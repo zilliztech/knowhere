@@ -1335,6 +1335,11 @@ class ScalarQuantizer(Quantizer):
     QT_6bit: int
     QT_bf16: int
     QT_8bit_direct_signed: int
+    QT_1bit_tqmse: int
+    QT_2bit_tqmse: int
+    QT_3bit_tqmse: int
+    QT_4bit_tqmse: int
+    QT_8bit_tqmse: int
 
     # RangeStat constants (as class attributes)
     RS_minmax: int
@@ -2263,6 +2268,11 @@ def range_search_with_parameters(
 class IVFSearchParameters(SearchParameters):
     nprobe: int
     max_codes: int
+    max_lists_num: int
+    ensure_topk_full: bool
+    max_empty_result_buckets: int
+    quantizer_params: SearchParameters | None
+    inverted_list_context: Any
     sel: IDSelector | None
     def __init__(self) -> None: ...
 

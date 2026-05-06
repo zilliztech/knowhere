@@ -8,79 +8,45 @@
 #pragma once
 
 #include <faiss/index_io.h>
-#include <faiss/cppcontrib/knowhere/invlists/InvertedLists.h>
+#include <faiss/invlists/BlockInvertedLists.h>
 #include <faiss/cppcontrib/knowhere/invlists/InvertedListsIOHook.h>
-#include <faiss/utils/AlignedTable.h>
-
-#include <faiss/impl/CodePacker.h>
-#include <faiss/impl/IDSelector.h>
 
 namespace faiss {
 namespace cppcontrib {
 namespace knowhere {
 
-/** Inverted Lists that are organized by blocks.
+/** Fork BlockInvertedLists — Path-D step 10.14c reparented directly
+ * onto baseline ::faiss::BlockInvertedLists.
  *
- * Different from the regular inverted lists, the codes are organized by blocks
- * of size block_size bytes that reprsent a set of n_per_block. Therefore, code
- * allocations are always rounded up to block_size bytes. The codes are also
- * aligned on 32-byte boundaries for use with SIMD.
+ * Adds NO state and NO method overrides beyond baseline. The only
+ * reason this class still exists is to be a distinct type (different
+ * typeid) so the fork's BlockInvertedListsIOHook can own it through
+ * the fork's InvertedListsIOHook registry without colliding with
+ * baseline's own hook registration.
  *
- * To avoid misinterpretations, the code_size is set to (size_t)(-1), even if
- * arguably the amount of memory consumed by code is block_size / n_per_block.
- *
- * The writing functions add_entries and update_entries operate on block-aligned
- * data.
+ * Consequences:
+ *   - dynamic_cast<::faiss::BlockInvertedLists*> on a fork object
+ *     now succeeds, which makes baseline DirectMap::remove_ids'
+ *     block-invlists shortcut fire correctly (unblocks step 11.1
+ *     DirectMap alias).
+ *   - baseline's remove_ids body (correctly captured orig_size +
+ *     reduction clause) is now inherited, fixing a long-standing fork
+ *     bug where nremove was always 0.
+ *   - fork BlockInvertedLists is NO LONGER a fork::InvertedLists,
+ *     so it cannot be passed to callers expecting fork::InvertedLists*.
+ *     The corresponding widening of fork::IndexIVF::replace_invlists to
+ *     accept baseline InvertedLists* is paired with this change.
  */
-struct BlockInvertedLists : InvertedLists {
-    size_t n_per_block = 0; // nb of vectors stored per block
-    size_t block_size = 0;  // nb bytes per block
-
-    // required to interpret the content of the blocks (owned by this)
-    const CodePacker* packer = nullptr;
-
-    std::vector<AlignedTable<uint8_t>> codes;
-    std::vector<std::vector<idx_t>> ids;
-
+struct BlockInvertedLists : ::faiss::BlockInvertedLists {
     BlockInvertedLists(size_t nlist, size_t vec_per_block, size_t block_size);
     BlockInvertedLists(size_t nlist, const CodePacker* packer);
-
     BlockInvertedLists();
-
-    size_t list_size(size_t list_no) const override;
-    const uint8_t* get_codes(size_t list_no) const override;
-    const idx_t* get_ids(size_t list_no) const override;
-    /// remove ids from the InvertedLists
-    size_t remove_ids(const IDSelector& sel);
-
-    // works only on empty BlockInvertedLists
-    // the codes should be of size ceil(n_entry / n_per_block) * block_size
-    // and padded with 0s
-    size_t add_entries(
-            size_t list_no,
-            size_t n_entry,
-            const idx_t* ids,
-            const uint8_t* code,
-            const float* code_norm = nullptr) override;
-
-    /// not implemented
-    void update_entries(
-            size_t list_no,
-            size_t offset,
-            size_t n_entry,
-            const idx_t* ids,
-            const uint8_t* code) override;
-
-    // also pads new data with 0s
-    void resize(size_t list_no, size_t new_size) override;
-
-    ~BlockInvertedLists() override;
 };
 
 struct BlockInvertedListsIOHook : InvertedListsIOHook {
     BlockInvertedListsIOHook();
-    void write(const InvertedLists* ils, IOWriter* f) const override;
-    InvertedLists* read(IOReader* f, int io_flags) const override;
+    void write(const ::faiss::InvertedLists* ils, IOWriter* f) const override;
+    ::faiss::InvertedLists* read(IOReader* f, int io_flags) const override;
 };
 
 }

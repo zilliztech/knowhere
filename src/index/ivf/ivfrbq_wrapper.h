@@ -16,9 +16,9 @@
 #include <memory>
 
 #include "faiss/Index.h"
+#include "faiss/IndexIVFRaBitQ.h"
 #include "faiss/cppcontrib/knowhere/IVFIteratorWorkspace.h"
 #include "faiss/cppcontrib/knowhere/IndexIVF.h"
-#include "faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h"
 #include "faiss/cppcontrib/knowhere/IndexRefine.h"
 #include "index/ivf/ivf_config.h"
 #include "knowhere/expected.h"
@@ -33,8 +33,8 @@ namespace knowhere {
 //   IndexPreTransform in the ivf.cc file.
 struct IndexIVFRaBitQWrapper : faiss::Index {
     // this is one of two:
-    // * faiss::IndexPreTransform + faiss::cppcontrib::knowhere::IndexIVFRaBitQ
-    // * faiss::IndexPreTransform + faiss::IndexRefine + faiss::cppcontrib::knowhere::IndexIVFRaBitQ
+    // * faiss::IndexPreTransform + faiss::IndexIVFRaBitQ
+    // * faiss::IndexPreTransform + faiss::IndexRefine + faiss::IndexIVFRaBitQ
     std::unique_ptr<faiss::Index> index;
     mutable std::optional<size_t> size_cache_ = std::nullopt;
 
@@ -76,9 +76,9 @@ struct IndexIVFRaBitQWrapper : faiss::Index {
 
     // point to IndexIVFRaBitQ or return nullptr.
     // this may also point to an index, owned by IndexRefine
-    faiss::cppcontrib::knowhere::IndexIVFRaBitQ*
+    faiss::IndexIVFRaBitQ*
     get_ivfrabitq_index();
-    const faiss::cppcontrib::knowhere::IndexIVFRaBitQ*
+    const faiss::IndexIVFRaBitQ*
     get_ivfrabitq_index() const;
 
     // point to IndexRefine or return nullptr.
@@ -96,7 +96,7 @@ struct IndexIVFRaBitQWrapper : faiss::Index {
 /// Delegates init and scanning to the original wrapper implementations.
 struct IVFRaBitQIteratorWorkspace : faiss::cppcontrib::knowhere::IVFIteratorWorkspace {
     const IndexIVFRaBitQWrapper* wrapper;
-    std::unique_ptr<faiss::cppcontrib::knowhere::IVFIteratorWorkspace> inner;
+    std::unique_ptr<faiss::cppcontrib::knowhere::IVFBaseIteratorWorkspace> inner;
 
     IVFRaBitQIteratorWorkspace(const IndexIVFRaBitQWrapper* wrapper, const float* query_data,
                                const faiss::cppcontrib::knowhere::IVFSearchParameters* params);

@@ -359,30 +359,6 @@ void range_search_cosine(
         const IDSelector* sel = nullptr);
 
 /***************************************************************************
- * elkan
- ***************************************************************************/
-
-/** Return the nearest neighbors of each of the nx vectors x among the ny
- *
- * @param x          query vectors, size nx * d
- * @param y          database vectors, size ny * d
- * @param ids        result array ids
- * @param val        result array value
- * @param tmp_buffer tmporary memory for symmetric matrix data
- * @param sym_dim    dimension of symmetric matrix
- */
-void elkan_L2_sse(
-        const float* x,
-        const float* y,
-        size_t d,
-        size_t nx,
-        size_t ny,
-        int64_t* ids,
-        float* val,
-        float* tmp_buffer,
-        size_t sym_dim);
-
-/***************************************************************************
  * Templatized versions of distance functions
  ***************************************************************************/
 

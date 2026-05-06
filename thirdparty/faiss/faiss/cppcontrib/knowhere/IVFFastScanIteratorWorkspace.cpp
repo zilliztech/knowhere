@@ -11,6 +11,8 @@
 
 #include <cinttypes>
 
+#include <faiss/IndexIVFFastScan.h>
+#include <faiss/IndexIVFPQFastScan.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFPQFastScan.h>
 #include <faiss/cppcontrib/knowhere/IndexScaNN.h>
@@ -33,7 +35,7 @@ inline size_t roundup(size_t a, size_t b) {
 // All AVX2-dependent members live here, invisible to baseline TUs.
 
 struct IVFFastScanIteratorWorkspace::Impl {
-    const IndexIVFFastScan* index;
+    const ::faiss::IndexIVFFastScan* index = nullptr;
     size_t dim12;
     AlignedTable<uint8_t> dis_tables;
     AlignedTable<uint16_t> biases;
@@ -41,7 +43,13 @@ struct IVFFastScanIteratorWorkspace::Impl {
 
     void next_batch(IVFFastScanIteratorWorkspace& ws, size_t current_backup_count);
 
+    void init(
+            IVFFastScanIteratorWorkspace& ws,
+            const ::faiss::IndexIVFFastScan* index,
+            const IVFSearchParameters* params);
+
     void get_interator_next_batch_implem_10(
+            const ::faiss::IndexIVFFastScan* index,
             IVFFastScanIteratorWorkspace& ws,
             SIMDResultHandlerToFloat& handler,
             size_t current_backup_count);
@@ -50,16 +58,22 @@ struct IVFFastScanIteratorWorkspace::Impl {
 // ---- IVFFastScanIteratorWorkspace ----
 
 IVFFastScanIteratorWorkspace::IVFFastScanIteratorWorkspace(
-        const IndexIVFFastScan* index_in,
+        const ::faiss::IndexIVFFastScan* index_in,
         const float* query_data,
         const IVFSearchParameters* params)
         : IVFIteratorWorkspace(query_data, index_in->d, params),
           impl_(std::make_unique<Impl>()) {
     impl_->index = index_in;
+    impl_->init(*this, index_in, params);
+}
 
+void IVFFastScanIteratorWorkspace::Impl::init(
+        IVFFastScanIteratorWorkspace& ws,
+        const ::faiss::IndexIVFFastScan* index_in,
+        const IVFSearchParameters* /* params */) {
     auto coarse_list_sizes_buf = std::make_unique<size_t[]>(index_in->nlist);
     size_t count = 0;
-    auto max_coarse_list_size = 0;
+    size_t max_coarse_list_size = 0;
     for (size_t list_no = 0; list_no < index_in->nlist; ++list_no) {
         auto list_size = index_in->invlists->list_size(list_no);
         coarse_list_sizes_buf[list_no] = list_size;
@@ -69,45 +83,45 @@ IVFFastScanIteratorWorkspace::IVFFastScanIteratorWorkspace(
         }
     }
 
-    size_t np = this->search_params->nprobe
-            ? this->search_params->nprobe
+    size_t np = ws.search_params->nprobe
+            ? ws.search_params->nprobe
             : index_in->nprobe;
     np = std::min(index_in->nlist, np);
-    this->backup_count_threshold = count * np / index_in->nlist;
+    ws.backup_count_threshold = count * np / index_in->nlist;
     auto max_backup_count =
-            max_coarse_list_size + this->backup_count_threshold;
+            max_coarse_list_size + ws.backup_count_threshold;
 
     auto coarse_idx_buf = std::make_unique<idx_t[]>(index_in->nlist);
     auto coarse_dis_buf = std::make_unique<float[]>(index_in->nlist);
     index_in->quantizer->search(
             1,
-            this->query_data.data(),
+            ws.query_data.data(),
             index_in->nlist,
             coarse_dis_buf.get(),
             coarse_idx_buf.get(),
-            this->search_params
-                    ? this->search_params->quantizer_params
+            ws.search_params
+                    ? ws.search_params->quantizer_params
                     : nullptr);
 
-    this->coarse_idx = std::move(coarse_idx_buf);
-    this->coarse_dis = std::move(coarse_dis_buf);
-    this->coarse_list_sizes = std::move(coarse_list_sizes_buf);
-    this->nprobe = np;
-    this->dists.reserve(max_backup_count);
+    ws.coarse_idx = std::move(coarse_idx_buf);
+    ws.coarse_dis = std::move(coarse_dis_buf);
+    ws.coarse_list_sizes = std::move(coarse_list_sizes_buf);
+    ws.nprobe = np;
+    ws.dists.reserve(max_backup_count);
 
-    impl_->dim12 = index_in->ksub * index_in->M2;
-    IndexIVFFastScan::CoarseQuantized cq{
-            this->nprobe,
-            this->coarse_dis.get(),
-            this->coarse_idx.get()};
+    dim12 = index_in->ksub * index_in->M2;
+    ::faiss::IndexIVFFastScan::CoarseQuantized cq{
+            ws.nprobe,
+            ws.coarse_dis.get(),
+            ws.coarse_idx.get()};
     faiss::FastScanDistancePostProcessing empty_context{};
     index_in->compute_LUT_uint8(
             1,
-            this->query_data.data(),
+            ws.query_data.data(),
             cq,
-            impl_->dis_tables,
-            impl_->biases,
-            impl_->normalizers,
+            dis_tables,
+            biases,
+            normalizers,
             empty_context);
 }
 
@@ -144,7 +158,8 @@ void IVFFastScanIteratorWorkspace::Impl::next_batch(
                         true>(pairs, index->ntotal, id_selector));
     }
 
-    this->get_interator_next_batch_implem_10(ws, *handler.get(), current_backup_count);
+    this->get_interator_next_batch_implem_10(
+            index, ws, *handler.get(), current_backup_count);
 
     // Convert std::pair to knowhere::DistId
     ws.dists.reserve(pairs.size());
@@ -154,6 +169,7 @@ void IVFFastScanIteratorWorkspace::Impl::next_batch(
 }
 
 void IVFFastScanIteratorWorkspace::Impl::get_interator_next_batch_implem_10(
+        const ::faiss::IndexIVFFastScan* index,
         IVFFastScanIteratorWorkspace& ws,
         SIMDResultHandlerToFloat& handler,
         size_t current_backup_count) {
@@ -180,9 +196,13 @@ void IVFFastScanIteratorWorkspace::Impl::get_interator_next_batch_implem_10(
             handler.dbias = this->biases.get() + next_list_idx;
         }
         idx_t list_no = ws.coarse_idx[next_list_idx];
-        size_t ls = index->invlists->list_size(list_no);
-        if (list_no < 0 || ls == 0)
+        if (list_no < 0) {
             continue;
+        }
+        size_t ls = index->invlists->list_size(list_no);
+        if (ls == 0) {
+            continue;
+        }
 
         InvertedLists::ScopedCodes codes(index->invlists, list_no);
         InvertedLists::ScopedIds ids(index->invlists, list_no);
@@ -211,21 +231,30 @@ ScaNNIteratorWorkspace::ScaNNIteratorWorkspace(
         const IndexScaNN* scann_index,
         const float* query_data,
         const IVFSearchParameters* params)
-        : inner(std::make_unique<IVFFastScanIteratorWorkspace>(
-                  dynamic_cast<const IndexIVFPQFastScan*>(scann_index->base_index),
-                  query_data,
-                  params)) {
-    auto* fast_scan_base =
-            dynamic_cast<const IndexIVFPQFastScan*>(scann_index->base_index);
+        : inner() {
+    if (auto* fast_scan_base = dynamic_cast<const ::faiss::IndexIVFPQFastScan*>(
+                scann_index->base_index)) {
+        inner = std::make_unique<IVFFastScanIteratorWorkspace>(
+                fast_scan_base, query_data, params);
+    } else {
+        FAISS_THROW_MSG("IndexScaNN base index must be IndexIVFPQFastScan");
+    }
+
     // Set up dis_refine (logic from IndexScaNN::getIteratorWorkspace)
     if (scann_index->refine_index) {
-        auto refine = dynamic_cast<const IndexFlat*>(scann_index->refine_index);
-        if (auto base_cosine =
-                    dynamic_cast<const IndexIVFPQFastScanCosine*>(fast_scan_base)) {
+        // refine_index may be a baseline ::faiss::IndexFlat{,IP,L2} or the
+        // knowhere Jaccard-aware subclass; cast to the common baseline type.
+        auto refine =
+                dynamic_cast<const ::faiss::IndexFlat*>(scann_index->refine_index);
+        FAISS_THROW_IF_NOT(refine);
+        if (auto norms = dynamic_cast<const HasInverseL2Norms*>(
+                    scann_index->base_index)) {
+            const float* inverse_l2_norms = norms->get_inverse_l2_norms();
+            FAISS_THROW_IF_NOT(inverse_l2_norms);
             this->dis_refine = std::unique_ptr<faiss::DistanceComputer>(
                     new faiss::cppcontrib::knowhere::WithCosineNormDistanceComputer(
-                            base_cosine->inverse_norms_storage.inverse_l2_norms.data(),
-                            base_cosine->d,
+                            inverse_l2_norms,
+                            scann_index->base_index->d,
                             std::unique_ptr<faiss::DistanceComputer>(
                                     refine->get_distance_computer())));
         } else {

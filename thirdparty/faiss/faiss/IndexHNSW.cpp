@@ -8,6 +8,7 @@
 #include <faiss/IndexHNSW.h>
 
 #include <omp.h>
+#include <atomic>
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
@@ -26,6 +27,7 @@
 #include <faiss/IndexIVFPQ.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
+#include <faiss/impl/FaissException.h>
 #include <faiss/impl/ResultHandler.h>
 #include <faiss/impl/VisitedTable.h>
 #include <faiss/impl/hnsw/MinimaxHeap.h>
@@ -93,7 +95,7 @@ void hnsw_add_vertices(
 
         // build histogram
         for (size_t i = 0; i < n; i++) {
-            storage_idx_t pt_id = i + n0;
+            storage_idx_t pt_id = static_cast<storage_idx_t>(i + n0);
             int pt_level = hnsw.levels[pt_id] - 1;
             while (pt_level >= static_cast<int>(hist.size())) {
                 hist.push_back(0);
@@ -109,7 +111,7 @@ void hnsw_add_vertices(
 
         // bucket sort
         for (size_t i = 0; i < n; i++) {
-            storage_idx_t pt_id = i + n0;
+            storage_idx_t pt_id = static_cast<storage_idx_t>(i + n0);
             int pt_level = hnsw.levels[pt_id] - 1;
             order[offsets[pt_level]++] = pt_id;
         }
@@ -121,7 +123,7 @@ void hnsw_add_vertices(
     { // perform add
         RandomGenerator rng2(789);
 
-        size_t i1 = n;
+        size_t i1 = static_cast<int>(n);
 
         for (int pt_level = static_cast<int>(hist.size()) - 1;
              pt_level >= int(!index_hnsw.init_level0);
@@ -264,29 +266,48 @@ void hnsw_search(
 
     for (idx_t i0 = 0; i0 < n; i0 += check_period) {
         idx_t i1 = std::min(i0 + check_period, n);
+        std::exception_ptr ex;
+        std::atomic<bool> interrupt{false};
 
 #pragma omp parallel if (i1 - i0 > 1)
         {
-            VisitedTable vt(index->ntotal, hnsw.use_visited_hashset);
-            typename BlockResultHandler::SingleResultHandler res(bres);
-
-            std::unique_ptr<DistanceComputer> dis(
-                    storage_distance_computer(index->storage));
+            std::unique_ptr<VisitedTable> vt;
+            std::unique_ptr<typename BlockResultHandler::SingleResultHandler>
+                    res;
+            std::unique_ptr<DistanceComputer> dis;
+            try {
+                vt = std::make_unique<VisitedTable>(
+                        index->ntotal, hnsw.use_visited_hashset);
+                res = std::make_unique<
+                        typename BlockResultHandler::SingleResultHandler>(bres);
+                dis.reset(storage_distance_computer(index->storage));
+            } catch (...) {
+                omp_capture_exception(ex, [&] { interrupt = true; });
+            }
 
 #pragma omp for reduction(+ : n1, n2, ndis, nhops) schedule(guided)
             for (idx_t i = i0; i < i1; i++) {
-                res.begin(i);
-                dis->set_query(x + i * index->d);
+                if (interrupt.load(std::memory_order_relaxed)) {
+                    continue;
+                }
+                try {
+                    res->begin(i);
+                    dis->set_query(x + i * index->d);
 
-                HNSWStats stats = hnsw.search(*dis, index, res, vt, params);
-                n1 += stats.n1;
-                n2 += stats.n2;
-                ndis += stats.ndis;
-                nhops += stats.nhops;
-                res.end();
-                vt.advance();
+                    HNSWStats stats =
+                            hnsw.search(*dis, index, *res, *vt, params);
+                    n1 += stats.n1;
+                    n2 += stats.n2;
+                    ndis += stats.ndis;
+                    nhops += stats.nhops;
+                    res->end();
+                    vt->advance();
+                } catch (...) {
+                    omp_capture_exception(ex, [&] { interrupt = true; });
+                }
             }
         }
+        omp_rethrow_if_exception(ex);
         InterruptCallback::check();
     }
 
@@ -436,42 +457,59 @@ void IndexHNSW::search_level_0(
     FAISS_THROW_IF_NOT(k > 0);
     FAISS_THROW_IF_NOT(nprobe > 0);
 
-    storage_idx_t hnsw_ntotal = hnsw.levels.size();
+    size_t hnsw_ntotal = hnsw.levels.size();
 
     using RH = HeapBlockResultHandler<HNSW::C>;
     RH bres(n, distances, labels, k);
 
+    std::exception_ptr ex;
+    std::atomic<bool> interrupt{false};
 #pragma omp parallel
     {
-        std::unique_ptr<DistanceComputer> qdis(
-                storage_distance_computer(storage));
+        std::unique_ptr<DistanceComputer> qdis;
         HNSWStats search_stats;
-        VisitedTable vt(hnsw_ntotal, hnsw.use_visited_hashset);
-        RH::SingleResultHandler res(bres);
+        std::unique_ptr<VisitedTable> vt;
+        std::unique_ptr<RH::SingleResultHandler> res;
+        try {
+            qdis.reset(storage_distance_computer(storage));
+            vt = std::make_unique<VisitedTable>(
+                    hnsw_ntotal, hnsw.use_visited_hashset);
+            res = std::make_unique<RH::SingleResultHandler>(bres);
+        } catch (...) {
+            omp_capture_exception(ex, [&] { interrupt = true; });
+        }
 
 #pragma omp for
         for (idx_t i = 0; i < n; i++) {
-            res.begin(i);
-            qdis->set_query(x + i * d);
+            if (interrupt.load(std::memory_order_relaxed)) {
+                continue;
+            }
+            try {
+                res->begin(i);
+                qdis->set_query(x + i * d);
 
-            hnsw.search_level_0(
-                    *qdis.get(),
-                    res,
-                    nprobe,
-                    nearest + i * nprobe,
-                    nearest_d + i * nprobe,
-                    search_type,
-                    search_stats,
-                    vt,
-                    params);
-            res.end();
-            vt.advance();
+                hnsw.search_level_0(
+                        *qdis.get(),
+                        *res,
+                        nprobe,
+                        nearest + i * nprobe,
+                        nearest_d + i * nprobe,
+                        search_type,
+                        search_stats,
+                        *vt,
+                        params);
+                res->end();
+                vt->advance();
+            } catch (...) {
+                omp_capture_exception(ex, [&] { interrupt = true; });
+            }
         }
 #pragma omp critical
         {
             hnsw_stats.combine(search_stats);
         }
     }
+    omp_rethrow_if_exception(ex);
     if (is_similarity_metric(this->metric_type)) {
 // we need to revert the negated distances
 #pragma omp parallel for
@@ -497,7 +535,7 @@ void IndexHNSW::init_level_0_from_knngraph(
         std::priority_queue<NodeDistFarther> initial_list;
 
         for (int j = 0; j < k; j++) {
-            int v1 = I[i * k + j];
+            int v1 = static_cast<int>(I[i * k + j]);
             if (v1 == i) {
                 continue;
             }
@@ -865,7 +903,7 @@ void IndexHNSW2Level::search(
                 index_ivfpq,
                 "IndexHNSW2Level mixed search requires IndexIVFPQ storage");
 
-        int nprobe = index_ivfpq->nprobe;
+        size_t nprobe = index_ivfpq->nprobe;
 
         std::unique_ptr<idx_t[]> coarse_assign(new idx_t[n * nprobe]);
         std::unique_ptr<float[]> coarse_dis(new float[n * nprobe]);
@@ -883,72 +921,88 @@ void IndexHNSW2Level::search(
                 labels,
                 false);
 
+        std::exception_ptr ex;
+        std::atomic<bool> interrupt{false};
 #pragma omp parallel
         {
             // visited table (not hash set) for tri-state flags.
-            VisitedTable vt(ntotal, /*use_hashset=*/false);
-            std::unique_ptr<DistanceComputer> dis(
-                    storage_distance_computer(storage));
-
+            std::unique_ptr<VisitedTable> vt;
+            std::unique_ptr<DistanceComputer> dis;
             constexpr int candidates_size = 1;
-            MinimaxHeap candidates(candidates_size);
+            std::unique_ptr<MinimaxHeap> candidates;
+            try {
+                vt = std::make_unique<VisitedTable>(
+                        ntotal, /*use_hashset=*/false);
+                dis.reset(storage_distance_computer(storage));
+                candidates = std::make_unique<MinimaxHeap>(candidates_size);
+            } catch (...) {
+                omp_capture_exception(ex, [&] { interrupt = true; });
+            }
 
 #pragma omp for reduction(+ : n1, n2, ndis, nhops)
             for (idx_t i = 0; i < n; i++) {
-                idx_t* idxi = labels + i * k;
-                float* simi = distances + i * k;
-                dis->set_query(x + i * d);
-
-                // mark all inverted list elements as visited
-
-                for (int j = 0; j < nprobe; j++) {
-                    idx_t key = coarse_assign[j + i * nprobe];
-                    if (key < 0) {
-                        break;
-                    }
-                    size_t list_length = index_ivfpq->get_list_size(key);
-                    const idx_t* ids = index_ivfpq->invlists->get_ids(key);
-
-                    for (size_t jj = 0; jj < list_length; jj++) {
-                        vt.set(ids[jj]);
-                    }
+                if (interrupt.load(std::memory_order_relaxed)) {
+                    continue;
                 }
+                try {
+                    idx_t* idxi = labels + i * k;
+                    float* simi = distances + i * k;
+                    dis->set_query(x + i * d);
 
-                candidates.clear();
+                    // mark all inverted list elements as visited
+                    for (size_t j = 0; j < nprobe; j++) {
+                        idx_t key = coarse_assign[j + i * nprobe];
+                        if (key < 0) {
+                            break;
+                        }
+                        size_t list_length = index_ivfpq->get_list_size(key);
+                        const idx_t* ids = index_ivfpq->invlists->get_ids(key);
 
-                for (int j = 0; j < k; j++) {
-                    if (idxi[j] < 0) {
-                        break;
+                        for (size_t jj = 0; jj < list_length; jj++) {
+                            vt->set(ids[jj]);
+                        }
                     }
-                    candidates.push(idxi[j], simi[j]);
+
+                    candidates->clear();
+
+                    for (int j = 0; j < k; j++) {
+                        if (idxi[j] < 0) {
+                            break;
+                        }
+                        candidates->push(
+                                static_cast<storage_idx_t>(idxi[j]), simi[j]);
+                    }
+
+                    // reorder from sorted to heap
+                    maxheap_heapify(k, simi, idxi, simi, idxi, k);
+
+                    HNSWStats search_stats;
+                    search_from_candidates_2(
+                            hnsw,
+                            *dis,
+                            k,
+                            idxi,
+                            simi,
+                            *candidates,
+                            *vt,
+                            search_stats,
+                            0,
+                            k);
+                    n1 += search_stats.n1;
+                    n2 += search_stats.n2;
+                    ndis += search_stats.ndis;
+                    nhops += search_stats.nhops;
+
+                    vt->advance();
+                    vt->advance();
+
+                    maxheap_reorder(k, simi, idxi);
+                } catch (...) {
+                    omp_capture_exception(ex, [&] { interrupt = true; });
                 }
-
-                // reorder from sorted to heap
-                maxheap_heapify(k, simi, idxi, simi, idxi, k);
-
-                HNSWStats search_stats;
-                search_from_candidates_2(
-                        hnsw,
-                        *dis,
-                        k,
-                        idxi,
-                        simi,
-                        candidates,
-                        vt,
-                        search_stats,
-                        0,
-                        k);
-                n1 += search_stats.n1;
-                n2 += search_stats.n2;
-                ndis += search_stats.ndis;
-                nhops += search_stats.nhops;
-
-                vt.advance();
-                vt.advance();
-
-                maxheap_reorder(k, simi, idxi);
             }
         }
+        omp_rethrow_if_exception(ex);
 
         hnsw_stats.combine({n1, n2, ndis, nhops});
     }
@@ -1060,7 +1114,7 @@ void IndexHNSWCagra::search(
                 auto idx = distrib(gen);
                 auto distance = (*dis)(idx);
                 if (distance < nearest_d[i]) {
-                    nearest[i] = idx;
+                    nearest[i] = static_cast<storage_idx_t>(idx);
                     nearest_d[i] = distance;
                 }
             }

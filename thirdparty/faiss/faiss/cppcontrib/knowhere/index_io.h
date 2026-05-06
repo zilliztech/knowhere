@@ -90,8 +90,10 @@ ProductQuantizer* read_ProductQuantizer(IOReader* reader);
 void write_ProductQuantizer(const ProductQuantizer* pq, const char* fname);
 void write_ProductQuantizer(const ProductQuantizer* pq, IOWriter* f);
 
-void write_InvertedLists(const InvertedLists* ils, IOWriter* f);
-InvertedLists* read_InvertedLists(IOReader* reader, int io_flags = 0);
+// Path-D step 10.14c: widened to baseline ::faiss::InvertedLists*
+// to match the widened fork::IndexIVF::invlists shadow.
+void write_InvertedLists(const ::faiss::InvertedLists* ils, IOWriter* f);
+::faiss::InvertedLists* read_InvertedLists(IOReader* reader, int io_flags = 0);
 
 // additional helper function for knowhere
 bool read_is_mv(IOReader* reader);

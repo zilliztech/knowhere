@@ -13,6 +13,7 @@
 #include <memory>
 #include <vector>
 
+#include <faiss/IndexIVF.h>
 #include <faiss/MetricType.h>
 #include <faiss/impl/DistanceComputer.h>
 
@@ -22,10 +23,17 @@ namespace faiss {
 namespace cppcontrib {
 namespace knowhere {
 
-struct SearchParametersIVF;
-using IVFSearchParameters = SearchParametersIVF;
+// Aliases of the baseline faiss SearchParametersIVF; the fork no longer
+// defines its own variant.
+using SearchParametersIVF = ::faiss::SearchParametersIVF;
+using IVFSearchParameters = ::faiss::SearchParametersIVF;
 
-struct IndexIVF;
+// Path-D step 11.4b: forward decl `struct IndexIVF;` replaced by an
+// alias to baseline. Fork's `struct IndexIVF` was deleted; the alias
+// here matches the same alias defined in
+// `<faiss/cppcontrib/knowhere/IndexIVF.h>` (allowed under C++ rules
+// for equivalent `using` declarations across translation units).
+using IndexIVF = ::faiss::IndexIVF;
 
 /// Base workspace for IVF iterator lifecycle.
 /// Holds query data, coarse quantization results, and iteration state.

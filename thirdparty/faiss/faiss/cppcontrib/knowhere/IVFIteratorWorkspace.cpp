@@ -13,6 +13,7 @@
 
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
+#include <faiss/cppcontrib/knowhere/invlists/InvertedLists.h>  // ConcurrentArrayInvertedLists
 #include <faiss/impl/FaissAssert.h>
 
 namespace faiss::cppcontrib::knowhere {
@@ -118,41 +119,86 @@ void IVFBaseIteratorWorkspace::next_batch(size_t current_backup_count) {
             continue;
         }
 
-        // get scanner
+        // get scanner — Path-D step 11.4b: fork IndexIVF no longer
+        // declares a covariant get_InvertedListScanner override, so the
+        // call returns baseline's wider `::faiss::InvertedListScanner*`.
+        // Take ownership in a baseline-typed unique_ptr first, then
+        // dynamic_cast to the knowhere hook interface for access to
+        // the fork-only virtuals (`set_list_segment`,
+        // `scan_codes_and_return`) used below. All iterator-supported
+        // fork-derived scanners implement these hooks, so the cast
+        // succeeds for supported paths while preserving a safety net if
+        // an unsupported baseline-only scanner were ever passed.
         IDSelector* sel = this->search_params
                 ? this->search_params->sel
                 : nullptr;
-        std::unique_ptr<InvertedListScanner> scanner(
-                ivf_index->get_InvertedListScanner(false, sel, this->search_params));
-        scanner->set_query(this->query_data.data());
-        scanner->set_list(list_no, coarse_list_centroid_dist);
+        std::unique_ptr<::faiss::InvertedListScanner> base_scanner(
+                ivf_index->get_InvertedListScanner(
+                        false, sel, this->search_params));
+        auto* hooks =
+                dynamic_cast<KnowhereInvertedListScannerHooks*>(
+                        base_scanner.get());
+        FAISS_THROW_IF_NOT_MSG(
+                hooks != nullptr,
+                "IVFIteratorWorkspace: scanner does not implement knowhere hooks");
+        base_scanner->set_query(this->query_data.data());
+        base_scanner->set_list(list_no, coarse_list_centroid_dist);
 
-        size_t segment_num = ivf_index->invlists->get_segment_num(list_no);
-        size_t scan_cnt = 0;
-        for (size_t segment_idx = 0; segment_idx < segment_num; segment_idx++) {
-            size_t segment_size =
-                    ivf_index->invlists->get_segment_size(list_no, segment_idx);
-            size_t should_scan_size =
-                    std::min(segment_size, max_codes - scan_cnt);
-            scan_cnt += should_scan_size;
-            if (should_scan_size <= 0) {
-                break;
+        // Path-D step 10.10: segment-aware walk for CC invlists (where
+        // list storage is chunked across ConcurrentArrayInvertedLists
+        // segments), single-scan fast path for everything else.
+        // Runtime dispatch via dynamic_cast — the segment API used to
+        // be a virtual on fork::InvertedLists base with a non-trivial
+        // override only on the CC invlists; that virtual is going away
+        // in this step, so the cast is the replacement.
+        if (auto* cil =
+                    dynamic_cast<const ConcurrentArrayInvertedLists*>(
+                            ivf_index->invlists)) {
+            // CC path: walk segments.
+            size_t segment_num = cil->get_segment_num(list_no);
+            size_t scan_cnt = 0;
+            for (size_t segment_idx = 0; segment_idx < segment_num;
+                 segment_idx++) {
+                size_t segment_size =
+                        cil->get_segment_size(list_no, segment_idx);
+                size_t should_scan_size =
+                        std::min(segment_size, max_codes - scan_cnt);
+                scan_cnt += should_scan_size;
+                if (should_scan_size <= 0) {
+                    break;
+                }
+                size_t segment_offset =
+                        cil->get_segment_offset(list_no, segment_idx);
+                // Direct access on concrete CC invlists — the pointers
+                // returned are deque-chunk interior pointers that don't
+                // need RAII release.
+                const uint8_t* codes =
+                        cil->get_codes(list_no, segment_offset);
+                const idx_t* ids = cil->get_ids(list_no, segment_offset);
+
+                // Per-segment norms are fetched by the scanner itself in
+                // set_list_segment.
+                hooks->set_list_segment(segment_offset);
+                hooks->scan_codes_and_return(
+                        should_scan_size, codes, ids, this->dists);
             }
-            size_t segment_offset =
-                    ivf_index->invlists->get_segment_offset(list_no, segment_idx);
-            InvertedLists::ScopedCodes scodes(
-                    ivf_index->invlists, list_no, segment_offset);
-            InvertedLists::ScopedCodeNorms scode_norms(
-                    ivf_index->invlists, list_no, segment_offset);
-            InvertedLists::ScopedIds sids(
-                    ivf_index->invlists, list_no, segment_offset);
-
-            scanner->scan_codes_and_return(
-                    should_scan_size,
-                    scodes.get(),
-                    scode_norms.get(),
-                    sids.get(),
-                    this->dists);
+        } else {
+            // Non-CC single-segment path: max_codes is already bounded
+            // by list_size (since coarse_list_sizes snapshot is that
+            // size). One scan covers the whole list.
+            size_t list_size = ivf_index->invlists->list_size(list_no);
+            size_t should_scan_size = std::min(list_size, max_codes);
+            if (should_scan_size > 0) {
+                InvertedLists::ScopedCodes scodes(
+                        ivf_index->invlists, list_no);
+                InvertedLists::ScopedIds sids(
+                        ivf_index->invlists, list_no);
+                hooks->scan_codes_and_return(
+                        should_scan_size,
+                        scodes.get(),
+                        sids.get(),
+                        this->dists);
+            }
         }
     }
 }

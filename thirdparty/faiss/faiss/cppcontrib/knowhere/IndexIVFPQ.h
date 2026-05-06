@@ -9,51 +9,51 @@
 
 #pragma once
 
-#include <vector>
-
-#include <faiss/IndexPQ.h>
+#include <faiss/IndexIVFPQ.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
-#include <faiss/impl/PolysemousTraining.h>
-#include <faiss/impl/ProductQuantizer.h>
-#include <faiss/impl/platform_macros.h>
-#include <faiss/utils/AlignedTable.h>
 
 namespace faiss {
 namespace cppcontrib {
 namespace knowhere {
 
+// Path-D step 11.5.1: fork IVFPQ machinery collapsed onto baseline.
+//
+// The following symbols are now type/value aliases of baseline:
+//   - IVFPQSearchParameters
+//   - IndexIVFPQStats
+//   - indexIVFPQ_stats        (extern; baseline owns the global)
+//   - precomputed_table_max_bytes
+//   - index_ivfpq_add_core_o_bs
+//   - initialize_IVFPQ_precomputed_table
+//
+// Fork-side declarations were byte-identical to baseline's, so the
+// `using` collapses are pure simplification with no behavioral change.
+using IVFPQSearchParameters = ::faiss::IVFPQSearchParameters;
+using IndexIVFPQStats = ::faiss::IndexIVFPQStats;
+using ::faiss::initialize_IVFPQ_precomputed_table;
 
-struct IVFPQSearchParameters : IVFSearchParameters {
-    size_t scan_table_threshold; ///< use table computation or on-the-fly?
-    int polysemous_ht;           ///< Hamming thresh for polysemous filtering
-    IVFPQSearchParameters() : scan_table_threshold(0), polysemous_ht(0) {}
-    ~IVFPQSearchParameters() {}
-};
-
-FAISS_API extern size_t precomputed_table_max_bytes;
-
-/** Inverted file with Product Quantizer encoding. Each residual
- * vector is encoded as a product quantizer code.
+/** Inverted file with Product Quantizer encoding.
+ *
+ * Path-D step 11.5.1: reparented to inherit from `::faiss::IndexIVFPQ`
+ * directly. After audit, every fork IVFPQ method body (encode_vectors,
+ * sa_decode, add_core, add_core_o, train_encoder,
+ * train_encoder_num_vectors, encode, encode_multiple, decode_multiple,
+ * precompute_table, find_duplicates, reconstruct_from_offset) was
+ * byte-identical to baseline's same-named method, so they have been
+ * deleted; baseline's inherited bodies take over. The default ctor was
+ * also byte-identical and is gone.
+ *
+ * The 4-arg ctor stays (with a different default for `own_invlists`)
+ * to preserve fork's convention of installing a fork
+ * `ArrayInvertedLists` (NormInvertedLists-capable) by default.
+ *
+ * The fork scanner override was deleted after the knowhere-only
+ * scanner hooks were split from baseline `::faiss::InvertedListScanner`.
+ * IVFPQ is not currently an iterator-supported knowhere index type, and
+ * non-iterator search paths can use baseline FAISS scanner dispatch
+ * directly.
  */
-struct IndexIVFPQ : IndexIVF {
-    ProductQuantizer pq; ///< produces the codes
-
-    bool do_polysemous_training; ///< reorder PQ centroids after training?
-    PolysemousTraining* polysemous_training; ///< if NULL, use default
-
-    // search-time parameters
-    size_t scan_table_threshold; ///< use table computation or on-the-fly?
-    int polysemous_ht;           ///< Hamming thresh for polysemous filtering
-
-    /** Precompute table that speed up query preprocessing at some
-     * memory cost (used only for by_residual with L2 metric)
-     */
-    int use_precomputed_table;
-
-    /// if use_precompute_table
-    /// size nlist * pq.M * pq.ksub
-    AlignedTable<float> precomputed_table;
-
+struct IndexIVFPQ : ::faiss::IndexIVFPQ {
     IndexIVFPQ(
             Index* quantizer,
             size_t d,
@@ -62,137 +62,11 @@ struct IndexIVFPQ : IndexIVF {
             size_t nbits_per_idx,
             MetricType metric = METRIC_L2);
 
-    void encode_vectors(
-            idx_t n,
-            const float* x,
-            const idx_t* list_nos,
-            uint8_t* codes,
-            bool include_listnos = false) const override;
-
-    void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
-
-    void add_core(
-            idx_t n,
-            const float* x,
-            const float* x_norms,
-            const idx_t* xids,
-            const idx_t* precomputed_idx,
-            void* inverted_list_context = nullptr) override;
-
-    /// same as add_core, also:
-    /// - output 2nd level residuals if residuals_2 != NULL
-    /// - accepts precomputed_idx = nullptr
-    void add_core_o(
-            idx_t n,
-            const float* x,
-            const idx_t* xids,
-            float* residuals_2,
-            const idx_t* precomputed_idx = nullptr,
-            void* inverted_list_context = nullptr);
-
-    /// trains the product quantizer
-    void train_encoder(idx_t n, const float* x, const idx_t* assign) override;
-
-    idx_t train_encoder_num_vectors() const override;
-
-    void reconstruct_from_offset(int64_t list_no, int64_t offset, float* recons)
-            const override;
-
-    /** Find exact duplicates in the dataset.
-     *
-     * the duplicates are returned in pre-allocated arrays (see the
-     * max sizes).
-     *
-     * @param lims   limits between groups of duplicates
-     *                (max size ntotal / 2 + 1)
-     * @param ids    ids[lims[i]] : ids[lims[i+1]-1] is a group of
-     *                duplicates (max size ntotal)
-     * @return n      number of groups found
-     */
-    size_t find_duplicates(idx_t* ids, size_t* lims) const;
-
-    // map a vector to a binary code knowning the index
-    void encode(idx_t key, const float* x, uint8_t* code) const;
-
-    /** Encode multiple vectors
-     *
-     * @param n       nb vectors to encode
-     * @param keys    posting list ids for those vectors (size n)
-     * @param x       vectors (size n * d)
-     * @param codes   output codes (size n * code_size)
-     * @param compute_keys  if false, assume keys are precomputed,
-     *                      otherwise compute them
-     */
-    void encode_multiple(
-            size_t n,
-            idx_t* keys,
-            const float* x,
-            uint8_t* codes,
-            bool compute_keys = false) const;
-
-    /// inverse of encode_multiple
-    void decode_multiple(
-            size_t n,
-            const idx_t* keys,
-            const uint8_t* xcodes,
-            float* x) const;
-
-    InvertedListScanner* get_InvertedListScanner(
-            bool store_pairs,
-            const IDSelector* sel,
-            const IVFSearchParameters* params) const override;
-
-    /// build precomputed table
-    void precompute_table();
-
-    IndexIVFPQ();
+    // Default ctor body was byte-identical to baseline's; inheriting
+    // baseline's default ctor is functionally equivalent.
+    IndexIVFPQ() = default;
 };
 
-// block size used in IndexIVFPQ::add_core_o
-FAISS_API extern int index_ivfpq_add_core_o_bs;
-
-/** Pre-compute distance tables for IVFPQ with by-residual and METRIC_L2
- *
- * @param use_precomputed_table (I/O)
- *        =-1: force disable
- *        =0: decide heuristically (default: use tables only if they are
- *            < precomputed_tables_max_bytes), set use_precomputed_table on
- * output =1: tables that work for all quantizers (size 256 * nlist * M) =2:
- * specific version for MultiIndexQuantizer (much more compact)
- * @param precomputed_table precomputed table to initialize
- */
-
-void initialize_IVFPQ_precomputed_table(
-        int& use_precomputed_table,
-        const Index* quantizer,
-        const ProductQuantizer& pq,
-        AlignedTable<float>& precomputed_table,
-        bool by_residual,
-        bool verbose);
-
-/// statistics are robust to internal threading, but not if
-/// IndexIVFPQ::search_preassigned is called by multiple threads
-struct IndexIVFPQStats {
-    size_t nrefine; ///< nb of refines (IVFPQR)
-
-    size_t n_hamming_pass;
-    ///< nb of passed Hamming distance tests (for polysemous)
-
-    // timings measured with the CPU RTC on all threads
-    size_t search_cycles;
-    size_t refine_cycles; ///< only for IVFPQR
-
-    IndexIVFPQStats() {
-        reset();
-    }
-    void reset();
-};
-
-// global var that collects them all
-FAISS_API extern IndexIVFPQStats indexIVFPQ_stats;
-
-
-}
-}
-} // namespace faiss
-
+}  // namespace knowhere
+}  // namespace cppcontrib
+}  // namespace faiss

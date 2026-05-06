@@ -71,6 +71,10 @@ InvertedListsIOHook* InvertedListsIOHook::lookup_classname(
         if (callback->classname == classname) {
             return callback;
         }
+        if (callback->key == "ilbl" &&
+            classname == typeid(::faiss::BlockInvertedLists).name()) {
+            return callback;
+        }
     }
     FAISS_THROW_FMT(
             "read_InvertedLists: could not find classname %s",
@@ -92,7 +96,7 @@ void InvertedListsIOHook::print_callbacks() {
     }
 }
 
-InvertedLists* InvertedListsIOHook::read_ArrayInvertedLists(
+::faiss::InvertedLists* InvertedListsIOHook::read_ArrayInvertedLists(
         IOReader*,
         int,
         size_t,
@@ -102,5 +106,4 @@ InvertedLists* InvertedListsIOHook::read_ArrayInvertedLists(
 }
 
 }
-
 

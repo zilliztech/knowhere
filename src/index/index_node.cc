@@ -551,7 +551,7 @@ IndexNode::DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_
         if (raw_index_bin) {
             MemoryIOReader reader(raw_index_bin->data.get(), raw_index_bin->size);
             auto* index = faiss::cppcontrib::knowhere::read_index(&reader);
-            auto* flat_index = dynamic_cast<faiss::cppcontrib::knowhere::IndexFlat*>(index);
+            auto* flat_index = dynamic_cast<::faiss::IndexFlat*>(index);
             if (flat_index == nullptr) {
                 delete index;
                 LOG_KNOWHERE_WARNING_ << "EMB_LIST_RAW_INDEX is not an IndexFlat";
@@ -652,7 +652,7 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
 
             auto raw_index_file = cfg.emb_list_raw_index_file_path.value();
             auto* index = faiss::cppcontrib::knowhere::read_index(raw_index_file.data(), io_flags);
-            auto* flat_index = dynamic_cast<faiss::cppcontrib::knowhere::IndexFlat*>(index);
+            auto* flat_index = dynamic_cast<::faiss::IndexFlat*>(index);
             if (flat_index == nullptr) {
                 delete index;
                 LOG_KNOWHERE_WARNING_ << "EMB_LIST_RAW_INDEX file is not an IndexFlat";

@@ -47,11 +47,7 @@ class ThreadPool;
 #endif
 
 namespace faiss {
-namespace cppcontrib {
-namespace knowhere {
 class IndexFlat;
-}
-}  // namespace cppcontrib
 }  // namespace faiss
 
 namespace knowhere {
@@ -644,7 +640,11 @@ class IndexNode : public Object {
     // into different representations for ANN search. Since the base index holds encoded
     // vectors (not raw), this IndexFlat stores original vectors for exact distance
     // computation during MaxSim reranking.
-    std::shared_ptr<faiss::cppcontrib::knowhere::IndexFlat> emb_list_raw_index_;
+    // Baseline type so that the same shared_ptr can hold either the knowhere
+    // Jaccard-aware IndexFlat subclass (fresh build path, if ever needed) or
+    // a plain ::faiss::IndexFlat{,IP,L2} restored by the deserialization
+    // factory in cppcontrib/knowhere/impl/index_read.cpp.
+    std::shared_ptr<::faiss::IndexFlat> emb_list_raw_index_;
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     struct PrometheusMetrics {

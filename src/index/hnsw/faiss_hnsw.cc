@@ -706,8 +706,11 @@ get_index_data_format(const faiss::Index* index) {
     }
 
     // is it flat?
-    // note: IndexFlatCosine preserves the original data, no cosine norm is applied
-    auto index_flat = dynamic_cast<const faiss::cppcontrib::knowhere::IndexFlat*>(index);
+    // note: IndexFlatCosine preserves the original data, no cosine norm is applied.
+    // Cast to baseline ::faiss::IndexFlat so this catches both the knowhere
+    // Jaccard-aware subclass (fresh build path) and baseline variants produced
+    // by the IxFI/IxF2 deserialization factory.
+    auto index_flat = dynamic_cast<const ::faiss::IndexFlat*>(index);
     if (index_flat != nullptr) {
         return DataFormatEnum::fp32;
     }
@@ -1433,7 +1436,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
                     // perform the search
                     if (is_refined) {
-                        faiss::cppcontrib::knowhere::IndexRefineSearchParameters refine_params;
+                        faiss::IndexRefineSearchParameters refine_params;
                         refine_params.k_factor = hnsw_cfg.refine_k.value_or(1);
                         // a refine procedure itself does not need to care about filtering
                         refine_params.sel = nullptr;
@@ -1727,7 +1730,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
                         // perform the search
                         if (is_refined) {
-                            faiss::cppcontrib::knowhere::IndexRefineSearchParameters refine_params;
+                            faiss::IndexRefineSearchParameters refine_params;
                             refine_params.k_factor = hnsw_cfg.refine_k.value_or(1);
                             // a refine procedure itself does not need to care about filtering
                             refine_params.sel = nullptr;
