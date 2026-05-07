@@ -53,7 +53,7 @@ INCLUDE_DIRS = [
     get_numpy_include(),
     os.path.join("..", "include"),
     os.path.join("..", "thirdparty"),
-    os.path.join("..", "build", "Release", "milvus-common-src", "include"),
+    get_thirdparty_prefix("milvus-common") + "/include",
     get_thirdparty_prefix("boost-headers") + "/include",
     get_thirdparty_prefix("nlohmann_json") + "/include",
     get_thirdparty_prefix("libglog") + "/include",
@@ -61,7 +61,7 @@ INCLUDE_DIRS = [
 ]
 
 BUILD_DIR = os.path.abspath(os.path.join("..", "build", "Release"))
-MILVUS_COMMON_LIB_DIR = os.path.join(BUILD_DIR, "milvus-common-build")
+MILVUS_COMMON_LIB_DIR = get_thirdparty_prefix("milvus-common") + "/lib"
 
 LIBRARY_DIRS = [
     BUILD_DIR,

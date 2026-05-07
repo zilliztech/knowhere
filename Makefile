@@ -61,7 +61,7 @@ CONAN_SETTINGS := -s compiler.libcxx=$(LIBCXX) -s build_type=$(BUILD_TYPE) -s co
 
 # DiskANN and liburing require libaio (Linux-only).
 ifneq ($(UNAME_S),Darwin)
-    CONAN_SETTINGS += -o with_diskann=True
+    CONAN_SETTINGS += -o \&:with_diskann=True
     ifndef WITH_GPU
         CONAN_INSTALL_FLAGS += --build=liburing
     endif
@@ -69,27 +69,27 @@ endif
 
 # GPU builds use cuVS.
 ifdef WITH_GPU
-    CONAN_SETTINGS += -o with_cuvs=True
+    CONAN_SETTINGS += -o \&:with_cuvs=True
 endif
 
 ifdef WITH_UT
-    CONAN_SETTINGS += -o with_ut=True
+    CONAN_SETTINGS += -o \&:with_ut=True
 endif
 
 ifdef WITH_BENCHMARK
-    CONAN_SETTINGS += -o with_benchmark=True
+    CONAN_SETTINGS += -o \&:with_benchmark=True
 endif
 
 ifdef WITH_ASAN
-    CONAN_SETTINGS += -o with_asan=True
+    CONAN_SETTINGS += -o \&:with_asan=True
 endif
 
 ifdef WITH_SVS
-    CONAN_FLAGS += -o with_svs=True
+    CONAN_FLAGS += -o \&:with_svs=True
 endif
 
 ifdef WITH_CARDINAL
-    CONAN_SETTINGS += -o with_cardinal=True
+    CONAN_SETTINGS += -o \&:with_cardinal=True
 endif
 
 ifdef CONAN_PROFILE
