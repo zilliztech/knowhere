@@ -1,0 +1,36 @@
+# ARM clang-22 profile used by the Ubuntu multiversion validation.
+# Boost.Build maps Conan armv8 to arm64-pc-linux, which breaks clang's
+# libstdc++ discovery on Ubuntu aarch64. Build boost and libunwind with GCC 12
+# and keep the rest of Knowhere on clang-22 with the GNU aarch64 target.
+
+[settings]
+arch=armv8
+build_type=Release
+compiler=clang
+compiler.cppstd=20
+compiler.libcxx=libstdc++11
+compiler.version=22
+os=Linux
+boost/*:compiler=gcc
+boost/*:compiler.cppstd=20
+boost/*:compiler.libcxx=libstdc++11
+boost/*:compiler.version=12
+libunwind/*:compiler=gcc
+libunwind/*:compiler.version=12
+
+[conf]
+tools.build:compiler_executables={"c": "clang-22", "cpp": "clang++-22"}
+tools.build:cflags=["--target=aarch64-linux-gnu"]
+tools.build:cxxflags=["--target=aarch64-linux-gnu"]
+tools.build:sharedlinkflags=["--target=aarch64-linux-gnu"]
+tools.build:exelinkflags=["--target=aarch64-linux-gnu"]
+boost/*:tools.build:compiler_executables={"c": "gcc-12", "cpp": "g++-12"}
+boost/*:tools.build:cflags=[]
+boost/*:tools.build:cxxflags=[]
+boost/*:tools.build:sharedlinkflags=[]
+boost/*:tools.build:exelinkflags=[]
+libunwind/*:tools.build:compiler_executables={"c": "gcc-12", "cpp": "g++-12"}
+libunwind/*:tools.build:cflags=[]
+libunwind/*:tools.build:cxxflags=[]
+libunwind/*:tools.build:sharedlinkflags=[]
+libunwind/*:tools.build:exelinkflags=[]

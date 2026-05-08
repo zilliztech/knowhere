@@ -41,6 +41,12 @@ typedef uint64_t size_t;
 #include <fstream>
 #include <string>
 using namespace knowhere;
+
+#if SWIG_VERSION >= 0x040300
+#define KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT(result, obj, is_void) SWIG_Python_AppendOutput(result, obj, is_void)
+#else
+#define KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT(result, obj, is_void) SWIG_Python_AppendOutput(result, obj)
+#endif
 %}
 
 %{
@@ -97,7 +103,7 @@ import_array();
 %typemap(argout) knowhere::Status& status %{
     PyObject *o;
     o = PyInt_FromLong(long(*$1));
-    $result = SWIG_Python_AppendOutput($result, o);
+    $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result, o, 0);
 %}
 
 %pythoncode %{

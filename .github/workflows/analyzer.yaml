@@ -39,7 +39,7 @@ jobs:
       - name: Build & Analyzer
         run: |
           make WITH_UT=True \
-          && find src -type f | grep -E "\.cc$" | xargs /usr/bin/run-clang-tidy-14.py -quiet -p=./build/Release
+          && find src -type f | grep -E "\.cc$" | xargs /usr/bin/run-clang-tidy-22.py -quiet -p=./build/Release
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:

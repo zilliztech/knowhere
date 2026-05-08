@@ -10,7 +10,7 @@ description: Use when building knowhere from source, configuring build options (
 ```bash
 # Ubuntu/Debian
 sudo apt install build-essential libopenblas-openmp-dev libaio-dev python3-dev python3-pip
-pip3 install conan==2.25.1 --user
+pip3 install conan==2.28.1 --user
 conan profile detect --force
 conan remote add default-conan-local2 https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local2
 export PATH=$PATH:$HOME/.local/bin

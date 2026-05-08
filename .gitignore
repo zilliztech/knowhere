@@ -55,6 +55,7 @@ coverage/
 
 # virtualenv
 venv/
+**/.venv/
 **/dist/
 **/knowhere.egg-info/
 **/knowhere/knowhere_wrap.cpp
