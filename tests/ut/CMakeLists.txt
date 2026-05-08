@@ -56,7 +56,7 @@ target_link_libraries(knowhere_tests PRIVATE
         Catch2::Catch2WithMain
         knowhere
         knowhere_utils
-        milvus-common)
+        milvus-common::milvus-common)
 if(NOT APPLE)
   target_link_libraries(knowhere_tests PRIVATE atomic stdc++fs)
 endif()

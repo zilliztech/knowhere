@@ -56,11 +56,11 @@ benchmark_test(benchmark_float_range_bitset    hdf5/benchmark_float_range_bitset
 benchmark_test(benchmark_simd_qps              hdf5/benchmark_simd_qps.cpp)
 
 # Float benchmarks use milvus::LocalFileManager directly
-target_link_libraries(benchmark_float milvus-common)
-target_link_libraries(benchmark_float_bitset milvus-common)
-target_link_libraries(benchmark_float_qps milvus-common)
-target_link_libraries(benchmark_float_range milvus-common)
-target_link_libraries(benchmark_float_range_bitset milvus-common)
+target_link_libraries(benchmark_float milvus-common::milvus-common)
+target_link_libraries(benchmark_float_bitset milvus-common::milvus-common)
+target_link_libraries(benchmark_float_qps milvus-common::milvus-common)
+target_link_libraries(benchmark_float_range milvus-common::milvus-common)
+target_link_libraries(benchmark_float_range_bitset milvus-common::milvus-common)
 
 if(WITH_SVS)
   benchmark_test(benchmark_svs_float_qps          hdf5/benchmark_svs_float_qps.cpp)

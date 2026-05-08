@@ -97,11 +97,10 @@ if [[ "${OS}" == "Linux" ]]; then
     fi
 
 elif [[ "${OS}" == "Mac" ]]; then
-    brew install libomp llvm ninja openblas ccache cmake
+    brew install libomp llvm ninja ccache cmake
     # libomp: OpenMP parallelization
     # llvm: clang toolchain
     # ninja: fast build system
-    # openblas: faiss BLAS operations
 
 else
     echo "[install_deps] Unsupported OS: ${OS}"

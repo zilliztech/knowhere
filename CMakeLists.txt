@@ -136,7 +136,7 @@ endif()
 
 include(cmake/utils/platform_check.cmake)
 include(cmake/utils/compile_flags.cmake)
-include(cmake/libs/libmilvus-common.cmake)
+find_package(milvus-common REQUIRED)
 include(cmake/libs/libhnsw.cmake)
 include(cmake/libs/libfaiss.cmake)
 
@@ -244,7 +244,7 @@ list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
 list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
 list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt)
 list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
-list(APPEND KNOWHERE_LINKER_LIBS milvus-common)
+list(APPEND KNOWHERE_LINKER_LIBS milvus-common::milvus-common)
 list(APPEND KNOWHERE_LINKER_LIBS simde::simde)
 
 add_library(knowhere SHARED ${KNOWHERE_SRCS})
