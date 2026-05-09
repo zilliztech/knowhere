@@ -28,6 +28,7 @@ class KnowhereConan(ConanFile):
         "with_diskann": [True, False],
         "with_svs": [True, False],
         "with_cardinal": [True, False],
+        "cardinal_version_force_checkout": [True, False],
         "with_profiler": [True, False],
         "with_ut": [True, False],
         "with_benchmark": [True, False],
@@ -44,6 +45,7 @@ class KnowhereConan(ConanFile):
         "with_diskann": False,
         "with_svs": False,
         "with_cardinal": False,
+        "cardinal_version_force_checkout": False,
         "with_profiler": False,
         "with_ut": False,
         "glog/*:shared": True,
@@ -59,6 +61,7 @@ class KnowhereConan(ConanFile):
         "openssl/*:no_apps": True,
         "gflags/*:shared": True,
         "fmt/*:header_only": False,
+        "openblas/*:dynamic_arch": True,
         "with_faiss_tests": False,
         "opentelemetry-cpp/*:with_stl": True,
         "libcurl/*:with_ssl": False,
@@ -107,7 +110,7 @@ class KnowhereConan(ConanFile):
     def configure(self):
         if self.options.shared:
             self.options.rm_safe("fPIC")
-        if self.settings.os in ["Linux", "Android"] and str(self.settings.arch) in self._openblas_dynamic_arches:
+        if self.settings.os == "Linux" and str(self.settings.arch) in self._openblas_dynamic_arches:
             self.options["openblas"].dynamic_arch = True
 
     def requirements(self):
@@ -136,11 +139,9 @@ class KnowhereConan(ConanFile):
         self.requires("xxhash/0.8.3#caa6d0af1b951c247922e38fbcebdbe6")
         if self.settings.os == "Linux":
             self.requires("openblas/0.3.30")
-        if self.settings.os == "Android":
-            self.requires("openblas/0.3.30")
         if not self.options.with_light:
             self.requires("opentelemetry-cpp/1.23.0@milvus/dev#11bc565ec6e82910ae8f7471da756720")
-        if self.settings.os not in ["Macos", "Android"]:
+        if self.settings.os != "Macos":
             self.requires("libunwind/1.8.1#748a981ace010b80163a08867b732e71")
         if self.options.with_ut:
             self.requires("catch2/3.7.1")
@@ -210,6 +211,7 @@ class KnowhereConan(ConanFile):
         tc.variables["WITH_DISKANN"] = self.options.with_diskann
         tc.variables["WITH_SVS"] = self.options.with_svs
         tc.variables["WITH_CARDINAL"] = self.options.with_cardinal
+        tc.variables["CARDINAL_VERSION_FORCE_CHECKOUT"] = self.options.cardinal_version_force_checkout
         tc.variables["WITH_CUVS"] = self.options.with_cuvs
         tc.variables["WITH_PROFILER"] = self.options.with_profiler
         tc.variables["WITH_UT"] = self.options.with_ut
