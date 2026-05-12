@@ -40,14 +40,14 @@ knowhere_file_glob(
 # AVX512 vanilla Faiss dynamic dispatch related files. Baseline
 # sq-avx512.cpp is replaced by a knowhere-local prelude file that declares
 # a fast DCTemplate specialization for QT_4bit_uniform + L2 and then
-# textually #includes the baseline sq-avx512.cpp — see
+# textually #includes the baseline sq-avx512.cpp \u2014 see
 # cppcontrib/knowhere/impl/sq-avx512-fastpath.cpp for the full design note.
 knowhere_file_glob(
   GLOB
   FAISS_DD_AVX512_SRCS
   thirdparty/faiss/faiss/impl/fast_scan/impl-avx512.cpp
   thirdparty/faiss/faiss/impl/hnsw/avx512.cpp
-  thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-avx512.cpp
+  thirdparty/faiss/faiss/impl/pq_code_distance/avx512.cpp
   thirdparty/faiss/faiss/impl/binary_hamming/avx512.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/sq-avx512-fastpath.cpp
   thirdparty/faiss/faiss/utils/distances_fused/avx512.cpp
@@ -85,7 +85,7 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/impl/approx_topk/avx2.cpp
   thirdparty/faiss/faiss/impl/fast_scan/impl-avx2.cpp
   thirdparty/faiss/faiss/impl/hnsw/avx2.cpp
-  thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-avx2.cpp
+  thirdparty/faiss/faiss/impl/pq_code_distance/avx2.cpp
   thirdparty/faiss/faiss/impl/binary_hamming/avx2.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/sq-avx2-fastpath.cpp
   thirdparty/faiss/faiss/utils/distances_fused/simdlib_based.cpp
@@ -138,6 +138,7 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/impl/approx_topk/neon.cpp
   thirdparty/faiss/faiss/impl/fast_scan/impl-neon.cpp
   thirdparty/faiss/faiss/impl/binary_hamming/neon.cpp
+  thirdparty/faiss/faiss/impl/pq_code_distance/neon.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/sq-neon-fastpath.cpp
   thirdparty/faiss/faiss/utils/distances_fused/simdlib_based_neon.cpp
   thirdparty/faiss/faiss/utils/hamming_distance/hamming_neon.cpp
@@ -186,6 +187,7 @@ knowhere_file_glob(
 knowhere_file_glob(
   GLOB
   FAISS_DD_RVV_SRCS
+  thirdparty/faiss/faiss/impl/pq_code_distance/rvv.cpp
   thirdparty/faiss/faiss/impl/scalar_quantizer/sq-rvv.cpp
   thirdparty/faiss/faiss/impl/binary_hamming/rvv.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_rvv.cpp
