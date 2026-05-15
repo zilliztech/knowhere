@@ -27,6 +27,7 @@ WITH_BENCHMARK ?=
 WITH_ASAN ?=
 WITH_SVS ?=
 WITH_CARDINAL ?=
+CARDINAL_VERSION_FORCE_CHECKOUT ?=
 WITH_DEBUG ?=
 CONAN_PROFILE ?=
 
@@ -35,7 +36,7 @@ CONAN_PROFILE ?=
 # variables such as WITH_ASAN to every sub-process, which causes the custom
 # folly recipe to pick up $ENV{WITH_ASAN} and compile folly itself with
 # -fsanitize=address — breaking the build on GCC.
-unexport WITH_GPU WITH_UT WITH_BENCHMARK WITH_ASAN WITH_CARDINAL WITH_DEBUG
+unexport WITH_GPU WITH_UT WITH_BENCHMARK WITH_ASAN WITH_CARDINAL CARDINAL_VERSION_FORCE_CHECKOUT WITH_DEBUG
 
 # ---------- Derived settings ----------
 ifdef WITH_DEBUG
@@ -90,6 +91,16 @@ endif
 
 ifdef WITH_CARDINAL
     CONAN_SETTINGS += -o \&:with_cardinal=True
+endif
+
+ifneq ($(CARDINAL_VERSION_FORCE_CHECKOUT),)
+    ifneq ($(filter True true ON on 1,$(CARDINAL_VERSION_FORCE_CHECKOUT)),)
+        CONAN_SETTINGS += -o \&:cardinal_version_force_checkout=True
+    else ifneq ($(filter False false OFF off 0,$(CARDINAL_VERSION_FORCE_CHECKOUT)),)
+        CONAN_SETTINGS += -o \&:cardinal_version_force_checkout=False
+    else
+        $(error CARDINAL_VERSION_FORCE_CHECKOUT must be True/False, ON/OFF, or 1/0)
+    endif
 endif
 
 ifdef CONAN_PROFILE
@@ -160,6 +171,7 @@ help: ## Show available targets
 	@echo "  WITH_ASAN=True     Enable AddressSanitizer"
 	@echo "  WITH_SVS=True      Enable SVS (Intel Scalable Vector Search, x86 only)"
 	@echo "  WITH_CARDINAL=True Enable Cardinal build"
+	@echo "  CARDINAL_VERSION_FORCE_CHECKOUT=True Force Cardinal checkout to configured version"
 	@echo "  WITH_DEBUG=True    Debug build (default: Release)"
 	@echo "  CONAN_PROFILE=<p>  Use a custom Conan profile (e.g. clang, gcc-15)"
 	@echo "  LIBCXX=<lib>       Override compiler.libcxx (auto-detected from OS)"
