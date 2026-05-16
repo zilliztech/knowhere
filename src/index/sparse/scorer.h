@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 namespace knowhere::sparse::inverted {
 
@@ -86,8 +87,9 @@ struct BM25IndexScorer : public IndexScorer {
     // In senario of BM25, qval is IDF value, rval is TF value
     [[nodiscard]] DimScorer
     dim_scorer(float qval) const override {
+        const float qval_p1 = qval * p1_;
         return
-            [&, qval](uint32_t rid, uint32_t rval) { return qval * p1_ * rval / (rval + p2_ + p3_ * row_sums_[rid]); };
+            [&, qval_p1](uint32_t rid, uint32_t rval) { return qval_p1 * rval / (rval + p2_ + p3_ * row_sums_[rid]); };
     }
 
     [[nodiscard]] float
@@ -98,6 +100,21 @@ struct BM25IndexScorer : public IndexScorer {
     [[nodiscard]] const std::vector<float>&
     row_sums() const {
         return row_sums_;
+    }
+
+    [[nodiscard]] float
+    p1() const {
+        return p1_;
+    }
+
+    [[nodiscard]] float
+    p2() const {
+        return p2_;
+    }
+
+    [[nodiscard]] float
+    p3() const {
+        return p3_;
     }
 
  protected:
