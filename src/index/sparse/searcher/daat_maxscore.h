@@ -8,6 +8,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cassert>
 #include <memory>
 #include <numeric>
 #include <utility>
@@ -26,6 +27,7 @@ class DaatMaxScoreSearcher : public RankedSearcher {
         typename IndexType::posting_list_iterator index_cursor;
         DimScorer scorer;
         float max_score;
+        float qval_p1;
 
         [[nodiscard]] uint32_t
         vec_id() const noexcept {
@@ -61,6 +63,12 @@ class DaatMaxScoreSearcher : public RankedSearcher {
           max_vec_id_(max_vec_id),
           row_sums_(index.get_row_sums()),
           scorer_type_(search_scorer->config().scorer_type) {
+        if (scorer_type_ == IndexScorerType::BM25) {
+            const auto* bm25_scorer = dynamic_cast<const BM25IndexScorer*>(search_scorer.get());
+            assert(bm25_scorer != nullptr);
+            bm25_p2_ = bm25_scorer->p2();
+            bm25_p3_ = bm25_scorer->p3();
+        }
     }
 
     [[nodiscard]] auto
@@ -136,16 +144,27 @@ class DaatMaxScoreSearcher : public RankedSearcher {
 
                 current_score = 0;
                 current_vec_id = std::exchange(next_vec_id, max_vec_id);
+                float doc_norm = 0.0f;
 
                 if constexpr (ScorerType == IndexScorerType::BM25) {
                     // Prefetch row_sums_ for next iterations that will be used by the BM25 scorer
                     // Experiments show this prefetch pattern is optimal vs only prefetching next_vec_id
                     __builtin_prefetch(&row_sums_[current_vec_id], 0, 3);
+                    doc_norm = bm25_p2_ + bm25_p3_ * row_sums_[current_vec_id];
                 }
+
+                auto score_term = [&](auto& cursor) -> float {
+                    if constexpr (ScorerType == IndexScorerType::BM25) {
+                        const float tf = static_cast<float>(cursor.index_cursor.val());
+                        return cursor.qval_p1 * tf / (tf + doc_norm);
+                    } else {
+                        return cursor.score();
+                    }
+                };
 
                 std::for_each(cursors.begin(), first_lookup, [&](auto& cursor) {
                     if (cursor.vec_id() == current_vec_id) {
-                        current_score += cursor.score();
+                        current_score += score_term(cursor);
                         cursor.next();
                         if constexpr (ScorerType == IndexScorerType::BM25) {
                             // Prefetch row_sums_ for next iterations that will be used by the BM25 scorer
@@ -168,7 +187,7 @@ class DaatMaxScoreSearcher : public RankedSearcher {
                     }
                     cursor.next_geq(current_vec_id);
                     if (cursor.vec_id() == current_vec_id) {
-                        current_score += cursor.score();
+                        current_score += score_term(cursor);
                     }
                 }
             }
@@ -200,9 +219,15 @@ class DaatMaxScoreSearcher : public RankedSearcher {
                  float dim_max_score_ratio) {
         std::vector<Cursor> cursors;
         cursors.reserve(query.size());
+        const BM25IndexScorer* bm25_scorer = nullptr;
+        if (index_scorer->config().scorer_type == IndexScorerType::BM25) {
+            bm25_scorer = dynamic_cast<const BM25IndexScorer*>(index_scorer.get());
+            assert(bm25_scorer != nullptr);
+        }
         for (const auto& [dim_id, dim_val] : query) {
             cursors.push_back(Cursor{index.get_dim_plist_cursor(dim_id, bitset), index_scorer->dim_scorer(dim_val),
-                                     dim_max_score_ratio * index.get_dim_max_score(dim_id, dim_val)});
+                                     dim_max_score_ratio * index.get_dim_max_score(dim_id, dim_val),
+                                     bm25_scorer != nullptr ? dim_val * bm25_scorer->p1() : 0.0f});
         }
         return cursors;
     }
@@ -212,6 +237,8 @@ class DaatMaxScoreSearcher : public RankedSearcher {
     // row_sums_ is only used for BM25 scorer
     const std::vector<float>& row_sums_;
     IndexScorerType scorer_type_;
+    float bm25_p2_{0.0f};
+    float bm25_p3_{0.0f};
 };
 
 }  // namespace knowhere::sparse::inverted
