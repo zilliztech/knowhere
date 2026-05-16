@@ -61,6 +61,9 @@ class DaatMaxScoreSearcher : public RankedSearcher {
           max_vec_id_(max_vec_id),
           row_sums_(index.get_row_sums()),
           scorer_type_(search_scorer->config().scorer_type) {
+        if (scorer_type_ == IndexScorerType::BM25) {
+            compute_warm_threshold(index, query, search_scorer, bitset);
+        }
     }
 
     [[nodiscard]] auto
@@ -103,7 +106,21 @@ class DaatMaxScoreSearcher : public RankedSearcher {
     void
     run_sorted(std::vector<Cursor>& cursors, uint64_t max_vec_id) {
         auto upper_bounds = calc_upper_bounds(cursors);
-        auto above_threshold = [&](auto score) { return topk_.WouldEnter(score); };
+        // Pruning threshold:
+        //   - Once topk_ is full, use its real threshold (the k-th best so far).
+        //   - Before topk_ fills, use warm_threshold_ if available (a safe lower bound
+        //     on the true k-th best, derived from a single seed term's contributions).
+        //   - If warm threshold is not valid, fall back to "always pass" (current behavior).
+        // Sparse top-k uses std::greater, so the entry condition is strict `>`.
+        auto above_threshold = [&](auto score) {
+            if (topk_.Full()) {
+                return topk_.WouldEnter(score);
+            }
+            if (warm_threshold_valid_) {
+                return score > warm_threshold_;
+            }
+            return true;
+        };
 
         auto first_upper_bound = upper_bounds.end();
         auto first_lookup = cursors.end();
@@ -194,6 +211,83 @@ class DaatMaxScoreSearcher : public RankedSearcher {
     }
 
  private:
+    // Compute a safe warm-start pruning threshold from a single seed term, used
+    // before topk_ fills.
+    //
+    // Math:
+    //   For BM25, each per-(term, doc) contribution is non-negative. So the full
+    //   query score for doc d is >= the contribution of any single matching term.
+    //   If we scan a seed term's posting list, compute its single-term BM25
+    //   contribution per matching doc, and take the k-th best (S_k), then at least
+    //   k docs have full_score >= S_k. Therefore the true k-th best full score
+    //   is also >= S_k. Using S_k as an early pruning threshold is recall-safe.
+    //
+    // Safety guard: only valid if the seed term has >= k matching docs. With fewer
+    // hits, S_m for m < k is only a lower bound on the m-th best full score, not
+    // the k-th. We skip in that case.
+    //
+    // Seed selection: the term with the largest per-dim max_score. High max_score
+    // is correlated with low document frequency / short posting list, so this
+    // gives the most discriminative bound at the lowest scan cost.
+    //
+    // Cost: one scan of the seed term's posting list + O(N log k) heap maintenance.
+    //
+    // Note: posting_list_iterator is move-only across all current sparse index
+    // implementations, so the seed cursor is built fresh via get_dim_plist_cursor
+    // rather than copied from the existing cursors_.
+    void
+    compute_warm_threshold(const IndexType& index, const std::vector<std::pair<uint32_t, float>>& query,
+                           const std::shared_ptr<IndexScorer>& search_scorer, const BitsetView& bitset) {
+        const std::size_t k = topk_.Capacity();
+        // Activation guards:
+        //   - query.size() < 2: seed pass == full search for single-term queries.
+        //   - k < 2: heap fills on first push; warm threshold serves no purpose.
+        if (query.size() < 2 || k < 2) {
+            return;
+        }
+
+        // Pick the query term with the largest per-dim max_score as the seed.
+        // dim_max_score_ratio is a per-search scalar so it does not change the argmax.
+        std::size_t seed_idx = 0;
+        float best_unscaled_max = -1.0f;
+        for (std::size_t i = 0; i < query.size(); ++i) {
+            float ms = index.get_dim_max_score(query[i].first, query[i].second);
+            if (ms > best_unscaled_max) {
+                best_unscaled_max = ms;
+                seed_idx = i;
+            }
+        }
+
+        auto seed_iter = index.get_dim_plist_cursor(query[seed_idx].first, bitset);
+        auto seed_scorer = search_scorer->dim_scorer(query[seed_idx].second);
+
+        // Min-heap of size k holding top-k single-term contributions.
+        std::vector<float> heap;
+        heap.reserve(k);
+        std::size_t hit_count = 0;
+
+        while (seed_iter.valid()) {
+            const float contrib = seed_scorer(seed_iter.vec_id(), seed_iter.val());
+            ++hit_count;
+            if (heap.size() < k) {
+                heap.push_back(contrib);
+                if (heap.size() == k) {
+                    std::make_heap(heap.begin(), heap.end(), std::greater<>());
+                }
+            } else if (contrib > heap.front()) {
+                std::pop_heap(heap.begin(), heap.end(), std::greater<>());
+                heap.back() = contrib;
+                std::push_heap(heap.begin(), heap.end(), std::greater<>());
+            }
+            seed_iter.next();
+        }
+
+        if (hit_count >= k && heap.size() == k) {
+            warm_threshold_ = heap.front();
+            warm_threshold_valid_ = true;
+        }
+    }
+
     static std::vector<Cursor>
     make_cursors(const IndexType& index, const std::vector<std::pair<uint32_t, float>>& query,
                  const std::shared_ptr<IndexScorer>& index_scorer, const BitsetView& bitset,
@@ -212,6 +306,10 @@ class DaatMaxScoreSearcher : public RankedSearcher {
     // row_sums_ is only used for BM25 scorer
     const std::vector<float>& row_sums_;
     IndexScorerType scorer_type_;
+    // Warm-start pruning threshold (BM25 only). Valid only after
+    // compute_warm_threshold sets it; consulted by run_sorted until topk_ fills.
+    float warm_threshold_ = 0.0f;
+    bool warm_threshold_valid_ = false;
 };
 
 }  // namespace knowhere::sparse::inverted
