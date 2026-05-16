@@ -79,3 +79,7 @@ graph_info.json
 
 # Claude Code plans (local only)
 docs/plans/
+docs/superpowers/
+
+# Test artifacts (Catch2 tests write serialized indexes into CWD)
+*.index
