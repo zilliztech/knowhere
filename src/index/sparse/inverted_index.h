@@ -541,23 +541,25 @@ CRTPInvertedIndex<IndexType, DType>::get_all_distances(const SparseRow<DType>& q
 
     std::vector<float> distances(this->nr_rows_, 0.0f);
 
-    std::shared_ptr<IndexScorer> search_scorer;
-    if (search_params.scorer_config.scorer_type == IndexScorerType::BM25) {
-        search_scorer = std::make_shared<BM25IndexScorer>(
-            search_params.scorer_config.scorer_params.bm25.k1, search_params.scorer_config.scorer_params.bm25.b,
-            search_params.scorer_config.scorer_params.bm25.avgdl, this->get_row_sums());
-    } else {
-        search_scorer = std::make_shared<IPIndexScorer>();
-    }
-
     const auto* self = static_cast<const IndexType*>(this);
-    for (const auto& [dim_id, dim_val] : q_vec) {
-        auto index_cursor = self->get_dim_plist_cursor(dim_id, bitset);
-        auto scorer = search_scorer->dim_scorer(dim_val);
-        while (index_cursor.valid()) {
-            distances[index_cursor.vec_id()] += scorer(index_cursor.vec_id(), index_cursor.val());
-            index_cursor.next();
+    auto accumulate_distances = [&](const auto& search_scorer) {
+        for (const auto& [dim_id, dim_val] : q_vec) {
+            auto index_cursor = self->get_dim_plist_cursor(dim_id, bitset);
+            auto scorer = search_scorer.dim_scorer(dim_val);
+            while (index_cursor.valid()) {
+                distances[index_cursor.vec_id()] += scorer(index_cursor.vec_id(), index_cursor.val());
+                index_cursor.next();
+            }
         }
+    };
+
+    if (search_params.scorer_config.scorer_type == IndexScorerType::BM25) {
+        BM25QueryScorer search_scorer(search_params.scorer_config.scorer_params.bm25.k1,
+                                      search_params.scorer_config.scorer_params.bm25.b,
+                                      search_params.scorer_config.scorer_params.bm25.avgdl, this->get_row_sums());
+        accumulate_distances(search_scorer);
+    } else {
+        accumulate_distances(IPQueryScorer{});
     }
 
     return distances;
@@ -568,15 +570,6 @@ void
 CRTPInvertedIndex<IndexType, DType>::search(const SparseRow<DType>& query, size_t k, float* distances, label_t* labels,
                                             const BitsetView& bitset,
                                             const InvertedIndexSearchParams& search_params) const {
-    std::shared_ptr<IndexScorer> search_scorer;
-    if (search_params.scorer_config.scorer_type == IndexScorerType::BM25) {
-        search_scorer = std::make_shared<BM25IndexScorer>(
-            search_params.scorer_config.scorer_params.bm25.k1, search_params.scorer_config.scorer_params.bm25.b,
-            search_params.scorer_config.scorer_params.bm25.avgdl, this->meta_data_.row_sums_);
-    } else {
-        search_scorer = std::make_shared<IPIndexScorer>();
-    }
-
     std::fill(distances, distances + k, std::numeric_limits<float>::quiet_NaN());
     std::fill(labels, labels + k, -1);
 
@@ -598,48 +591,58 @@ CRTPInvertedIndex<IndexType, DType>::search(const SparseRow<DType>& query, size_
         }
     };
 
-    switch (search_params.algo) {
-        case InvertedIndexAlgo::DAAT_WAND: {
-            DaatWandSearcher<std::remove_reference_t<IndexType>> searcher(*static_cast<const IndexType*>(this), q_vec,
-                                                                          search_scorer, k, this->nr_rows_, bitset,
-                                                                          search_params.approx.dim_max_score_ratio);
-            searcher.search();
-            process_search_results(searcher);
-            break;
+    const auto* self = static_cast<const IndexType*>(this);
+    auto run_search = [&](const auto& search_scorer) {
+        using SearcherIndexType = std::remove_reference_t<IndexType>;
+        using QueryScorer = std::decay_t<decltype(search_scorer)>;
+        switch (search_params.algo) {
+            case InvertedIndexAlgo::DAAT_WAND: {
+                DaatWandSearcher<SearcherIndexType, QueryScorer> searcher(
+                    *self, q_vec, search_scorer, k, this->nr_rows_, bitset, search_params.approx.dim_max_score_ratio);
+                searcher.search();
+                process_search_results(searcher);
+                break;
+            }
+            case InvertedIndexAlgo::DAAT_MAXSCORE: {
+                DaatMaxScoreSearcher<SearcherIndexType, QueryScorer> searcher(
+                    *self, q_vec, search_scorer, k, this->nr_rows_, bitset, search_params.approx.dim_max_score_ratio);
+                searcher.search();
+                process_search_results(searcher);
+                break;
+            }
+            case InvertedIndexAlgo::TAAT_NAIVE: {
+                TaatNaiveSearcher<SearcherIndexType, QueryScorer> searcher(*self, q_vec, search_scorer, k,
+                                                                           this->nr_rows_, bitset);
+                searcher.search();
+                process_search_results(searcher);
+                break;
+            }
+            case InvertedIndexAlgo::BLOCK_MAX_MAXSCORE: {
+                BlockMaxMaxScoreSearcher<SearcherIndexType, QueryScorer> searcher(
+                    *self, q_vec, search_scorer, k, this->nr_rows_, bitset, search_params.approx.dim_max_score_ratio);
+                searcher.search();
+                process_search_results(searcher);
+                break;
+            }
+            case InvertedIndexAlgo::BLOCK_MAX_WAND: {
+                BlockMaxWandSearcher<SearcherIndexType, QueryScorer> searcher(
+                    *self, q_vec, search_scorer, k, this->nr_rows_, bitset, search_params.approx.dim_max_score_ratio);
+                searcher.search();
+                process_search_results(searcher);
+                break;
+            }
+            default:
+                LOG_KNOWHERE_ERROR_ << "Unsupported search algorithm";
         }
-        case InvertedIndexAlgo::DAAT_MAXSCORE: {
-            DaatMaxScoreSearcher<std::remove_reference_t<IndexType>> searcher(
-                *static_cast<const IndexType*>(this), q_vec, search_scorer, k, this->nr_rows_, bitset,
-                search_params.approx.dim_max_score_ratio);
-            searcher.search();
-            process_search_results(searcher);
-            break;
-        }
-        case InvertedIndexAlgo::TAAT_NAIVE: {
-            TaatNaiveSearcher<std::remove_reference_t<IndexType>> searcher(*static_cast<const IndexType*>(this), q_vec,
-                                                                           search_scorer, k, this->nr_rows_, bitset);
-            searcher.search();
-            process_search_results(searcher);
-            break;
-        }
-        case InvertedIndexAlgo::BLOCK_MAX_MAXSCORE: {
-            BlockMaxMaxScoreSearcher<std::remove_reference_t<IndexType>> searcher(
-                *static_cast<const IndexType*>(this), q_vec, search_scorer, k, this->nr_rows_, bitset,
-                search_params.approx.dim_max_score_ratio);
-            searcher.search();
-            process_search_results(searcher);
-            break;
-        }
-        case InvertedIndexAlgo::BLOCK_MAX_WAND: {
-            BlockMaxWandSearcher<std::remove_reference_t<IndexType>> searcher(
-                *static_cast<const IndexType*>(this), q_vec, search_scorer, k, this->nr_rows_, bitset,
-                search_params.approx.dim_max_score_ratio);
-            searcher.search();
-            process_search_results(searcher);
-            break;
-        }
-        default:
-            LOG_KNOWHERE_ERROR_ << "Unsupported search algorithm";
+    };
+
+    if (search_params.scorer_config.scorer_type == IndexScorerType::BM25) {
+        BM25QueryScorer search_scorer(search_params.scorer_config.scorer_params.bm25.k1,
+                                      search_params.scorer_config.scorer_params.bm25.b,
+                                      search_params.scorer_config.scorer_params.bm25.avgdl, this->get_row_sums());
+        run_search(search_scorer);
+    } else {
+        run_search(IPQueryScorer{});
     }
 }
 

@@ -17,9 +17,11 @@
 
 namespace knowhere::sparse::inverted {
 
-template <typename IndexType>
+template <typename IndexType, typename QueryScorer>
 class DaatWandSearcher : public RankedSearcher {
  public:
+    using DimScorer = decltype(std::declval<const QueryScorer&>().dim_scorer(0.0f));
+
     struct Cursor {
         typename IndexType::posting_list_iterator index_cursor;
         DimScorer scorer;
@@ -52,8 +54,8 @@ class DaatWandSearcher : public RankedSearcher {
     };
 
     explicit DaatWandSearcher(const IndexType& index, const std::vector<std::pair<uint32_t, float>>& query,
-                              const std::shared_ptr<IndexScorer>& search_scorer, const uint32_t k,
-                              const uint32_t max_vec_id, const BitsetView& bitset, float dim_max_score_ratio)
+                              const QueryScorer& search_scorer, const uint32_t k, const uint32_t max_vec_id,
+                              const BitsetView& bitset, float dim_max_score_ratio)
         : RankedSearcher(k),
           cursors_(make_cursors(index, query, search_scorer, bitset, dim_max_score_ratio)),
           max_vec_id_(max_vec_id) {
@@ -133,12 +135,11 @@ class DaatWandSearcher : public RankedSearcher {
  private:
     static std::vector<Cursor>
     make_cursors(const IndexType& index, const std::vector<std::pair<uint32_t, float>>& query,
-                 const std::shared_ptr<IndexScorer>& index_scorer, const BitsetView& bitset,
-                 float dim_max_score_ratio) {
+                 const QueryScorer& index_scorer, const BitsetView& bitset, float dim_max_score_ratio) {
         std::vector<Cursor> cursors;
         cursors.reserve(query.size());
         for (const auto& [dim_id, dim_val] : query) {
-            cursors.push_back(Cursor{index.get_dim_plist_cursor(dim_id, bitset), index_scorer->dim_scorer(dim_val),
+            cursors.push_back(Cursor{index.get_dim_plist_cursor(dim_id, bitset), index_scorer.dim_scorer(dim_val),
                                      dim_max_score_ratio * index.get_dim_max_score(dim_id, dim_val)});
         }
         return cursors;

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
+#include <vector>
 
 namespace knowhere::sparse::inverted {
 
@@ -19,13 +19,61 @@ struct IndexScorerConfig {
     } scorer_params;
 };
 
-/**
- * DimScorer is a function that computes a relevance score for a vector.
- * @param uint32_t The vector ID
- * @param float The vector's dimension value, such as term frequency in BM25 or value in IP
- * @return float The computed relevance score
- */
-using DimScorer = std::function<float(uint32_t, float)>;
+// Query-time scorers are small concrete functors used in hot loops.
+// Build-time scorers keep the existing virtual interface for index construction
+// and metadata generation paths that are outside query scoring hot paths.
+struct IPDimScorer {
+    float qval;
+
+    template <typename RType>
+    [[nodiscard]] float
+    operator()(uint32_t /*rid*/, RType rval) const noexcept {
+        return qval * static_cast<float>(rval);
+    }
+};
+
+struct BM25DimScorer {
+    float qval;
+    float p1;
+    float p2;
+    float p3;
+    const float* row_sums;
+
+    template <typename RType>
+    [[nodiscard]] float
+    operator()(uint32_t rid, RType rval) const noexcept {
+        const float tf = static_cast<float>(rval);
+        return qval * p1 * tf / (tf + p2 + p3 * row_sums[rid]);
+    }
+};
+
+struct IPQueryScorer {
+    static constexpr auto scorer_type = IndexScorerType::IP;
+
+    [[nodiscard]] IPDimScorer
+    dim_scorer(float qval) const noexcept {
+        return {qval};
+    }
+};
+
+struct BM25QueryScorer {
+    static constexpr auto scorer_type = IndexScorerType::BM25;
+
+    float p1;
+    float p2;
+    float p3;
+    const float* row_sums;
+
+    explicit BM25QueryScorer(float k1, float b, float avgdl, const std::vector<float>& row_sums_in)
+        // row_sums stays valid as long as the underlying vector is not reallocated.
+        : p1(k1 + 1), p2(k1 * (1 - b)), p3(k1 * b / avgdl), row_sums(row_sums_in.data()) {
+    }
+
+    [[nodiscard]] BM25DimScorer
+    dim_scorer(float qval) const noexcept {
+        return {qval, p1, p2, p3, row_sums};
+    }
+};
 
 /** Index scorer construct scorers for dimensions in the index. */
 class IndexScorer {
@@ -38,8 +86,6 @@ class IndexScorer {
     IndexScorer&
     operator=(IndexScorer&&) noexcept = delete;
     virtual ~IndexScorer() = default;
-    [[nodiscard]] virtual DimScorer
-    dim_scorer(float qval) const = 0;
     [[nodiscard]] virtual float
     vec_score(uint32_t rid, float rval) const = 0;
 
@@ -57,11 +103,6 @@ struct IPIndexScorer : public IndexScorer {
  public:
     explicit IPIndexScorer() {
         config_.scorer_type = IndexScorerType::IP;
-    }
-
-    [[nodiscard]] DimScorer
-    dim_scorer(float qval) const override {
-        return [qval](uint32_t rid, float rval) { return qval * rval; };
     }
 
     [[nodiscard]] float
@@ -82,13 +123,6 @@ struct BM25IndexScorer : public IndexScorer {
     }
 
     ~BM25IndexScorer() override = default;
-
-    // In senario of BM25, qval is IDF value, rval is TF value
-    [[nodiscard]] DimScorer
-    dim_scorer(float qval) const override {
-        return
-            [&, qval](uint32_t rid, uint32_t rval) { return qval * p1_ * rval / (rval + p2_ + p3_ * row_sums_[rid]); };
-    }
 
     [[nodiscard]] float
     vec_score(uint32_t rid, float rval) const override {
