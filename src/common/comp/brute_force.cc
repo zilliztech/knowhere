@@ -1078,6 +1078,14 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                             id_selector);
                         break;
                     }
+                    case faiss::METRIC_Substructure:
+                    case faiss::METRIC_Superstructure: {
+                        auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
+                        faiss::cppcontrib::knowhere::binary_range_search<faiss::CMin<float, int64_t>, float>(
+                            faiss_metric_type, cur_query, (const uint8_t*)xb, 1, nb, radius, dim / 8, &res,
+                            id_selector);
+                        break;
+                    }
                     default: {
                         LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << cfg.metric_type.value();
                         return Status::invalid_metric_type;
