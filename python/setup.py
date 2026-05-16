@@ -107,7 +107,10 @@ setup(
     author_email="milvus-team@zilliz.com",
     license='Apache License 2.0',
     keywords="search nearest neighbors",
-    # numpy must be pre-installed (install_deps.sh handles this).
+
+    # numpy must be pre-installed in the active Python environment. Standalone
+    # wheel builds use the uv-managed python/.venv from install_deps.sh; CI
+    # jobs such as cibuildwheel install numpy into their own active interpreter.
     # Do NOT use setup_requires — it triggers the deprecated fetch_build_eggs
     # which makes network calls to PyPI and fails intermittently in CI.
     #use_scm_version={'root': '..', 'local_scheme': 'no-local-version', 'version_scheme': 'release-branch-semver'},
@@ -116,7 +119,11 @@ setup(
     packages=["knowhere"],
     include_package_data=True,
     package_data={"knowhere": ["libknowhere.so"]},
-    python_requires=">=3.8",
+    python_requires=">=3.10",
+    install_requires=[
+        "numpy>=2,<3",
+        "ml-dtypes",
+    ],
     ext_modules=[_swigknowhere],
     cmdclass={"build_py": CustomBuildPy},
     classifiers=[
@@ -125,10 +132,11 @@ setup(
         "Intended Audience :: Science/Research",
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: POSIX",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
 )

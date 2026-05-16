@@ -7,7 +7,19 @@ set -euo pipefail
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/../build/Release"
-PYTHON="${PYTHON:-python3}"
+VENV_DIR="${KNOWHERE_PYTHON_VENV:-${SCRIPT_DIR}/.venv}"
+
+# Prefer the project-local uv venv for standalone builds, but still honor an
+# explicit PYTHON from cibuildwheel or a workflow-specific interpreter.
+if [ -z "${PYTHON:-}" ] && [ -x "${VENV_DIR}/bin/python" ]; then
+    PYTHON="${VENV_DIR}/bin/python"
+    export PATH="${VENV_DIR}/bin:${PATH}"
+else
+    PYTHON="${PYTHON:-python3}"
+    if [ -d "${VENV_DIR}/bin" ]; then
+        export PATH="${VENV_DIR}/bin:${PATH}"
+    fi
+fi
 
 # Color output (optional)
 if [ -t 1 ]; then
@@ -66,15 +78,21 @@ check_deps() {
         fi
     done
 
-    command -v auditwheel >/dev/null || {
-        log_warn "auditwheel not found, installing..."
-        pip3 install -q auditwheel
-    }
-
     command -v "$PYTHON" >/dev/null || { log_error "Python not found: $PYTHON"; exit 1; }
 
+    if ! command -v auditwheel >/dev/null; then
+        if command -v uv >/dev/null; then
+            log_warn "auditwheel not found, installing into $PYTHON environment with uv..."
+            uv pip install --python "$PYTHON" auditwheel
+            export PATH="$(dirname "$PYTHON"):${PATH}"
+        else
+            log_error "auditwheel not found. Run scripts/install_deps.sh to create the uv-managed Python environment."
+            exit 1
+        fi
+    fi
+
     $PYTHON -c "import numpy" 2>/dev/null || {
-        log_error "numpy not found. Install with: pip3 install 'numpy<2'"
+        log_error "numpy not found. Install with: uv pip install --python '$PYTHON' 'numpy>=2,<3'"
         exit 1
     }
 
@@ -115,8 +133,9 @@ detect_platform() {
     local major=$(echo "$glibc_ver" | cut -d. -f1)
     local minor=$(echo "$glibc_ver" | cut -d. -f2)
 
-    # Map GLIBC version to manylinux tag with detected architecture
-    if   [ "$major" -eq 2 ] && [ "$minor" -ge 35 ]; then echo "manylinux_2_35_${arch}"
+    # PEP 600 tags are glibc-versioned. Do not cap newer distros at 2.35:
+    # auditwheel rejects that when binaries contain newer versioned symbols.
+    if   [ "$major" -eq 2 ] && [ "$minor" -ge 35 ]; then echo "manylinux_2_${minor}_${arch}"
     elif [ "$major" -eq 2 ] && [ "$minor" -ge 31 ]; then echo "manylinux_2_31_${arch}"
     elif [ "$major" -eq 2 ] && [ "$minor" -ge 28 ]; then echo "manylinux_2_28_${arch}"
     elif [ "$major" -eq 2 ] && [ "$minor" -ge 24 ]; then echo "manylinux_2_24_${arch}"
@@ -152,10 +171,18 @@ repair_wheel() {
                 sed 's/.*\[\(.*\)\]/\1/' | \
                 tr ':' '\n' | grep -v '^$' | tr '\n' ':')
 
-    export LD_LIBRARY_PATH="${lib_paths}:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu"
+    local multiarch
+    multiarch=$(gcc -print-multiarch 2>/dev/null || true)
+
+    local system_lib_paths="/lib:/usr/lib"
+    if [ -n "$multiarch" ]; then
+        system_lib_paths="${system_lib_paths}:/lib/${multiarch}:/usr/lib/${multiarch}"
+    fi
+
+    export LD_LIBRARY_PATH="${lib_paths}:${system_lib_paths}:${LD_LIBRARY_PATH:-}"
 
     # Run auditwheel repair (all output to stderr so it doesn't leak into command substitution)
-    if ! auditwheel repair "$wheel" -w dist/ --plat "$platform" 2>&1 >&2; then
+    if ! auditwheel repair "$wheel" -w dist/ --plat "$platform" >&2; then
         log_error "auditwheel repair failed" >&2
         exit 1
     fi

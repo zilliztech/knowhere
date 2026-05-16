@@ -103,17 +103,15 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v2
         with:
-          python-version: "3.8"
+          python-version: "3.10"
       - name: Install Dependency
         run: |
           bash scripts/install_deps.sh
-          pip3 install pytest faiss-cpu
+          python -m pip install wheel pytest 'numpy>=2,<3' ml-dtypes faiss-cpu
       - name: Install GCC 12
         # GCC 11 (ubuntu-22.04 default) has incomplete C++20 support:
         # std::partial_ordering, std::strong_ordering, std::weak_ordering
         # from <compare> are not available, causing abseil build failures.
-        # Installed after install_deps.sh so bfloat16 builds with GCC 11
-        # (bfloat16 fails on GCC 12 due to missing #include <memory>).
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-12 g++-12
@@ -139,4 +137,4 @@ jobs:
           cd python && pip3 install dist/*-manylinux*.whl
       - name: Test
         run: |
-          pytest tests/python/test_index_with_random.py
+          python -m pytest tests/python/test_index_with_random.py

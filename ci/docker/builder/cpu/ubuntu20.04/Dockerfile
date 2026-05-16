@@ -33,7 +33,7 @@ RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3 \
 # install knowhere dependancies
 RUN apt update \
     && apt install -y libopenblas-openmp-dev libcurl4-openssl-dev libaio-dev libevent-dev lcov \
-    && pip3 install conan==2.25.1 \
+    && pip3 install conan==2.28.1 \
     && conan profile detect --force \
     && conan remote add default-conan-local2 https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local2 \
     && export PATH=$PATH:$HOME/.local/bin
