@@ -64,7 +64,7 @@ mm_masked_read_short(int d, const uint16_t* x) {
         case 1:
             buf[0] = x[0];
     }
-    return _mm_loadu_si128((__m128i*)buf);
+    return _mm_loadu_si128(reinterpret_cast<__m128i*>(buf));
 }
 
 inline __m128
@@ -148,7 +148,7 @@ fvec_madd_sse(size_t n, const float* a, float bf, const float* b, float* c) {
     __m128 bf4 = _mm_set_ps1(bf);
     __m128* a4 = (__m128*)a;
     __m128* b4 = (__m128*)b;
-    __m128* c4 = (__m128*)c;
+    __m128* c4 = reinterpret_cast<__m128*>(c);
 
     while (n--) {
         *c4 = _mm_add_ps(*a4, _mm_mul_ps(bf4, *b4));
@@ -172,7 +172,7 @@ fvec_madd_and_argmin_sse(size_t n, const float* a, float bf, const float* b, flo
     __m128i inc4 = _mm_set1_epi32(4);
     __m128* a4 = (__m128*)a;
     __m128* b4 = (__m128*)b;
-    __m128* c4 = (__m128*)c;
+    __m128* c4 = reinterpret_cast<__m128*>(c);
 
     while (n--) {
         __m128 vc4 = _mm_add_ps(*a4, _mm_mul_ps(bf4, *b4));
@@ -414,7 +414,7 @@ int32_t
 ivec_inner_product_sse(const int8_t* x, const int8_t* y, size_t d) {
     int32_t res = 0;
     for (size_t i = 0; i < d; i++) {
-        res += (int32_t)x[i] * y[i];
+        res += static_cast<int32_t>(x[i]) * y[i];
     }
     return res;
 }
@@ -423,7 +423,7 @@ int32_t
 ivec_L2sqr_sse(const int8_t* x, const int8_t* y, size_t d) {
     int32_t res = 0;
     for (size_t i = 0; i < d; i++) {
-        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        const int32_t tmp = static_cast<int32_t>(x[i]) - static_cast<int32_t>(y[i]);
         res += tmp * tmp;
     }
     return res;
@@ -436,8 +436,8 @@ float
 bf16_vec_inner_product_sse(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     __m128 m_res = _mm_setzero_ps();
     while (d >= 4) {
-        __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)x));
-        __m128 m_y = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)y));
+        __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(x)));
+        __m128 m_y = _mm_bf16_to_fp32(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(y)));
         m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_y));
         x += 4;
         y += 4;
@@ -457,8 +457,8 @@ float
 bf16_vec_L2sqr_sse(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t d) {
     __m128 m_res = _mm_setzero_ps();
     while (d >= 4) {
-        __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)x));
-        __m128 m_y = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)y));
+        __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(x)));
+        __m128 m_y = _mm_bf16_to_fp32(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(y)));
         m_x = _mm_sub_ps(m_x, m_y);
         m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
         x += 4;
@@ -480,7 +480,7 @@ float
 bf16_vec_norm_L2sqr_sse(const ::knowhere::bf16* x, size_t d) {
     __m128 m_res = _mm_setzero_ps();
     while (d >= 4) {
-        __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64((const __m128i*)x));
+        __m128 m_x = _mm_bf16_to_fp32(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(x)));
         m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
         x += 4;
         d -= 4;
@@ -503,9 +503,9 @@ int8_vec_inner_product_sse(const int8_t* x, const int8_t* y, size_t d) {
     int32_t res = 0;
     FAISS_PRAGMA_IMPRECISE_LOOP
     for (size_t i = 0; i < d; i++) {
-        res += (int32_t)x[i] * (int32_t)y[i];
+        res += static_cast<int32_t>(x[i]) * static_cast<int32_t>(y[i]);
     }
-    return (float)res;
+    return static_cast<float>(res);
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
@@ -515,10 +515,10 @@ int8_vec_L2sqr_sse(const int8_t* x, const int8_t* y, size_t d) {
     int32_t res = 0;
     FAISS_PRAGMA_IMPRECISE_LOOP
     for (size_t i = 0; i < d; i++) {
-        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        const int32_t tmp = static_cast<int32_t>(x[i]) - static_cast<int32_t>(y[i]);
         res += tmp * tmp;
     }
-    return (float)res;
+    return static_cast<float>(res);
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
@@ -528,9 +528,9 @@ int8_vec_norm_L2sqr_sse(const int8_t* x, size_t d) {
     int32_t res = 0;
     FAISS_PRAGMA_IMPRECISE_LOOP
     for (size_t i = 0; i < d; i++) {
-        res += (int32_t)x[i] * (int32_t)x[i];
+        res += static_cast<int32_t>(x[i]) * static_cast<int32_t>(x[i]);
     }
-    return (float)res;
+    return static_cast<float>(res);
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
@@ -565,8 +565,8 @@ rabitq_dp_popcnt_sse(const uint8_t* q, const uint8_t* x, const size_t d, const s
         // process 64-bit popcounts
         int count_dot = 0;
         for (size_t i = 0; i < di_64b; i += 8) {
-            const auto qv = *(const uint64_t*)(q_j + i);
-            const auto xv = *(const uint64_t*)(x + i);
+            const auto qv = *reinterpret_cast<const uint64_t*>(q_j + i);
+            const auto xv = *reinterpret_cast<const uint64_t*>(x + i);
             count_dot += __builtin_popcountll(qv & xv);
         }
 

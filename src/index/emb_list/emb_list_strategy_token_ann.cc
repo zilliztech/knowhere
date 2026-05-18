@@ -81,8 +81,8 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
             LOG_KNOWHERE_WARNING_ << err_msg;
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, err_msg);
         }
-        int32_t vec_topk =
-            std::min(std::max((int32_t)(k * retrieval_ann_ratio), 1), (int32_t)emb_list_offset_->offset.back());
+        int32_t vec_topk = std::min(std::max(static_cast<int32_t>(k * retrieval_ann_ratio), 1),
+                                    static_cast<int32_t>(emb_list_offset_->offset.back()));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         knowhere_search_emb_list_retrieval_ann_ratio.Observe(retrieval_ann_ratio);
@@ -133,7 +133,7 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
                 if (stage1_ids[j] < 0) {
                     continue;
                 }
-                el_ids_set.emplace(emb_list_offset_->get_el_id((size_t)stage1_ids[j]));
+                el_ids_set.emplace(emb_list_offset_->get_el_id(static_cast<size_t>(stage1_ids[j])));
             }
 
             // Convert to vector for RerankByCalcDistByIDs
@@ -143,12 +143,12 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
                     LOG_KNOWHERE_ERROR_ << "Invalid el_id: " << el_id;
                     return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "invalid emb_list id");
                 }
-                candidate_docs.push_back((int64_t)el_id);
+                candidate_docs.push_back(static_cast<int64_t>(el_id));
             }
             total_candidates += candidate_docs.size();
 
             // Compute aggregated score for each candidate
-            auto tensor = (const char*)query_dataset->GetTensor();
+            auto tensor = static_cast<const char*>(query_dataset->GetTensor());
             size_t tensor_offset = start_offset * query_code_size;
             auto bf_query_dataset = GenDataSet(nq, dim, tensor + tensor_offset);
 
@@ -169,12 +169,13 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
 #endif
 
         LOG_KNOWHERE_DEBUG_ << "[TokenANN] Stage2 Rerank"
-                            << ", total_candidates=" << total_candidates
-                            << ", avg_candidates_per_query=" << (num_q_el > 0 ? (double)total_candidates / num_q_el : 0)
+                            << ", total_candidates=" << total_candidates << ", avg_candidates_per_query="
+                            << (num_q_el > 0 ? static_cast<double>(total_candidates) / num_q_el : 0)
                             << ", total_dist_comps=" << total_distance_computations << ", avg_dist_comps_per_query="
-                            << (num_q_el > 0 ? (double)total_distance_computations / num_q_el : 0);
+                            << (num_q_el > 0 ? static_cast<double>(total_distance_computations) / num_q_el : 0);
 
-        return GenResultDataSet((int64_t)num_q_el, (int64_t)k, std::move(ids), std::move(dists));
+        return GenResultDataSet(static_cast<int64_t>(num_q_el), static_cast<int64_t>(k), std::move(ids),
+                                std::move(dists));
     }
 
     Status

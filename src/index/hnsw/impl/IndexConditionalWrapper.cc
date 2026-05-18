@@ -49,7 +49,7 @@ WhetherPerformBruteForceSearch(const faiss::Index* index, const BaseConfig& cfg,
     if (!bitset.empty()) {
         const size_t filtered_out_num = bitset.count();
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-        double ratio = ((double)filtered_out_num) / bitset.size();
+        double ratio = (static_cast<double>(filtered_out_num)) / bitset.size();
         knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
 #endif
         if (filtered_out_num >= (bitset.size() * HnswSearchThresholds::kHnswSearchKnnBFFilterThreshold) ||
@@ -82,7 +82,7 @@ WhetherPerformBruteForceRangeSearch(const faiss::Index* index, const FaissHnswCo
     if (!bitset.empty()) {
         const size_t filtered_out_num = bitset.count();
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-        double ratio = ((double)filtered_out_num) / bitset.size();
+        double ratio = (static_cast<double>(filtered_out_num)) / bitset.size();
         knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
 #endif
         if (filtered_out_num >= (bitset.size() * HnswSearchThresholds::kHnswSearchRangeBFFilterThreshold) ||

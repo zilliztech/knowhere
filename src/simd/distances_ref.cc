@@ -215,7 +215,7 @@ int32_t
 ivec_inner_product_ref(const int8_t* x, const int8_t* y, size_t d) {
     int32_t res = 0;
     for (size_t i = 0; i < d; i++) {
-        res += (int32_t)x[i] * y[i];
+        res += static_cast<int32_t>(x[i]) * y[i];
     }
     return res;
 }
@@ -224,7 +224,7 @@ int32_t
 ivec_L2sqr_ref(const int8_t* x, const int8_t* y, size_t d) {
     int32_t res = 0;
     for (size_t i = 0; i < d; i++) {
-        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        const int32_t tmp = static_cast<int32_t>(x[i]) - static_cast<int32_t>(y[i]);
         res += tmp * tmp;
     }
     return res;
@@ -387,28 +387,28 @@ float
 int8_vec_inner_product_ref(const int8_t* x, const int8_t* y, size_t d) {
     int32_t res = 0;
     for (size_t i = 0; i < d; i++) {
-        res += (int32_t)x[i] * (int32_t)y[i];
+        res += static_cast<int32_t>(x[i]) * static_cast<int32_t>(y[i]);
     }
-    return (float)res;
+    return static_cast<float>(res);
 }
 
 float
 int8_vec_L2sqr_ref(const int8_t* x, const int8_t* y, size_t d) {
     int32_t res = 0;
     for (size_t i = 0; i < d; i++) {
-        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        const int32_t tmp = static_cast<int32_t>(x[i]) - static_cast<int32_t>(y[i]);
         res += tmp * tmp;
     }
-    return (float)res;
+    return static_cast<float>(res);
 }
 
 float
 int8_vec_norm_L2sqr_ref(const int8_t* x, size_t d) {
     int32_t res = 0;
     for (size_t i = 0; i < d; i++) {
-        res += (int32_t)x[i] * (int32_t)x[i];
+        res += static_cast<int32_t>(x[i]) * static_cast<int32_t>(x[i]);
     }
-    return (float)res;
+    return static_cast<float>(res);
 }
 
 void
@@ -418,17 +418,17 @@ int8_vec_inner_product_batch_4_ref(const int8_t* x, const int8_t* y0, const int8
     int32_t d0 = 0, d1 = 0, d2 = 0, d3 = 0;
 
     for (size_t i = 0; i < d; ++i) {
-        auto x_i = (int32_t)x[i];
-        d0 += x_i * (int32_t)y0[i];
-        d1 += x_i * (int32_t)y1[i];
-        d2 += x_i * (int32_t)y2[i];
-        d3 += x_i * (int32_t)y3[i];
+        auto x_i = static_cast<int32_t>(x[i]);
+        d0 += x_i * static_cast<int32_t>(y0[i]);
+        d1 += x_i * static_cast<int32_t>(y1[i]);
+        d2 += x_i * static_cast<int32_t>(y2[i]);
+        d3 += x_i * static_cast<int32_t>(y3[i]);
     }
 
-    dis0 = (float)d0;
-    dis1 = (float)d1;
-    dis2 = (float)d2;
-    dis3 = (float)d3;
+    dis0 = static_cast<float>(d0);
+    dis1 = static_cast<float>(d1);
+    dis2 = static_cast<float>(d2);
+    dis3 = static_cast<float>(d3);
 }
 
 void
@@ -437,21 +437,21 @@ int8_vec_L2sqr_batch_4_ref(const int8_t* x, const int8_t* y0, const int8_t* y1, 
     int32_t d0 = 0, d1 = 0, d2 = 0, d3 = 0;
 
     for (size_t i = 0; i < d; ++i) {
-        auto x_i = (int32_t)x[i];
-        const int32_t q0 = x_i - (int32_t)y0[i];
-        const int32_t q1 = x_i - (int32_t)y1[i];
-        const int32_t q2 = x_i - (int32_t)y2[i];
-        const int32_t q3 = x_i - (int32_t)y3[i];
+        auto x_i = static_cast<int32_t>(x[i]);
+        const int32_t q0 = x_i - static_cast<int32_t>(y0[i]);
+        const int32_t q1 = x_i - static_cast<int32_t>(y1[i]);
+        const int32_t q2 = x_i - static_cast<int32_t>(y2[i]);
+        const int32_t q3 = x_i - static_cast<int32_t>(y3[i]);
         d0 += q0 * q0;
         d1 += q1 * q1;
         d2 += q2 * q2;
         d3 += q3 * q3;
     }
 
-    dis0 = (float)d0;
-    dis1 = (float)d1;
-    dis2 = (float)d2;
-    dis3 = (float)d3;
+    dis0 = static_cast<float>(d0);
+    dis1 = static_cast<float>(d1);
+    dis2 = static_cast<float>(d2);
+    dis3 = static_cast<float>(d3);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -485,8 +485,8 @@ rabitq_dp_popcnt_ref(const uint8_t* q, const uint8_t* x, const size_t d, const s
         // process 64-bit popcounts
         int count_dot = 0;
         for (size_t i = 0; i < di_64b; i += 8) {
-            const auto qv = *(const uint64_t*)(q_j + i);
-            const auto xv = *(const uint64_t*)(x + i);
+            const auto qv = *reinterpret_cast<const uint64_t*>(q_j + i);
+            const auto xv = *reinterpret_cast<const uint64_t*>(x + i);
             count_dot += __builtin_popcountll(qv & xv);
         }
 
@@ -514,10 +514,10 @@ minhash_lsh_hit_ref(const char* x, const char* y, size_t dim, size_t mh_lsh_band
         size_t j = r;
         bool eq = true;
         while (j >= 16) {
-            if (*(const uint64_t*)(x_b + 8) != *(const uint64_t*)(y_b + 8)) {
+            if (*reinterpret_cast<const uint64_t*>(x_b + 8) != *reinterpret_cast<const uint64_t*>(y_b + 8)) {
                 goto next_band;
             }
-            if (*(const uint64_t*)(x_b) != *(const uint64_t*)(y_b)) {
+            if (*reinterpret_cast<const uint64_t*>(x_b) != *reinterpret_cast<const uint64_t*>(y_b)) {
                 goto next_band;
             }
             j -= 16;
@@ -525,7 +525,7 @@ minhash_lsh_hit_ref(const char* x, const char* y, size_t dim, size_t mh_lsh_band
             y_b += 16;
         }
         if (j >= 8) {
-            if (*(const uint64_t*)(x_b) != *(const uint64_t*)(y_b)) {
+            if (*reinterpret_cast<const uint64_t*>(x_b) != *reinterpret_cast<const uint64_t*>(y_b)) {
                 goto next_band;
             }
             j -= 8;
@@ -603,8 +603,8 @@ calculate_hash_ref(const char* data, size_t size) {
 float
 u32_jaccard_distance_ref(const char* x, const char* y, size_t element_length, size_t element_size) {
     float res = 0.0;
-    auto u32_x = (const uint32_t*)x;
-    auto u32_y = (const uint32_t*)y;
+    auto u32_x = reinterpret_cast<const uint32_t*>(x);
+    auto u32_y = reinterpret_cast<const uint32_t*>(y);
     for (size_t i = 0; i < element_length; i++) {
         res += (u32_x[i] == u32_y[i]);
     }
@@ -615,11 +615,11 @@ u32_jaccard_distance_batch_4_ref(const char* x, const char* y0, const char* y1, 
                                  size_t element_length, size_t element_size, float& dis0, float& dis1, float& dis2,
                                  float& dis3) {
     dis0 = dis1 = dis2 = dis3 = 0.0;
-    auto u32_x = (const uint32_t*)x;
-    auto u32_y0 = (const uint32_t*)y0;
-    auto u32_y1 = (const uint32_t*)y1;
-    auto u32_y2 = (const uint32_t*)y2;
-    auto u32_y3 = (const uint32_t*)y3;
+    auto u32_x = reinterpret_cast<const uint32_t*>(x);
+    auto u32_y0 = reinterpret_cast<const uint32_t*>(y0);
+    auto u32_y1 = reinterpret_cast<const uint32_t*>(y1);
+    auto u32_y2 = reinterpret_cast<const uint32_t*>(y2);
+    auto u32_y3 = reinterpret_cast<const uint32_t*>(y3);
     for (size_t i = 0; i < element_length; i++) {
         dis0 += (u32_x[i] == u32_y0[i]);
         dis1 += (u32_x[i] == u32_y1[i]);
@@ -635,8 +635,8 @@ u32_jaccard_distance_batch_4_ref(const char* x, const char* y0, const char* y1, 
 float
 u64_jaccard_distance_ref(const char* x, const char* y, size_t element_length, size_t element_size) {
     float res = 0.0;
-    auto u64_x = (const uint64_t*)x;
-    auto u64_y = (const uint64_t*)y;
+    auto u64_x = reinterpret_cast<const uint64_t*>(x);
+    auto u64_y = reinterpret_cast<const uint64_t*>(y);
     for (size_t i = 0; i < element_length; i++) {
         res += (u64_x[i] == u64_y[i]);
     }
@@ -647,11 +647,11 @@ u64_jaccard_distance_batch_4_ref(const char* x, const char* y0, const char* y1, 
                                  size_t element_length, size_t element_size, float& dis0, float& dis1, float& dis2,
                                  float& dis3) {
     dis0 = dis1 = dis2 = dis3 = 0.0;
-    auto u64_x = (const uint64_t*)x;
-    auto u64_y0 = (const uint64_t*)y0;
-    auto u64_y1 = (const uint64_t*)y1;
-    auto u64_y2 = (const uint64_t*)y2;
-    auto u64_y3 = (const uint64_t*)y3;
+    auto u64_x = reinterpret_cast<const uint64_t*>(x);
+    auto u64_y0 = reinterpret_cast<const uint64_t*>(y0);
+    auto u64_y1 = reinterpret_cast<const uint64_t*>(y1);
+    auto u64_y2 = reinterpret_cast<const uint64_t*>(y2);
+    auto u64_y3 = reinterpret_cast<const uint64_t*>(y3);
     for (size_t i = 0; i < element_length; i++) {
         dis0 += (u64_x[i] == u64_y0[i]);
         dis1 += (u64_x[i] == u64_y1[i]);

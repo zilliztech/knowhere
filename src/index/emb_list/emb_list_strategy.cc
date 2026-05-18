@@ -52,7 +52,7 @@ RerankByCalcDistByIDs(const std::vector<int64_t>& candidate_docs, const DataSetP
     std::priority_queue<DistId, std::vector<DistId>, std::less<>> maxheap;
 
     for (int64_t doc_id : candidate_docs) {
-        auto vids = emb_list_offset->get_vids((size_t)doc_id);
+        auto vids = emb_list_offset->get_vids(static_cast<size_t>(doc_id));
         if (vids.empty()) {
             // Empty embedding lists (0 vectors) can appear as rerank candidates because some strategies
             // (e.g., MUVERA) encode every doc into the ANN index regardless of whether it has vectors.
@@ -76,14 +76,14 @@ RerankByCalcDistByIDs(const std::vector<int64_t>& candidate_docs, const DataSetP
         }
 
         if (larger_is_closer) {
-            if (minheap.size() < (size_t)k) {
+            if (minheap.size() < static_cast<size_t>(k)) {
                 minheap.emplace(doc_id, score.value());
             } else if (score.value() > minheap.top().val) {
                 minheap.pop();
                 minheap.emplace(doc_id, score.value());
             }
         } else {
-            if (maxheap.size() < (size_t)k) {
+            if (maxheap.size() < static_cast<size_t>(k)) {
                 maxheap.emplace(doc_id, score.value());
             } else if (score.value() < maxheap.top().val) {
                 maxheap.pop();

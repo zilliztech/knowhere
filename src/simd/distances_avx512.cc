@@ -279,7 +279,7 @@ int32_t
 ivec_inner_product_avx512(const int8_t* x, const int8_t* y, size_t d) {
     int32_t res = 0;
     for (size_t i = 0; i < d; i++) {
-        res += (int32_t)x[i] * y[i];
+        res += static_cast<int32_t>(x[i]) * y[i];
     }
     return res;
 }
@@ -288,7 +288,7 @@ int32_t
 ivec_L2sqr_avx512(const int8_t* x, const int8_t* y, size_t d) {
     int32_t res = 0;
     for (size_t i = 0; i < d; i++) {
-        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        const int32_t tmp = static_cast<int32_t>(x[i]) - static_cast<int32_t>(y[i]);
         res += tmp * tmp;
     }
     return res;
@@ -693,9 +693,9 @@ int8_vec_inner_product_avx512(const int8_t* x, const int8_t* y, size_t d) {
     int32_t res = 0;
     FAISS_PRAGMA_IMPRECISE_LOOP
     for (size_t i = 0; i < d; i++) {
-        res += (int32_t)x[i] * (int32_t)y[i];
+        res += static_cast<int32_t>(x[i]) * static_cast<int32_t>(y[i]);
     }
-    return (float)res;
+    return static_cast<float>(res);
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
@@ -705,10 +705,10 @@ int8_vec_L2sqr_avx512(const int8_t* x, const int8_t* y, size_t d) {
     int32_t res = 0;
     FAISS_PRAGMA_IMPRECISE_LOOP
     for (size_t i = 0; i < d; i++) {
-        const int32_t tmp = (int32_t)x[i] - (int32_t)y[i];
+        const int32_t tmp = static_cast<int32_t>(x[i]) - static_cast<int32_t>(y[i]);
         res += tmp * tmp;
     }
-    return (float)res;
+    return static_cast<float>(res);
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
@@ -718,9 +718,9 @@ int8_vec_norm_L2sqr_avx512(const int8_t* x, size_t d) {
     int32_t res = 0;
     FAISS_PRAGMA_IMPRECISE_LOOP
     for (size_t i = 0; i < d; i++) {
-        res += (int32_t)x[i] * (int32_t)x[i];
+        res += static_cast<int32_t>(x[i]) * static_cast<int32_t>(x[i]);
     }
-    return (float)res;
+    return static_cast<float>(res);
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
@@ -733,17 +733,17 @@ int8_vec_inner_product_batch_4_avx512(const int8_t* x, const int8_t* y0, const i
 
     FAISS_PRAGMA_IMPRECISE_LOOP
     for (size_t i = 0; i < d; ++i) {
-        auto x_i = (int32_t)x[i];
-        d0 += x_i * (int32_t)y0[i];
-        d1 += x_i * (int32_t)y1[i];
-        d2 += x_i * (int32_t)y2[i];
-        d3 += x_i * (int32_t)y3[i];
+        auto x_i = static_cast<int32_t>(x[i]);
+        d0 += x_i * static_cast<int32_t>(y0[i]);
+        d1 += x_i * static_cast<int32_t>(y1[i]);
+        d2 += x_i * static_cast<int32_t>(y2[i]);
+        d3 += x_i * static_cast<int32_t>(y3[i]);
     }
 
-    dis0 = (float)d0;
-    dis1 = (float)d1;
-    dis2 = (float)d2;
-    dis3 = (float)d3;
+    dis0 = static_cast<float>(d0);
+    dis1 = static_cast<float>(d1);
+    dis2 = static_cast<float>(d2);
+    dis3 = static_cast<float>(d3);
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
@@ -755,21 +755,21 @@ int8_vec_L2sqr_batch_4_avx512(const int8_t* x, const int8_t* y0, const int8_t* y
 
     FAISS_PRAGMA_IMPRECISE_LOOP
     for (size_t i = 0; i < d; ++i) {
-        auto x_i = (int32_t)x[i];
-        const int32_t q0 = x_i - (int32_t)y0[i];
-        const int32_t q1 = x_i - (int32_t)y1[i];
-        const int32_t q2 = x_i - (int32_t)y2[i];
-        const int32_t q3 = x_i - (int32_t)y3[i];
+        auto x_i = static_cast<int32_t>(x[i]);
+        const int32_t q0 = x_i - static_cast<int32_t>(y0[i]);
+        const int32_t q1 = x_i - static_cast<int32_t>(y1[i]);
+        const int32_t q2 = x_i - static_cast<int32_t>(y2[i]);
+        const int32_t q3 = x_i - static_cast<int32_t>(y3[i]);
         d0 += q0 * q0;
         d1 += q1 * q1;
         d2 += q2 * q2;
         d3 += q3 * q3;
     }
 
-    dis0 = (float)d0;
-    dis1 = (float)d1;
-    dis2 = (float)d2;
-    dis3 = (float)d3;
+    dis0 = static_cast<float>(d0);
+    dis1 = static_cast<float>(d1);
+    dis2 = static_cast<float>(d2);
+    dis3 = static_cast<float>(d3);
 }
 FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
@@ -782,7 +782,7 @@ fvec_masked_sum_avx512(const float* q, const uint8_t* x, const size_t d) {
     const size_t d_16 = (d / 16) * 16;
 
     for (size_t i = 0; i < d_16; i += 16) {
-        __mmask16 mask = *((const uint16_t*)(x + i / 8));
+        __mmask16 mask = *(reinterpret_cast<const uint16_t*>(x + i / 8));
         sum = _mm512_add_ps(sum, _mm512_maskz_loadu_ps(mask, q + i));
     }
 
@@ -792,7 +792,7 @@ fvec_masked_sum_avx512(const float* q, const uint8_t* x, const size_t d) {
 
         __mmask16 mask = 0;
         if (leftovers > 8) {
-            mask = *((const uint16_t*)(x + d_16 / 8));
+            mask = *(reinterpret_cast<const uint16_t*>(x + d_16 / 8));
         } else {
             mask = *(x + d_16 / 8);
         }
@@ -816,8 +816,8 @@ rabitq_dp_popcnt_avx512(const uint8_t* q, const uint8_t* x, const size_t d, cons
         // process 64-bit popcounts
         int count_dot = 0;
         for (size_t i = 0; i < di_64b; i += 8) {
-            const auto qv = *(const uint64_t*)(q_j + i);
-            const auto xv = *(const uint64_t*)(x + i);
+            const auto qv = *reinterpret_cast<const uint64_t*>(q_j + i);
+            const auto xv = *reinterpret_cast<const uint64_t*>(x + i);
             count_dot += __builtin_popcountll(qv & xv);
         }
 
@@ -994,7 +994,7 @@ u32_jaccard_distance_avx512(const char* x, const char* y, size_t element_length,
         __mmask16 cmp_result = _mm512_cmpeq_epu32_mask(mx, my);
         equal_sum += __builtin_popcount(static_cast<unsigned int>(cmp_result & mask));
     }
-    return float(equal_sum) / float(element_length);
+    return static_cast<float>(equal_sum) / static_cast<float>(element_length);
 }
 void
 u32_jaccard_distance_batch_4_avx512(const char* x, const char* y0, const char* y1, const char* y2, const char* y3,
@@ -1045,10 +1045,10 @@ u32_jaccard_distance_batch_4_avx512(const char* x, const char* y0, const char* y
         d2 += __builtin_popcount(static_cast<unsigned int>(cmp_result2 & mask));
         d3 += __builtin_popcount(static_cast<unsigned int>(cmp_result3 & mask));
     }
-    dis0 = float(d0) / float(element_length);
-    dis1 = float(d1) / float(element_length);
-    dis2 = float(d2) / float(element_length);
-    dis3 = float(d3) / float(element_length);
+    dis0 = static_cast<float>(d0) / static_cast<float>(element_length);
+    dis1 = static_cast<float>(d1) / static_cast<float>(element_length);
+    dis2 = static_cast<float>(d2) / static_cast<float>(element_length);
+    dis3 = static_cast<float>(d3) / static_cast<float>(element_length);
 }
 
 float
@@ -1074,7 +1074,7 @@ u64_jaccard_distance_avx512(const char* x, const char* y, size_t element_length,
         __mmask8 cmp_result = _mm512_cmpeq_epu64_mask(mx, my);
         equal_sum += __builtin_popcount(static_cast<unsigned int>(cmp_result & mask));
     }
-    return float(equal_sum) / element_length;
+    return static_cast<float>(equal_sum) / element_length;
 }
 void
 u64_jaccard_distance_batch_4_avx512(const char* x, const char* y0, const char* y1, const char* y2, const char* y3,
@@ -1125,10 +1125,10 @@ u64_jaccard_distance_batch_4_avx512(const char* x, const char* y0, const char* y
         d2 += __builtin_popcount(static_cast<unsigned int>(cmp_result2 & mask));
         d3 += __builtin_popcount(static_cast<unsigned int>(cmp_result3 & mask));
     }
-    dis0 = float(d0) / element_length;
-    dis1 = float(d1) / element_length;
-    dis2 = float(d2) / element_length;
-    dis3 = float(d3) / element_length;
+    dis0 = static_cast<float>(d0) / element_length;
+    dis1 = static_cast<float>(d1) / element_length;
+    dis2 = static_cast<float>(d2) / element_length;
+    dis3 = static_cast<float>(d3) / element_length;
 }
 
 }  // namespace faiss::cppcontrib::knowhere

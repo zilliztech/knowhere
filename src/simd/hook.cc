@@ -163,7 +163,7 @@ supports_sve() {
 void
 fvec_hook(std::string& simd_type) {
     static std::mutex hook_mutex;
-    std::lock_guard<std::mutex> lock(hook_mutex);
+    std::scoped_lock lock(hook_mutex);
 #if defined(__x86_64__)
     if (use_avx512 && cpu_support_avx512()) {
         fvec_inner_product = fvec_inner_product_avx512;

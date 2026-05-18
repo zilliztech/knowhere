@@ -74,7 +74,7 @@ void
 PrometheusHistogramCache::RegisterMetrics(prometheus::Family<prometheus::Histogram>& family, const std::string& module,
                                           const std::vector<std::string>& index_types,
                                           const prometheus::Histogram::BucketBoundaries& buckets) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::scoped_lock lock(mutex_);
     for (const auto& index_type : index_types) {
         const auto key = module + '\n' + index_type + '\n' + std::to_string(reinterpret_cast<uintptr_t>(&family));
         if (metrics_.find(key) != metrics_.end()) {
@@ -90,7 +90,7 @@ PrometheusHistogramCache::GetMetric(prometheus::Family<prometheus::Histogram>& f
                                     const std::string& index_type,
                                     const prometheus::Histogram::BucketBoundaries& buckets) {
     const auto key = module + '\n' + index_type + '\n' + std::to_string(reinterpret_cast<uintptr_t>(&family));
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::scoped_lock lock(mutex_);
     auto it = metrics_.find(key);
     if (it != metrics_.end()) {
         return *(it->second);
