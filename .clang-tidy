@@ -26,7 +26,8 @@ Checks: >
     performance-trivially-destructible, performance-inefficient-vector-operation,
     performance-move-const-arg, performance-move-constructor-init,
     performance-noexcept-move-constructor, performance-no-automatic-move,
-    performance-type-promotion-in-math-fn, -clang-analyzer-optin.core.EnumCastOutOfRange
+    performance-type-promotion-in-math-fn, -clang-analyzer-optin.core.EnumCastOutOfRange,
+    -modernize-use-ranges
 
 WarningsAsErrors: '*'
 HeaderFilterRegex: '^(?:.*\/knowhere\/include\/.+\.h)|(?:.*\/knowhere\/src\/.+\.h)$'

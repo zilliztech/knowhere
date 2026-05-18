@@ -151,7 +151,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
     if (b_cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(b_cfg.trace_id.value());
         auto span_id_str = tracer::GetIDFromHexStr(b_cfg.span_id.value());
-        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()), 
+        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
                                         .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
                                         .traceFlags = static_cast<uint8_t>(b_cfg.trace_flags.value())};
         span = tracer::StartSpan("knowhere search", &ctx);
@@ -251,7 +251,7 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
     if (b_cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(b_cfg.trace_id.value());
         auto span_id_str = tracer::GetIDFromHexStr(b_cfg.span_id.value());
-        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()), 
+        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
                                         .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
                                         .traceFlags = static_cast<uint8_t>(b_cfg.trace_flags.value())};
         span = tracer::StartSpan("knowhere range search", &ctx);

@@ -1482,7 +1482,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
 
     auto num_chunk = base_dataset->GetNumChunk();
     auto num_total_vectors = base_dataset->GetRows();
-    if (num_total_vectors != static_cast<int64_t>(chunk_lims[num_chunk]))) {
+    if (num_total_vectors != static_cast<int64_t>(chunk_lims[num_chunk])) {
         LOG_KNOWHERE_ERROR_ << "the num_rows should be equal to the last element of chunk_lims";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(
             Status::invalid_args, "the num_rows should be equal to the last element of chunk_lims");
