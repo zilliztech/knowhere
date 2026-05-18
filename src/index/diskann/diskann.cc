@@ -144,7 +144,7 @@ class DiskANNIndexNode : public IndexNode {
     static expected<Resource>
     StaticEstimateLoadResource(const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
                                const knowhere::BaseConfig& config, const IndexVersion& version) {
-        return Resource{.memoryCost=file_size_in_bytes / 4, .diskCost=file_size_in_bytes};
+        return Resource{.memoryCost = file_size_in_bytes / 4, .diskCost = file_size_in_bytes};
     }
 
     Status
@@ -1012,7 +1012,7 @@ expected<DataSetPtr>
 DiskANNIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     std::vector<int64_t> entry_points;
     entry_points.reserve(pq_flash_index_->get_num_medoids());
-for (size_t i = 0; i < pq_flash_index_->get_num_medoids(); i++) {
+    for (size_t i = 0; i < pq_flash_index_->get_num_medoids(); i++) {
         entry_points.push_back(pq_flash_index_->get_medoids()[i]);
     }
     auto diskann_conf = static_cast<const DiskANNConfig&>(*cfg);

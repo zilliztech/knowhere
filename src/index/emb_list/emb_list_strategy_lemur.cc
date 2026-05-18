@@ -775,7 +775,10 @@ class LemurEmbListStrategy : public EmbListStrategy {
                         break;
                     }
                 }
-                chunks.push_back({.doc_start=chunk_doc_start, .doc_end=cur_doc, .vec_start=chunk_vec_start, .vec_end=chunk_vec_end});
+                chunks.push_back({.doc_start = chunk_doc_start,
+                                  .doc_end = cur_doc,
+                                  .vec_start = chunk_vec_start,
+                                  .vec_end = chunk_vec_end});
             }
         }
 

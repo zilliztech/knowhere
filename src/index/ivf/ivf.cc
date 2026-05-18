@@ -678,7 +678,8 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         // create scann index, which does not base_index by default,
         //    but owns the refine index by default omg
         if (scann_cfg.with_raw_data.value()) {
-            index = std::make_unique<faiss::cppcontrib::knowhere::IndexScaNN>(base_index.get(), static_cast<const float*>(data));
+            index = std::make_unique<faiss::cppcontrib::knowhere::IndexScaNN>(base_index.get(),
+                                                                              static_cast<const float*>(data));
         } else {
             index = std::make_unique<faiss::cppcontrib::knowhere::IndexScaNN>(base_index.get(), nullptr);
         }
@@ -984,7 +985,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
                     }
                 } else if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlatCC> ||
                                      std::is_same_v<IndexType,
-                                                  faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC>) {
+                                                    faiss::cppcontrib::knowhere::IndexIVFScalarQuantizerCC>) {
                     auto cur_query = static_cast<const float*>(data) + index * dim;
                     if (is_cosine) {
                         copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);

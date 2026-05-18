@@ -85,7 +85,7 @@ class AisaqIndexNode : public IndexNode {
     StaticEstimateLoadResource(const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
                                const knowhere::BaseConfig& config, const IndexVersion& version) {
         uint64_t s = file_size_in_bytes / 1024;
-        return Resource{.memoryCost=s, .diskCost=file_size_in_bytes};
+        return Resource{.memoryCost = s, .diskCost = file_size_in_bytes};
     }
 
     Status
@@ -640,7 +640,8 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
     if (!search_conf.vectors_beamwidth.has_value()) {
         search_conf.vectors_beamwidth.value() = diskann::defaults::DEFAULT_AISAQ_VECTORS_BEAMWIDTH;
     } else {
-        const int32_t max_aisaq_vectors_beamwidth = static_cast<int32_t>(diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH);
+        const int32_t max_aisaq_vectors_beamwidth =
+            static_cast<int32_t>(diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH);
         if (search_conf.vectors_beamwidth.value() > max_aisaq_vectors_beamwidth) {
             LOG_KNOWHERE_ERROR_ << "Error. Vector beam width more than max value";
             return expected<DataSetPtr>::Err(Status::aisaq_error, "vector beam width more than maximal");

@@ -99,9 +99,9 @@ class MinHashLSHNode : public IndexNode {
         if (code_in_mem) {
             // TODO: more precise estimation to resolve the following comments
             // unknown dim and rows number, incorrect mem size if code_in_mem == true.
-            return Resource{.memoryCost=file_size_in_bytes, .diskCost=file_size_in_bytes};
+            return Resource{.memoryCost = file_size_in_bytes, .diskCost = file_size_in_bytes};
         } else {
-            return Resource{.memoryCost=0, .diskCost=file_size_in_bytes};
+            return Resource{.memoryCost = 0, .diskCost = file_size_in_bytes};
         }
     }
 
@@ -316,9 +316,9 @@ MinHashLSHNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
             size_t run_times = (nq + batch_size - 1) / batch_size;
             futures.reserve(run_times);
             for (size_t row = 0; row < run_times; ++row) {
-                futures.emplace_back(
-                    search_pool_->push([&, beg = row * batch_size, end = std::min(static_cast<int64_t>((row + 1) * batch_size), nq),
-                                        p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
+                futures.emplace_back(search_pool_->push(
+                    [&, beg = row * batch_size, end = std::min(static_cast<int64_t>((row + 1) * batch_size), nq),
+                     p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
                         for (size_t index = beg; std::cmp_less(index, end); index++) {
                             minhash_lsh_->Search(xq + (index * dim), p_dist_ptr + index * topk, p_id_ptr + index * topk,
                                                  &search_params);

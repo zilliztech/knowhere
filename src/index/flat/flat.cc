@@ -127,8 +127,8 @@ class FlatIndexNode : public IndexNode {
                         faiss::SearchParameters search_params;
                         search_params.sel = id_selector;
 
-                        index_->search(1, static_cast<const uint8_t*>(x) + index * ((dim + 7) / 8), k, cur_i_dis, cur_ids,
-                                       &search_params);
+                        index_->search(1, static_cast<const uint8_t*>(x) + index * ((dim + 7) / 8), k, cur_i_dis,
+                                       cur_ids, &search_params);
 
                         if (index_->metric_type == faiss::METRIC_Hamming) {
                             for (int64_t j = 0; j < k; j++) {
