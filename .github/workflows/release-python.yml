@@ -44,12 +44,12 @@ jobs:
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_BEFORE_ALL_LINUX: "bash scripts/install_deps.sh && make"
           # Use portable wheel build script instead of plain setup.py
-          CIBW_BEFORE_BUILD: "pip3 install pytest numpy faiss-cpu bfloat16 auditwheel"
+          CIBW_BEFORE_BUILD: "pip3 install pytest numpy faiss-cpu ml-dtypes auditwheel"
           # Custom build command using our portable wheel builder
           CIBW_BUILD_FRONTEND: "build"
           # Note: cibuildwheel will use our build_portable_wheel.sh via setup.py
           # The script automatically handles auditwheel repair
-          CIBW_TEST_REQUIRES: "pytest numpy<2 faiss-cpu bfloat16"
+          CIBW_TEST_REQUIRES: "pytest numpy>=2,<3 faiss-cpu ml-dtypes"
           CIBW_TEST_COMMAND: "pytest {project}/tests/python/test_index_with_random.py"
           CIBW_ENVIRONMENT: "SETUPTOOLS_SCM_PRETEND_VERSION=${{ github.event.inputs.tag }}"
         with:

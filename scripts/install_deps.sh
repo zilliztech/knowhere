@@ -125,11 +125,8 @@ else
     pip3 install conan==${CONAN_VERSION}  # C/C++ package manager
 
     pip3 install -U setuptools
-    # wheel must be installed before bfloat16: bfloat16 has no pre-built wheel
-    # for Python 3.8, so pip builds from source. Without the wheel package, pip
-    # uses PEP 517 build isolation which can't see the installed numpy.
-    pip3 install wheel 'numpy<2'
-    pip3 install bfloat16   # wheel: bfloat16 dtype support for PyKnowhere
+    pip3 install wheel 'numpy>=2,<3'
+    pip3 install 'ml-dtypes>=0.5,<1'  # wheel: bfloat16 dtype support for PyKnowhere
     pip3 install auditwheel  # wheel: manylinux wheel repair
 fi
 

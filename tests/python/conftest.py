@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 import faiss
-from bfloat16 import bfloat16
+from ml_dtypes import bfloat16
 
 
 @pytest.fixture()
