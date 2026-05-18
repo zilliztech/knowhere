@@ -117,8 +117,7 @@ minhash_lsh_hit_with_topk1_opt_search(const char* x, const char* y, size_t size_
     base_hash_k.reserve(ny * mh_lsh_band);
     base_hash_v.reserve(ny * mh_lsh_band);
     {
-        auto base_kv = minhash::GenTransposedHashKV(y, ny, size_in_bytes, element_size_in_bytes,
-                                                    mh_lsh_band, mh_lsh_r);
+        auto base_kv = minhash::GenTransposedHashKV(y, ny, size_in_bytes, element_size_in_bytes, mh_lsh_band, mh_lsh_r);
         minhash::SortHashKV(base_kv, ny, mh_lsh_band);
         for (size_t i = 0; i < ny * mh_lsh_band; i++) {
             base_hash_k.emplace_back(base_kv[i].Key);
@@ -128,8 +127,7 @@ minhash_lsh_hit_with_topk1_opt_search(const char* x, const char* y, size_t size_
     std::vector<minhash::KeyType> query_hash_k;
     query_hash_k.reserve(nx * mh_lsh_band);
     {
-        auto query_kv =
-            minhash::GenHashKV(x, nx, size_in_bytes, element_size_in_bytes, mh_lsh_band, mh_lsh_r);
+        auto query_kv = minhash::GenHashKV(x, nx, size_in_bytes, element_size_in_bytes, mh_lsh_band, mh_lsh_r);
         for (size_t i = 0; i < nx * mh_lsh_band; i++) {
             query_hash_k.emplace_back(query_kv[i].Key);
         }
@@ -145,28 +143,28 @@ minhash_lsh_hit_with_topk1_opt_search(const char* x, const char* y, size_t size_
     size_t run_times = (nx + kQueryBatch - 1) / kQueryBatch;
     futs.reserve(run_times);
     for (size_t row = 0; row < run_times; ++row) {
-        futs.emplace_back(pool->push([&query_hash_k, &base_hash_k, &base_hash_v, &all_res, mh_lsh_band, ny,
-                                      query_beg = row * kQueryBatch,
-                                      query_end = std::min(((row + 1) * kQueryBatch), nx)]() {
-            for (size_t query_id = query_beg; query_id < query_end; query_id++) {
-                auto query_key = query_hash_k.data() + mh_lsh_band * query_id;
-                for (size_t i = 0; i < mh_lsh_band; i++) {
-                    auto hit_id = faiss::cppcontrib::knowhere::u64_binary_search_eq(base_hash_k.data() + i * ny, ny,
-                                                                                    query_key[i]);
-                    if (hit_id != -1) {
-                        all_res[query_id].push(base_hash_v[hit_id], 1.0f);
-                        while (!all_res[query_id].full() && std::cmp_less(hit_id , mh_lsh_band) &&
-                               base_hash_k[i * mh_lsh_band + hit_id] == query_key[i]) {
+        futs.emplace_back(
+            pool->push([&query_hash_k, &base_hash_k, &base_hash_v, &all_res, mh_lsh_band, ny,
+                        query_beg = row * kQueryBatch, query_end = std::min(((row + 1) * kQueryBatch), nx)]() {
+                for (size_t query_id = query_beg; query_id < query_end; query_id++) {
+                    auto query_key = query_hash_k.data() + mh_lsh_band * query_id;
+                    for (size_t i = 0; i < mh_lsh_band; i++) {
+                        auto hit_id = faiss::cppcontrib::knowhere::u64_binary_search_eq(base_hash_k.data() + i * ny, ny,
+                                                                                        query_key[i]);
+                        if (hit_id != -1) {
                             all_res[query_id].push(base_hash_v[hit_id], 1.0f);
-                            hit_id++;
-                        }
-                        if (all_res[query_id].full()) {
-                            break;
+                            while (!all_res[query_id].full() && std::cmp_less(hit_id, mh_lsh_band) &&
+                                   base_hash_k[i * mh_lsh_band + hit_id] == query_key[i]) {
+                                all_res[query_id].push(base_hash_v[hit_id], 1.0f);
+                                hit_id++;
+                            }
+                            if (all_res[query_id].full()) {
+                                break;
+                            }
                         }
                     }
                 }
-            }
-        }));
+            }));
     }
     RETURN_IF_ERROR(WaitAllSuccess(futs));
     return Status::success;
@@ -201,12 +199,12 @@ minhash_ny_batch_search(const char* x, const char* y, size_t size_in_bytes, size
                 if (mh_search_with_jaccard) {
                     size_t mh_length = size_in_bytes / element_size_in_bytes;
                     auto cur_query = x + size_in_bytes * i;
-                    MinHashJaccardKNNSearchByNy(cur_query, y, mh_length, element_size_in_bytes, ny, topk,
-                                                bitset, cur_distances, cur_labels);
+                    MinHashJaccardKNNSearchByNy(cur_query, y, mh_length, element_size_in_bytes, ny, topk, bitset,
+                                                cur_distances, cur_labels);
                 } else {
                     auto cur_query = x + size_in_bytes * i;
-                    MinHashLSHHitByNy(cur_query, y, size_in_bytes, element_size_in_bytes, mh_lsh_band,
-                                      mh_lsh_r, ny, topk, bitset, cur_distances, cur_labels);
+                    MinHashLSHHitByNy(cur_query, y, size_in_bytes, element_size_in_bytes, mh_lsh_band, mh_lsh_r, ny,
+                                      topk, bitset, cur_distances, cur_labels);
                 }
             }
             return Status::success;
@@ -254,17 +252,21 @@ GenHashKV(const char* data, size_t rows, size_t data_size, size_t data_element_s
                 const char* data_j = data + data_size * j;
                 size_t b = 0;
                 for (; b + 4 <= band_num; b += 4) {
-                    res_kv.get()[j * band_num + b] = {.Key=GetHashKey(data_j, truncated_data_size, band_num, b),
-                                                      .Value=static_cast<minhash::ValueType>(j)};
-                    res_kv.get()[j * band_num + b + 1] = {.Key=GetHashKey(data_j, truncated_data_size, band_num, b + 1),
-                                                          .Value=static_cast<minhash::ValueType>(j)};
-                    res_kv.get()[j * band_num + b + 2] = {.Key=GetHashKey(data_j, truncated_data_size, band_num, b + 2),
-                                                          .Value=static_cast<minhash::ValueType>(j)};
-                    res_kv.get()[j * band_num + b + 3] = {.Key=GetHashKey(data_j, truncated_data_size, band_num, b + 3),
-                                                          .Value=static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[j * band_num + b] = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b),
+                                                      .Value = static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[j * band_num + b + 1] = {
+                        .Key = GetHashKey(data_j, truncated_data_size, band_num, b + 1),
+                        .Value = static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[j * band_num + b + 2] = {
+                        .Key = GetHashKey(data_j, truncated_data_size, band_num, b + 2),
+                        .Value = static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[j * band_num + b + 3] = {
+                        .Key = GetHashKey(data_j, truncated_data_size, band_num, b + 3),
+                        .Value = static_cast<minhash::ValueType>(j)};
                 }
                 for (; b < band_num; b++) {
-                    minhash::KVPair kv = {.Key=GetHashKey(data_j, truncated_data_size, band_num, b), .Value=static_cast<minhash::ValueType>(j)};
+                    minhash::KVPair kv = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b),
+                                          .Value = static_cast<minhash::ValueType>(j)};
                     res_kv.get()[j * band_num + b] = kv;
                 }
             }
@@ -293,17 +295,18 @@ GenTransposedHashKV(const char* data, size_t rows, size_t data_size, size_t data
                 const char* data_j = data + data_size * j;
                 size_t b = 0;
                 for (; b + 4 <= band_num; b += 4) {
-                    res_kv.get()[b * rows + j] = {.Key=GetHashKey(data_j, truncated_data_size, band_num, b),
-                                                  .Value=static_cast<minhash::ValueType>(j)};
-                    res_kv.get()[(b + 1) * rows + j] = {.Key=GetHashKey(data_j, truncated_data_size, band_num, b + 1),
-                                                        .Value=static_cast<minhash::ValueType>(j)};
-                    res_kv.get()[(b + 2) * rows + j] = {.Key=GetHashKey(data_j, truncated_data_size, band_num, b + 2),
-                                                        .Value=static_cast<minhash::ValueType>(j)};
-                    res_kv.get()[(b + 3) * rows + j] = {.Key=GetHashKey(data_j, truncated_data_size, band_num, b + 3),
-                                                        .Value=static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[b * rows + j] = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b),
+                                                  .Value = static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[(b + 1) * rows + j] = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b + 1),
+                                                        .Value = static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[(b + 2) * rows + j] = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b + 2),
+                                                        .Value = static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[(b + 3) * rows + j] = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b + 3),
+                                                        .Value = static_cast<minhash::ValueType>(j)};
                 }
                 for (; b < band_num; b++) {
-                    minhash::KVPair kv = {.Key=GetHashKey(data_j, truncated_data_size, band_num, b), .Value=static_cast<minhash::ValueType>(j)};
+                    minhash::KVPair kv = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b),
+                                          .Value = static_cast<minhash::ValueType>(j)};
                     res_kv.get()[b * rows + j] = kv;
                 }
             }

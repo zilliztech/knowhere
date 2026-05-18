@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <unordered_set>
 
 #include "diskann/aux_utils.h"
@@ -143,7 +144,7 @@ class DiskANNIndexNode : public IndexNode {
     static expected<Resource>
     StaticEstimateLoadResource(const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
                                const knowhere::BaseConfig& config, const IndexVersion& version) {
-        return Resource{file_size_in_bytes / 4, file_size_in_bytes};
+        return Resource{.memoryCost=file_size_in_bytes / 4, .diskCost=file_size_in_bytes};
     }
 
     Status
@@ -502,7 +503,7 @@ Status
 DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
                                                bool use_knowhere_build_pool) {
     assert(file_manager_ != nullptr);
-    std::lock_guard<std::mutex> lock(preparation_lock_);
+    std::scoped_lock lock(preparation_lock_);
     auto& config = static_cast<BaseConfig&>(*cfg);
     auto el_metric_type_or = get_el_metric_type(config.metric_type.value());
     if (!el_metric_type_or.has_value()) {
@@ -614,7 +615,7 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
     // load diskann pq code and meta info
     std::shared_ptr<AlignedFileReader> reader = nullptr;
 
-    reader.reset(new LinuxAlignedFileReader());
+    reader = std::make_shared<LinuxAlignedFileReader>();
 
     pq_flash_index_ = std::make_unique<diskann::PQFlashIndex<DataType>>(reader, diskann_metric);
     auto disk_ann_call = [&]() {
@@ -704,7 +705,7 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
 
         std::vector<folly::Future<folly::Unit>> futures;
         futures.reserve(warmup_num);
-        for (_s64 i = 0; i < (int64_t)warmup_num; ++i) {
+        for (uint64_t i = 0; i < warmup_num; ++i) {
             futures.emplace_back(search_pool_->push([&, index = i]() {
                 pq_flash_index_->cached_beam_search(warmup + (index * warmup_aligned_dim), 1, warmup_L,
                                                     warmup_result_ids_64.data() + (index * 1),
@@ -732,7 +733,7 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
 template <typename DataType>
 Status
 DiskANNIndexNode<DataType>::DeserializeEmbListIfNeed(const BinarySet& binset, std::shared_ptr<Config> cfg) {
-    std::lock_guard<std::mutex> lock(preparation_lock_);
+    std::scoped_lock lock(preparation_lock_);
     auto& config = static_cast<BaseConfig&>(*cfg);
     auto el_metric_type_or = get_el_metric_type(config.metric_type.value());
     if (!el_metric_type_or.has_value()) {
@@ -1010,7 +1011,8 @@ template <typename DataType>
 expected<DataSetPtr>
 DiskANNIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     std::vector<int64_t> entry_points;
-    for (size_t i = 0; i < pq_flash_index_->get_num_medoids(); i++) {
+    entry_points.reserve(pq_flash_index_->get_num_medoids());
+for (size_t i = 0; i < pq_flash_index_->get_num_medoids(); i++) {
         entry_points.push_back(pq_flash_index_->get_medoids()[i]);
     }
     auto diskann_conf = static_cast<const DiskANNConfig&>(*cfg);
