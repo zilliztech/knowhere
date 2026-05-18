@@ -30,6 +30,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "common/metric.h"
 #include "faiss/cppcontrib/knowhere/IndexHNSW.h"
@@ -228,7 +229,7 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
                 uint32_t v = readHeader(&reader);
                 indexes.resize(v);
                 LOG_KNOWHERE_INFO_ << "read " << v << " mvs";
-                for (auto i = 0; i < v; ++i) {
+                for (uint32_t i = 0; i < v; ++i) {
                     auto read_index = std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
                     indexes[i].reset(read_index.release());
                 }
@@ -270,7 +271,7 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
                     uint32_t v = readHeader(r);
                     LOG_KNOWHERE_INFO_ << "read " << v << " mvs";
                     indexes.resize(v);
-                    for (auto i = 0; i < v; ++i) {
+                    for (uint32_t i = 0; i < v; ++i) {
                         auto read_index =
                             std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(r, io_flags));
                         indexes[i].reset(read_index.release());
@@ -435,10 +436,11 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
     uint32_t
     readHeader(faiss::IOReader* f) {
         [[maybe_unused]] uint32_t version = faiss::cppcontrib::knowhere::read_value(f);
-        uint32_t size = faiss::cppcontrib::knowhere::read_value(f);
-        uint32_t cluster_size = faiss::cppcontrib::knowhere::read_value(f);
+        const uint32_t size = faiss::cppcontrib::knowhere::read_value(f);
+        const uint32_t cluster_size = faiss::cppcontrib::knowhere::read_value(f);
         labels.resize(cluster_size);
-        for (auto j = 0; j < cluster_size; ++j) {
+
+        for (uint32_t j = 0; j < cluster_size; ++j) {
             labels[j] = std::make_shared<std::vector<uint32_t>>();
             faiss::cppcontrib::knowhere::read_vector(*labels[j], f);
         }
@@ -471,7 +473,7 @@ convert_rows_to_fp32(const void* const __restrict src_in, float* const __restric
         const knowhere::fp16* const src = reinterpret_cast<const knowhere::fp16*>(src_in);
         for (size_t i = 0; i < nrows; i++) {
             for (size_t j = 0; j < dim; ++j) {
-                dst[i * dim + j] = (float)(src[offsets[i] * dim + j]);
+                dst[i * dim + j] = static_cast<float>(src[offsets[i] * dim + j]);
             }
         }
         return true;
@@ -479,7 +481,7 @@ convert_rows_to_fp32(const void* const __restrict src_in, float* const __restric
         const knowhere::bf16* const src = reinterpret_cast<const knowhere::bf16*>(src_in);
         for (size_t i = 0; i < nrows; i++) {
             for (size_t j = 0; j < dim; ++j) {
-                dst[i * dim + j] = (float)(src[offsets[i] * dim + j]);
+                dst[i * dim + j] = static_cast<float>(src[offsets[i] * dim + j]);
             }
         }
         return true;
@@ -487,7 +489,7 @@ convert_rows_to_fp32(const void* const __restrict src_in, float* const __restric
         const knowhere::fp32* const src = reinterpret_cast<const knowhere::fp32*>(src_in);
         for (size_t i = 0; i < nrows; i++) {
             for (size_t j = 0; j < dim; ++j) {
-                dst[i * dim + j] = (float)(src[offsets[i] * dim + j]);
+                dst[i * dim + j] = src[offsets[i] * dim + j];
             }
         }
         return true;
@@ -495,7 +497,7 @@ convert_rows_to_fp32(const void* const __restrict src_in, float* const __restric
         const knowhere::int8* const src = reinterpret_cast<const knowhere::int8*>(src_in);
         for (size_t i = 0; i < nrows; i++) {
             for (size_t j = 0; j < dim; ++j) {
-                dst[i * dim + j] = (float)(src[offsets[i] * dim + j]);
+                dst[i * dim + j] = static_cast<float>(src[offsets[i] * dim + j]);
             }
         }
         return true;
@@ -504,7 +506,7 @@ convert_rows_to_fp32(const void* const __restrict src_in, float* const __restric
         auto uint8_dim = (dim + 7) / 8;
         for (size_t i = 0; i < nrows; i++) {
             for (size_t j = 0; j < uint8_dim; ++j) {
-                dst[i * dim + j] = (float)(src[offsets[i] * uint8_dim + j]);
+                dst[i * dim + j] = static_cast<float>(src[offsets[i] * uint8_dim + j]);
             }
         }
         return true;
@@ -521,13 +523,13 @@ convert_rows_to_fp32(const void* const __restrict src_in, float* const __restric
     if (src_data_format == DataFormatEnum::fp16) {
         const knowhere::fp16* const src = reinterpret_cast<const knowhere::fp16*>(src_in);
         for (size_t i = 0; i < nrows * dim; i++) {
-            dst[i] = (float)(src[i + start_row * dim]);
+            dst[i] = static_cast<float>(src[i + start_row * dim]);
         }
         return true;
     } else if (src_data_format == DataFormatEnum::bf16) {
         const knowhere::bf16* const src = reinterpret_cast<const knowhere::bf16*>(src_in);
         for (size_t i = 0; i < nrows * dim; i++) {
-            dst[i] = (float)(src[i + start_row * dim]);
+            dst[i] = static_cast<float>(src[i + start_row * dim]);
         }
         return true;
     } else if (src_data_format == DataFormatEnum::fp32) {
@@ -539,7 +541,7 @@ convert_rows_to_fp32(const void* const __restrict src_in, float* const __restric
     } else if (src_data_format == DataFormatEnum::int8) {
         const knowhere::int8* const src = reinterpret_cast<const knowhere::int8*>(src_in);
         for (size_t i = 0; i < nrows * dim; i++) {
-            dst[i] = (float)(src[i + start_row * dim]);
+            dst[i] = static_cast<float>(src[i + start_row * dim]);
         }
         return true;
     } else if (src_data_format == DataFormatEnum::bin1) {
@@ -555,7 +557,7 @@ convert_rows_to_fp32(const void* const __restrict src_in, float* const __restric
         auto uint8_dim = (dim + 7) / 8;
         for (size_t i = 0; i < nrows; i++) {
             for (size_t j = 0; j < uint8_dim; j++) {
-                dst[i * dim + j] = (float)(src[(start_row + i) * uint8_dim + j]);
+                dst[i * dim + j] = static_cast<float>(src[(start_row + i) * uint8_dim + j]);
             }
         }
         return true;
@@ -572,13 +574,13 @@ convert_rows_from_fp32(const float* const __restrict src, void* const __restrict
     if (dst_data_format == DataFormatEnum::fp16) {
         knowhere::fp16* const dst = reinterpret_cast<knowhere::fp16*>(dst_in);
         for (size_t i = 0; i < nrows * dim; i++) {
-            dst[i + start_row * dim] = (knowhere::fp16)src[i];
+            dst[i + start_row * dim] = static_cast<knowhere::fp16>(src[i]);
         }
         return true;
     } else if (dst_data_format == DataFormatEnum::bf16) {
         knowhere::bf16* const dst = reinterpret_cast<knowhere::bf16*>(dst_in);
         for (size_t i = 0; i < nrows * dim; i++) {
-            dst[i + start_row * dim] = (knowhere::bf16)src[i];
+            dst[i + start_row * dim] = static_cast<knowhere::bf16>(src[i]);
         }
         return true;
     } else if (dst_data_format == DataFormatEnum::fp32) {
@@ -593,7 +595,7 @@ convert_rows_from_fp32(const float* const __restrict src, void* const __restrict
             KNOWHERE_THROW_IF_NOT_MSG(src[i] >= std::numeric_limits<knowhere::int8>::min() &&
                                           src[i] <= std::numeric_limits<knowhere::int8>::max(),
                                       "convert float to int8_t overflow");
-            dst[i + start_row * dim] = (knowhere::int8)src[i];
+            dst[i + start_row * dim] = static_cast<knowhere::int8>(src[i]);
         }
         return true;
     } else if (dst_data_format == DataFormatEnum::bin1) {
@@ -603,7 +605,7 @@ convert_rows_from_fp32(const float* const __restrict src, void* const __restrict
             KNOWHERE_THROW_IF_NOT_MSG(src[i] >= std::numeric_limits<knowhere::bin1>::min() &&
                                           src[i] <= std::numeric_limits<knowhere::bin1>::max(),
                                       "convert float to bin1(uint8_t) overflow");
-            dst[i + start_row * uint8_dim] = (knowhere::bin1)src[i];
+            dst[i + start_row * uint8_dim] = static_cast<knowhere::bin1>(src[i]);
         }
         return true;
     } else {
@@ -1405,7 +1407,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
                     std::vector<float> cur_query_tmp(dim);
                     if (data_format == DataFormatEnum::fp32) {
-                        cur_query = (const float*)data + idx * dim;
+                        cur_query = static_cast<const float*>(data) + idx * dim;
                     } else {
                         convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
                         cur_query = cur_query_tmp.data();
@@ -1418,13 +1420,13 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     // check if we need to perform a brute-force search bcz of the lack of results
                     auto bf_search_needed = [&]() -> bool {
                         size_t real_topk = 0;
-                        for (auto j = 0; j < k; ++j) {
+                        for (int j = 0; j < k; ++j) {
                             if (local_ids[j] < 0) {
                                 continue;
                             }
                             real_topk++;
                         }
-                        if (real_topk < k && real_topk < bitset.size() - bitset.count() &&
+                        if (std::cmp_less(real_topk, k) && real_topk < bitset.size() - bitset.count() &&
                             bf_index_wrapper_ptr != nullptr && !hnsw_cfg.disable_fallback_brute_force.value()) {
                             LOG_KNOWHERE_WARNING_ << "required topk: " << k
                                                   << ", but the actual num of results got from hnsw: " << real_topk
@@ -1455,7 +1457,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     }
 
                     if (!labels.empty()) {
-                        for (auto j = 0; j < k; ++j) {
+                        for (int j = 0; j < k; ++j) {
                             local_ids[j] = local_ids[j] < 0 ? local_ids[j] : labels[index_id]->operator[](local_ids[j]);
                         }
                     }
@@ -1523,7 +1525,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         }
         const auto dim = dataset->GetDim();
         const auto rows = dataset->GetRows();
-        const float* data = (const float*)dataset->GetTensor();
+        const float* data = static_cast<const float*>(dataset->GetTensor());
         auto distances = std::make_unique<float[]>(rows * labels_len);
 
         BitsetView bitset(bitset_);
@@ -1559,14 +1561,14 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     const float* cur_query = nullptr;
                     std::vector<float> cur_query_tmp(dim);
                     if (data_format == DataFormatEnum::fp32) {
-                        cur_query = (const float*)data + idx * dim;
+                        cur_query = data + idx * dim;
                     } else {
                         convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
                         cur_query = cur_query_tmp.data();
                     }
 
                     dist_computer->set_query(cur_query);
-                    for (auto j = 0; j < labels_len; j++) {
+                    for (size_t j = 0; j < labels_len; j++) {
                         auto id = labels[j];
                         if (indexes.size() > 1) {
                             id = label_to_internal_offset[labels[j]] - index_rows_sum[index_id];
@@ -1719,7 +1721,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
                         std::vector<float> cur_query_tmp(dim);
                         if (data_format == DataFormatEnum::fp32) {
-                            cur_query = (const float*)data + idx * dim;
+                            cur_query = static_cast<const float*>(data) + idx * dim;
                         } else {
                             convert_rows_to_fp32(data, cur_query_tmp.data(), data_format, idx, 1, dim);
                             cur_query = cur_query_tmp.data();
@@ -1917,7 +1919,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 cur_size += scalar_info[scalar_id].size();
             }
 
-            Status s = train_index((const float*)(tmp_data.get()), i, partition_size);
+            Status s = train_index(tmp_data.get(), i, partition_size);
             if (s != Status::success) {
                 return s;
             }
@@ -2150,7 +2152,7 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
 
         // no scalar info or just one partition(after possible combination), build index on whole data
         if (scalar_info_map.empty() || tmp_combined_scalar_ids.size() <= 1) {
-            return train_index((const float*)(data), 0, rows);
+            return train_index(static_cast<const float*>(data), 0, rows);
         }
 
         LOG_KNOWHERE_INFO_ << "Train HNSW index with Scalar Info";
@@ -2803,7 +2805,7 @@ class BaseFaissRegularIndexHNSWPQNode : public BaseFaissRegularIndexHNSWNode {
                 LOG_KNOWHERE_ERROR_ << "Unsupported data format";
                 return Status::invalid_args;
             }
-            return train_index((const float*)(float_ds_ptr->GetTensor()), 0, rows);
+            return train_index(static_cast<const float*>(float_ds_ptr->GetTensor()), 0, rows);
         }
 
         LOG_KNOWHERE_INFO_ << "Train HNSWPQ Index with Scalar Info";
@@ -3089,7 +3091,7 @@ class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
                 LOG_KNOWHERE_ERROR_ << "Unsupported data format";
                 return Status::invalid_args;
             }
-            return train_index((const float*)(float_ds_ptr->GetTensor()), 0, rows);
+            return train_index(static_cast<const float*>(float_ds_ptr->GetTensor()), 0, rows);
         }
 
         LOG_KNOWHERE_INFO_ << "Train HNSWPRQ Index with Scalar Info";

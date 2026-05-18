@@ -139,28 +139,25 @@ fvec_Linf_sse(const float* x, const float* y, size_t d) {
 
 void
 fvec_madd_sse(size_t n, const float* a, float bf, const float* b, float* c) {
-    if ((n & 3) != 0 || ((((int64_t)a) | ((int64_t)b) | ((int64_t)c)) & 15) != 0) {
+    if ((n & 3) != 0) {
         fvec_madd_ref(n, a, bf, b, c);
         return;
     }
 
     n >>= 2;
     __m128 bf4 = _mm_set_ps1(bf);
-    __m128* a4 = (__m128*)a;
-    __m128* b4 = (__m128*)b;
-    __m128* c4 = reinterpret_cast<__m128*>(c);
 
     while (n--) {
-        *c4 = _mm_add_ps(*a4, _mm_mul_ps(bf4, *b4));
-        b4++;
-        a4++;
-        c4++;
+        _mm_storeu_ps(c, _mm_add_ps(_mm_loadu_ps(a), _mm_mul_ps(bf4, _mm_loadu_ps(b))));
+        a += 4;
+        b += 4;
+        c += 4;
     }
 }
 
 int
 fvec_madd_and_argmin_sse(size_t n, const float* a, float bf, const float* b, float* c) {
-    if ((n & 3) != 0 || ((((int64_t)a) | ((int64_t)b) | ((int64_t)c)) & 15) != 0) {
+    if ((n & 3) != 0) {
         return fvec_madd_and_argmin_ref(n, a, bf, b, c);
     }
 
@@ -170,21 +167,18 @@ fvec_madd_and_argmin_sse(size_t n, const float* a, float bf, const float* b, flo
     __m128i imin4 = _mm_set1_epi32(-1);
     __m128i idx4 = _mm_set_epi32(3, 2, 1, 0);
     __m128i inc4 = _mm_set1_epi32(4);
-    __m128* a4 = (__m128*)a;
-    __m128* b4 = (__m128*)b;
-    __m128* c4 = reinterpret_cast<__m128*>(c);
 
     while (n--) {
-        __m128 vc4 = _mm_add_ps(*a4, _mm_mul_ps(bf4, *b4));
-        *c4 = vc4;
+        __m128 vc4 = _mm_add_ps(_mm_loadu_ps(a), _mm_mul_ps(bf4, _mm_loadu_ps(b)));
+        _mm_storeu_ps(c, vc4);
         __m128i mask = _mm_castps_si128(_mm_cmpgt_ps(vmin4, vc4));
         // imin4 = _mm_blendv_epi8 (imin4, idx4, mask); // slower!
 
         imin4 = _mm_or_si128(_mm_and_si128(mask, idx4), _mm_andnot_si128(mask, imin4));
         vmin4 = _mm_min_ps(vmin4, vc4);
-        b4++;
-        a4++;
-        c4++;
+        a += 4;
+        b += 4;
+        c += 4;
         idx4 = _mm_add_epi32(idx4, inc4);
     }
 
@@ -444,8 +438,8 @@ bf16_vec_inner_product_sse(const ::knowhere::bf16* x, const ::knowhere::bf16* y,
         d -= 4;
     }
     if (d > 0) {
-        __m128 m_x = _mm_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
-        __m128 m_y = _mm_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)y));
+        __m128 m_x = _mm_bf16_to_fp32(mm_masked_read_short(d, reinterpret_cast<const uint16_t*>(x)));
+        __m128 m_y = _mm_bf16_to_fp32(mm_masked_read_short(d, reinterpret_cast<const uint16_t*>(y)));
         m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_y));
     }
     m_res = _mm_hadd_ps(m_res, m_res);
@@ -466,8 +460,8 @@ bf16_vec_L2sqr_sse(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t 
         d -= 4;
     }
     if (d > 0) {
-        __m128 m_x = _mm_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
-        __m128 m_y = _mm_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)y));
+        __m128 m_x = _mm_bf16_to_fp32(mm_masked_read_short(d, reinterpret_cast<const uint16_t*>(x)));
+        __m128 m_y = _mm_bf16_to_fp32(mm_masked_read_short(d, reinterpret_cast<const uint16_t*>(y)));
         m_x = _mm_sub_ps(m_x, m_y);
         m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
     }
@@ -486,7 +480,7 @@ bf16_vec_norm_L2sqr_sse(const ::knowhere::bf16* x, size_t d) {
         d -= 4;
     }
     if (d > 0) {
-        __m128 m_x = _mm_bf16_to_fp32(mm_masked_read_short(d, (uint16_t*)x));
+        __m128 m_x = _mm_bf16_to_fp32(mm_masked_read_short(d, reinterpret_cast<const uint16_t*>(x)));
         m_res = _mm_add_ps(m_res, _mm_mul_ps(m_x, m_x));
     }
     m_res = _mm_hadd_ps(m_res, m_res);

@@ -230,7 +230,7 @@ class SparseInvertedIndexNode : public IndexNode {
                     distances_ids.reserve(distances.size() * 0.3);
                     for (size_t i = 0; i < distances.size(); i++) {
                         if (distances[i] != 0) {
-                            distances_ids.emplace_back((int64_t)i, distances[i]);
+                            distances_ids.emplace_back(static_cast<int64_t>(i), distances[i]);
                         }
                     }
                     return distances_ids;

@@ -127,7 +127,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
     // when index is mutable, it could happen that data count larger than bitset size, see
     // https://github.com/zilliztech/knowhere/issues/70
     // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > (size_t)this->Count()) {
+    if (bitset_.size() > static_cast<size_t>(this->Count())) {
         msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
                           bitset_.size(), this->Count());
         LOG_KNOWHERE_ERROR_ << msg;
@@ -151,8 +151,9 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
     if (b_cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(b_cfg.trace_id.value());
         auto span_id_str = tracer::GetIDFromHexStr(b_cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)b_cfg.trace_flags.value()};
+        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()), 
+                                        .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
+                                        .traceFlags = static_cast<uint8_t>(b_cfg.trace_flags.value())};
         span = tracer::StartSpan("knowhere search", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
         span->SetAttribute(meta::TOPK, b_cfg.k.value());
@@ -196,7 +197,7 @@ Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetVi
     // when index is mutable, it could happen that data count larger than bitset size, see
     // https://github.com/zilliztech/knowhere/issues/70
     // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > (size_t)this->Count()) {
+    if (bitset_.size() > static_cast<size_t>(this->Count())) {
         msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
                           bitset_.size(), this->Count());
         LOG_KNOWHERE_ERROR_ << msg;
@@ -234,7 +235,7 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
     // when index is mutable, it could happen that data count larger than bitset size, see
     // https://github.com/zilliztech/knowhere/issues/70
     // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > (size_t)this->Count()) {
+    if (bitset_.size() > static_cast<size_t>(this->Count())) {
         msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
                           bitset_.size(), this->Count());
         LOG_KNOWHERE_ERROR_ << msg;
@@ -250,8 +251,9 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
     if (b_cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(b_cfg.trace_id.value());
         auto span_id_str = tracer::GetIDFromHexStr(b_cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)b_cfg.trace_flags.value()};
+        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()), 
+                                        .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
+                                        .traceFlags = static_cast<uint8_t>(b_cfg.trace_flags.value())};
         span = tracer::StartSpan("knowhere range search", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
         span->SetAttribute(meta::RADIUS, b_cfg.radius.value());

@@ -13,6 +13,7 @@
 
 #include <faiss/cppcontrib/knowhere/utils/binary_distances.h>
 
+#include <utility>
 #include <vector>
 
 #include "common/metric.h"
@@ -104,9 +105,10 @@ GetInverseVecNorms(const DataSetPtr& base) {
         futs.reserve(num_chunk_dataset);
         for (auto i = 0; i < num_chunk_dataset; i++) {
             futs.emplace_back(pool->push([&, chunk_idx = i] {
-                auto num_vectors = chunk_lims[chunk_idx + 1] - chunk_lims[chunk_idx];
+                const size_t num_vectors = chunk_lims[chunk_idx + 1] - chunk_lims[chunk_idx];
                 auto xb = base_tensor[chunk_idx];
-                for (auto j = 0; j < num_vectors; j++) {
+
+                for (size_t j = 0; j < num_vectors; j++) {
                     inv_norms[chunk_lims[chunk_idx] + j] = compute_inv_norm(xb + j * dim, dim);
                 }
             }));
@@ -125,10 +127,11 @@ GetInverseVecNorms(const DataSetPtr& base) {
         constexpr int64_t chunk_size = 8192;
         auto chunk_num = (nb + chunk_size - 1) / chunk_size;
         futs.reserve(chunk_num);
-        for (auto i = 0; i < nb; i += chunk_size) {
-            auto last = std::min(i + chunk_size, nb);
+
+        for (int64_t i = 0; i < nb; i += chunk_size) {
+            int64_t last = std::min(i + chunk_size, nb);
             futs.emplace_back(pool->push([&, beg_id = i, end_id = last] {
-                for (auto j = beg_id; j < end_id; j++) {
+                for (int64_t j = beg_id; j < end_id; j++) {
                     inv_norms[j] = compute_inv_norm(xb + j * dim, dim);
                 }
             }));
@@ -194,7 +197,7 @@ brute_force_dense_impl(const void* xq, size_t query_idx, const void* xb, const f
         case faiss::METRIC_L2: {
             auto cur_query = (const DataType*)xq + dim * query_idx;
             if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                faiss::cppcontrib::knowhere::knn_L2sqr(cur_query, (const float*)xb, dim, 1, nb, topk, cur_distances,
+                faiss::cppcontrib::knowhere::knn_L2sqr(cur_query, static_cast<const float*>(xb), dim, 1, nb, topk, cur_distances,
                                                        cur_labels, nullptr, id_selector);
             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                 faiss::cppcontrib::knowhere::knn_L2sqr_typed(cur_query, (const DataType*)xb, dim, 1, nb, topk,
@@ -210,7 +213,7 @@ brute_force_dense_impl(const void* xq, size_t query_idx, const void* xb, const f
             if (is_cosine) {
                 if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                     auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                    faiss::cppcontrib::knowhere::knn_cosine(copied_query.get(), (const float*)xb, inv_norms, dim, 1, nb,
+                    faiss::cppcontrib::knowhere::knn_cosine(copied_query.get(), static_cast<const float*>(xb), inv_norms, dim, 1, nb,
                                                             topk, cur_distances, cur_labels, id_selector);
                 } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                     // normalize query vector may cause precision loss, so div query norms in apply
@@ -223,7 +226,7 @@ brute_force_dense_impl(const void* xq, size_t query_idx, const void* xb, const f
                 }
             } else {
                 if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                    faiss::cppcontrib::knowhere::knn_inner_product(cur_query, (const float*)xb, dim, 1, nb, topk,
+                    faiss::cppcontrib::knowhere::knn_inner_product(cur_query, static_cast<const float*>(xb), dim, 1, nb, topk,
                                                                    cur_distances, cur_labels, id_selector);
                 } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                     faiss::cppcontrib::knowhere::knn_inner_product_typed(cur_query, (const DataType*)xb, dim, 1, nb,
@@ -236,19 +239,19 @@ brute_force_dense_impl(const void* xq, size_t query_idx, const void* xb, const f
             break;
         }
         case faiss::METRIC_Jaccard: {
-            auto cur_query = (const uint8_t*)xq + (dim / 8) * query_idx;
-            faiss::float_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, cur_distances};
-            faiss::cppcontrib::knowhere::binary_knn_hc(faiss::METRIC_Jaccard, &res, cur_query, (const uint8_t*)xb, nb,
+            auto cur_query = static_cast<const uint8_t*>(xq) + (dim / 8) * query_idx;
+            faiss::float_maxheap_array_t res = {.nh=static_cast<size_t>(1), .k=(topk), .ids=cur_labels, .val=cur_distances};
+            faiss::cppcontrib::knowhere::binary_knn_hc(faiss::METRIC_Jaccard, &res, cur_query, static_cast<const uint8_t*>(xb), nb,
                                                        dim / 8, id_selector);
             break;
         }
         case faiss::METRIC_Hamming: {
-            auto cur_query = (const uint8_t*)xq + (dim / 8) * query_idx;
+            auto cur_query = static_cast<const uint8_t*>(xq) + (dim / 8) * query_idx;
             std::vector<int32_t> int_distances(topk);
-            faiss::int_maxheap_array_t res = {size_t(1), size_t(topk), cur_labels, int_distances.data()};
-            faiss::cppcontrib::knowhere::binary_knn_hc(faiss::METRIC_Hamming, &res, (const uint8_t*)cur_query,
-                                                       (const uint8_t*)xb, nb, dim / 8, id_selector);
-            for (int i = 0; i < topk; ++i) {
+            faiss::int_maxheap_array_t res = {.nh=static_cast<size_t>(1), .k=(topk), .ids=cur_labels, .val=int_distances.data()};
+            faiss::cppcontrib::knowhere::binary_knn_hc(faiss::METRIC_Hamming, &res, static_cast<const uint8_t*>(cur_query),
+                                                       static_cast<const uint8_t*>(xb), nb, dim / 8, id_selector);
+            for (size_t i = 0; i < topk; ++i) {
                 cur_distances[i] = static_cast<float>(int_distances[i]);
             }
             break;
@@ -256,8 +259,8 @@ brute_force_dense_impl(const void* xq, size_t query_idx, const void* xb, const f
         case faiss::METRIC_Substructure:
         case faiss::METRIC_Superstructure: {
             // only matched ids will be chosen, not to use heap
-            auto cur_query = (const uint8_t*)xq + (dim / 8) * query_idx;
-            faiss::cppcontrib::knowhere::binary_knn_mc(faiss_metric_type, cur_query, (const uint8_t*)xb, 1, nb, topk,
+            auto cur_query = static_cast<const uint8_t*>(xq) + (dim / 8) * query_idx;
+            faiss::cppcontrib::knowhere::binary_knn_mc(faiss_metric_type, cur_query, static_cast<const uint8_t*>(xb), 1, nb, topk,
                                                        dim / 8, cur_distances, cur_labels, id_selector);
             break;
         }
@@ -288,7 +291,7 @@ brute_force_minhash_impl(const void* xq, const void* xb, int64_t* labels, float*
     if (mh_valid_stat != Status::success) {
         return mh_valid_stat;
     }
-    auto search_status = minhash::MinHashVecSearch((const char*)xq, (const char*)xb, mh_vec_size_in_bytes,
+    auto search_status = minhash::MinHashVecSearch(static_cast<const char*>(xq), static_cast<const char*>(xb), mh_vec_size_in_bytes,
                                                    mh_vec_element_size_in_bytes, mh_lsh_band, mh_lsh_r, nq, nb, topk,
                                                    mh_search_with_jaccard, bitset, distances, labels);
     if (search_status != Status::success) {
@@ -408,21 +411,21 @@ brute_force_emb_list_impl(const void* xq, size_t query_el_idx, const void* xb, i
             }
             auto score = score_or.value();
             if (larger_is_closer) {
-                if (minheap.size() < (size_t)topk) {
-                    minheap.emplace((int64_t)base_el_idx + xb_id_offset, score);
+                if (minheap.size() < topk) {
+                    minheap.emplace(static_cast<int64_t>(base_el_idx) + xb_id_offset, score);
                 } else {
                     if (score > minheap.top().val) {
                         minheap.pop();
-                        minheap.emplace((int64_t)base_el_idx + xb_id_offset, score);
+                        minheap.emplace(static_cast<int64_t>(base_el_idx) + xb_id_offset, score);
                     }
                 }
             } else {
-                if (maxheap.size() < (size_t)topk) {
-                    maxheap.emplace((int64_t)base_el_idx + xb_id_offset, score);
+                if (maxheap.size() < topk) {
+                    maxheap.emplace(static_cast<int64_t>(base_el_idx) + xb_id_offset, score);
                 } else {
                     if (score < maxheap.top().val) {
                         maxheap.pop();
-                        maxheap.emplace((int64_t)base_el_idx + xb_id_offset, score);
+                        maxheap.emplace(static_cast<int64_t>(base_el_idx) + xb_id_offset, score);
                     }
                 }
             }
@@ -437,7 +440,7 @@ brute_force_emb_list_impl(const void* xq, size_t query_el_idx, const void* xb, i
             dis[query_el_idx * topk + real_el_k - j - 1] = a.val;
             minheap.pop();
         }
-        for (size_t j = real_el_k; j < (size_t)topk; j++) {
+        for (size_t j = real_el_k; j < topk; j++) {
             ids[query_el_idx * topk + j] = -1;
             dis[query_el_idx * topk + j] = std::numeric_limits<float>::min();
         }
@@ -449,7 +452,7 @@ brute_force_emb_list_impl(const void* xq, size_t query_el_idx, const void* xb, i
             dis[query_el_idx * topk + real_el_k - j - 1] = a.val;
             maxheap.pop();
         }
-        for (size_t j = real_el_k; j < (size_t)topk; j++) {
+        for (size_t j = real_el_k; j < topk; j++) {
             ids[query_el_idx * topk + j] = -1;
             dis[query_el_idx * topk + j] = std::numeric_limits<float>::max();
         }
@@ -486,8 +489,8 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
         auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)cfg.trace_flags.value()};
+        auto ctx = tracer::TraceContext{.traceID=(uint8_t*)trace_id_str.c_str(), .spanID=(uint8_t*)span_id_str.c_str(),
+                                        .traceFlags=static_cast<uint8_t>(cfg.trace_flags.value())};
         span = tracer::StartSpan("knowhere bf search with buf", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
         span->SetAttribute(meta::TOPK, cfg.k.value());
@@ -637,7 +640,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
     auto base_tensor = base_dataset->GetTensor();
     auto num_chunk = base_dataset->GetNumChunk();
     auto num_total_vectors = base_dataset->GetRows();
-    if (num_total_vectors != chunk_lims[num_chunk]) {
+    if (std::cmp_not_equal(num_total_vectors ,chunk_lims[num_chunk])) {
         LOG_KNOWHERE_ERROR_ << "the num_rows should be equal to the last element of chunk_lims";
         return Status::invalid_args;
     }
@@ -649,8 +652,8 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
         auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)cfg.trace_flags.value()};
+        auto ctx = tracer::TraceContext{.traceID=(uint8_t*)trace_id_str.c_str(), .spanID=(uint8_t*)span_id_str.c_str(),
+                                        .traceFlags=static_cast<uint8_t>(cfg.trace_flags.value())};
         span = tracer::StartSpan("knowhere bf search [on chunk] with buf", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
         span->SetAttribute(meta::TOPK, cfg.k.value());
@@ -717,7 +720,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                         auto global_id = static_cast<int64_t>(id) + static_cast<int64_t>(chunk_lims[chunk_idx]);
                         auto distance = tmp_distances[j];
                         if (larger_is_closer) {
-                            if (minheap.size() < (size_t)k) {
+                            if (minheap.size() < static_cast<size_t>(k)) {
                                 minheap.emplace(global_id, distance);
                             } else {
                                 if (distance > minheap.top().val) {
@@ -726,7 +729,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                                 }
                             }
                         } else {
-                            if (maxheap.size() < (size_t)k) {
+                            if (maxheap.size() < static_cast<size_t>(k)) {
                                 maxheap.emplace(global_id, distance);
                             } else {
                                 if (distance < maxheap.top().val) {
@@ -746,7 +749,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                         dis[k * query_idx + real_el_k - j - 1] = a.val;
                         minheap.pop();
                     }
-                    for (size_t j = real_el_k; j < (size_t)k; j++) {
+                    for (size_t j = real_el_k; std::cmp_less(j ,k); j++) {
                         ids[k * query_idx + j] = -1;
                         dis[k * query_idx + j] = std::numeric_limits<float>::min();
                     }
@@ -758,7 +761,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                         dis[k * query_idx + real_el_k - j - 1] = a.val;
                         maxheap.pop();
                     }
-                    for (size_t j = real_el_k; j < (size_t)k; j++) {
+                    for (size_t j = real_el_k; std::cmp_less(j ,k); j++) {
                         ids[k * query_idx + j] = -1;
                         dis[k * query_idx + j] = std::numeric_limits<float>::max();
                     }
@@ -800,7 +803,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
         auto pool = ThreadPool::GetGlobalSearchThreadPool();
         std::vector<folly::Future<Status>> futs;
         futs.reserve(num_query_el);
-        for (auto query_el_i = 0; query_el_i < num_query_el; query_el_i++) {
+        for (auto query_el_i = 0; std::cmp_less(query_el_i , num_query_el); query_el_i++) {
             auto num_query_vectors = query_el_offset.get_el_len(query_el_i);
             if (num_query_vectors == 0) {
                 continue;
@@ -842,7 +845,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                         }
                         auto distance = tmp_distances[j];
                         if (larger_is_closer) {
-                            if (minheap.size() < (size_t)k) {
+                            if (minheap.size() < static_cast<size_t>(k)) {
                                 minheap.emplace(id, distance);
                             } else {
                                 if (distance > minheap.top().val) {
@@ -851,7 +854,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                                 }
                             }
                         } else {
-                            if (maxheap.size() < (size_t)k) {
+                            if (maxheap.size() < static_cast<size_t>(k)) {
                                 maxheap.emplace(id, distance);
                             } else {
                                 if (distance < maxheap.top().val) {
@@ -871,7 +874,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                         dis[k * query_el_idx + real_el_k - j - 1] = a.val;
                         minheap.pop();
                     }
-                    for (size_t j = real_el_k; j < (size_t)k; j++) {
+                    for (size_t j = real_el_k; std::cmp_less(j ,k); j++) {
                         ids[k * query_el_idx + j] = -1;
                         dis[k * query_el_idx + j] = std::numeric_limits<float>::min();
                     }
@@ -883,7 +886,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                         dis[k * query_el_idx + real_el_k - j - 1] = a.val;
                         maxheap.pop();
                     }
-                    for (size_t j = real_el_k; j < (size_t)k; j++) {
+                    for (size_t j = real_el_k; std::cmp_less(j ,k); j++) {
                         ids[k * query_el_idx + j] = -1;
                         dis[k * query_el_idx + j] = std::numeric_limits<float>::max();
                     }
@@ -926,8 +929,8 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
         auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)cfg.trace_flags.value()};
+        auto ctx = tracer::TraceContext{.traceID=(uint8_t*)trace_id_str.c_str(), .spanID=(uint8_t*)span_id_str.c_str(),
+                                        .traceFlags=static_cast<uint8_t>(cfg.trace_flags.value())};
         span = tracer::StartSpan("knowhere bf range search", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
         span->SetAttribute(meta::RADIUS, cfg.radius.value());
@@ -983,8 +986,8 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
     for (int i = 0; i < nq; ++i) {
         futs.emplace_back(pool->push([&, index = i] {
             if constexpr (std::is_same_v<DataType, knowhere::sparse::SparseRow<float>>) {
-                auto cur_query = (const sparse::SparseRow<float>*)xq + index;
-                auto xb_sparse = (const sparse::SparseRow<float>*)xb;
+                auto cur_query = static_cast<const sparse::SparseRow<float>*>(xq) + index;
+                auto xb_sparse = static_cast<const sparse::SparseRow<float>*>(xb);
                 std::set<std::pair<float, int64_t>, std::greater<>> result;
                 for (int j = 0; j < nb; ++j) {
                     auto xid = xb_id_offset + j;
@@ -1022,7 +1025,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                     case faiss::METRIC_L2: {
                         [[maybe_unused]] auto cur_query = (const DataType*)xq + dim * index;
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                            faiss::cppcontrib::knowhere::range_search_L2sqr(cur_query, (const float*)xb, dim, 1, nb,
+                            faiss::cppcontrib::knowhere::range_search_L2sqr(cur_query, static_cast<const float*>(xb), dim, 1, nb,
                                                                             radius, &res, id_selector);
                         } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                             faiss::cppcontrib::knowhere::range_search_L2sqr_typed(cur_query, (const DataType*)xb, dim,
@@ -1038,7 +1041,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                         if (is_cosine) {
                             if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                                 auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                                faiss::cppcontrib::knowhere::range_search_cosine(copied_query.get(), (const float*)xb,
+                                faiss::cppcontrib::knowhere::range_search_cosine(copied_query.get(), static_cast<const float*>(xb),
                                                                                  inv_norms.get(), dim, 1, nb, radius,
                                                                                  &res, id_selector);
                             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
@@ -1065,16 +1068,16 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                         break;
                     }
                     case faiss::METRIC_Jaccard: {
-                        auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
+                        auto cur_query = static_cast<const uint8_t*>(xq) + (dim / 8) * index;
                         faiss::cppcontrib::knowhere::binary_range_search<faiss::CMin<float, int64_t>, float>(
-                            faiss::METRIC_Jaccard, cur_query, (const uint8_t*)xb, 1, nb, radius, dim / 8, &res,
+                            faiss::METRIC_Jaccard, cur_query, static_cast<const uint8_t*>(xb), 1, nb, radius, dim / 8, &res,
                             id_selector);
                         break;
                     }
                     case faiss::METRIC_Hamming: {
-                        auto cur_query = (const uint8_t*)xq + (dim / 8) * index;
+                        auto cur_query = static_cast<const uint8_t*>(xq) + (dim / 8) * index;
                         faiss::cppcontrib::knowhere::binary_range_search<faiss::CMin<int, int64_t>, int>(
-                            faiss::METRIC_Hamming, cur_query, (const uint8_t*)xb, 1, nb, (int)radius, dim / 8, &res,
+                            faiss::METRIC_Hamming, cur_query, static_cast<const uint8_t*>(xb), 1, nb, static_cast<int>(radius), dim / 8, &res,
                             id_selector);
                         break;
                     }
@@ -1145,8 +1148,8 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
         auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)cfg.trace_flags.value()};
+        auto ctx = tracer::TraceContext{.traceID=(uint8_t*)trace_id_str.c_str(), .spanID=(uint8_t*)span_id_str.c_str(),
+                                        .traceFlags=static_cast<uint8_t>(cfg.trace_flags.value())};
         span = tracer::StartSpan("knowhere bf search sparse with buf", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
         span->SetAttribute(meta::TOPK, cfg.k.value());
@@ -1276,8 +1279,8 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
         auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)cfg.trace_flags.value()};
+        auto ctx = tracer::TraceContext{.traceID=(uint8_t*)trace_id_str.c_str(), .spanID=(uint8_t*)span_id_str.c_str(),
+                                        .traceFlags=static_cast<uint8_t>(cfg.trace_flags.value())};
         span = tracer::StartSpan("knowhere bf ann iterator initialization", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
         span->SetAttribute(meta::ROWS, nb);
@@ -1318,7 +1321,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                 switch (faiss_metric_type) {
                     case faiss::METRIC_L2: {
                         if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                            faiss::cppcontrib::knowhere::all_L2sqr(cur_query, (const float*)xb, dim, 1, nb,
+                            faiss::cppcontrib::knowhere::all_L2sqr(cur_query, static_cast<const float*>(xb), dim, 1, nb,
                                                                    distances_ids, nullptr, id_selector);
                         } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                             faiss::cppcontrib::knowhere::all_L2sqr_typed(cur_query, (const DataType*)xb, dim, 1, nb,
@@ -1334,7 +1337,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                         if (is_cosine) {
                             if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                                 auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                                faiss::cppcontrib::knowhere::all_cosine(copied_query.get(), (const float*)xb,
+                                faiss::cppcontrib::knowhere::all_cosine(copied_query.get(), static_cast<const float*>(xb),
                                                                         inv_norms.get(), dim, 1, nb, distances_ids,
                                                                         id_selector);
                             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
@@ -1349,7 +1352,7 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                             }
                         } else {
                             if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                                faiss::cppcontrib::knowhere::all_inner_product(cur_query, (const float*)xb, dim, 1, nb,
+                                faiss::cppcontrib::knowhere::all_inner_product(cur_query, static_cast<const float*>(xb), dim, 1, nb,
                                                                                distances_ids, id_selector);
                             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                 faiss::cppcontrib::knowhere::all_inner_product_typed(
@@ -1479,7 +1482,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
 
     auto num_chunk = base_dataset->GetNumChunk();
     auto num_total_vectors = base_dataset->GetRows();
-    if (num_total_vectors != chunk_lims[num_chunk]) {
+    if (num_total_vectors != static_cast<int64_t>(chunk_lims[num_chunk]))) {
         LOG_KNOWHERE_ERROR_ << "the num_rows should be equal to the last element of chunk_lims";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(
             Status::invalid_args, "the num_rows should be equal to the last element of chunk_lims");
@@ -1504,8 +1507,8 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
         auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)cfg.trace_flags.value()};
+        auto ctx = tracer::TraceContext{.traceID=(uint8_t*)trace_id_str.c_str(), .spanID=(uint8_t*)span_id_str.c_str(),
+                                        .traceFlags=static_cast<uint8_t>(cfg.trace_flags.value())};
         span = tracer::StartSpan("knowhere bf ann iterator initialization", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
         span->SetAttribute(meta::ROWS, num_total_vectors);
@@ -1533,8 +1536,9 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                 [[maybe_unused]] auto cur_query = (const DataType*)xq + code_size * i;
 
                 for (int chunk_idx = 0; chunk_idx < num_chunk; chunk_idx++) {
-                    auto num_base_vectors = chunk_lims[chunk_idx + 1] - chunk_lims[chunk_idx];
+                    const size_t num_base_vectors = chunk_lims[chunk_idx + 1] - chunk_lims[chunk_idx];
                     auto xb = chunk_tensor[chunk_idx];
+
                     BitsetView bitset = bitset_;
                     bitset.set_id_offset(xb_id_offset + chunk_lims[chunk_idx]);
                     BitsetViewIDSelector bw_idselector(bitset);
@@ -1557,7 +1561,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                 KNOWHERE_THROW_MSG(err_msg);
                             }
                             // copy chunk_distances_ids to distances_ids
-                            for (int j = 0; j < num_base_vectors; ++j) {
+                            for (size_t j = 0; j < num_base_vectors; ++j) {
                                 distances_ids[chunk_lims[chunk_idx] + j].id =
                                     chunk_distances_ids[j].id == -1
                                         ? -1
@@ -1586,7 +1590,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                     KNOWHERE_THROW_MSG(err_msg);
                                 }
                                 // copy chunk_distances_ids to distances_ids
-                                for (int j = 0; j < num_base_vectors; ++j) {
+                                for (size_t j = 0; j < num_base_vectors; ++j) {
                                     distances_ids[chunk_lims[chunk_idx] + j].id =
                                         chunk_distances_ids[j].id == -1
                                             ? -1
@@ -1608,7 +1612,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                     KNOWHERE_THROW_MSG(err_msg);
                                 }
                                 // copy chunk_distances_ids to distances_ids
-                                for (int j = 0; j < num_base_vectors; ++j) {
+                                for (size_t j = 0; j < num_base_vectors; ++j) {
                                     distances_ids[chunk_lims[chunk_idx] + j].id =
                                         chunk_distances_ids[j].id == -1
                                             ? -1
@@ -1624,7 +1628,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                 faiss::cppcontrib::knowhere::all_hamming_distances(cur_query, (const DataType*)xb,
                                                                                    code_size, 1, num_base_vectors,
                                                                                    distances.data(), id_selector);
-                                for (int j = 0; j < num_base_vectors; ++j) {
+                                for (size_t j = 0; j < num_base_vectors; ++j) {
                                     if (distances[j] == std::numeric_limits<int32_t>::max()) {
                                         distances_ids[chunk_lims[chunk_idx] + j].id = -1;
                                         distances_ids[chunk_lims[chunk_idx] + j].val = max_dis;
@@ -1647,7 +1651,7 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                 faiss::cppcontrib::knowhere::all_jaccard_distances(cur_query, (const DataType*)xb,
                                                                                    code_size, 1, num_base_vectors,
                                                                                    distances.data(), id_selector);
-                                for (int j = 0; j < num_base_vectors; ++j) {
+                                for (size_t j = 0; j < num_base_vectors; ++j) {
                                     if (distances[j] == std::numeric_limits<float>::infinity()) {
                                         distances_ids[chunk_lims[chunk_idx] + j].id = -1;
                                         distances_ids[chunk_lims[chunk_idx] + j].val = max_dis;
@@ -1711,8 +1715,8 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
     if (cfg.trace_id.has_value()) {
         auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
         auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{(uint8_t*)trace_id_str.c_str(), (uint8_t*)span_id_str.c_str(),
-                                        (uint8_t)cfg.trace_flags.value()};
+        auto ctx = tracer::TraceContext{.traceID=(uint8_t*)trace_id_str.c_str(), .spanID=(uint8_t*)span_id_str.c_str(),
+                                        .traceFlags=static_cast<uint8_t>(cfg.trace_flags.value())};
         span = tracer::StartSpan("knowhere bf iterator sparse", &ctx);
         span->SetAttribute(meta::METRIC_TYPE, metric_str);
         span->SetAttribute(meta::ROWS, rows);

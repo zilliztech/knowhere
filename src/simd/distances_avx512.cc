@@ -301,10 +301,10 @@ float
 fp16_vec_inner_product_avx512(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d) {
     __m512 m512_res = _mm512_setzero_ps();
     while (d >= 32) {
-        auto mx_0 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
-        auto my_0 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y));
-        auto mx_1 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)(x + 16)));
-        auto my_1 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)(y + 16)));
+        auto mx_0 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto my_0 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y)));
+        auto mx_1 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x + 16)));
+        auto my_1 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y + 16)));
         m512_res = _mm512_fmadd_ps(mx_0, my_0, m512_res);
         m512_res = _mm512_fmadd_ps(mx_1, my_1, m512_res);
         x += 32;
@@ -312,8 +312,8 @@ fp16_vec_inner_product_avx512(const ::knowhere::fp16* x, const ::knowhere::fp16*
         d -= 32;
     }
     if (d >= 16) {
-        auto mx = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
-        auto my = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y));
+        auto mx = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto my = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y)));
         m512_res = _mm512_fmadd_ps(mx, my, m512_res);
         x += 16;
         y += 16;
@@ -333,10 +333,10 @@ fp16_vec_L2sqr_avx512(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size
     __m512 m512_res = _mm512_setzero_ps();
     __m512 m512_res_0 = _mm512_setzero_ps();
     while (d >= 32) {
-        auto mx_0 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
-        auto my_0 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y));
-        auto mx_1 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)(x + 16)));
-        auto my_1 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)(y + 16)));
+        auto mx_0 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto my_0 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y)));
+        auto mx_1 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x + 16)));
+        auto my_1 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y + 16)));
         mx_0 = mx_0 - my_0;
         mx_1 = mx_1 - my_1;
         m512_res = _mm512_fmadd_ps(mx_0, mx_0, m512_res);
@@ -347,8 +347,8 @@ fp16_vec_L2sqr_avx512(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size
     }
     m512_res = m512_res + m512_res_0;
     if (d >= 16) {
-        auto mx = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
-        auto my = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y));
+        auto mx = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto my = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y)));
         mx = mx - my;
         m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
         x += 16;
@@ -370,8 +370,8 @@ fp16_vec_norm_L2sqr_avx512(const ::knowhere::fp16* x, size_t d) {
     __m512 m512_res = _mm512_setzero_ps();
     __m512 m512_res_0 = _mm512_setzero_ps();
     while (d >= 32) {
-        auto mx_0 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
-        auto mx_1 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)(x + 16)));
+        auto mx_0 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto mx_1 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x + 16)));
         m512_res = _mm512_fmadd_ps(mx_0, mx_0, m512_res);
         m512_res_0 = _mm512_fmadd_ps(mx_1, mx_1, m512_res_0);
         x += 32;
@@ -379,7 +379,7 @@ fp16_vec_norm_L2sqr_avx512(const ::knowhere::fp16* x, size_t d) {
     }
     m512_res = m512_res + m512_res_0;
     if (d >= 16) {
-        auto mx = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
+        auto mx = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
         m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
         x += 16;
         d -= 16;
@@ -402,11 +402,11 @@ fp16_vec_inner_product_batch_4_avx512(const ::knowhere::fp16* x, const ::knowher
     __m512 m512_res_3 = _mm512_setzero_ps();
     size_t cur_d = d;
     while (cur_d >= 16) {
-        auto mx = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
-        auto my0 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y0));
-        auto my1 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y1));
-        auto my2 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y2));
-        auto my3 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y3));
+        auto mx = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto my0 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y0)));
+        auto my1 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y1)));
+        auto my2 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y2)));
+        auto my3 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y3)));
         m512_res_0 = _mm512_fmadd_ps(mx, my0, m512_res_0);
         m512_res_1 = _mm512_fmadd_ps(mx, my1, m512_res_1);
         m512_res_2 = _mm512_fmadd_ps(mx, my2, m512_res_2);
@@ -446,11 +446,11 @@ fp16_vec_L2sqr_batch_4_avx512(const ::knowhere::fp16* x, const ::knowhere::fp16*
     __m512 m512_res_3 = _mm512_setzero_ps();
     size_t cur_d = d;
     while (cur_d >= 16) {
-        auto mx = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)x));
-        auto my0 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y0));
-        auto my1 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y1));
-        auto my2 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y2));
-        auto my3 = _mm512_cvtph_ps(_mm256_loadu_si256((__m256i*)y3));
+        auto mx = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto my0 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y0)));
+        auto my1 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y1)));
+        auto my2 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y2)));
+        auto my3 = _mm512_cvtph_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y3)));
         my0 = _mm512_sub_ps(mx, my0);
         my1 = _mm512_sub_ps(mx, my1);
         my2 = _mm512_sub_ps(mx, my2);
@@ -496,10 +496,10 @@ bf16_vec_inner_product_avx512(const ::knowhere::bf16* x, const ::knowhere::bf16*
     __m512 m512_res = _mm512_setzero_ps();
     __m512 m512_res_0 = _mm512_setzero_ps();
     while (d >= 32) {
-        auto mx_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
-        auto my_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y));
-        auto mx_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)(x + 16)));
-        auto my_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)(y + 16)));
+        auto mx_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto my_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y)));
+        auto mx_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x + 16)));
+        auto my_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y + 16)));
         m512_res = _mm512_fmadd_ps(mx_0, my_0, m512_res);
         m512_res_0 = _mm512_fmadd_ps(mx_1, my_1, m512_res_0);
         x += 32;
@@ -508,8 +508,8 @@ bf16_vec_inner_product_avx512(const ::knowhere::bf16* x, const ::knowhere::bf16*
     }
     m512_res = m512_res + m512_res_0;
     if (d >= 16) {
-        auto mx = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
-        auto my = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y));
+        auto mx = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto my = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y)));
         m512_res = _mm512_fmadd_ps(mx, my, m512_res);
         x += 16;
         y += 16;
@@ -529,10 +529,10 @@ bf16_vec_L2sqr_avx512(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size
     __m512 m512_res = _mm512_setzero_ps();
     __m512 m512_res_0 = _mm512_setzero_ps();
     while (d >= 32) {
-        auto mx_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
-        auto my_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y));
-        auto mx_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)(x + 16)));
-        auto my_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)(y + 16)));
+        auto mx_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto my_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y)));
+        auto mx_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x + 16)));
+        auto my_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y + 16)));
         mx_0 = mx_0 - my_0;
         mx_1 = mx_1 - my_1;
         m512_res = _mm512_fmadd_ps(mx_0, mx_0, m512_res);
@@ -543,8 +543,8 @@ bf16_vec_L2sqr_avx512(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size
     }
     m512_res = m512_res + m512_res_0;
     if (d >= 16) {
-        auto mx = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
-        auto my = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y));
+        auto mx = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto my = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y)));
         mx = mx - my;
         m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
         x += 16;
@@ -566,8 +566,8 @@ bf16_vec_norm_L2sqr_avx512(const ::knowhere::bf16* x, size_t d) {
     __m512 m512_res = _mm512_setzero_ps();
     __m512 m512_res_0 = _mm512_setzero_ps();
     while (d >= 32) {
-        auto mx_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
-        auto mx_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)(x + 16)));
+        auto mx_0 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto mx_1 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x + 16)));
         m512_res = _mm512_fmadd_ps(mx_0, mx_0, m512_res);
         m512_res_0 = _mm512_fmadd_ps(mx_1, mx_1, m512_res_0);
         x += 32;
@@ -575,7 +575,7 @@ bf16_vec_norm_L2sqr_avx512(const ::knowhere::bf16* x, size_t d) {
     }
     m512_res = m512_res + m512_res_0;
     if (d >= 16) {
-        auto mx = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
+        auto mx = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
         m512_res = _mm512_fmadd_ps(mx, mx, m512_res);
         x += 16;
         d -= 16;
@@ -598,11 +598,11 @@ bf16_vec_inner_product_batch_4_avx512(const ::knowhere::bf16* x, const ::knowher
     __m512 m512_res_3 = _mm512_setzero_ps();
     size_t cur_d = d;
     while (cur_d >= 16) {
-        auto mx = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
-        auto my0 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y0));
-        auto my1 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y1));
-        auto my2 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y2));
-        auto my3 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y3));
+        auto mx = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto my0 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y0)));
+        auto my1 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y1)));
+        auto my2 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y2)));
+        auto my3 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y3)));
         m512_res_0 = _mm512_fmadd_ps(mx, my0, m512_res_0);
         m512_res_1 = _mm512_fmadd_ps(mx, my1, m512_res_1);
         m512_res_2 = _mm512_fmadd_ps(mx, my2, m512_res_2);
@@ -642,11 +642,11 @@ bf16_vec_L2sqr_batch_4_avx512(const ::knowhere::bf16* x, const ::knowhere::bf16*
     __m512 m512_res_3 = _mm512_setzero_ps();
     size_t cur_d = d;
     while (cur_d >= 16) {
-        auto mx = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)x));
-        auto my0 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y0));
-        auto my1 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y1));
-        auto my2 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y2));
-        auto my3 = _mm512_bf16_to_fp32(_mm256_loadu_si256((__m256i*)y3));
+        auto mx = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(x)));
+        auto my0 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y0)));
+        auto my1 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y1)));
+        auto my2 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y2)));
+        auto my3 = _mm512_bf16_to_fp32(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(y3)));
         my0 = mx - my0;
         my1 = mx - my1;
         my2 = mx - my2;
