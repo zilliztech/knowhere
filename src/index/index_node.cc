@@ -108,7 +108,7 @@ IndexNode::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, co
             }
             result_id_array[idx].push_back(id);
             result_dist_array[idx].push_back(dist);
-            
+
             if (range_search_k >= 0 && result_id_array[idx].size() >= static_cast<size_t>(range_search_k)) {
                 break;
             }
