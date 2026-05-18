@@ -68,7 +68,7 @@ class FlatIndexNode : public IndexNode {
     Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         auto x = dataset->GetTensor();
         auto n = dataset->GetRows();
-        index_->add(n, (const DataType*)x);
+        index_->add(n, static_cast<const DataType*>(x));
         return Status::success;
     }
 
@@ -109,7 +109,7 @@ class FlatIndexNode : public IndexNode {
                     faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
                     if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexFlat>) {
-                        auto cur_query = (const DataType*)x + dim * index;
+                        auto cur_query = static_cast<const DataType*>(x) + dim * index;
                         std::unique_ptr<DataType[]> copied_query = nullptr;
                         if (is_cosine) {
                             copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
@@ -185,7 +185,7 @@ class FlatIndexNode : public IndexNode {
                     faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
 
                     if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexFlat>) {
-                        auto cur_query = (const DataType*)xq + dim * index;
+                        auto cur_query = static_cast<const DataType*>(xq) + dim * index;
                         std::unique_ptr<DataType[]> copied_query = nullptr;
                         if (is_cosine) {
                             copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);

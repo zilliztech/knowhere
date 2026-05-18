@@ -828,7 +828,7 @@ DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_pt
 
     try {
         for (int i = 0; i < nq; i++) {
-            auto single_query = (DataType*)xq + i * dim;
+            auto single_query = static_cast<const DataType*>(xq) + i * dim;
             auto it = std::make_shared<iterator>(transform, single_query, lsearch, beamwidth, filter_ratio, bitset,
                                                  pq_flash_index_.get(), use_knowhere_search_pool);
             vec[i] = it;

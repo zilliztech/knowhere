@@ -108,7 +108,8 @@ IndexNode::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, co
             }
             result_id_array[idx].push_back(id);
             result_dist_array[idx].push_back(dist);
-            if (range_search_k >= 0 && static_cast<int32_t>(result_id_array[idx].size()) >= range_search_k) {
+            
+            if (range_search_k >= 0 && result_id_array[idx].size() >= static_cast<size_t>(range_search_k)) {
                 break;
             }
         }
@@ -153,7 +154,7 @@ IndexNode::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, co
                 continue;
             }
             if (range_search_k > 0) {
-                if (static_cast<int32_t>(early_stop_further_bounds.size()) < range_search_k) {
+                if (early_stop_further_bounds.size() < static_cast<size_t>(range_search_k)) {
                     early_stop_further_bounds.emplace(dist);
                 } else {
                     early_stop_further_bounds.pop();
@@ -321,7 +322,7 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
 
     if (total_vecs == 0) {
         // all emblist are empty list
-        auto result = GenResultDataSet(num_el_ids, dim, (const void*)nullptr);
+        auto result = GenResultDataSet(num_el_ids, dim, nullptr);
         auto* offsets_ptr = new size_t[out_offsets.size()];
         std::memcpy(offsets_ptr, out_offsets.data(), out_offsets.size() * sizeof(size_t));
         result->Set(meta::EMB_LIST_OFFSET, static_cast<const size_t*>(offsets_ptr));
@@ -465,9 +466,9 @@ IndexNode::ParseEmbListMetaHeader(const uint8_t* data, int64_t size) {
         readBinaryPOD(reader, type_len);
         std::string strategy_type(reinterpret_cast<const char*>(data + reader.tellg()), type_len);
         reader.advance(type_len);
-        return {std::move(strategy_type), data + reader.tellg(), static_cast<int64_t>(reader.remaining())};
+        return {.strategy_type=std::move(strategy_type), .strategy_blob=data + reader.tellg(), .strategy_blob_size=static_cast<int64_t>(reader.remaining())};
     }
-    return {meta::EMB_LIST_STRATEGY_TOKENANN, data, size};
+    return {.strategy_type=meta::EMB_LIST_STRATEGY_TOKENANN, .strategy_blob=data, .strategy_blob_size=size};
 }
 
 Status
@@ -618,7 +619,7 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
         }
     }
 
-    if (file_size < static_cast<int64_t>(sizeof(int32_t))) {
+    if (file_size < sizeof(int32_t)) {
         LOG_KNOWHERE_WARNING_ << "emb_list meta file too small: " << file_size;
         return Status::emb_list_inner_error;
     }
@@ -696,7 +697,7 @@ IndexNode::CalcDistByRawIndex(const DataSetPtr dataset, const int64_t* labels, s
                 knowhere::checkCancellation(op_context);
                 std::unique_ptr<faiss::DistanceComputer> dist_computer(emb_list_raw_index_->get_distance_computer());
 
-                const float* cur_query = (const float*)query_data + idx * dim;
+                const float* cur_query = static_cast<const float*>(query_data) + idx * dim;
                 std::unique_ptr<float[]> copied_query = nullptr;
                 if (is_cosine) {
                     copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);

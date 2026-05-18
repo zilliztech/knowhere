@@ -375,7 +375,7 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                                                      static_cast<uint32_t>(build_conf.disk_pq_dims.value()),
                                                      false,
                                                      build_conf.accelerate_build.value(),
-                                                     (uint32_t)num_nodes_to_cache, /* num_nodes_to_cache */
+                                                     static_cast<uint32_t>(num_nodes_to_cache), /* num_nodes_to_cache */
                                                      build_conf.shuffle_build.value(),
                                                      true,
                                                      static_cast<uint32_t>(build_conf.inline_pq.value()),
