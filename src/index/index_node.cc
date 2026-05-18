@@ -466,9 +466,11 @@ IndexNode::ParseEmbListMetaHeader(const uint8_t* data, int64_t size) {
         readBinaryPOD(reader, type_len);
         std::string strategy_type(reinterpret_cast<const char*>(data + reader.tellg()), type_len);
         reader.advance(type_len);
-        return {.strategy_type=std::move(strategy_type), .strategy_blob=data + reader.tellg(), .strategy_blob_size=static_cast<int64_t>(reader.remaining())};
+        return {.strategy_type = std::move(strategy_type),
+                .strategy_blob = data + reader.tellg(),
+                .strategy_blob_size = static_cast<int64_t>(reader.remaining())};
     }
-    return {.strategy_type=meta::EMB_LIST_STRATEGY_TOKENANN, .strategy_blob=data, .strategy_blob_size=size};
+    return {.strategy_type = meta::EMB_LIST_STRATEGY_TOKENANN, .strategy_blob = data, .strategy_blob_size = size};
 }
 
 Status

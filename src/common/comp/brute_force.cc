@@ -200,8 +200,8 @@ brute_force_dense_impl(const void* xq, size_t query_idx, const void* xb, const f
                 faiss::cppcontrib::knowhere::knn_L2sqr(cur_query, static_cast<const float*>(xb), dim, 1, nb, topk,
                                                        cur_distances, cur_labels, nullptr, id_selector);
             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
-                faiss::cppcontrib::knowhere::knn_L2sqr_typed(cur_query, static_cast<const DataType*>(xb), dim, 1, nb, topk,
-                                                             cur_distances, cur_labels, nullptr, id_selector);
+                faiss::cppcontrib::knowhere::knn_L2sqr_typed(cur_query, static_cast<const DataType*>(xb), dim, 1, nb,
+                                                             topk, cur_distances, cur_labels, nullptr, id_selector);
             } else {
                 LOG_KNOWHERE_ERROR_ << "Metric L2 not supported for current vector type";
                 return Status::faiss_inner_error;
@@ -219,8 +219,9 @@ brute_force_dense_impl(const void* xq, size_t query_idx, const void* xb, const f
                 } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                     // normalize query vector may cause precision loss, so div query norms in apply
                     // function
-                    faiss::cppcontrib::knowhere::knn_cosine_typed(cur_query, static_cast<const DataType*>(xb), inv_norms, dim, 1, nb,
-                                                                  topk, cur_distances, cur_labels, id_selector);
+                    faiss::cppcontrib::knowhere::knn_cosine_typed(cur_query, static_cast<const DataType*>(xb),
+                                                                  inv_norms, dim, 1, nb, topk, cur_distances,
+                                                                  cur_labels, id_selector);
                 } else {
                     LOG_KNOWHERE_ERROR_ << "Metric COSINE not supported for current vector type";
                     return Status::faiss_inner_error;
@@ -230,8 +231,9 @@ brute_force_dense_impl(const void* xq, size_t query_idx, const void* xb, const f
                     faiss::cppcontrib::knowhere::knn_inner_product(cur_query, static_cast<const float*>(xb), dim, 1, nb,
                                                                    topk, cur_distances, cur_labels, id_selector);
                 } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
-                    faiss::cppcontrib::knowhere::knn_inner_product_typed(cur_query, static_cast<const DataType*>(xb), dim, 1, nb,
-                                                                         topk, cur_distances, cur_labels, id_selector);
+                    faiss::cppcontrib::knowhere::knn_inner_product_typed(cur_query, static_cast<const DataType*>(xb),
+                                                                         dim, 1, nb, topk, cur_distances, cur_labels,
+                                                                         id_selector);
                 } else {
                     LOG_KNOWHERE_ERROR_ << "Metric IP not supported for current vector type";
                     return Status::faiss_inner_error;
@@ -1035,8 +1037,8 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                             faiss::cppcontrib::knowhere::range_search_L2sqr(cur_query, static_cast<const float*>(xb),
                                                                             dim, 1, nb, radius, &res, id_selector);
                         } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
-                            faiss::cppcontrib::knowhere::range_search_L2sqr_typed(cur_query, static_cast<const DataType*>(xb), dim,
-                                                                                  1, nb, radius, &res, id_selector);
+                            faiss::cppcontrib::knowhere::range_search_L2sqr_typed(
+                                cur_query, static_cast<const DataType*>(xb), dim, 1, nb, radius, &res, id_selector);
                         } else {
                             LOG_KNOWHERE_ERROR_ << "Metric L2 not supported for current vector type";
                             return Status::faiss_inner_error;
@@ -1053,9 +1055,9 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                                     radius, &res, id_selector);
                             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                 // normalize query vector may cause precision loss, so div query norms in apply function
-                                faiss::cppcontrib::knowhere::range_search_cosine_typed(cur_query, static_cast<const DataType*>(xb),
-                                                                                       inv_norms.get(), dim, 1, nb,
-                                                                                       radius, &res, id_selector);
+                                faiss::cppcontrib::knowhere::range_search_cosine_typed(
+                                    cur_query, static_cast<const DataType*>(xb), inv_norms.get(), dim, 1, nb, radius,
+                                    &res, id_selector);
                             } else {
                                 LOG_KNOWHERE_ERROR_ << "Metric COSINE not supported for current vector type";
                                 return Status::faiss_inner_error;
@@ -1333,8 +1335,9 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                             faiss::cppcontrib::knowhere::all_L2sqr(cur_query, static_cast<const float*>(xb), dim, 1, nb,
                                                                    distances_ids, nullptr, id_selector);
                         } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
-                            faiss::cppcontrib::knowhere::all_L2sqr_typed(cur_query, static_cast<const DataType*>(xb), dim, 1, nb,
-                                                                         distances_ids, nullptr, id_selector);
+                            faiss::cppcontrib::knowhere::all_L2sqr_typed(cur_query, static_cast<const DataType*>(xb),
+                                                                         dim, 1, nb, distances_ids, nullptr,
+                                                                         id_selector);
                         } else {
                             std::string err_msg = "Metric L2 not supported for current vector type";
                             LOG_KNOWHERE_ERROR_ << err_msg;
@@ -1351,9 +1354,9 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                                                                         dim, 1, nb, distances_ids, id_selector);
                             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                 // normalize query vector may cause precision loss, so div query norms in apply function
-                                faiss::cppcontrib::knowhere::all_cosine_typed(cur_query, static_cast<const DataType*>(xb),
-                                                                              inv_norms.get(), dim, 1, nb,
-                                                                              distances_ids, id_selector);
+                                faiss::cppcontrib::knowhere::all_cosine_typed(
+                                    cur_query, static_cast<const DataType*>(xb), inv_norms.get(), dim, 1, nb,
+                                    distances_ids, id_selector);
                             } else {
                                 std::string err_msg = "Metric COSINE not supported for current vector type";
                                 LOG_KNOWHERE_ERROR_ << err_msg;
@@ -1365,7 +1368,8 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                                                                                dim, 1, nb, distances_ids, id_selector);
                             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                 faiss::cppcontrib::knowhere::all_inner_product_typed(
-                                    cur_query, static_cast<const DataType*>(xb), dim, 1, nb, distances_ids, id_selector);
+                                    cur_query, static_cast<const DataType*>(xb), dim, 1, nb, distances_ids,
+                                    id_selector);
                             } else {
                                 std::string err_msg = "Metric IP not supported for current vector type";
                                 LOG_KNOWHERE_ERROR_ << err_msg;
@@ -1378,7 +1382,8 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                         if constexpr (std::is_same_v<DataType, knowhere::bin1>) {
                             std::vector<int32_t> distances(nb, std::numeric_limits<int32_t>::max());
                             faiss::cppcontrib::knowhere::all_hamming_distances(
-                                cur_query, static_cast<const DataType*>(xb), code_size, 1, nb, distances.data(), id_selector);
+                                cur_query, static_cast<const DataType*>(xb), code_size, 1, nb, distances.data(),
+                                id_selector);
                             for (int j = 0; j < nb; ++j) {
                                 if (distances[j] == std::numeric_limits<int32_t>::max()) {
                                     distances_ids[j] = {-1, max_dis};
@@ -1397,7 +1402,8 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                         if constexpr (std::is_same_v<DataType, knowhere::bin1>) {
                             std::vector<float> distances(nb, max_dis);
                             faiss::cppcontrib::knowhere::all_jaccard_distances(
-                                cur_query, static_cast<const DataType*>(xb), code_size, 1, nb, distances.data(), id_selector);
+                                cur_query, static_cast<const DataType*>(xb), code_size, 1, nb, distances.data(),
+                                id_selector);
                             for (int j = 0; j < nb; ++j) {
                                 if (distances[j] == std::numeric_limits<float>::infinity()) {
                                     distances_ids[j] = {-1, max_dis};
@@ -1562,9 +1568,9 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                                                        num_base_vectors, chunk_distances_ids, nullptr,
                                                                        id_selector);
                             } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
-                                faiss::cppcontrib::knowhere::all_L2sqr_typed(cur_query, static_cast<const DataType*>(xb), dim, 1,
-                                                                             num_base_vectors, chunk_distances_ids,
-                                                                             nullptr, id_selector);
+                                faiss::cppcontrib::knowhere::all_L2sqr_typed(
+                                    cur_query, static_cast<const DataType*>(xb), dim, 1, num_base_vectors,
+                                    chunk_distances_ids, nullptr, id_selector);
                             } else {
                                 std::string err_msg = "Metric L2 not supported for current vector type";
                                 LOG_KNOWHERE_ERROR_ << err_msg;
@@ -1585,15 +1591,15 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                 auto chunk_inv_norms = inv_norms ? inv_norms.get() + chunk_lims[chunk_idx] : nullptr;
                                 if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
                                     auto copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                                    faiss::cppcontrib::knowhere::all_cosine(copied_query.get(), static_cast<const float*>(xb),
-                                                                            chunk_inv_norms, dim, 1, num_base_vectors,
-                                                                            chunk_distances_ids, id_selector);
+                                    faiss::cppcontrib::knowhere::all_cosine(
+                                        copied_query.get(), static_cast<const float*>(xb), chunk_inv_norms, dim, 1,
+                                        num_base_vectors, chunk_distances_ids, id_selector);
                                 } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                     // normalize query vector may cause precision loss, so div query norms in apply
                                     // function
                                     faiss::cppcontrib::knowhere::all_cosine_typed(
-                                        cur_query, static_cast<const DataType*>(xb), chunk_inv_norms, dim, 1, num_base_vectors,
-                                        chunk_distances_ids, id_selector);
+                                        cur_query, static_cast<const DataType*>(xb), chunk_inv_norms, dim, 1,
+                                        num_base_vectors, chunk_distances_ids, id_selector);
                                 } else {
                                     std::string err_msg = "Metric COSINE not supported for current vector type";
                                     LOG_KNOWHERE_ERROR_ << err_msg;
@@ -1609,13 +1615,13 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                 }
                             } else {
                                 if constexpr (std::is_same_v<DataType, knowhere::fp32>) {
-                                    faiss::cppcontrib::knowhere::all_inner_product(cur_query, static_cast<const float*>(xb), dim, 1,
-                                                                                   num_base_vectors,
-                                                                                   chunk_distances_ids, id_selector);
+                                    faiss::cppcontrib::knowhere::all_inner_product(
+                                        cur_query, static_cast<const float*>(xb), dim, 1, num_base_vectors,
+                                        chunk_distances_ids, id_selector);
                                 } else if constexpr (KnowhereLowPrecisionTypeCheck<DataType>::value) {
                                     faiss::cppcontrib::knowhere::all_inner_product_typed(
-                                        cur_query, static_cast<const DataType*>(xb), dim, 1, num_base_vectors, chunk_distances_ids,
-                                        id_selector);
+                                        cur_query, static_cast<const DataType*>(xb), dim, 1, num_base_vectors,
+                                        chunk_distances_ids, id_selector);
                                 } else {
                                     std::string err_msg = "Metric IP not supported for current vector type";
                                     LOG_KNOWHERE_ERROR_ << err_msg;
@@ -1635,9 +1641,9 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                         case faiss::METRIC_Hamming: {
                             if constexpr (std::is_same_v<DataType, knowhere::bin1>) {
                                 std::vector<int32_t> distances(num_base_vectors, max_dis);
-                                faiss::cppcontrib::knowhere::all_hamming_distances(cur_query, static_cast<const DataType*>(xb),
-                                                                                   code_size, 1, num_base_vectors,
-                                                                                   distances.data(), id_selector);
+                                faiss::cppcontrib::knowhere::all_hamming_distances(
+                                    cur_query, static_cast<const DataType*>(xb), code_size, 1, num_base_vectors,
+                                    distances.data(), id_selector);
                                 for (size_t j = 0; j < num_base_vectors; ++j) {
                                     if (distances[j] == std::numeric_limits<int32_t>::max()) {
                                         distances_ids[chunk_lims[chunk_idx] + j].id = -1;
@@ -1658,9 +1664,9 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                         case faiss::METRIC_Jaccard: {
                             if constexpr (std::is_same_v<DataType, knowhere::bin1>) {
                                 std::vector<float> distances(num_base_vectors, max_dis);
-                                faiss::cppcontrib::knowhere::all_jaccard_distances(cur_query, static_cast<const DataType*>(xb),
-                                                                                   code_size, 1, num_base_vectors,
-                                                                                   distances.data(), id_selector);
+                                faiss::cppcontrib::knowhere::all_jaccard_distances(
+                                    cur_query, static_cast<const DataType*>(xb), code_size, 1, num_base_vectors,
+                                    distances.data(), id_selector);
                                 for (size_t j = 0; j < num_base_vectors; ++j) {
                                     if (distances[j] == std::numeric_limits<float>::infinity()) {
                                         distances_ids[chunk_lims[chunk_idx] + j].id = -1;
