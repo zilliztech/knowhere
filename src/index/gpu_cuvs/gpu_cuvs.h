@@ -21,6 +21,7 @@
 #include <exception>
 #include <fstream>
 #include <istream>
+#include <memory>
 #include <numeric>
 #include <thread>
 #include <tuple>
@@ -73,7 +74,7 @@ struct GpuCuvsIndexNode : public IndexNode {
     using knowhere_config_type = typename KnowhereConfigType<index_kind>::Type;
     using data_type = typename cuvs_knowhere::cuvs_data_type_mapper<DataType>::data_type;
 
-    GpuCuvsIndexNode(int32_t, const Object& object) : index_{} {
+    GpuCuvsIndexNode(int32_t, const Object& object) {
     }
 
     Status
@@ -86,7 +87,8 @@ struct GpuCuvsIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << e.what();
             result = Status::invalid_args;
         }
-        if (index_.is_trained()) {
+        auto& cuvs_index = GetOrCreateIndex();
+        if (cuvs_index.is_trained()) {
             result = Status::index_already_trained;
         }
         if (result == Status::success) {
@@ -94,8 +96,8 @@ struct GpuCuvsIndexNode : public IndexNode {
             auto dim = dataset->GetDim();
             auto const* data = reinterpret_cast<const data_type*>(dataset->GetTensor());
             try {
-                index_.train(cuvs_cfg, data, rows, dim);
-                index_.synchronize(true);
+                cuvs_index.train(cuvs_cfg, data, rows, dim);
+                cuvs_index.synchronize(true);
             } catch (const std::exception& e) {
                 LOG_KNOWHERE_ERROR_ << e.what();
                 result = Status::cuvs_inner_error;
@@ -127,10 +129,14 @@ struct GpuCuvsIndexNode : public IndexNode {
                 auto rows = dataset->GetRows();
                 auto dim = dataset->GetDim();
                 auto const* data = reinterpret_cast<const data_type*>(dataset->GetTensor());
+                if (!index_) {
+                    LOG_KNOWHERE_ERROR_ << "Empty index.";
+                    return expected<DataSetPtr>::Err(Status::empty_index, "empty index");
+                }
                 auto search_result =
-                    index_.search(cuvs_cfg, data, rows, dim, bitset.data(), bitset.byte_size(), bitset.size());
+                    index_->search(cuvs_cfg, data, rows, dim, bitset.data(), bitset.byte_size(), bitset.size());
                 std::this_thread::yield();
-                index_.synchronize();
+                index_->synchronize();
                 return GenResultDataSet(rows, cuvs_cfg.k, std::get<0>(search_result), std::get<1>(search_result));
             } catch (const std::exception& e) {
                 err_msg = std::string{e.what()};
@@ -161,14 +167,14 @@ struct GpuCuvsIndexNode : public IndexNode {
     Serialize(BinarySet& binset) const override {
         auto result = Status::success;
         std::stringbuf buf;
-        if (!index_.is_trained()) {
+        if (!index_ || !index_->is_trained()) {
             result = Status::empty_index;
         } else {
             std::ostream os(&buf);
 
             try {
-                index_.serialize(os);
-                index_.synchronize(true);
+                index_->serialize(os);
+                index_->synchronize(true);
             } catch (const std::exception& e) {
                 LOG_KNOWHERE_ERROR_ << e.what();
                 result = Status::cuvs_inner_error;
@@ -221,7 +227,7 @@ struct GpuCuvsIndexNode : public IndexNode {
 
     int64_t
     Dim() const override {
-        return index_.dim();
+        return index_ ? index_->dim() : 0;
     }
 
     int64_t
@@ -231,7 +237,7 @@ struct GpuCuvsIndexNode : public IndexNode {
 
     int64_t
     Count() const override {
-        return index_.size();
+        return index_ ? index_->size() : 0;
     }
 
     std::string
@@ -250,14 +256,22 @@ struct GpuCuvsIndexNode : public IndexNode {
     using cuvs_knowhere_index_type = typename cuvs_knowhere::cuvs_knowhere_index<K, DataType>;
 
  protected:
-    cuvs_knowhere_index_type index_;
+    std::unique_ptr<cuvs_knowhere_index_type> index_;
+
+    cuvs_knowhere_index_type&
+    GetOrCreateIndex() {
+        if (!index_) {
+            index_ = std::make_unique<cuvs_knowhere_index_type>();
+        }
+        return *index_;
+    }
 
     Status
     DeserializeFromStream(std::istream& stream) {
         auto result = Status::success;
         try {
-            index_ = cuvs_knowhere_index_type::deserialize(stream);
-            index_.synchronize(true);
+            index_ = std::make_unique<cuvs_knowhere_index_type>(cuvs_knowhere_index_type::deserialize(stream));
+            index_->synchronize(true);
         } catch (const std::exception& e) {
             LOG_KNOWHERE_ERROR_ << e.what();
             result = Status::cuvs_inner_error;
