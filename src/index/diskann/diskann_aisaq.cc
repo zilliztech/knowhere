@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <cstdint>
+#include <memory>
 
 #include "diskann/aisaq.h"
 #include "diskann/aux_utils.h"
@@ -84,7 +85,7 @@ class AisaqIndexNode : public IndexNode {
     StaticEstimateLoadResource(const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
                                const knowhere::BaseConfig& config, const IndexVersion& version) {
         uint64_t s = file_size_in_bytes / 1024;
-        return Resource{s, file_size_in_bytes};
+        return Resource{.memoryCost = s, .diskCost = file_size_in_bytes};
     }
 
     Status
@@ -296,15 +297,20 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
         LOG_KNOWHERE_ERROR_ << "inline pq more than max degree value";
         return Status::aisaq_error;
     }
-    if (build_conf.max_degree.value() > (int)diskann::defaults::MAX_AISAQ_MAX_DEGREE) {
+
+    const int32_t max_degree = static_cast<int32_t>(diskann::defaults::MAX_AISAQ_MAX_DEGREE);
+    if (build_conf.max_degree.value() > max_degree) {
         LOG_KNOWHERE_ERROR_ << "max degree more than maximum allowed max degree value";
         return Status::aisaq_error;
     }
+
     if (build_conf.disk_pq_dims.value() < 0 || build_conf.disk_pq_dims.value() > build_conf.dim.value()) {
         LOG_KNOWHERE_ERROR_ << "disk PQ badget more than dimension value";
         return Status::aisaq_error;
     }
-    if (build_conf.search_list_size.value() > (int)diskann::defaults::MAX_AISAQ_SEARCH_LIST_SIZE) {
+
+    const int32_t max_aisaq_search_list_size = static_cast<int32_t>(diskann::defaults::MAX_AISAQ_SEARCH_LIST_SIZE);
+    if (build_conf.search_list_size.value() > max_aisaq_search_list_size) {
         LOG_KNOWHERE_ERROR_ << "search list size value more than maximum allowed value";
         return Status::aisaq_error;
     }
@@ -321,7 +327,7 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                        << " search_cache_budget_gb: " << build_conf.search_cache_budget_gb.value()
                        << " disk PQ budget: " << build_conf.disk_pq_dims.value();
 
-    std::lock_guard<std::mutex> lock(preparation_lock_);
+    std::scoped_lock lock(preparation_lock_);
     if (!CheckMetric(build_conf.metric_type.value())) {
         LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << build_conf.metric_type.value();
         return Status::invalid_metric_type;
@@ -369,10 +375,10 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                                                      static_cast<uint32_t>(build_conf.disk_pq_dims.value()),
                                                      false,
                                                      build_conf.accelerate_build.value(),
-                                                     (uint32_t)num_nodes_to_cache, /* num_nodes_to_cache */
+                                                     static_cast<uint32_t>(num_nodes_to_cache), /* num_nodes_to_cache */
                                                      build_conf.shuffle_build.value(),
                                                      true,
-                                                     (uint32_t)build_conf.inline_pq.value(),
+                                                     static_cast<uint32_t>(build_conf.inline_pq.value()),
                                                      build_conf.rearrange.value(),
                                                      build_conf.num_entry_points.value()};
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
@@ -417,7 +423,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
 
     diskann::aisaq_pq_io_engine pq_read_io_engine = diskann::aisaq_pq_io_engine_default;
 
-    std::lock_guard<std::mutex> lock(preparation_lock_);
+    std::scoped_lock lock(preparation_lock_);
     if (!CheckMetric(prep_conf.metric_type.value())) {
         return Status::invalid_metric_type;
     }
@@ -471,7 +477,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
     // load diskann pq code and meta info
     std::shared_ptr<AlignedFileReader> reader = nullptr;
 
-    reader.reset(new LinuxAlignedFileReader());
+    reader = std::make_shared<LinuxAlignedFileReader>();
 
     pq_flash_index_ = std::make_unique<diskann::PQFlashAisaqIndex<DataType>>(reader, diskann_metric);
 
@@ -575,7 +581,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
 
         std::vector<folly::Future<folly::Unit>> futures;
         futures.reserve(warmup_num);
-        for (_s64 i = 0; i < (int64_t)warmup_num; ++i) {
+        for (uint64_t i = 0; i < warmup_num; ++i) {
             futures.emplace_back(search_pool_->push([&, index = i]() {
                 pq_flash_index_->aisaq_cached_beam_search(warmup + (index * warmup_aligned_dim), 1, warmup_L,
                                                           warmup_result_ids_64.data() + (index * 1),
@@ -624,7 +630,8 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
     if (!search_conf.beamwidth.has_value()) {
         search_conf.beamwidth.value() = diskann::defaults::DEFAULT_AISAQ_BEAMWIDTH;
     } else {
-        if (search_conf.beamwidth.value() > (int)diskann::defaults::MAX_AISAQ_BEAMWIDTH) {
+        const int32_t max_aisaq_beamwidth = static_cast<int32_t>(diskann::defaults::MAX_AISAQ_BEAMWIDTH);
+        if (search_conf.beamwidth.value() > max_aisaq_beamwidth) {
             LOG_KNOWHERE_ERROR_ << "Error. Beam width more than max value";
             return expected<DataSetPtr>::Err(Status::aisaq_error, "beam width more than maximal");
         }
@@ -633,7 +640,9 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
     if (!search_conf.vectors_beamwidth.has_value()) {
         search_conf.vectors_beamwidth.value() = diskann::defaults::DEFAULT_AISAQ_VECTORS_BEAMWIDTH;
     } else {
-        if (search_conf.vectors_beamwidth.value() > (int)diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH) {
+        const int32_t max_aisaq_vectors_beamwidth =
+            static_cast<int32_t>(diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH);
+        if (search_conf.vectors_beamwidth.value() > max_aisaq_vectors_beamwidth) {
             LOG_KNOWHERE_ERROR_ << "Error. Vector beam width more than max value";
             return expected<DataSetPtr>::Err(Status::aisaq_error, "vector beam width more than maximal");
         }
@@ -649,7 +658,7 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
         aisaq_search_config.pq_read_page_cache_size = search_conf.pq_read_page_cache_size.value();
     }
 
-    auto nq = (uint64_t)dataset->GetRows();
+    auto nq = static_cast<uint64_t>(dataset->GetRows());
     auto dim = dataset->GetDim();
     auto xq = static_cast<const DataType*>(dataset->GetTensor());
 
@@ -737,6 +746,8 @@ template <typename DataType>
 expected<DataSetPtr>
 AisaqIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     std::vector<int64_t> entry_points;
+    entry_points.reserve(pq_flash_index_->get_num_medoids());
+
     for (size_t i = 0; i < pq_flash_index_->get_num_medoids(); i++) {
         entry_points.push_back(pq_flash_index_->get_medoids()[i]);
     }

@@ -26,7 +26,7 @@ ClusterFactory::Create(const std::string& name, const Object& object) {
         return expected<Cluster<ClusterNode>>::Err(Status::invalid_cluster_error, "cluster type not supported");
     }
     LOG_KNOWHERE_INFO_ << "use key " << key << " to create knowhere cluster worker " << name;
-    auto fun_map_v = (FunMapValue<Cluster<ClusterNode>>*)(func_mapping_[key].get());
+    auto fun_map_v = static_cast<FunMapValue<Cluster<ClusterNode>>*>(func_mapping_[key].get());
 
     return fun_map_v->fun_value(object);
 }

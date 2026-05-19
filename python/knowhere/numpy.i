@@ -1991,7 +1991,7 @@
 %typemap(argout)
   (DATA_TYPE ARGOUT_ARRAY1[ANY])
 {
-  $result = SWIG_Python_AppendOutput($result,(PyObject*)array$argnum);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,(PyObject*)array$argnum, 1);
 }
 
 /* Typemap suite for (DATA_TYPE* ARGOUT_ARRAY1, DIM_TYPE DIM1)
@@ -2020,7 +2020,7 @@
 %typemap(argout)
   (DATA_TYPE* ARGOUT_ARRAY1, DIM_TYPE DIM1)
 {
-  $result = SWIG_Python_AppendOutput($result,(PyObject*)array$argnum);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,(PyObject*)array$argnum, 1);
 }
 
 /* Typemap suite for (DIM_TYPE DIM1, DATA_TYPE* ARGOUT_ARRAY1)
@@ -2049,7 +2049,7 @@
 %typemap(argout)
   (DIM_TYPE DIM1, DATA_TYPE* ARGOUT_ARRAY1)
 {
-  $result = SWIG_Python_AppendOutput($result,(PyObject*)array$argnum);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,(PyObject*)array$argnum, 1);
 }
 
 /* Typemap suite for (DATA_TYPE ARGOUT_ARRAY2[ANY][ANY])
@@ -2067,7 +2067,7 @@
 %typemap(argout)
   (DATA_TYPE ARGOUT_ARRAY2[ANY][ANY])
 {
-  $result = SWIG_Python_AppendOutput($result,(PyObject*)array$argnum);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,(PyObject*)array$argnum, 1);
 }
 
 /* Typemap suite for (DATA_TYPE ARGOUT_ARRAY3[ANY][ANY][ANY])
@@ -2085,7 +2085,7 @@
 %typemap(argout)
   (DATA_TYPE ARGOUT_ARRAY3[ANY][ANY][ANY])
 {
-  $result = SWIG_Python_AppendOutput($result,(PyObject*)array$argnum);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,(PyObject*)array$argnum, 1);
 }
 
 /* Typemap suite for (DATA_TYPE ARGOUT_ARRAY4[ANY][ANY][ANY][ANY])
@@ -2103,7 +2103,7 @@
 %typemap(argout)
   (DATA_TYPE ARGOUT_ARRAY4[ANY][ANY][ANY][ANY])
 {
-  $result = SWIG_Python_AppendOutput($result,(PyObject*)array$argnum);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,(PyObject*)array$argnum, 1);
 }
 
 /*****************************/
@@ -2128,7 +2128,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DATA_TYPE** ARGOUTVIEW_ARRAY1)
@@ -2149,7 +2149,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DATA_TYPE** ARGOUTVIEW_ARRAY2, DIM_TYPE* DIM1, DIM_TYPE* DIM2)
@@ -2171,7 +2171,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DIM_TYPE* DIM2, DATA_TYPE** ARGOUTVIEW_ARRAY2)
@@ -2193,7 +2193,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DATA_TYPE** ARGOUTVIEW_FARRAY2, DIM_TYPE* DIM1, DIM_TYPE* DIM2)
@@ -2215,7 +2215,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array || !require_fortran(array)) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DIM_TYPE* DIM2, DATA_TYPE** ARGOUTVIEW_FARRAY2)
@@ -2237,7 +2237,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array || !require_fortran(array)) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DATA_TYPE** ARGOUTVIEW_ARRAY3, DIM_TYPE* DIM1, DIM_TYPE* DIM2,
@@ -2261,7 +2261,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DIM_TYPE* DIM2, DIM_TYPE* DIM3,
@@ -2285,7 +2285,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DATA_TYPE** ARGOUTVIEW_FARRAY3, DIM_TYPE* DIM1, DIM_TYPE* DIM2,
@@ -2309,7 +2309,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array || !require_fortran(array)) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DIM_TYPE* DIM2, DIM_TYPE* DIM3,
@@ -2333,7 +2333,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array || !require_fortran(array)) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DATA_TYPE** ARGOUTVIEW_ARRAY4, DIM_TYPE* DIM1, DIM_TYPE* DIM2,
@@ -2358,7 +2358,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DIM_TYPE* DIM2, DIM_TYPE* DIM3, DIM_TYPE* DIM4,
@@ -2383,7 +2383,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DATA_TYPE** ARGOUTVIEW_FARRAY4, DIM_TYPE* DIM1, DIM_TYPE* DIM2,
@@ -2408,7 +2408,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array || !require_fortran(array)) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DIM_TYPE* DIM2, DIM_TYPE* DIM3, DIM_TYPE* DIM4,
@@ -2433,7 +2433,7 @@
   PyArrayObject* array = (PyArrayObject*) obj;
 
   if (!array || !require_fortran(array)) SWIG_fail;
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /*************************************/
@@ -2471,7 +2471,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DATA_TYPE** ARGOUTVIEWM_ARRAY1)
@@ -2505,7 +2505,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DATA_TYPE** ARGOUTVIEWM_ARRAY2, DIM_TYPE* DIM1, DIM_TYPE* DIM2)
@@ -2540,7 +2540,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DIM_TYPE* DIM2, DATA_TYPE** ARGOUTVIEWM_ARRAY2)
@@ -2575,7 +2575,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DATA_TYPE** ARGOUTVIEWM_FARRAY2, DIM_TYPE* DIM1, DIM_TYPE* DIM2)
@@ -2610,7 +2610,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DIM_TYPE* DIM2, DATA_TYPE** ARGOUTVIEWM_FARRAY2)
@@ -2645,7 +2645,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DATA_TYPE** ARGOUTVIEWM_ARRAY3, DIM_TYPE* DIM1, DIM_TYPE* DIM2,
@@ -2682,7 +2682,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DIM_TYPE* DIM2, DIM_TYPE* DIM3,
@@ -2719,7 +2719,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DATA_TYPE** ARGOUTVIEWM_FARRAY3, DIM_TYPE* DIM1, DIM_TYPE* DIM2,
@@ -2756,7 +2756,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DIM_TYPE* DIM2, DIM_TYPE* DIM3,
@@ -2793,7 +2793,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DATA_TYPE** ARGOUTVIEWM_ARRAY4, DIM_TYPE* DIM1, DIM_TYPE* DIM2,
@@ -2831,7 +2831,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DIM_TYPE* DIM2, DIM_TYPE* DIM3, DIM_TYPE* DIM4,
@@ -2869,7 +2869,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DATA_TYPE** ARGOUTVIEWM_FARRAY4, DIM_TYPE* DIM1, DIM_TYPE* DIM2,
@@ -2907,7 +2907,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /* Typemap suite for (DIM_TYPE* DIM1, DIM_TYPE* DIM2, DIM_TYPE* DIM3, DIM_TYPE* DIM4,
@@ -2945,7 +2945,7 @@
   PyArray_SetBaseObject(array,cap);
 %#endif
 
-  $result = SWIG_Python_AppendOutput($result,obj);
+  $result = KNOWHERE_SWIG_PYTHON_APPEND_OUTPUT($result,obj, 1);
 }
 
 /**************************************/

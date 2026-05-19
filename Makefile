@@ -31,6 +31,10 @@ CARDINAL_VERSION_FORCE_CHECKOUT ?=
 WITH_DEBUG ?=
 CONAN_PROFILE ?=
 
+# CMake 4.x removed compatibility with cmake_minimum_required versions below
+# 3.5. Export this so Conan-built third-party packages inherit it too.
+export CMAKE_POLICY_VERSION_MINIMUM ?= 3.5
+
 # Prevent build-flag variables from leaking into the environment of child
 # processes (conan / cmake).  Without this, GNU Make exports command-line
 # variables such as WITH_ASAN to every sub-process, which causes the custom
@@ -104,7 +108,7 @@ ifneq ($(CARDINAL_VERSION_FORCE_CHECKOUT),)
 endif
 
 ifdef CONAN_PROFILE
-    CONAN_SETTINGS += -pr $(CONAN_PROFILE)
+    CONAN_SETTINGS += -pr:h $(CONAN_PROFILE) -pr:b $(CONAN_PROFILE)
 endif
 
 .PHONY: build test \
@@ -173,7 +177,7 @@ help: ## Show available targets
 	@echo "  WITH_CARDINAL=True Enable Cardinal build"
 	@echo "  CARDINAL_VERSION_FORCE_CHECKOUT=True Force Cardinal checkout to configured version"
 	@echo "  WITH_DEBUG=True    Debug build (default: Release)"
-	@echo "  CONAN_PROFILE=<p>  Use a custom Conan profile (e.g. clang, gcc-15)"
+	@echo "  CONAN_PROFILE=<p>  Use one custom Conan profile for host and build"
 	@echo "  LIBCXX=<lib>       Override compiler.libcxx (auto-detected from OS)"
 	@echo ""
 	@echo "Examples:"
@@ -183,5 +187,5 @@ help: ## Show available targets
 	@echo "  make WITH_GPU=True WITH_UT=True   # GPU UT"
 	@echo "  make WITH_DEBUG=True WITH_UT=True # CPU debug + UT"
 	@echo "  make LIBCXX=libc++                # override compiler.libcxx"
-	@echo "  make CONAN_PROFILE=gcc15          # CPU with custom profile"
+	@echo "  make CONAN_PROFILE=/path/to/profile # CPU with custom profile"
 	@echo ""

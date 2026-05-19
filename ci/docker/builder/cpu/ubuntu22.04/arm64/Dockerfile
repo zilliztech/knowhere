@@ -5,7 +5,6 @@ ENV CMAKE_VERSION="v3.30.5"
 ENV CMAKE_TAR="cmake-3.30.5-linux-aarch64.tar.gz"
 ENV CCACHE_DIR="ccache-4.9.1"
 ENV CCACHE_SRC_TAR="v4.9.1.tar.gz"
-ENV BFLOAT16_WHL="bfloat16-1.4.0-cp311-cp311-linux_aarch64.whl"
 
 RUN apt update \
     && apt install -y ca-certificates apt-transport-https software-properties-common lsb-release \
@@ -25,7 +24,7 @@ RUN apt update \
     && apt remove --purge -y \
     && rm -rf /var/lib/apt/lists/*
 
-# install cmake, ccache and bfloat16
+# install cmake, ccache and Python BF16 dtype support
 RUN cd /tmp \
     && wget https://github.com/Kitware/CMake/releases/download/${CMAKE_VERSION}/${CMAKE_TAR} \
     && tar --strip-components=1 -xz -C /usr/local -f ${CMAKE_TAR} \
@@ -37,14 +36,12 @@ RUN cd /tmp \
     && cmake -D CMAKE_BUILD_TYPE=Release .. \
     && make -j3 && make install \
     && cd ../.. && rm -rf ${CCACHE_DIR} ${CCACHE_SRC_TAR} \
-    && wget https://github.com/zilliztech/knowhere/releases/download/v2.3.1/${BFLOAT16_WHL} \
-    && pip3 install ${BFLOAT16_WHL} \
-    && rm -f ${BFLOAT16_WHL}
+    && pip3 install 'numpy>=2,<3' ml-dtypes
 
 # install knowhere dependancies
 RUN apt update \
     && apt install -y libopenblas-openmp-dev libcurl4-openssl-dev libaio-dev libevent-dev lcov \
-    && pip3 install conan==2.25.1 \
+    && pip3 install conan==2.28.1 \
     && conan profile detect --force \
     && conan remote add default-conan-local2 https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local2
 # clone knowhere repo and build to update .conan2

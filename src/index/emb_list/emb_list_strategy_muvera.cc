@@ -337,7 +337,7 @@ class MuveraEmbListStrategy : public EmbListStrategy {
     Status
     Deserialize(const uint8_t* data, int64_t size, const BaseConfig& config) override {
         // 1. Deserialize config parameters
-        constexpr size_t kExpectedConfigSize = 2 * sizeof(int32_t) + 4 * sizeof(int32_t) + sizeof(int64_t);
+        constexpr int64_t kExpectedConfigSize = 2 * sizeof(int32_t) + 4 * sizeof(int32_t) + sizeof(int64_t);
         if (size < static_cast<int64_t>(kExpectedConfigSize)) {
             LOG_KNOWHERE_ERROR_ << "MUVERA: blob too small: " << size << " < " << kExpectedConfigSize;
             return Status::emb_list_inner_error;

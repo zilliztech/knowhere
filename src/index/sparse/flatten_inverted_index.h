@@ -611,7 +611,8 @@ FlattenInvertedIndex<DType, QType>::serialize(MemoryIOWriter& writer) const {
     writer.write(&nr_sections, sizeof(uint32_t));
 
     // since writer doesn't support seekp() for now, calculate all sizes of each sections first
-    InvertedIndexSectionHeader section_headers[nr_sections];
+    std::vector<InvertedIndexSectionHeader> section_headers(nr_sections);
+
     uint64_t used_offset = sizeof(InvertedIndexSectionHeader) * nr_sections + 36;
     section_headers[0].type = InvertedIndexSectionType::POSTING_LISTS;
     section_headers[0].offset = used_offset;
@@ -661,7 +662,7 @@ FlattenInvertedIndex<DType, QType>::serialize(MemoryIOWriter& writer) const {
     assert(curr_section_idx == nr_sections);
 
     // write section headers table
-    writer.write(section_headers, sizeof(InvertedIndexSectionHeader), nr_sections);
+    writer.write(section_headers.data(), sizeof(InvertedIndexSectionHeader), nr_sections);
 
     // write index encoding type and encoded index
     uint32_t index_encoding_type = static_cast<uint32_t>(InvertedIndexEncoding::FLAT);

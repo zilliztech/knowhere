@@ -217,7 +217,7 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
 
     // update stats if possible
     if (hnsw_stats != nullptr) {
-        hnsw_stats->combine({n1, n2, ndis, nhops});
+        hnsw_stats->combine({.n1 = n1, .n2 = n2, .ndis = ndis, .nhops = nhops});
     }
 
     // done, update the results, if needed
@@ -387,7 +387,7 @@ IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_
 
     // update stats if possible
     if (hnsw_stats != nullptr) {
-        hnsw_stats->combine({n1, n2, ndis, nhops});
+        hnsw_stats->combine({.n1 = n1, .n2 = n2, .ndis = ndis, .nhops = nhops});
     }
 
     // done, update the results, if needed

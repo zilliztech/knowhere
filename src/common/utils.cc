@@ -74,7 +74,7 @@ NormalizeVec(DataType* x, int32_t d) {
     if (norm_l2_sqr > 0 && std::abs(1.0f - norm_l2_sqr) > FloatAccuracy) {
         float norm_l2 = std::sqrt(norm_l2_sqr);
         for (int32_t i = 0; i < d; i++) {
-            x[i] = (DataType)((float)x[i] / norm_l2);
+            x[i] = static_cast<DataType>(static_cast<float>(x[i]) / norm_l2);
         }
         return norm_l2;
     }
@@ -104,10 +104,10 @@ CopyAndNormalizeVecs(const DataType* x, size_t rows, int32_t dim) {
 
 template <typename DataType>
 void
-NormalizeDataset(const DataSetPtr dataset) {
+NormalizeDataset(DataSetPtr dataset) {
     auto rows = dataset->GetRows();
     auto dim = dataset->GetDim();
-    auto data = (DataType*)dataset->GetTensor();
+    auto data = const_cast<DataType*>(static_cast<const DataType*>(dataset->GetTensor()));
 
     LOG_KNOWHERE_DEBUG_ << "vector normalize, rows " << rows << ", dim " << dim;
     NormalizeVecs<DataType>(data, rows, dim);
@@ -118,7 +118,7 @@ std::tuple<DataSetPtr, std::vector<float>>
 CopyAndNormalizeDataset(const DataSetPtr dataset) {
     auto rows = dataset->GetRows();
     auto dim = dataset->GetDim();
-    auto data = (DataType*)dataset->GetTensor();
+    auto data = static_cast<const DataType*>(dataset->GetTensor());
 
     LOG_KNOWHERE_DEBUG_ << "vector normalize, rows " << rows << ", dim " << dim;
 

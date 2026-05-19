@@ -57,7 +57,7 @@ IndexFactory::Create(const std::string& name, const int32_t& version, const Obje
         return expected<Index<IndexNode>>::Err(Status::invalid_index_error, "index not supported");
     }
     LOG_KNOWHERE_INFO_ << "use key " << key << " to create knowhere index " << name << " with version " << version;
-    auto fun_map_v = (FunMapValue<Index<IndexNode>>*)(func_mapping_[key].get());
+    auto fun_map_v = static_cast<FunMapValue<Index<IndexNode>>*>(func_mapping_[key].get());
 
 #ifdef KNOWHERE_WITH_CUVS
     if (!checkGpuAvailable(name)) {

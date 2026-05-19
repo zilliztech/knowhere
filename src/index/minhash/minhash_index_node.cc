@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <cstdint>
+#include <utility>
 
 #include "filemanager/FileManager.h"
 #include "index/minhash/minhash_lsh.h"
@@ -98,9 +99,9 @@ class MinHashLSHNode : public IndexNode {
         if (code_in_mem) {
             // TODO: more precise estimation to resolve the following comments
             // unknown dim and rows number, incorrect mem size if code_in_mem == true.
-            return Resource{file_size_in_bytes, file_size_in_bytes};
+            return Resource{.memoryCost = file_size_in_bytes, .diskCost = file_size_in_bytes};
         } else {
-            return Resource{0, file_size_in_bytes};
+            return Resource{.memoryCost = 0, .diskCost = file_size_in_bytes};
         }
     }
 
@@ -227,13 +228,13 @@ MinHashLSHNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
             LOG_KNOWHERE_ERROR_ << "Expecting (dim % 8 == 0) and (mh_element_bit_width % 8 == 0)";
             return Status::invalid_args;
         }
-        size_t mh_vec_element_size = size_t(build_conf.mh_element_bit_width.value() / 8);
-        size_t mh_vec_length = size_t(dim / build_conf.mh_element_bit_width.value());
+        size_t mh_vec_element_size = static_cast<size_t>(build_conf.mh_element_bit_width.value() / 8);
+        size_t mh_vec_length = (dim / build_conf.mh_element_bit_width.value());
         minhash::MinHashLSHBuildParams index_params = {
             .data_path = build_conf.data_path.value(),
             .index_file_path = build_conf.index_prefix.value() + fname_,
-            .band = size_t(build_conf.mh_lsh_band.value()),
-            .block_size = size_t(build_conf.mh_lsh_aligned_block_size.value()),
+            .band = static_cast<size_t>(build_conf.mh_lsh_band.value()),
+            .block_size = static_cast<size_t>(build_conf.mh_lsh_aligned_block_size.value()),
             .with_raw_data = build_conf.with_raw_data.value(),
             .mh_vec_element_size = mh_vec_element_size,
             .mh_vec_length = mh_vec_length};
@@ -315,10 +316,10 @@ MinHashLSHNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
             size_t run_times = (nq + batch_size - 1) / batch_size;
             futures.reserve(run_times);
             for (size_t row = 0; row < run_times; ++row) {
-                futures.emplace_back(
-                    search_pool_->push([&, beg = row * batch_size, end = std::min(int64_t((row + 1) * batch_size), nq),
-                                        p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
-                        for (size_t index = beg; index < (size_t)end; index++) {
+                futures.emplace_back(search_pool_->push(
+                    [&, beg = row * batch_size, end = std::min(static_cast<int64_t>((row + 1) * batch_size), nq),
+                     p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
+                        for (size_t index = beg; std::cmp_less(index, end); index++) {
                             minhash_lsh_->Search(xq + (index * dim), p_dist_ptr + index * topk, p_id_ptr + index * topk,
                                                  &search_params);
                         }

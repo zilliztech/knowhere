@@ -59,7 +59,7 @@ CopyAndNormalizeVecs(const DataType* x, size_t rows, int32_t dim);
 
 template <typename DataType>
 extern void
-NormalizeDataset(const DataSetPtr dataset);
+NormalizeDataset(DataSetPtr dataset);
 
 template <typename DataType>
 extern std::tuple<DataSetPtr, std::vector<float>>

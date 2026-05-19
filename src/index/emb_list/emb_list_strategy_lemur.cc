@@ -117,7 +117,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
 
         // 3. Sample training vectors (reservoir sampling: O(actual_samples) memory).
         std::mt19937 rng(seed_);
-        int32_t actual_samples = std::min(num_train_samples_, static_cast<int32_t>(total_vectors));
+        size_t actual_samples = static_cast<size_t>(std::min(num_train_samples_, static_cast<int32_t>(total_vectors)));
         // Memory check: peak usage is ~2 × actual_samples × num_docs × 4B (y_train + y_train_raw)
         // plus actual_samples × original_dim × 4B (X_train). Cap at 4GB to avoid OOM.
         constexpr size_t kMaxTrainingMemoryBytes = 4ULL * 1024 * 1024 * 1024;  // 4GB
@@ -144,7 +144,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
         }
 
         std::vector<float> X_train(actual_samples * original_dim_);
-        for (int64_t i = 0; i < actual_samples; ++i) {
+        for (size_t i = 0; i < actual_samples; ++i) {
             std::memcpy(X_train.data() + i * original_dim_, raw_data + sample_indices[i] * original_dim_,
                         original_dim_ * sizeof(float));
         }
@@ -560,8 +560,8 @@ class LemurEmbListStrategy : public EmbListStrategy {
         const uint8_t* end = data + size;
 
         // 1. Read magic and version
-        constexpr size_t kMinConfigSize = 6 * sizeof(int32_t) + sizeof(int64_t);  // must match Serialize
-        if (size < static_cast<int64_t>(kMinConfigSize)) {
+        constexpr int64_t kMinConfigSize = 6 * sizeof(int32_t) + sizeof(int64_t);  // must match Serialize
+        if (size < kMinConfigSize) {
             LOG_KNOWHERE_ERROR_ << "LEMUR: blob too small: " << size << " < " << kMinConfigSize;
             return Status::emb_list_inner_error;
         }
@@ -775,7 +775,10 @@ class LemurEmbListStrategy : public EmbListStrategy {
                         break;
                     }
                 }
-                chunks.push_back({chunk_doc_start, cur_doc, chunk_vec_start, chunk_vec_end});
+                chunks.push_back({.doc_start = chunk_doc_start,
+                                  .doc_end = cur_doc,
+                                  .vec_start = chunk_vec_start,
+                                  .vec_end = chunk_vec_end});
             }
         }
 

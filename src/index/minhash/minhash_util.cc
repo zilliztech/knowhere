@@ -10,6 +10,8 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 #include "index/minhash/minhash_util.h"
 
+#include <utility>
+
 namespace knowhere::minhash {
 
 namespace {
@@ -25,7 +27,7 @@ minhash_jaccard_native(const char* x, const char* y, size_t element_length, size
         const char* y_b = y + element_size * i;
         res += (std::memcmp(x_b, y_b, element_size) == 0) ? 1.0f : 0.0f;
     }
-    return float(res) / float(element_length);
+    return (res) / static_cast<float>(element_length);
 }
 
 inline void
@@ -79,7 +81,7 @@ struct MinHashJaccardComputer : faiss::DistanceComputer {
     }
     float
     distance_to_code(const void* x) {
-        return dist1(q, (const char*)x, element_length, element_size);
+        return dist1(q, static_cast<const char*>(x), element_length, element_size);
     }
     float
     operator()(idx_t i) override {
@@ -115,8 +117,7 @@ minhash_lsh_hit_with_topk1_opt_search(const char* x, const char* y, size_t size_
     base_hash_k.reserve(ny * mh_lsh_band);
     base_hash_v.reserve(ny * mh_lsh_band);
     {
-        auto base_kv = minhash::GenTransposedHashKV((const char*)y, ny, size_in_bytes, element_size_in_bytes,
-                                                    mh_lsh_band, mh_lsh_r);
+        auto base_kv = minhash::GenTransposedHashKV(y, ny, size_in_bytes, element_size_in_bytes, mh_lsh_band, mh_lsh_r);
         minhash::SortHashKV(base_kv, ny, mh_lsh_band);
         for (size_t i = 0; i < ny * mh_lsh_band; i++) {
             base_hash_k.emplace_back(base_kv[i].Key);
@@ -126,8 +127,7 @@ minhash_lsh_hit_with_topk1_opt_search(const char* x, const char* y, size_t size_
     std::vector<minhash::KeyType> query_hash_k;
     query_hash_k.reserve(nx * mh_lsh_band);
     {
-        auto query_kv =
-            minhash::GenHashKV((const char*)x, nx, size_in_bytes, element_size_in_bytes, mh_lsh_band, mh_lsh_r);
+        auto query_kv = minhash::GenHashKV(x, nx, size_in_bytes, element_size_in_bytes, mh_lsh_band, mh_lsh_r);
         for (size_t i = 0; i < nx * mh_lsh_band; i++) {
             query_hash_k.emplace_back(query_kv[i].Key);
         }
@@ -143,28 +143,28 @@ minhash_lsh_hit_with_topk1_opt_search(const char* x, const char* y, size_t size_
     size_t run_times = (nx + kQueryBatch - 1) / kQueryBatch;
     futs.reserve(run_times);
     for (size_t row = 0; row < run_times; ++row) {
-        futs.emplace_back(pool->push([&query_hash_k, &base_hash_k, &base_hash_v, &all_res, mh_lsh_band, ny,
-                                      query_beg = row * kQueryBatch,
-                                      query_end = std::min((size_t)((row + 1) * kQueryBatch), (size_t)nx)]() {
-            for (size_t query_id = query_beg; query_id < query_end; query_id++) {
-                auto query_key = query_hash_k.data() + mh_lsh_band * query_id;
-                for (size_t i = 0; i < mh_lsh_band; i++) {
-                    auto hit_id = faiss::cppcontrib::knowhere::u64_binary_search_eq(base_hash_k.data() + i * ny, ny,
-                                                                                    query_key[i]);
-                    if (hit_id != -1) {
-                        all_res[query_id].push(base_hash_v[hit_id], 1.0f);
-                        while (!all_res[query_id].full() && hit_id < mh_lsh_band &&
-                               base_hash_k[i * mh_lsh_band + hit_id] == query_key[i]) {
+        futs.emplace_back(
+            pool->push([&query_hash_k, &base_hash_k, &base_hash_v, &all_res, mh_lsh_band, ny,
+                        query_beg = row * kQueryBatch, query_end = std::min(((row + 1) * kQueryBatch), nx)]() {
+                for (size_t query_id = query_beg; query_id < query_end; query_id++) {
+                    auto query_key = query_hash_k.data() + mh_lsh_band * query_id;
+                    for (size_t i = 0; i < mh_lsh_band; i++) {
+                        auto hit_id = faiss::cppcontrib::knowhere::u64_binary_search_eq(base_hash_k.data() + i * ny, ny,
+                                                                                        query_key[i]);
+                        if (hit_id != -1) {
                             all_res[query_id].push(base_hash_v[hit_id], 1.0f);
-                            hit_id++;
-                        }
-                        if (all_res[query_id].full()) {
-                            break;
+                            while (!all_res[query_id].full() && std::cmp_less(hit_id, mh_lsh_band) &&
+                                   base_hash_k[i * mh_lsh_band + hit_id] == query_key[i]) {
+                                all_res[query_id].push(base_hash_v[hit_id], 1.0f);
+                                hit_id++;
+                            }
+                            if (all_res[query_id].full()) {
+                                break;
+                            }
                         }
                     }
                 }
-            }
-        }));
+            }));
     }
     RETURN_IF_ERROR(WaitAllSuccess(futs));
     return Status::success;
@@ -190,7 +190,7 @@ minhash_ny_batch_search(const char* x, const char* y, size_t size_in_bytes, size
         futs.emplace_back(pool->push([&, batch_idx] {
             ThreadPool::ScopedSearchOmpSetter setter(1);
             int start_query = batch_idx * batch_size;
-            int end_query = std::min(size_t(start_query + batch_size), nx);
+            int end_query = std::min(static_cast<size_t>(start_query + batch_size), nx);
 
             for (int i = start_query; i < end_query; ++i) {
                 auto cur_labels = labels + topk * i;
@@ -198,13 +198,13 @@ minhash_ny_batch_search(const char* x, const char* y, size_t size_in_bytes, size
 
                 if (mh_search_with_jaccard) {
                     size_t mh_length = size_in_bytes / element_size_in_bytes;
-                    auto cur_query = (const char*)x + size_in_bytes * i;
-                    MinHashJaccardKNNSearchByNy(cur_query, (const char*)y, mh_length, element_size_in_bytes, ny, topk,
-                                                bitset, cur_distances, cur_labels);
+                    auto cur_query = x + size_in_bytes * i;
+                    MinHashJaccardKNNSearchByNy(cur_query, y, mh_length, element_size_in_bytes, ny, topk, bitset,
+                                                cur_distances, cur_labels);
                 } else {
-                    auto cur_query = (const char*)x + size_in_bytes * i;
-                    MinHashLSHHitByNy(cur_query, (const char*)y, size_in_bytes, element_size_in_bytes, mh_lsh_band,
-                                      mh_lsh_r, ny, topk, bitset, cur_distances, cur_labels);
+                    auto cur_query = x + size_in_bytes * i;
+                    MinHashLSHHitByNy(cur_query, y, size_in_bytes, element_size_in_bytes, mh_lsh_band, mh_lsh_r, ny,
+                                      topk, bitset, cur_distances, cur_labels);
                 }
             }
             return Status::success;
@@ -240,7 +240,10 @@ GenHashKV(const char* data, size_t rows, size_t data_size, size_t data_element_s
     auto batch_num = (rows + kBatch - 1) / kBatch;
     auto truncated_data_size = band_num * band_size * data_element_size;
     auto build_pool = ThreadPool::GetGlobalBuildThreadPool();
+
     std::vector<folly::Future<folly::Unit>> futures;
+    futures.reserve(batch_num);
+
     for (size_t i = 0; i < batch_num; i++) {
         futures.emplace_back(build_pool->push([&, idx = i]() {
             auto beg_id = idx * kBatch;
@@ -249,17 +252,21 @@ GenHashKV(const char* data, size_t rows, size_t data_size, size_t data_element_s
                 const char* data_j = data + data_size * j;
                 size_t b = 0;
                 for (; b + 4 <= band_num; b += 4) {
-                    res_kv.get()[j * band_num + b] = {GetHashKey(data_j, truncated_data_size, band_num, b),
-                                                      minhash::ValueType(j)};
-                    res_kv.get()[j * band_num + b + 1] = {GetHashKey(data_j, truncated_data_size, band_num, b + 1),
-                                                          minhash::ValueType(j)};
-                    res_kv.get()[j * band_num + b + 2] = {GetHashKey(data_j, truncated_data_size, band_num, b + 2),
-                                                          minhash::ValueType(j)};
-                    res_kv.get()[j * band_num + b + 3] = {GetHashKey(data_j, truncated_data_size, band_num, b + 3),
-                                                          minhash::ValueType(j)};
+                    res_kv.get()[j * band_num + b] = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b),
+                                                      .Value = static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[j * band_num + b + 1] = {
+                        .Key = GetHashKey(data_j, truncated_data_size, band_num, b + 1),
+                        .Value = static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[j * band_num + b + 2] = {
+                        .Key = GetHashKey(data_j, truncated_data_size, band_num, b + 2),
+                        .Value = static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[j * band_num + b + 3] = {
+                        .Key = GetHashKey(data_j, truncated_data_size, band_num, b + 3),
+                        .Value = static_cast<minhash::ValueType>(j)};
                 }
                 for (; b < band_num; b++) {
-                    minhash::KVPair kv = {GetHashKey(data_j, truncated_data_size, band_num, b), minhash::ValueType(j)};
+                    minhash::KVPair kv = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b),
+                                          .Value = static_cast<minhash::ValueType>(j)};
                     res_kv.get()[j * band_num + b] = kv;
                 }
             }
@@ -276,7 +283,10 @@ GenTransposedHashKV(const char* data, size_t rows, size_t data_size, size_t data
     auto batch_num = (rows + kBatch - 1) / kBatch;
     auto build_pool = ThreadPool::GetGlobalBuildThreadPool();
     auto truncated_data_size = band_num * band_size * data_element_size;
+
     std::vector<folly::Future<folly::Unit>> futures;
+    futures.reserve(batch_num);
+
     for (size_t i = 0; i < batch_num; i++) {
         futures.emplace_back(build_pool->push([&, idx = i]() {
             auto beg_id = idx * kBatch;
@@ -285,17 +295,18 @@ GenTransposedHashKV(const char* data, size_t rows, size_t data_size, size_t data
                 const char* data_j = data + data_size * j;
                 size_t b = 0;
                 for (; b + 4 <= band_num; b += 4) {
-                    res_kv.get()[b * rows + j] = {GetHashKey(data_j, truncated_data_size, band_num, b),
-                                                  minhash::ValueType(j)};
-                    res_kv.get()[(b + 1) * rows + j] = {GetHashKey(data_j, truncated_data_size, band_num, b + 1),
-                                                        minhash::ValueType(j)};
-                    res_kv.get()[(b + 2) * rows + j] = {GetHashKey(data_j, truncated_data_size, band_num, b + 2),
-                                                        minhash::ValueType(j)};
-                    res_kv.get()[(b + 3) * rows + j] = {GetHashKey(data_j, truncated_data_size, band_num, b + 3),
-                                                        minhash::ValueType(j)};
+                    res_kv.get()[b * rows + j] = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b),
+                                                  .Value = static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[(b + 1) * rows + j] = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b + 1),
+                                                        .Value = static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[(b + 2) * rows + j] = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b + 2),
+                                                        .Value = static_cast<minhash::ValueType>(j)};
+                    res_kv.get()[(b + 3) * rows + j] = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b + 3),
+                                                        .Value = static_cast<minhash::ValueType>(j)};
                 }
                 for (; b < band_num; b++) {
-                    minhash::KVPair kv = {GetHashKey(data_j, truncated_data_size, band_num, b), minhash::ValueType(j)};
+                    minhash::KVPair kv = {.Key = GetHashKey(data_j, truncated_data_size, band_num, b),
+                                          .Value = static_cast<minhash::ValueType>(j)};
                     res_kv.get()[b * rows + j] = kv;
                 }
             }
@@ -308,7 +319,10 @@ GenTransposedHashKV(const char* data, size_t rows, size_t data_size, size_t data
 void
 SortHashKV(const std::shared_ptr<KVPair[]> kv_code, size_t rows, size_t band) {
     auto build_pool = ThreadPool::GetGlobalBuildThreadPool();
+
     std::vector<folly::Future<folly::Unit>> futures;
+    futures.reserve(band);
+
     for (size_t i = 0; i < band; i++) {
         futures.emplace_back(build_pool->push([&, idx = i]() {
             std::sort(kv_code.get() + rows * idx, kv_code.get() + rows * (idx + 1),
@@ -343,7 +357,7 @@ MinHashJaccardKNNSearchByNy(const char* x, const char* y, size_t length, size_t 
         ids[i] = -1;
     }
     auto computer = std::make_shared<MinHashJaccardComputer>(y, length, element_size);
-    computer->set_query((const float*)x);
+    computer->set_query(reinterpret_cast<const float*>(x));
     auto filter = [&](const size_t j) { return (bitset.empty() || !bitset.test(j)); };
 
     // the lambda that applies a valid element.
@@ -370,7 +384,7 @@ MinHashJaccardKNNSearchByIDs(const char* x, const char* y, const int64_t* sel_id
         }
     };
     auto computer = std::make_shared<MinHashJaccardComputer>(y, length, element_size);
-    computer->set_query((const float*)x);
+    computer->set_query(reinterpret_cast<const float*>(x));
     size_t i = 0;
     float dis0, dis1, dis2, dis3;
     for (; i + 4 < sel_ids_num; i += 4) {
