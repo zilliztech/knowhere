@@ -278,10 +278,10 @@ CheckMetric(const std::string& diskann_metric) {
 }
 }  // namespace
 
-static size_t get_pq_size(size_t points_num, size_t dim, double pq_code_size_gb) {
-
+static size_t
+get_pq_size(size_t points_num, size_t dim, double pq_code_size_gb) {
     double pq_code_size_limit = diskann::get_memory_budget(pq_code_size_gb);
-    size_t num_pq_chunks = (size_t) (std::floor)(_u64(pq_code_size_limit / points_num));
+    size_t num_pq_chunks = (size_t)(std::floor)(_u64(pq_code_size_limit / points_num));
     num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
     num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
     num_pq_chunks = num_pq_chunks > diskann::defaults::MAX_PQ_CHUNKS ? diskann::defaults::MAX_PQ_CHUNKS : num_pq_chunks;
