@@ -145,7 +145,7 @@ void PQFlashAisaqIndex<T>::aisaq_async_generate_cache_list_from_sample_queries(
             state_controller->status.store(
                 ThreadSafeStateController::Status::DOING);
         }
-        T *samples;
+        T *samples = nullptr;
         try {
             auto s = std::chrono::high_resolution_clock::now();
             uint64_t sample_num, sample_dim, sample_aligned_dim;
@@ -217,6 +217,8 @@ void PQFlashAisaqIndex<T>::aisaq_async_generate_cache_list_from_sample_queries(
                       << diff.count() << "s";
         } catch (std::exception &e) {
             LOG(INFO) << "Can't generate Diskann cache: " << e.what();
+        } catch (...) {
+            LOG(INFO) << "Unknown exception while generating cache";
         }
 
         // clear up
@@ -233,6 +235,7 @@ void PQFlashAisaqIndex<T>::aisaq_async_generate_cache_list_from_sample_queries(
         // free samples
         if (samples != nullptr) {
             diskann::aligned_free(samples);
+            samples = nullptr;
         }
         {
             std::unique_lock<std::mutex> guard(state_controller->status_mtx);
@@ -1370,7 +1373,9 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
     float query_norm = query_norm_opt.value();
     AisaqThreadData aisaq_data = aisaq_thread_data.pop();
     auto ctx = this->reader->get_ctx();
-    _aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, ctx);
+    if(aisaq_data.aisaq_pq_reader_ctx) {
+        _aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, ctx);
+    }
     auto release_data = [this, data, aisaq_data, ctx]() mutable {
         _aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, nullptr);
         this->thread_data.push(data);
@@ -1512,7 +1517,9 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
     };
 
     Timer query_timer, io_timer, cpu_timer;
-    _aisaq_pq_vectors_reader->set_page_cache_size(*aisaq_data.aisaq_pq_reader_ctx, pq_read_page_cache_size);
+    if (aisaq_data.aisaq_pq_reader_ctx != nullptr) {
+        _aisaq_pq_vectors_reader->set_page_cache_size(*aisaq_data.aisaq_pq_reader_ctx, pq_read_page_cache_size);
+    }
 
     tsl::robin_set<uint64_t> *visited = query_scratch->visited;
     NeighborPriorityQueue &retset = aisaq_data.retset;

@@ -469,7 +469,7 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
     uint64_t num_nodes_to_cache;
     if (build_conf.disk_pq_dims.value() > 0) {
         uint64_t disk_pq_nchunks = dim;
-        if (build_conf.disk_pq_dims.value() < (int)dim) {
+        if (std::cmp_less(build_conf.disk_pq_dims.value(), dim)) {
             disk_pq_nchunks = build_conf.disk_pq_dims.value();
         }
         num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), disk_pq_nchunks, sizeof(_u8),
@@ -668,7 +668,7 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         uint64_t num_nodes_to_cache = 0;
         if (prep_conf.disk_pq_dims.value() > 0) {
             uint64_t disk_pq_nchunks = pq_flash_index_->get_data_dim();
-            if (prep_conf.disk_pq_dims.value() < (int)pq_flash_index_->get_data_dim()) {
+            if (prep_conf.disk_pq_dims.value() < static_cast<int>(pq_flash_index_->get_data_dim())) {
                 disk_pq_nchunks = prep_conf.disk_pq_dims.value();
             }
             num_nodes_to_cache = GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), disk_pq_nchunks,

@@ -281,7 +281,7 @@ CheckMetric(const std::string& diskann_metric) {
 static size_t
 get_pq_size(size_t points_num, size_t dim, double pq_code_size_gb) {
     double pq_code_size_limit = diskann::get_memory_budget(pq_code_size_gb);
-    size_t num_pq_chunks = (size_t)(std::floor)(_u64(pq_code_size_limit / points_num));
+    size_t num_pq_chunks = static_cast<size_t>((std::floor)(static_cast<_u64>(pq_code_size_limit / points_num)));
     num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
     num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
     num_pq_chunks = num_pq_chunks > diskann::defaults::MAX_PQ_CHUNKS ? diskann::defaults::MAX_PQ_CHUNKS : num_pq_chunks;
@@ -375,16 +375,17 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
     // calc max_node_len in order to estimate number of nodes to cache
     if (build_conf.disk_pq_dims.value() > 0) {
         uint32_t disk_pq_nchunks = dim;
-        if (build_conf.disk_pq_dims.value() < (int)dim) {
+        if (std::cmp_less(build_conf.disk_pq_dims.value(), dim)) {
             disk_pq_nchunks = build_conf.disk_pq_dims.value();
         }
-        max_node_len =
-            (((uint64_t)build_conf.max_degree.value() + 1) * sizeof(uint32_t)) + disk_pq_nchunks * sizeof(_u8);
+        max_node_len = (static_cast<uint64_t>(build_conf.max_degree.value()) + 1) * sizeof(uint32_t) +
+                       disk_pq_nchunks * sizeof(_u8);
         diskann::aisaq_calc_inline_layout<_u8>(build_conf.inline_pq.value(), pq_compressed_nbytes,
                                                build_conf.max_degree.value(), build_conf.rearrange.value(),
                                                inline_pq_vectors, max_node_len);
     } else {
-        max_node_len = (((uint64_t)build_conf.max_degree.value() + 1) * sizeof(uint32_t)) + dim * sizeof(DataType);
+        max_node_len =
+            (static_cast<uint64_t>(build_conf.max_degree.value()) + 1) * sizeof(uint32_t) + dim * sizeof(DataType);
         diskann::aisaq_calc_inline_layout<DataType>(build_conf.inline_pq.value(), pq_compressed_nbytes,
                                                     build_conf.max_degree.value(), build_conf.rearrange.value(),
                                                     inline_pq_vectors, max_node_len);
@@ -658,7 +659,7 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
     assert(search_conf.vectors_beamwidth.has_value());
     assert(search_conf.pq_read_page_cache_size.has_value());
 
-    if (search_conf.beamwidth.value() > (int)diskann::defaults::MAX_AISAQ_BEAMWIDTH) {
+    if (std::cmp_greater(search_conf.beamwidth.value(), diskann::defaults::MAX_AISAQ_BEAMWIDTH)) {
         LOG_KNOWHERE_ERROR_ << "Error. Beam width more than max value";
         return expected<DataSetPtr>::Err(Status::aisaq_error, "beam width more than maximal");
     }
@@ -759,7 +760,10 @@ template <typename DataType>
 expected<DataSetPtr>
 AisaqIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     std::vector<int64_t> entry_points;
-    for (size_t i = 0; i < pq_flash_index_->get_num_medoids(); i++) {
+    auto num_medoids = pq_flash_index_->get_num_medoids();
+    entry_points.reserve(num_medoids);
+
+    for (size_t i = 0; i < num_medoids; i++) {
         entry_points.push_back(pq_flash_index_->get_medoids()[i]);
     }
     auto aisaq_conf = static_cast<const DiskANNConfig&>(*cfg);
