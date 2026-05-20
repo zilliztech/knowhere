@@ -106,14 +106,14 @@ FaissKmeansClusterNode<DataType>::Train(const DataSet& dataset, const Config& cf
     index_factory = std::make_unique<VariantProgressiveDimIndexFactory>(kmeans_conf.metric_type.value());
     const auto num_clusters = kmeans_conf.num_clusters.value();
     std::shared_ptr<faiss::Clustering> previous_clustering = clustering;
-    if (previous_clustering &&
-        (previous_clustering->k != (size_t)num_clusters || previous_clustering->d != (size_t)dim)) {
+    if (previous_clustering && (std::cmp_not_equal(previous_clustering->k, static_cast<size_t>(num_clusters)) ||
+                                std::cmp_not_equal(previous_clustering->d, static_cast<size_t>(dim)))) {
         LOG_KNOWHERE_ERROR_ << "train called again with different params: " << num_clusters << " , " << dim
                             << std::endl;
         return expected<DataSetPtr>::Err(Status::invalid_param_in_json, "rain called again with different params");
     }
     std::vector<size_t> total_points_per_cluster = points_per_cluster;
-    size_t best_score = (size_t)-1, current_score = 0;
+    size_t best_score = static_cast<size_t>(-1), current_score = 0;
     std::vector<size_t> best_point_per_cluster;
     expected<DataSetPtr> best_res;
     std::shared_ptr<faiss::Clustering> best_clustering;
@@ -139,7 +139,9 @@ FaissKmeansClusterNode<DataType>::Train(const DataSet& dataset, const Config& cf
             {
                 int num_threads = kmeans_conf.num_build_thread.has_value() ? kmeans_conf.num_build_thread.value() : 0;
                 ThreadPool::ScopedBuildOmpSetter setter(num_threads);
-                clustering->train(num_rows, train_data, *(*index_factory)(dataset.GetDim()));
+                faiss::Index* the_index = (*index_factory)(dataset.GetDim());
+                clustering->train(num_rows, train_data, *the_index);
+                delete the_index;
             }
             auto res = AssignInternal(dataset, false, current_score);
             if (!res.has_value()) {
@@ -162,7 +164,7 @@ FaissKmeansClusterNode<DataType>::Train(const DataSet& dataset, const Config& cf
         // n_t+t = n_t * a + m_t
         for (size_t i = 0; i < clustering->k; i++) {
             if (best_point_per_cluster[i]) {
-                for (size_t j = 0; j < (size_t)dim; j++) {
+                for (size_t j = 0; std::cmp_less(j, static_cast<size_t>(dim)); j++) {
                     size_t index = i * dim + j;
                     previous_clustering->centroids[index] =
                         (previous_clustering->centroids[index] * total_points_per_cluster[i] * a +
@@ -196,9 +198,8 @@ FaissKmeansClusterNode<DataType>::AssignInternal(const DataSet& dataset, bool ba
     size_t min_points_per_cluster = avg_points_per_cluster / 100 + 1;
     size_t min_points_for_transfer = min_points_per_cluster * 10;
     size_t num_points_assigned_not_optimally = 0;
-    std::vector<size_t> location_diff(num_rows);
-    memset(points_per_cluster.data(), 0, clustering->k * sizeof(size_t));
-    memset(location_diff.data(), 0, num_rows * sizeof(size_t));
+    std::vector<size_t> location_diff(num_rows, 0);
+    std::fill(points_per_cluster.begin(), points_per_cluster.end(), 0);
     auto p_id = std::make_unique<uint32_t[]>(num_rows);
     std::unique_ptr<faiss::Index> index((*index_factory)(dataset.GetDim()));
     if (!index->is_trained) {
@@ -223,6 +224,9 @@ FaissKmeansClusterNode<DataType>::AssignInternal(const DataSet& dataset, bool ba
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
     }
+    // Balancing looks for cluster which didn't have enough points
+    // and tries to move points from other clusters which have more than enough points.
+    // But it moves a point from that cluster only if it is close enough to the cluster we want to move it to.
     if (balance) {
         for (int i = 0; i < num_rows; i++) {
             for (size_t j = 0; j < clustering->k; j++) {
@@ -245,7 +249,8 @@ FaissKmeansClusterNode<DataType>::AssignInternal(const DataSet& dataset, bool ba
             points_per_cluster[idx[i]]++;
         }
     }
-    size_t min_points = num_rows, max_points = 0;
+    size_t min_points = num_rows;
+    size_t max_points = 0;
 
     for (size_t i = 0; i < clustering->k; i++) {
         if (points_per_cluster[i] < min_points) {
@@ -259,10 +264,10 @@ FaissKmeansClusterNode<DataType>::AssignInternal(const DataSet& dataset, bool ba
             int selected_point = -1;
             for (int j = 0; j < num_rows; j++) {
                 bool found = false;
-                if (p_id.get()[j] != (uint32_t)i) {
+                if (p_id.get()[j] != static_cast<uint32_t>(i)) {
                     faiss::idx_t* row_selections = idx.data() + j * clustering->k;
                     for (size_t l = 1; l < clustering->k; l++) {
-                        if (row_selections[l] == (faiss::idx_t)i &&
+                        if (std::cmp_equal(row_selections[l], static_cast<faiss::idx_t>(i)) &&
                             points_per_cluster[row_selections[0]] > min_points_for_transfer) {
                             if (l < best_row) {
                                 best_row = l;
@@ -279,9 +284,10 @@ FaissKmeansClusterNode<DataType>::AssignInternal(const DataSet& dataset, bool ba
                     }
                 }
             }
+            auto old_cluster = p_id.get()[selected_point];
             p_id.get()[selected_point] = i;
             points_per_cluster[i]++;
-            points_per_cluster[selected_point]--;
+            points_per_cluster[old_cluster]--;
         }
     }
     LOG_KNOWHERE_INFO_ << "End assign: min points: " << min_points << " max points: " << max_points

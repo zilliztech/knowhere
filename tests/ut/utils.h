@@ -153,7 +153,7 @@ GetKNNRecall(const knowhere::DataSet& ground_truth, const std::vector<std::vecto
         v.resize(it - v.begin());
         matched_num += v.size();
     }
-    return ((float)matched_num) / ((float)nq * topk_actual);
+    return static_cast<float>(matched_num) / (static_cast<float>(nq) * topk_actual);
 }
 
 //  Compare two ann-search results

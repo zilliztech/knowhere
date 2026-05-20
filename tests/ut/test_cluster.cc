@@ -44,6 +44,7 @@ TEST_CASE("Test Kmeans With Float Vector", "[float metrics]") {
     const std::string NUM_CLUSTERS = "num_clusters";
     const std::string NUM_ITER = "num_iter";
     auto topk = 1;
+    auto maxTopK = 10;
     auto nprobes = 3;
     auto num_trains = 10;
     auto base_gen = [=]() {
@@ -60,7 +61,7 @@ TEST_CASE("Test Kmeans With Float Vector", "[float metrics]") {
 
     const knowhere::Json conf = {
         {knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
-        {knowhere::meta::TOPK, topk},
+        {knowhere::meta::TOPK, maxTopK},
     };
     knowhere::BitsetView bitset;
     auto gt = knowhere::BruteForce::Search<knowhere::fp32>(base_ds, query_ds, conf, bitset);
@@ -118,7 +119,7 @@ TEST_CASE("Test Kmeans With Float Vector", "[float metrics]") {
         res_assign.value().reset();
         float recall_top1 = GetKNNRecall(*gt.value(), result_assign, 1);
         LOG_KNOWHERE_INFO_ << "recall_top1: " << recall_top1;
-        float recall_top10 = GetKNNRecall(*gt.value(), result_assign, 10);
+        float recall_top10 = GetKNNRecall(*gt.value(), result_assign, maxTopK);
         LOG_KNOWHERE_INFO_ << "recall_top10: " << recall_top10;
 
         result_assign.clear();
