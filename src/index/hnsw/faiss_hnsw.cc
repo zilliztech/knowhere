@@ -2174,6 +2174,11 @@ class BaseFaissRegularIndexHNSWFlatNodeTemplate : public BaseFaissRegularIndexHN
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
         return true;
     }
+
+    static Status
+    StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
+        return HnswIndexNode<DataType, hnswlib::QuantType::None>::StaticConfigCheck(cfg, paramType, msg);
+    }
 };
 
 // this is a regular node that can be initialized as some existing index type,
@@ -2492,6 +2497,11 @@ class BaseFaissRegularIndexHNSWFlatNodeTemplateWithSearchFallback : public HNSWI
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
         return true;
+    }
+
+    static Status
+    StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
+        return BaseFaissRegularIndexHNSWFlatNodeTemplate<DataType>::StaticConfigCheck(cfg, paramType, msg);
     }
 
     static std::unique_ptr<BaseConfig>

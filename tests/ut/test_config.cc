@@ -28,42 +28,44 @@
 #endif
 
 void
-checkBuildConfig(knowhere::IndexType indexType, knowhere::Json& json) {
-    std::string msg;
+checkBuildConfig(knowhere::IndexType indexType, const knowhere::Json& json) {
+    const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
     if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::BINARY)) {
-        CHECK(knowhere::IndexStaticFaced<knowhere::bin1>::ConfigCheck(
-                  indexType, knowhere::Version::GetCurrentVersion().VersionNumber(), json, msg) ==
+        auto binary_json = json;
+        binary_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::HAMMING;
+        std::string msg;
+        CHECK(knowhere::IndexStaticFaced<knowhere::bin1>::ConfigCheck(indexType, version, binary_json, msg) ==
               knowhere::Status::success);
         CHECK(msg.empty());
     }
     if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::FLOAT32)) {
-        CHECK(knowhere::IndexStaticFaced<float>::ConfigCheck(indexType,
-                                                             knowhere::Version::GetCurrentVersion().VersionNumber(),
-                                                             json, msg) == knowhere::Status::success);
+        std::string msg;
+        CHECK(knowhere::IndexStaticFaced<float>::ConfigCheck(indexType, version, json, msg) ==
+              knowhere::Status::success);
         CHECK(msg.empty());
     }
     if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::BF16)) {
-        CHECK(knowhere::IndexStaticFaced<knowhere::bf16>::ConfigCheck(
-                  indexType, knowhere::Version::GetCurrentVersion().VersionNumber(), json, msg) ==
+        std::string msg;
+        CHECK(knowhere::IndexStaticFaced<knowhere::bf16>::ConfigCheck(indexType, version, json, msg) ==
               knowhere::Status::success);
         CHECK(msg.empty());
     }
     if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::FP16)) {
-        CHECK(knowhere::IndexStaticFaced<knowhere::fp16>::ConfigCheck(
-                  indexType, knowhere::Version::GetCurrentVersion().VersionNumber(), json, msg) ==
+        std::string msg;
+        CHECK(knowhere::IndexStaticFaced<knowhere::fp16>::ConfigCheck(indexType, version, json, msg) ==
               knowhere::Status::success);
         CHECK(msg.empty());
     }
     if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::SPARSE_U32_F32)) {
-        CHECK(knowhere::IndexStaticFaced<float>::ConfigCheck(indexType,
-                                                             knowhere::Version::GetCurrentVersion().VersionNumber(),
-                                                             json, msg) == knowhere::Status::success);
+        std::string msg;
+        CHECK(knowhere::IndexStaticFaced<float>::ConfigCheck(indexType, version, json, msg) ==
+              knowhere::Status::success);
         CHECK(msg.empty());
     }
 #ifndef KNOWHERE_WITH_CARDINAL
     if (knowhere::IndexFactory::Instance().FeatureCheck(indexType, knowhere::feature::INT8)) {
-        CHECK(knowhere::IndexStaticFaced<knowhere::int8>::ConfigCheck(
-                  indexType, knowhere::Version::GetCurrentVersion().VersionNumber(), json, msg) ==
+        std::string msg;
+        CHECK(knowhere::IndexStaticFaced<knowhere::int8>::ConfigCheck(indexType, version, json, msg) ==
               knowhere::Status::success);
         CHECK(msg.empty());
     }
@@ -512,6 +514,20 @@ TEST_CASE("Test config json parse", "[config]") {
                                                                           version, valid_json,
                                                                           msg) == knowhere::Status::success);
             CHECK(msg.empty());
+        }
+
+        // ---- HNSW (bin1): binary metric whitelist is enforced ----
+        {
+            knowhere::Json bad_json = knowhere::Json::parse(R"({
+                "metric_type": "L2",
+                "M": 16,
+                "efConstruction": 96
+            })");
+            std::string msg;
+            CHECK(knowhere::IndexStaticFaced<knowhere::bin1>::ConfigCheck(knowhere::IndexEnum::INDEX_HNSW, version,
+                                                                          bad_json, msg) ==
+                  knowhere::Status::invalid_metric_type);
+            CHECK_FALSE(msg.empty());
         }
 
         // ---- IVF_FLAT (int8): int8 is mocked to fp32 at runtime, so float metrics must pass ----
