@@ -13,10 +13,10 @@
 
 #include <unordered_set>
 
-#include "../DiskANN/include/diskann/partition_and_pq.h"
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "diskann/partition_and_pq.h"
 #include "faiss/Clustering.h"
 #include "faiss/IndexFlat.h"
 #include "faiss/cppcontrib/knowhere/utils/binary_distances.h"
