@@ -162,7 +162,7 @@ struct ConcurrentArrayInvertedLists : ::faiss::InvertedLists, NormInvertedLists 
     template <typename T>
     struct Segment {
         Segment(size_t segment_size, size_t code_size) : segment_size_(segment_size), code_size_(code_size) {
-            data_.reserve(segment_size_ * code_size_);
+            data_.resize(segment_size_ * code_size_);
         }
         T& operator[](idx_t idx) {
             assert(idx < segment_size_);
