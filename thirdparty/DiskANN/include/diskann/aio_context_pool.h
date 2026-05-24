@@ -18,8 +18,8 @@ constexpr size_t default_max_events = diskann::defaults::MAX_N_SECTOR_READS / 2;
 constexpr size_t default_pool_size = default_max_nr / default_max_events;
 
 struct AioInfo {
-    long aio_nr;
-    long aio_max_nr;
+    long aio_nr = 0;
+    long aio_max_nr = 0;
 };
 
 static AioInfo readAioInfo() {
@@ -141,9 +141,10 @@ class AioContextPool {
       : num_ctx_(num_ctx), max_events_(max_events) {
 	AioInfo aio_info = readAioInfo();
 	size_t available_aio = (size_t)(aio_info.aio_max_nr - aio_info.aio_nr);
-	if(num_ctx*max_events > available_aio) {
-		LOG_KNOWHERE_INFO_ << " max events requested is too high: " << max_events << " setting to: " << available_aio/num_ctx;
-		max_events= max_events_ = available_aio/num_ctx;
+	if(num_ctx * max_events > available_aio) {
+		LOG_KNOWHERE_INFO_ << " max events requested is too high: " << max_events << " setting to: " << available_aio / num_ctx;
+	  max_events_ = available_aio / num_ctx;
+		max_events = max_events_;
 	}
     for (size_t i = 0; i < num_ctx_; ++i) {
       io_context_t ctx = 0;

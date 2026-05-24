@@ -962,6 +962,3 @@ inline bool avx2Supported() {
 
 inline void printProcessMemory(const char*) {
 }
-
-extern bool AvxSupportedCPU;
-extern bool Avx2SupportedCPU;

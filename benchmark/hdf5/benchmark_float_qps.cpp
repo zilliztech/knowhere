@@ -388,7 +388,7 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
     void
     SetUp() override {
         T0_ = elapsed();
-        const char* dataset = std::getenv("DATASET");
+        const char* dataset = std::getenv("BENCH_DATASET");
         if (dataset == nullptr || dataset[0] == '\0') {
             set_ann_test_name("sift-128-euclidean");
         } else {
@@ -403,7 +403,8 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
 
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);
-        knowhere::KnowhereConfig::SetBuildThreadPoolSize(48);
+        knowhere::KnowhereConfig::SetBuildThreadPoolSize(default_build_thread_num);
+        knowhere::KnowhereConfig::SetSearchThreadPoolSize(default_search_thread_num);
         knowhere::KnowhereConfig::SetSearchThreadPoolSize(num_search_threads);
         printf("faiss::distance_compute_blas_threshold: %ld\n", knowhere::KnowhereConfig::GetBlasThreshold());
 #ifdef KNOWHERE_WITH_GPU

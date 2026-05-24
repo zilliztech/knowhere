@@ -1333,12 +1333,14 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     aisaq_calc_inline_layout<T>(inline_pq, pq_compressed_nbytes, width_u32, rearrange,
                                 inline_pq_vectors, max_node_len);
 
-    uint64_t *vamana_reader_node_to_pos_map = nullptr;
+    std::unique_ptr<uint64_t[]> vamana_reader_node_to_pos_map = nullptr;
     if (rearrange) {
-        vamana_reader_node_to_pos_map = new uint64_t[npts_64];
-        if (vamana_reader_node_to_pos_map == nullptr) {
-            throw ANNException("memory allocation failed"
-                    , -1, __FUNCSIG__, __FILE__, __LINE__);
+        try {
+            vamana_reader_node_to_pos_map = std::make_unique<uint64_t[]>(npts_64);
+        } catch (const std::bad_alloc& e) {
+            LOG_KNOWHERE_ERROR_ << "failed to allocate memory for vamana reader map. msg: " << e.what();
+            throw ANNException("vamana reader map memory allocation failed"
+                        , -1, __FUNCSIG__, __FILE__, __LINE__);
         }
     }
 
@@ -1536,8 +1538,17 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     LOG_KNOWHERE_ERROR_ << "Output disk index file written to " << output_file;
 
     if (rearrange) {
-        uint32_t *rearranged_vectors_map = nullptr;
-        uint32_t *reversed_rearranged_vectors_map = nullptr;
+        std::unique_ptr<uint32_t[]> rearranged_vectors_map = nullptr;
+        std::unique_ptr<uint32_t[]> reversed_rearranged_vectors_map = nullptr;
+
+        try {
+            rearranged_vectors_map = std::make_unique<uint32_t[]>(npts_64);
+            reversed_rearranged_vectors_map = std::make_unique<uint32_t[]>(npts_64);
+        } catch (const std::bad_alloc& e) {
+            LOG_KNOWHERE_ERROR_ << "failed to allocate memory for vector map. msg: " << e.what();
+            throw ANNException("vector rearrange map memory allocation failed"
+                        , -1, __FUNCSIG__, __FILE__, __LINE__);
+        }
         std::string medoids_path = index_prefix_path + "_disk.index_medoids.bin";
         std::string entry_points_path = index_prefix_path + "_disk.index_entry_points.bin";
         std::unique_ptr <uint32_t[]> entry_points = nullptr;
@@ -1557,12 +1568,12 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
         std::unordered_map<uint32_t, std::vector<uint32_t>> filter_to_medoid_ids;
         std::string vamana_reader_path = mem_index_file;
         uint32_t thread_count = std::min(knowhere::ThreadPool::GetGlobalBuildThreadPoolSize(), (size_t)AISAQ_MAX_REARRANGE_MAP_THREADS);
-        void** context_arr = allocate_vamana_read_contexts(vamana_reader_path, vamana_reader_node_to_pos_map, thread_count);
+        void** context_arr = allocate_vamana_read_contexts(vamana_reader_path, vamana_reader_node_to_pos_map.get(), thread_count);
         if (context_arr == nullptr) {
           throw ANNException("failed to allocate index read context "
                  , -1, __FUNCSIG__, __FILE__, __LINE__);
         }
-        if (aisaq_generate_vectors_rearrange_map<T, uint32_t>(aisaq_rearrange_sorter_default, rearranged_vectors_map, (uint32_t)npts_64,
+        if (aisaq_generate_vectors_rearrange_map<T, uint32_t>(aisaq_rearrange_sorter_default, rearranged_vectors_map.get(), (uint32_t)npts_64,
             pq_compressed_nbytes , width_u32, entry_points.get(), n_entry_points, filter_to_medoid_ids,
             read_node_nbrs_from_vamana<T, uint32_t>, context_arr, thread_count) != 0) {
             throw ANNException("failed to generate rearranged vectors data"
@@ -1570,7 +1581,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
         }
         free_vamana_read_contexts(context_arr, thread_count);
         /* create reversed vectors map */
-        if (aisaq_create_reversed_vectors_map(reversed_rearranged_vectors_map, rearranged_vectors_map, (uint32_t)npts_64) != 0) {
+        if (aisaq_create_reversed_vectors_map(reversed_rearranged_vectors_map.get(), rearranged_vectors_map.get(), (uint32_t)npts_64) != 0) {
             throw ANNException("failed to generate reversed rearranged vectors map"
                    , -1, __FUNCSIG__, __FILE__, __LINE__);
         }
@@ -1579,7 +1590,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
         std::string rearranged_pq_compressed_vectors_path = index_prefix_path + "_pq_compressed_rearranged.bin";
         if (aisaq_create_aligned_rearranged_pq_compressed_vectors_file(pq_compressed_vectors_reader,
             rearranged_pq_compressed_vectors_path, AISAQ_REARRANGED_PQ_FILE_PAGE_SIZE_DEFAULT,
-            reversed_rearranged_vectors_map, npts_64, pq_compressed_nbytes) != 0) {
+            reversed_rearranged_vectors_map.get(), npts_64, pq_compressed_nbytes) != 0) {
             throw ANNException("failed to create aligned rearranged pq vectors file"
                    , -1, __FUNCSIG__, __FILE__, __LINE__);
         };
@@ -1587,26 +1598,11 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
         /* create rearrange map
         rearrange map contains mapping from  origin_id --> new_id */
         std::string rearrange_map_path = index_prefix_path + "_disk.index_rearrange.bin";
-        diskann::save_bin<uint32_t>(rearrange_map_path, rearranged_vectors_map, npts_64, 1, 0);
+        diskann::save_bin<uint32_t>(rearrange_map_path, rearranged_vectors_map.get(), npts_64, 1, 0);
 
         pq_compressed_vectors_reader.close();
         if (delete_file(pq_compressed_vectors_path) != 0 ) {
           LOG_KNOWHERE_ERROR_ << "failed to delete file: " << pq_compressed_vectors_path;
-        }
-
-        if (rearranged_vectors_map != nullptr) {
-            delete [] rearranged_vectors_map;
-            rearranged_vectors_map = nullptr;
-        }
-        
-        if (reversed_rearranged_vectors_map != nullptr) {
-          delete [] reversed_rearranged_vectors_map;
-          reversed_rearranged_vectors_map = nullptr;
-        }
-
-        if (vamana_reader_node_to_pos_map != nullptr) {
-          delete [] vamana_reader_node_to_pos_map;
-          vamana_reader_node_to_pos_map = nullptr;
         }
     }
 }

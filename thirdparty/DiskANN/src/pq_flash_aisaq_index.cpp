@@ -556,82 +556,29 @@ int PQFlashAisaqIndex<T>::aisaq_init(
 
 // obtains region of sector containing node
 template <typename T>
-void PQFlashAisaqIndex<T>::aisaq_get_vector_by_ids(const int64_t *ids,
-                                             const int64_t n, T *output_data) {
-    auto sectors_to_visit =
-        this->get_sectors_layout_and_write_data_from_cache(ids, n, output_data);
-    if (0 == sectors_to_visit.size()) {
-        return;
-    }
+void PQFlashAisaqIndex<T>::aisaq_get_vector_by_ids(const int64_t *ids, const int64_t n, T *output_data) {
 
-    ThreadData<T> data = this->thread_data.pop();
-    while (data.scratch.sector_scratch == nullptr) {
-        this->thread_data.wait_for_push_notify();
-        data = this->thread_data.pop();
-    }
-    uint32_t aio_max_events = 8;
-
-    const size_t batch_size =
-        std::min((size_t)aio_max_events,
-                 std::min(MAX_N_SECTOR_READS / 2UL, sectors_to_visit.size()));
-    const size_t half_buf_idx =
-        MAX_N_SECTOR_READS / 2 * this->read_len_for_node;
-    char *sector_scratch = data.scratch.sector_scratch;
-    std::vector<AlignedRead> frontier_read_reqs;
-    frontier_read_reqs.reserve(batch_size);
-
-    std::vector<uint64_t> sector_offsets;
-    sector_offsets.reserve(sectors_to_visit.size());
-    for (const auto &it : sectors_to_visit) {
-        sector_offsets.emplace_back(it.first);
-    }
-
-    auto ctx = this->reader->get_ctx();
-    const auto sector_num = sector_offsets.size();
-    const uint64_t num_blocks = DIV_ROUND_UP(sector_num, batch_size);
-    std::vector<AlignedRead> last_reqs;
-    bool rotate = false;
-
-    for (uint64_t i = 0; i < num_blocks; ++i) {
-        uint64_t start_idx = i * batch_size;
-        uint64_t idx_len = std::min(batch_size, sector_num - start_idx);
-        last_reqs = frontier_read_reqs;
-        frontier_read_reqs.clear();
-        for (uint64_t j = 0; j < idx_len; ++j) {
-            char *sector_buf = sector_scratch + rotate * half_buf_idx +
-                               j * this->read_len_for_node;
-            frontier_read_reqs.emplace_back(sector_offsets[start_idx + j],
-                                            this->read_len_for_node,
-                                            sector_buf);
-        }
-        rotate ^= 0x1;
-        this->reader->submit_req(ctx, frontier_read_reqs);
-        for (const auto &req : last_reqs) {
-            auto offset = req.offset;
-            char *sector_buf = static_cast<char *>(req.buf);
-            for (auto idx : sectors_to_visit.at(offset)) {
-                // char *node_buf = offset_to_node(sector_buf, ids[idx]);
-                char *node_buf = this->get_offset_to_node(sector_buf, ids[idx]);
-                this->copy_vec_base_data(output_data, idx, node_buf);
+    if(_aisaq_rearranged_index) {
+        std::unique_ptr<int64_t[]> rearranged_ids;
+        std::unique_ptr<uint32_t[]> reversed_vectors_map;
+        try {
+            rearranged_ids = std::make_unique<int64_t[]>(n);
+            reversed_vectors_map = std::make_unique<uint32_t[]>((uint32_t)this->get_num_points());
+            if (diskann::aisaq_create_reversed_vectors_map(reversed_vectors_map.get(), this->_aisaq_rearranged_vectors_map.get(), (uint32_t)this->get_num_points()) != 0) {
+                LOG_KNOWHERE_ERROR_ << "failed to create reverse rearrange map ";
+                return;
             }
+            for (uint64_t i = 0; i < n ; i++) {
+                rearranged_ids[i] = reversed_vectors_map[ids[i]];
+            }
+        } catch (const std::bad_alloc& e) {
+            LOG_KNOWHERE_ERROR_ << "Failed to allocate memory for rearranged ids";
+            return;
         }
-        this->reader->get_submitted_req(ctx, frontier_read_reqs.size());
+        this->get_vector_by_ids(rearranged_ids.get(), n, output_data);
+    } else {
+        this->get_vector_by_ids(ids, n, output_data);
     }
-
-    // if any remaining
-    for (const auto &req : frontier_read_reqs) {
-        auto offset = req.offset;
-        char *sector_buf = static_cast<char *>(req.buf);
-        for (auto idx : sectors_to_visit.at(offset)) {
-            // char *node_buf = offset_to_node(sector_buf, ids[idx]);
-            char *node_buf = this->get_offset_to_node(sector_buf, ids[idx]);
-            this->copy_vec_base_data(output_data, idx, node_buf);
-        }
-    }
-
-    this->reader->put_ctx(ctx);
-    this->thread_data.push(data);
-    this->thread_data.push_notify_all();
 }
 
 template <typename T> bool PQFlashAisaqIndex<T>::get_rearranged_index() {
@@ -1377,7 +1324,9 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
         _aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, ctx);
     }
     auto release_data = [this, data, aisaq_data, ctx]() mutable {
-        _aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, nullptr);
+        if(aisaq_data.aisaq_pq_reader_ctx){
+            _aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, nullptr);
+        }
         this->thread_data.push(data);
         this->thread_data.push_notify_all();
         this->aisaq_thread_data.push(aisaq_data);
@@ -2100,7 +2049,9 @@ template <typename T> PQFlashAisaqIndex<T>::~PQFlashAisaqIndex() {
     if (this->load_flag) {
         while (aisaq_thread_data.size() > 0) {
             AisaqThreadData<T> aisaq_data = aisaq_thread_data.pop();
-            _aisaq_pq_vectors_reader->destroy_context(*aisaq_data.aisaq_pq_reader_ctx);
+            if (aisaq_data.aisaq_pq_reader_ctx != nullptr) {
+                _aisaq_pq_vectors_reader->destroy_context(*aisaq_data.aisaq_pq_reader_ctx);
+            }
         }
     }
     if (_aisaq_pq_vectors_reader != nullptr) {

@@ -19,7 +19,7 @@ namespace diskann {
       return 0 on success
      */
     template <typename T, typename LabelT>
-    int aisaq_generate_vectors_rearrange_map(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+    int aisaq_generate_vectors_rearrange_map(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<LabelT, std::vector<uint32_t>> &filter_to_medoid_ids,
             aisaq_read_nodes_nbrs_func_t<T, LabelT> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
@@ -29,7 +29,7 @@ namespace diskann {
      on success, reversed_vectors_map is allocated, the caller is responsible on deleting it
      return 0 on success
      */
-    int aisaq_create_reversed_vectors_map(uint32_t *&reversed_vectors_map,
+    int aisaq_create_reversed_vectors_map(uint32_t *reversed_vectors_map,
             const uint32_t *vectors_map, uint32_t num_points);
 
     /*

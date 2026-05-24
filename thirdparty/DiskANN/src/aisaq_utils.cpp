@@ -24,7 +24,7 @@ namespace diskann {
 
     /* todo: control rearrange logic at runtime */
     template <typename T, typename LabelT>
-    int aisaq_generate_vectors_rearrange_map(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+    int aisaq_generate_vectors_rearrange_map(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<LabelT, std::vector<uint32_t>> &filter_to_medoid_ids,
             aisaq_read_nodes_nbrs_func_t<T, LabelT> read_nodes_nbrs_func, void **contexts, uint32_t context_count) {
@@ -92,11 +92,6 @@ namespace diskann {
                 return -1;
         }
 
-        rearranged_vectors_map = new uint32_t[num_points];
-        if (rearranged_vectors_map == nullptr) {
-            LOG_KNOWHERE_ERROR_ << "memory allocation failure";
-            return -1;
-        }
         /* init */
         for (uint32_t i = 0; i < num_points; i++) {
             rearranged_vectors_map[i] = AISAQ_INVALID_VID;
@@ -261,8 +256,7 @@ namespace diskann {
         return 0;
     }
 
-    int aisaq_create_reversed_vectors_map(uint32_t *&reversed_vectors_map, const uint32_t *vectors_map, uint32_t num_points) {
-        reversed_vectors_map = new uint32_t[num_points];
+    int aisaq_create_reversed_vectors_map(uint32_t *reversed_vectors_map, const uint32_t *vectors_map, uint32_t num_points) {
         if (reversed_vectors_map == nullptr) {
             LOG_KNOWHERE_ERROR_ << "failed to allocate memory.";
             return -1;
@@ -435,35 +429,35 @@ namespace diskann {
     }
 
     /* instatiations */
-    template int aisaq_generate_vectors_rearrange_map<float, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+    template int aisaq_generate_vectors_rearrange_map<float, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint32_t, std::vector<uint32_t>> &filter_to_medoid_ids,
             aisaq_read_nodes_nbrs_func_t<float, uint32_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
-    template int aisaq_generate_vectors_rearrange_map<int8_t, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+    template int aisaq_generate_vectors_rearrange_map<int8_t, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint32_t, std::vector<uint32_t>> &filter_to_medoid_ids,
             aisaq_read_nodes_nbrs_func_t<int8_t, uint32_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
-    template int aisaq_generate_vectors_rearrange_map<uint8_t, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+    template int aisaq_generate_vectors_rearrange_map<uint8_t, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint32_t, std::vector<uint32_t>> &filter_to_medoid_ids,
             aisaq_read_nodes_nbrs_func_t<uint8_t, uint32_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
-    template int aisaq_generate_vectors_rearrange_map<float, uint16_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+    template int aisaq_generate_vectors_rearrange_map<float, uint16_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint16_t, std::vector<uint32_t>> &filter_to_medoid_ids,
             aisaq_read_nodes_nbrs_func_t<float, uint16_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
-    template int aisaq_generate_vectors_rearrange_map<int8_t, uint16_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+    template int aisaq_generate_vectors_rearrange_map<int8_t, uint16_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint16_t, std::vector<uint32_t>> &filter_to_medoid_ids,
             aisaq_read_nodes_nbrs_func_t<int8_t, uint16_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
-    template int aisaq_generate_vectors_rearrange_map<uint8_t, uint16_t>(enum aisaq_rearrange_sorter, uint32_t *&rearranged_vectors_map,
+    template int aisaq_generate_vectors_rearrange_map<uint8_t, uint16_t>(enum aisaq_rearrange_sorter, uint32_t *rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint16_t, std::vector<uint32_t>> &filter_to_medoid_ids,
             aisaq_read_nodes_nbrs_func_t<uint8_t, uint16_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
-    template int aisaq_generate_vectors_rearrange_map<knowhere::bf16, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+    template int aisaq_generate_vectors_rearrange_map<knowhere::bf16, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint32_t, std::vector<uint32_t>> &filter_to_medoid_ids,
             aisaq_read_nodes_nbrs_func_t<float, uint32_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);
-    template int aisaq_generate_vectors_rearrange_map<knowhere::fp16, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *&rearranged_vectors_map,
+    template int aisaq_generate_vectors_rearrange_map<knowhere::fp16, uint32_t>(enum aisaq_rearrange_sorter rearrange_sorter, uint32_t *rearranged_vectors_map,
             uint32_t num_points, uint32_t pq_vector_bytes, uint32_t max_degree, const uint32_t *medoids, uint32_t num_medoids,
             std::unordered_map<uint32_t, std::vector<uint32_t>> &filter_to_medoid_ids,
             aisaq_read_nodes_nbrs_func_t<int8_t, uint32_t> read_nodes_nbrs_func, void **contexts, uint32_t context_count);

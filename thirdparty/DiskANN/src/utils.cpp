@@ -4,9 +4,6 @@
 #include <stdio.h>
 #include <memory>
 
-bool Avx2SupportedCPU = true;
-bool AvxSupportedCPU = false;
-
 namespace diskann {
   void block_convert(std::ofstream& writr, std::ifstream& readr,
                      float* read_buf, _u64 npts, _u64 ndims) {

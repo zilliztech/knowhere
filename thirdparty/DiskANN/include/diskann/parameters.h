@@ -24,7 +24,7 @@ namespace diskann {
     inline ParamType Get(const std::string &name) const {
       auto item = params.find(name);
       if (item == params.end()) {
-        throw std::invalid_argument("Invalid parameter name."+name);
+        throw std::invalid_argument("Invalid parameter name (" + name + ")");
       } else {
         return std::any_cast<ParamType>(item->second);
       }
