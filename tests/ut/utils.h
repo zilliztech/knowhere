@@ -745,3 +745,37 @@ GenEmbListOffset(size_t rows, size_t each_el_len = 10) {
     lims[num_el] = rows;
     return lims;
 }
+
+template <typename T>
+void
+GenRandomSlice(const T* inputdata, size_t num_points, size_t dim, double ratio, std::unique_ptr<float[]>& sampled_data,
+               size_t& sample_size) {
+    std::vector<std::vector<float>> sampled_vecs;
+    const T* current_vector;
+
+    ratio = ratio < 1 ? ratio : 1;
+
+    std::random_device random_device;
+    size_t x = random_device();
+    std::mt19937 generator(x);
+    std::uniform_real_distribution<float> distribution(0, 1);
+
+    for (size_t i = 0; i < num_points; i++) {
+        current_vector = inputdata + dim * i;
+        float rnd_val = distribution(generator);
+        if (rnd_val < ratio) {
+            std::vector<float> cur_vector_float;
+            for (size_t d = 0; d < dim; d++) {
+                cur_vector_float.push_back((float)current_vector[d]);
+            }
+            sampled_vecs.push_back(cur_vector_float);
+        }
+    }
+    sample_size = sampled_vecs.size();
+    sampled_data = std::make_unique<float[]>(sample_size * dim);
+    for (size_t i = 0; i < sample_size; i++) {
+        for (size_t j = 0; j < dim; j++) {
+            sampled_data[i * dim + j] = (float)sampled_vecs[i][j];
+        }
+    }
+}

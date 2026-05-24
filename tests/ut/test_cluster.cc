@@ -16,7 +16,6 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
-#include "diskann/partition_and_pq.h"
 #include "faiss/Clustering.h"
 #include "faiss/IndexFlat.h"
 #include "faiss/cppcontrib/knowhere/utils/binary_distances.h"
@@ -77,7 +76,7 @@ TEST_CASE("Test Kmeans With Float Vector", "[float metrics]") {
         REQUIRE(cluster.Type() == name);
 
         for (int i = 0; i < num_trains; i++) {
-            gen_random_slice<float>((const float*)base_ds->GetTensor(), nb, dim, 0.01, sampled_data, ns);
+            GenRandomSlice<float>((const float*)base_ds->GetTensor(), nb, dim, 0.01, sampled_data, ns);
             auto sample_ds = knowhere::GenDataSet(ns, dim, sampled_data.get());
             auto res = cluster.Train(*sample_ds, json);
             REQUIRE(res.has_value());
