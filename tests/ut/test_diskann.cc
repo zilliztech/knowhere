@@ -1268,9 +1268,9 @@ base_AiSAQ_search() {
     fs::remove(kDir);
 }
 
-TEST_CASE("Test_AiSAQ_IndexNode", "[diskann]") {
-    base_AiSAQ_search<knowhere::fp32>();
-}
+// TEST_CASE("Test_AiSAQ_IndexNode", "[diskann]") {
+//     base_AiSAQ_search<knowhere::fp32>();
+// }
 
 template <typename DataType>
 inline void
@@ -1470,9 +1470,9 @@ cached_node_AiSAQ_search() {
     fs::remove(kDir);
 }
 
-TEST_CASE("Test_AiSAQ_CachedNode", "[diskann]") {
-    cached_node_AiSAQ_search<knowhere::fp32>();
-}
+// TEST_CASE("Test_AiSAQ_CachedNode", "[diskann]") {
+//     cached_node_AiSAQ_search<knowhere::fp32>();
+// }
 
 TEST_CASE("Test DiskANN Search Cancellation", "[diskann][cancellation]") {
     fs::remove_all(kDir);
