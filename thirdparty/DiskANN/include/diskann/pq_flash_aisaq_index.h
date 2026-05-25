@@ -107,7 +107,7 @@ public:
         const float filter_ratio_in = -1.0f,
         const struct diskann::aisaq_search_config *aisaq_search_config = nullptr);
     
-    void load_cache_list(std::vector<uint32_t> &node_list);
+    void aisaq_load_cache_list(std::vector<uint32_t> &node_list);
     
     void setup_thread_data(uint64_t nthreads);
     

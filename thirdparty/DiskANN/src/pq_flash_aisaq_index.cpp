@@ -209,7 +209,7 @@ void PQFlashAisaqIndex<T>::aisaq_async_generate_cache_list_from_sample_queries(
                 node_list.push_back(this->node_visit_counter[i].first);
             }
 
-            load_cache_list(node_list);
+            aisaq_load_cache_list(node_list);
             auto e = std::chrono::high_resolution_clock::now();
 
             std::chrono::duration<double> diff = e - s;
@@ -1865,21 +1865,25 @@ void PQFlashAisaqIndex<T>::prepare_search_results(std::vector<Neighbor> &full_re
 }
 
 template <typename T>
-void PQFlashAisaqIndex<T>::load_cache_list(std::vector<uint32_t> &node_list) {
+void PQFlashAisaqIndex<T>::aisaq_load_cache_list(std::vector<uint32_t> &node_list) {
     LOG_KNOWHERE_DEBUG_ << "Loading the cache list into memory..";
     size_t num_cached_nodes = node_list.size();
 
     // Allocate space for neighborhood cache
-    this->nhood_cache_buf =
-        std::make_unique<unsigned[]>(num_cached_nodes * (this->max_degree + 1));
-    memset(this->nhood_cache_buf.get(), 0,
-           num_cached_nodes * (this->max_degree + 1));
+    if (this->nhood_cache_buf == nullptr) {
+        this->nhood_cache_buf =
+            std::make_unique<unsigned[]>(num_cached_nodes * (this->max_degree + 1));
+        memset(this->nhood_cache_buf.get(), 0,
+               num_cached_nodes * (this->max_degree + 1));
+    }
 
     // Allocate space for coordinate cache
     size_t coord_cache_buf_len = num_cached_nodes * this->aligned_dim;
-    diskann::alloc_aligned((void **)&this->coord_cache_buf,
-                           coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
-    memset((void*)this->coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
+    if (this->coord_cache_buf == nullptr) {
+        diskann::alloc_aligned((void **)&this->coord_cache_buf,
+                               coord_cache_buf_len * sizeof(T), 8 * sizeof(T));
+        memset((void*)this->coord_cache_buf, 0, coord_cache_buf_len * sizeof(T));
+    }
 
     // Allocate space for AiSAQ node data cache
     uint32_t aisaq_data_len_u32 = DIV_ROUND_UP(

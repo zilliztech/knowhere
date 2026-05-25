@@ -584,7 +584,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
     }
 
     if (node_list.size() > 0) {
-        if (TryDiskANNCall([&]() { pq_flash_index_->load_cache_list(node_list); }) != Status::success) {
+        if (TryDiskANNCall([&]() { pq_flash_index_->aisaq_load_cache_list(node_list); }) != Status::success) {
             LOG_KNOWHERE_ERROR_ << "Failed to load cache for AiSAQ.";
             return Status::aisaq_error;
         }
