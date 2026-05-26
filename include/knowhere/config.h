@@ -701,7 +701,8 @@ class BaseConfig : public Config {
             .description("index thread limit for build.")
             .allow_empty_without_default()
             .set_range(1, std::thread::hardware_concurrency())
-            .for_train();
+            .for_train()
+            .for_cluster();
         KNOWHERE_CONFIG_DECLARE_FIELD(radius)
             .set_default(0.0)
             .description("radius for range search")
