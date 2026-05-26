@@ -21,6 +21,30 @@
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/dataset.h"
 
+template <typename T>
+bool
+get_env(const char* name, T& out) {
+    const char* val = std::getenv(name);
+    if (!val || val[0] == '\0') {
+        return false;
+    }
+    std::istringstream iss(val);
+    iss >> out;
+    return !iss.fail();
+}
+
+// Specialization for double (handles "5" / "5.0")
+template <>
+bool
+get_env<double>(const char* name, double& out) {
+    const char* val = std::getenv(name);
+    if (!val || val[0] == '\0') {
+        return false;
+    }
+    out = std::stod(val);
+    return true;
+}
+
 const int32_t GPU_DEVICE_ID = 0;
 
 class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
@@ -297,8 +321,9 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
                 recall = CalcRecall(result.value()->GetIds(), nq_, topk_);
                 recall_map[search_list_size] = recall;
                 printf(
-                    "[%0.3f s] iterate DISKANN param for expected recall %.4f: search_list_size=%4d, k=%d, R@=%.4f\n",
-                    get_time_diff(), expected_recall, search_list_size, topk_, recall);
+                    "[%0.3f s] iterate DISKANN param for expected recall %.4f: search_list_size=%4d, k=%d, R@=%.4f ram "
+                    "is %ld bytes\n",
+                    get_time_diff(), expected_recall, search_list_size, topk_, recall, index_.value().Size());
                 std::fflush(stdout);
                 if (std::abs(recall - expected_recall) <= 0.0001) {
                     return {search_list_size, recall_map[search_list_size]};
@@ -363,14 +388,24 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
     void
     SetUp() override {
         T0_ = elapsed();
-        set_ann_test_name("sift-128-euclidean");
+        const char* dataset = std::getenv("BENCH_DATASET");
+        if (dataset == nullptr || dataset[0] == '\0') {
+            set_ann_test_name("sift-128-euclidean");
+        } else {
+            set_ann_test_name(dataset);
+        }
         parse_ann_test_name();
         load_hdf5_data<knowhere::fp32>();
+        int num_search_threads = 48;
+        int i;
+        if (get_env("NUM_SEARCH_THREADS", i))
+            num_search_threads = i;
 
         cfg_[knowhere::meta::METRIC_TYPE] = metric_type_;
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX2);
         knowhere::KnowhereConfig::SetBuildThreadPoolSize(default_build_thread_num);
         knowhere::KnowhereConfig::SetSearchThreadPoolSize(default_search_thread_num);
+        knowhere::KnowhereConfig::SetSearchThreadPoolSize(num_search_threads);
         printf("faiss::distance_compute_blas_threshold: %ld\n", knowhere::KnowhereConfig::GetBlasThreshold());
 #ifdef KNOWHERE_WITH_GPU
         knowhere::KnowhereConfig::InitGPUResource(GPU_DEVICE_ID, 2);
@@ -390,9 +425,9 @@ class Benchmark_float_qps : public Benchmark_knowhere, public ::testing::Test {
     }
 
  protected:
-    const int32_t topk_ = 100;
-    const std::vector<float> EXPECTED_RECALLs_ = {0.8, 0.95};
-    const std::vector<int32_t> THREAD_NUMs_ = {1, 2, 4, 8};
+    int32_t topk_ = 100;
+    const std::vector<float> EXPECTED_RECALLs_ = {0.9};
+    const std::vector<int32_t> THREAD_NUMs_ = {48};
 
     // IVF index params
     const std::vector<int32_t> NLISTs_ = {1024};
@@ -523,6 +558,7 @@ TEST_F(Benchmark_float_qps, TEST_SCANN) {
 }
 
 #ifdef KNOWHERE_WITH_DISKANN
+
 TEST_F(Benchmark_float_qps, TEST_DISKANN) {
     index_type_ = knowhere::IndexEnum::INDEX_DISKANN;
 
@@ -530,49 +566,35 @@ TEST_F(Benchmark_float_qps, TEST_DISKANN) {
     conf[knowhere::meta::DIM] = dim_;
     conf[knowhere::meta::INDEX_PREFIX] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
     conf[knowhere::meta::DATA_PATH] = kRawDataPath;
-    conf[knowhere::indexparam::MAX_DEGREE] = 56;
+    conf[knowhere::indexparam::MAX_DEGREE] = 64;
     conf[knowhere::indexparam::PQ_CODE_BUDGET_GB] = sizeof(float) * dim_ * nb_ * 0.125 / (1024 * 1024 * 1024);
     conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = 32.0;
     conf[knowhere::indexparam::SEARCH_CACHE_BUDGET_GB] = 0;
     conf[knowhere::indexparam::BEAMWIDTH] = 8;
-
-    fs::create_directory(kDir);
-    fs::create_directory(kL2IndexDir);
-    fs::create_directory(kIPIndexDir);
-
-    WriteRawDataToDisk(kRawDataPath, (const float*)xb_, (const uint32_t)nb_, (const uint32_t)dim_);
-
-    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
-    auto diskann_index_pack = knowhere::Pack(file_manager);
-
-    index_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-        index_type_, knowhere::Version::GetCurrentVersion().VersionNumber(), diskann_index_pack);
-    printf("[%.3f s] Building all on %d vectors\n", get_time_diff(), nb_);
-    knowhere::DataSetPtr ds_ptr = nullptr;
-    index_.value().Build(ds_ptr, conf);
-
-    knowhere::BinarySet binset;
-    index_.value().Serialize(binset);
-    index_.value().Deserialize(binset, conf);
-
-    test_diskann<knowhere::fp32>(conf);
-}
-
-TEST_F(Benchmark_float_qps, TEST_AISAQ_P) {
-    index_type_ = knowhere::IndexEnum::INDEX_AISAQ;
-
-    knowhere::Json conf = cfg_;
-    conf[knowhere::meta::DIM] = dim_;
-    conf[knowhere::meta::INDEX_PREFIX] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
-    conf[knowhere::meta::DATA_PATH] = kRawDataPath;
-    conf[knowhere::indexparam::MAX_DEGREE] = 56;
-    conf[knowhere::indexparam::INLINE_PQ] = 56;
-    conf[knowhere::indexparam::PQ_CODE_BUDGET_GB] = sizeof(float) * dim_ * nb_ * 0.125 / (1024 * 1024 * 1024);
-    conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = 32.0;
-    conf[knowhere::indexparam::SEARCH_CACHE_BUDGET_GB] = 0;
-    conf[knowhere::indexparam::BEAMWIDTH] = 8;
+    conf[knowhere::indexparam::DISK_PQ_DIMS] = 0;
     fs::remove_all(kDir);
     fs::remove(kDir);
+    // Overrides
+    int i;
+    double d;
+
+    if (get_env("MAX_DEGREE", i))
+        conf[knowhere::indexparam::MAX_DEGREE] = i;
+
+    if (get_env("PQ_CODE_BUDGET_GB", d))
+        conf[knowhere::indexparam::PQ_CODE_BUDGET_GB] = d;
+
+    if (get_env("BUILD_DRAM_BUDGET_GB", d))
+        conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = d;
+
+    if (get_env("BEAMWIDTH", i))
+        conf[knowhere::indexparam::BEAMWIDTH] = i;
+
+    if (get_env("DISK_PQ_DIMS", i))
+        conf[knowhere::indexparam::DISK_PQ_DIMS] = i;
+
+    if (get_env("TOPK", i))
+        topk_ = i;
 
     fs::create_directory(kDir);
     fs::create_directory(kL2IndexDir);
@@ -592,22 +614,60 @@ TEST_F(Benchmark_float_qps, TEST_AISAQ_P) {
     knowhere::BinarySet binset;
     index_.value().Serialize(binset);
     index_.value().Deserialize(binset, conf);
-
+    printf("index size in ram is %ld bytes. \n", index_.value().Size());
     test_diskann<knowhere::fp32>(conf);
 }
 
-TEST_F(Benchmark_float_qps, TEST_AISAQ_S) {
+TEST_F(Benchmark_float_qps, TEST_AISAQ) {
     index_type_ = knowhere::IndexEnum::INDEX_AISAQ;
 
     knowhere::Json conf = cfg_;
     conf[knowhere::meta::DIM] = dim_;
     conf[knowhere::meta::INDEX_PREFIX] = (metric_type_ == knowhere::metric::L2 ? kL2IndexPrefix : kIPIndexPrefix);
     conf[knowhere::meta::DATA_PATH] = kRawDataPath;
-    conf[knowhere::indexparam::MAX_DEGREE] = 56;
+    conf[knowhere::indexparam::MAX_DEGREE] = 64;
     conf[knowhere::indexparam::INLINE_PQ] = -1;
     conf[knowhere::indexparam::PQ_CODE_BUDGET_GB] = sizeof(float) * dim_ * nb_ * 0.125 / (1024 * 1024 * 1024);
-    conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = 32.0;
+    conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = 5.0;
     conf[knowhere::indexparam::BEAMWIDTH] = 8;
+    conf[knowhere::indexparam::NUM_ENTRY_POINTS] = 1000;
+    conf[knowhere::indexparam::DISK_PQ_DIMS] = 0;
+    // Overrides
+    int i;
+    double d;
+
+    if (get_env("MAX_DEGREE", i))
+        conf[knowhere::indexparam::MAX_DEGREE] = i;
+
+    if (get_env("INLINE_PQ", i))
+        conf[knowhere::indexparam::INLINE_PQ] = i;
+
+    if (get_env("PQ_CODE_BUDGET_GB", d))
+        conf[knowhere::indexparam::PQ_CODE_BUDGET_GB] = d;
+
+    if (get_env("BUILD_DRAM_BUDGET_GB", d))
+        conf[knowhere::indexparam::BUILD_DRAM_BUDGET_GB] = d;
+
+    if (get_env("BEAMWIDTH", i))
+        conf[knowhere::indexparam::BEAMWIDTH] = i;
+
+    if (get_env("NUM_ENTRY_POINTS", i))
+        conf[knowhere::indexparam::NUM_ENTRY_POINTS] = i;
+
+    if (get_env("PQ_CACHE_SIZE", i))
+        conf[knowhere::indexparam::PQ_CACHE_SIZE] = i;
+
+    if (get_env("PQ_READ_PAGE_CACHE_SIZE", i))
+        conf[knowhere::indexparam::PQ_READ_PAGE_CACHE_SIZE] = i;
+
+    if (get_env("REARRANGE", i))
+        conf[knowhere::indexparam::REARRANGE] = i == 0 ? false : true;
+
+    if (get_env("DISK_PQ_DIMS", i))
+        conf[knowhere::indexparam::DISK_PQ_DIMS] = i;
+
+    if (get_env("TOPK", i))
+        topk_ = i;
 
     fs::remove_all(kDir);
     fs::remove(kDir);
@@ -629,6 +689,7 @@ TEST_F(Benchmark_float_qps, TEST_AISAQ_S) {
     knowhere::BinarySet binset;
     index_.value().Serialize(binset);
     index_.value().Deserialize(binset, conf);
+    printf("index size in ram is %ld bytes. \n", index_.value().Size());
 
     test_diskann<knowhere::fp32>(conf);
 }

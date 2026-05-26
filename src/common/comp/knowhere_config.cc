@@ -49,9 +49,6 @@ KnowhereConfig::ShowVersion() {
 #ifdef KNOWHERE_WITH_CUVS
     msg = msg + "-gpu";
 #endif
-#ifdef KNOWHERE_WITH_SVS
-    msg = msg + "-svs";
-#endif
 #else
     msg = msg + " unknown";
 #endif
@@ -145,7 +142,10 @@ KnowhereConfig::GetClusteringType() {
 bool
 KnowhereConfig::SetAioContextPool(size_t num_ctx) {
 #ifdef KNOWHERE_WITH_DISKANN
-    return AioContextPool::InitGlobalAioPool(num_ctx, default_max_events);
+    size_t max_events = (num_ctx > 0) ? std::min(default_max_nr / num_ctx, default_max_events) : default_max_events;
+    LOG_KNOWHERE_INFO_ << "InitGlobalAioPool with " << num_ctx << " contexts and " << max_events
+                       << " events per context";
+    return AioContextPool::InitGlobalAioPool(num_ctx, max_events);
 #endif
     return true;
 }
@@ -221,11 +221,21 @@ KnowhereConfig::SetRaftMemPool(size_t init_size, size_t max_size) {
     cuvs_knowhere::initialize_raft(config);
 #endif
 }
-
 void
 KnowhereConfig::SetRaftMemPool() {
     // Overload for default values
 #ifdef KNOWHERE_WITH_CUVS
+    int count = 0;
+    auto status = cudaGetDeviceCount(&count);
+    if (status != cudaSuccess) {
+        LOG_KNOWHERE_INFO_ << cudaGetErrorString(status);
+        return;
+    }
+    if (count < 1) {
+        LOG_KNOWHERE_INFO_ << "GPU not available";
+        return;
+    }
+
     auto config = cuvs_knowhere::raft_configuration{};
     cuvs_knowhere::initialize_raft(config);
 #endif

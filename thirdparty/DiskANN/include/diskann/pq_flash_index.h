@@ -179,6 +179,7 @@ namespace diskann {
 	virtual _u8* get_pq_data()=0;
 	virtual _u64 get_origin_id(_u64 id)=0;
 	virtual void release_pq_data(size_t offset=0, size_t size=0)=0;
+  virtual void aggregate_pq_coords(const unsigned* ids, const _u64 n_ids, const _u64 ndims, _u8* out)=0;
 	virtual ~PQDataGetter() {}
   };
 
@@ -248,6 +249,10 @@ namespace diskann {
 
     virtual _u64 get_origin_id(_u64 id) override {
     	return id;
+    }
+
+    virtual void aggregate_pq_coords(const unsigned* ids, const _u64 n_ids, const _u64 ndims, _u8* out) override {
+      aggregate_coords(ids, n_ids, get_pq_data(), ndims, out);
     }
 
     virtual void release_pq_data(size_t offset=0, size_t size=0) override {}

@@ -1,5 +1,6 @@
 #include <cmath>
 #include "diskann/distance.h"
+
 namespace diskann {
   // Get the right distance function for the given metric.
   template<typename T>

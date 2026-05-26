@@ -9,10 +9,37 @@
 #include "aux_utils.h"
 #include "diskann/ann_exception.h"
 #include "diskann/defaults.h"
+#include <iostream>
+#include <fstream>
+#include <string>
 
 constexpr size_t default_max_nr = 65536;
 constexpr size_t default_max_events = diskann::defaults::MAX_N_SECTOR_READS / 2;
 constexpr size_t default_pool_size = default_max_nr / default_max_events;
+
+struct AioInfo {
+    long aio_nr = 0;
+    long aio_max_nr = 0;
+};
+
+static AioInfo readAioInfo() {
+    AioInfo info{0, 0};
+
+    std::ifstream nrFile("/proc/sys/fs/aio-nr");
+    std::ifstream maxFile("/proc/sys/fs/aio-max-nr");
+
+    if (!nrFile.is_open()) {
+        throw std::runtime_error("Failed to open /proc/sys/fs/aio-nr");
+    }
+    if (!maxFile.is_open()) {
+        throw std::runtime_error("Failed to open /proc/sys/fs/aio-max-nr");
+    }
+
+    nrFile >> info.aio_nr;
+    maxFile >> info.aio_max_nr;
+
+    return info;
+}
 
 class AioContextPool {
  public:
@@ -112,6 +139,13 @@ class AioContextPool {
 
   AioContextPool(size_t num_ctx, size_t max_events)
       : num_ctx_(num_ctx), max_events_(max_events) {
+	AioInfo aio_info = readAioInfo();
+	size_t available_aio = (size_t)(aio_info.aio_max_nr - aio_info.aio_nr);
+	if(num_ctx * max_events > available_aio) {
+		LOG_KNOWHERE_INFO_ << " max events requested is too high: " << max_events << " setting to: " << available_aio / num_ctx;
+	  max_events_ = available_aio / num_ctx;
+		max_events = max_events_;
+	}
     for (size_t i = 0; i < num_ctx_; ++i) {
       io_context_t ctx = 0;
       int          ret = -1;
@@ -126,7 +160,7 @@ class AioContextPool {
         LOG(ERROR) << "io_setup() failed; returned " << ret
                    << ", errno=" << -ret << ":" << ::strerror(-ret);
       } else {
-        LOG_KNOWHERE_DEBUG_ << "allocating ctx: " << ctx;
+        LOG_KNOWHERE_DEBUG_ << "allocating ctx: " << ctx << " with max_events " << max_events_;
         ctx_q_.push(ctx);
         ctx_bak_.push_back(ctx);
       }

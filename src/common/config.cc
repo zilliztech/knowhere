@@ -11,7 +11,6 @@
 
 #include "knowhere/config.h"
 
-#include "index/diskann/diskann_config.h"
 #include "index/flat/flat_config.h"
 #include "index/gpu_cuvs/gpu_cuvs_brute_force_config.h"
 #include "index/gpu_cuvs/gpu_cuvs_cagra_config.h"

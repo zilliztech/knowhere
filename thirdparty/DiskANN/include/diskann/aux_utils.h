@@ -147,10 +147,9 @@ namespace diskann {
   void aisaq_calc_inline_layout(int inline_pq, uint32_t pq_compressed_nbytes, uint32_t max_degree, bool &rearrange,
                                 uint32_t &inline_pq_vectors, uint64_t &max_node_len);
 
-  template<typename T>
-  void create_disk_layout(
+template<typename T>
+    void create_disk_layout(
       const std::string base_file, const std::string mem_index_file,
       const std::string output_file,
       const std::string reorder_data_file = std::string(""));
-
 }  // namespace diskann

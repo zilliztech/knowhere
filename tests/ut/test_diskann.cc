@@ -25,11 +25,9 @@
 #include "index/diskann/diskann_config.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/knowhere_check.h"
-#include "knowhere/context.h"
 #include "knowhere/expected.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/utils.h"
-#include "knowhere/version.h"
 #include "utils.h"
 
 #if __has_include(<filesystem>)
@@ -182,11 +180,11 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
         auto binarySet = knowhere::BinarySet();
         auto diskann =
             knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, diskann_index_pack).value();
-        diskann.Build(ds_ptr, test_gen());
+        knowhere::Json test_json = test_gen();
+        diskann.Build(ds_ptr, test_json);
         diskann.Serialize(binarySet);
         diskann.Deserialize(binarySet, test_gen());
 
-        knowhere::Json test_json;
         auto query_ds = GenDataSet(kNumQueries, kDim, 42);
 
 #ifndef KNOWHERE_WITH_CARDINAL
@@ -991,6 +989,8 @@ base_AiSAQ_param_test() {
         json["pq_code_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 * 0.5 / (1024 * 1024 * 1024);
         json["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
         json["build_dram_budget_gb"] = 16.0;
+        json["disk_pq_dims"] = 0;
+        json["accelerate_build"] = false;
         return json;
     };
 
@@ -998,6 +998,7 @@ base_AiSAQ_param_test() {
         knowhere::Json json = base_gen();
         json["index_prefix"] = metric_dir_map[metric_str];
         json["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+        json["warm_up"] = true;
         return json;
     };
 
@@ -1006,6 +1007,14 @@ base_AiSAQ_param_test() {
         json["index_prefix"] = metric_dir_map[metric_str];
         json["search_list_size"] = defaultSearchListSize;
         json["beamwidth"] = 4;
+        json["vectors_beamwidth"] = 4;
+        return json;
+    };
+
+    auto knn_search_without_beamwidth_gen = [&base_gen, &metric_str, &metric_dir_map]() {
+        knowhere::Json json = base_gen();
+        json["index_prefix"] = metric_dir_map[metric_str];
+        json["search_list_size"] = 36;
         json["vectors_beamwidth"] = 4;
         return json;
     };
@@ -1052,12 +1061,19 @@ base_AiSAQ_param_test() {
             auto diskann =
                 knowhere::IndexFactory::Instance().Create<DataType>(index_type, version, diskann_index_pack).value();
             LOG_KNOWHERE_INFO_ << "Test invalid metric_type parameter";
+            diskann.Dim();
+            diskann.Size();
+            diskann.Count();
             test_json = build_gen();
             test_json["metric_type"] = knowhere::metric::JACCARD;
             test_stat = diskann.Build(ds_ptr, test_json);
             REQUIRE(test_stat == knowhere::Status::invalid_metric_type);
             // raw data path not exist
             LOG_KNOWHERE_INFO_ << "Test data path not exist";
+            test_json = build_gen();
+            test_json.erase("data_path");
+            test_stat = diskann.Build(ds_ptr, test_json);
+            REQUIRE(test_stat == knowhere::Status::invalid_param_in_json);
             test_json = build_gen();
             test_json["data_path"] = kL2IndexPrefix + ".temp";
             test_stat = diskann.Build(ds_ptr, test_json);
@@ -1107,23 +1123,53 @@ base_AiSAQ_param_test() {
             test_json["max_degree"] = diskann::defaults::MAX_AISAQ_MAX_DEGREE + 1;
             test_stat = diskann.Build(ds_ptr, test_json);
             REQUIRE(test_stat == knowhere::Status::aisaq_error);
+            test_json = build_gen();
+            test_json["search_list_size"] = diskann::defaults::MAX_AISAQ_SEARCH_LIST_SIZE + 1;
+            test_stat = diskann.Build(ds_ptr, test_json);
+            REQUIRE(test_stat == knowhere::Status::aisaq_error);
 
+            test_stat = diskann.Train(ds_ptr, json);
+            REQUIRE(test_stat == knowhere::Status::not_implemented);
+            test_stat = diskann.Add(ds_ptr, json);
+            REQUIRE(test_stat == knowhere::Status::not_implemented);
+            test_stat = diskann.DeserializeFromFile("DeserializeFile", json);
+            REQUIRE(test_stat == knowhere::Status::not_implemented);
             diskann.Build(ds_ptr, json);
             diskann.Serialize(binset);
+            diskann.Dim();
+            diskann.Size();
+            diskann.Count();
+            diskann.Type();
         }
         {
             // knn search
             auto diskann =
                 knowhere::IndexFactory::Instance().Create<DataType>(index_type, version, diskann_index_pack).value();
+            deserialize_json.erase("index_prefix");
+            test_stat = diskann.Deserialize(binset, deserialize_json);
+            REQUIRE(test_stat == knowhere::Status::invalid_param_in_json);
+            test_json = knn_search_gen();
+            auto search_stat = diskann.Search(query_ds, test_json, nullptr);
+            REQUIRE(search_stat.error() == knowhere::Status::empty_index);
+            deserialize_json["index_prefix"] = metric_dir_map[metric_str];
+            deserialize_json["metric_type"] = knowhere::metric::JACCARD;
+            test_stat = diskann.Deserialize(binset, deserialize_json);
+            REQUIRE(test_stat == knowhere::Status::invalid_metric_type);
+            deserialize_json["metric_type"] = knowhere::metric::L2;
             diskann.Deserialize(binset, deserialize_json);
-
+            diskann.Deserialize(binset, deserialize_json);
             REQUIRE(diskann.HasRawData(metric_str) ==
                     knowhere::IndexStaticFaced<DataType>::HasRawData(index_type, version, json));
 
+            LOG_KNOWHERE_INFO_ << "Test default beamwidth";
+            test_json = knn_search_without_beamwidth_gen();
+            test_json["vectors_beamwidth"] = 4;
+            search_stat = diskann.Search(query_ds, test_json, nullptr);
+            REQUIRE(search_stat.error() == knowhere::Status::aisaq_error);
             LOG_KNOWHERE_INFO_ << "Test vectors_beamwidth parameter value less than minimum";
             test_json = knn_search_gen();
             test_json["vectors_beamwidth"] = 0;
-            auto search_stat = diskann.Search(query_ds, test_json, nullptr);
+            search_stat = diskann.Search(query_ds, test_json, nullptr);
             REQUIRE(search_stat.error() == knowhere::Status::out_of_range_in_json);
             LOG_KNOWHERE_INFO_ << "Test pq_read_page_cache_size parameter value less than minimum";
             test_json = knn_search_gen();
@@ -1144,7 +1190,33 @@ base_AiSAQ_param_test() {
             test_json = knn_search_gen();
             test_json["beamwidth"] = diskann::defaults::MAX_AISAQ_BEAMWIDTH + 1;
             search_stat = diskann.Search(query_ds, test_json, nullptr);
-            REQUIRE(search_stat.error() == knowhere::Status::aisaq_error);
+            REQUIRE(search_stat.error() == knowhere::Status::out_of_range_in_json);
+            LOG_KNOWHERE_INFO_ << "Test beamwidth parameter value more than maximum "
+                               << diskann::defaults::MAX_AISAQ_BEAMWIDTH;
+            test_json = knn_search_gen();
+            test_json["beamwidth"] = diskann::defaults::MAX_AISAQ_BEAMWIDTH + 1;
+            search_stat = diskann.Search(query_ds, test_json, nullptr);
+            REQUIRE(search_stat.error() == knowhere::Status::out_of_range_in_json);
+            LOG_KNOWHERE_INFO_ << "Test vectors_beamwidth parameter value more than maximum "
+                               << diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH;
+            test_json = knn_search_gen();
+            test_json["vectors_beamwidth"] = diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH + 1;
+            search_stat = diskann.Search(query_ds, test_json, nullptr);
+            REQUIRE(search_stat.error() == knowhere::Status::out_of_range_in_json);
+            LOG_KNOWHERE_INFO_ << "Test feder parameter";
+            test_json = knn_search_gen();
+            test_json["trace_visit"] = true;
+            search_stat = diskann.Search(query_ds, test_json, nullptr);
+            auto one_query_ds = GenDataSet(1, kLargeDim, 42);
+            auto test_query_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(one_query_ds);
+            test_json = knn_search_gen();
+            test_json["trace_visit"] = true;
+            search_stat = diskann.Search(test_query_ds, test_json, nullptr);
+            LOG_KNOWHERE_INFO_ << "Test invalid metric parameter for search operation";
+            test_json = knn_search_gen();
+            test_json["metric_type"] = knowhere::metric::JACCARD;
+            search_stat = diskann.Search(query_ds, test_json, nullptr);
+            REQUIRE(search_stat.error() == knowhere::Status::invalid_metric_type);
         }
     }
     fs::remove_all(kDir);
@@ -1153,6 +1225,19 @@ base_AiSAQ_param_test() {
 
 TEST_CASE("Test_AiSAQ_Params", "[diskann]") {
     base_AiSAQ_param_test<knowhere::fp32>();
+}
+
+int64_t
+check_node_size(std::string metric_type, int64_t dim, int64_t pq_bytes, int64_t pq_cache_size,
+                int64_t num_entry_points) {
+    int64_t size = 0;
+    if (metric_type == "COSINE")
+        size += dim * 4;
+    if (num_entry_points > 0)
+        size += num_entry_points * pq_bytes;
+    if (pq_cache_size > 0)
+        size += pq_cache_size;
+    return size;
 }
 
 template <typename DataType>
@@ -1222,7 +1307,7 @@ base_AiSAQ_search() {
         knowhere::Json json = base_gen();
         json["index_prefix"] = metric_dir_map[metric_str];
         json["beamwidth"] = 4;
-        json["vectors_beamwidth"] = 4;
+        json["vectors_beamwidth"] = 1;
         return json;
     };
 
@@ -1247,7 +1332,7 @@ base_AiSAQ_search() {
         range_search_gt_ptr = result_range.value();
     }
     const auto rearrange_list = {true, false};
-    const auto inline_pq_list = {0, -1, 10};
+    const auto inline_pq_list = {64, -1, 0};
     const auto pq_cache_size_list = {0, 4096};
     const auto num_entry_points_list = {0, 100};
     const auto bitset_percentages = {0.05f, 0.20f, 0.40f, 0.60f, 0.80f, 0.9f};
@@ -1270,6 +1355,9 @@ base_AiSAQ_search() {
                         json["inline_pq"] = inline_pq;
                         json["pq_cache_size"] = pq_cache_size;
                         json["num_entry_points"] = num_entry_points;
+                        deserialize_json["rearrange"] = rearrange;
+                        deserialize_json["pq_cache_size"] = pq_cache_size;
+                        deserialize_json["num_entry_points"] = num_entry_points;
                         LOG_KNOWHERE_DEBUG_ << "========== build_json =================";
                         LOG_KNOWHERE_DEBUG_ << json.dump();
                         LOG_KNOWHERE_DEBUG_ << "===========================";
@@ -1332,6 +1420,13 @@ base_AiSAQ_search() {
                                 }
                             }
                         }
+                        LOG_KNOWHERE_DEBUG_ << "========== Index clean =================";
+                        fs::remove_all(kL2IndexDir);
+                        REQUIRE_NOTHROW(fs::create_directory(kL2IndexDir));
+                        fs::remove_all(kIPIndexDir);
+                        REQUIRE_NOTHROW(fs::create_directory(kIPIndexDir));
+                        fs::remove_all(kCOSINEIndexDir);
+                        REQUIRE_NOTHROW(fs::create_directory(kCOSINEIndexDir));
                     }
                 }
             }
@@ -1343,6 +1438,208 @@ base_AiSAQ_search() {
 
 TEST_CASE("Test_AiSAQ_IndexNode", "[diskann]") {
     base_AiSAQ_search<knowhere::fp32>();
+}
+
+template <typename DataType>
+inline void
+cached_node_AiSAQ_search() {
+    std::string index_type = "AISAQ";
+    fs::remove_all(kDir);
+    fs::remove(kDir);
+    REQUIRE_NOTHROW(fs::create_directory(kDir));
+    REQUIRE_NOTHROW(fs::create_directory(kL2IndexDir));
+    REQUIRE_NOTHROW(fs::create_directory(kIPIndexDir));
+    REQUIRE_NOTHROW(fs::create_directory(kCOSINEIndexDir));
+
+    auto metric_str = knowhere::metric::L2;
+    auto version = GenTestVersionList();
+
+    std::unordered_map<knowhere::MetricType, std::string> metric_dir_map = {
+        {knowhere::metric::L2, kL2IndexPrefix},
+        {knowhere::metric::IP, kIPIndexPrefix},
+        {knowhere::metric::COSINE, kCOSINEIndexPrefix},
+    };
+    std::unordered_map<knowhere::MetricType, float> metric_range_ap_map = {
+        {knowhere::metric::L2, kL2RangeAp},
+        {knowhere::metric::IP, kIpRangeAp},
+        {knowhere::metric::COSINE, kCosineRangeAp},
+    };
+
+    auto base_gen = [&metric_str]() {
+        knowhere::Json json;
+        json["dim"] = kLargeDim;
+        json["metric_type"] = metric_str;
+        json["k"] = kK;
+        if (metric_str == knowhere::metric::L2) {
+            json["radius"] = CFG_FLOAT::value_type(200000);
+            json["range_filter"] = CFG_FLOAT::value_type(0);
+        } else if (metric_str == knowhere::metric::IP) {
+            json["radius"] = CFG_FLOAT::value_type(350000);
+            json["range_filter"] = std::numeric_limits<CFG_FLOAT::value_type>::max();
+        } else {
+            json["radius"] = 0.75f;
+            json["range_filter"] = 1.0f;
+        }
+        return json;
+    };
+
+    auto build_gen = [&base_gen, &metric_str, &metric_dir_map]() {
+        knowhere::Json json = base_gen();
+        json["index_prefix"] = metric_dir_map[metric_str];
+        json["data_path"] = kRawDataPath;
+        json["max_degree"] = 64;
+        json["search_list_size"] = 128;
+        json["pq_code_budget_gb"] = sizeof(float) * kLargeDim * kNumRows * 0.5 / (1024 * 1024 * 1024);
+        json["search_cache_budget_gb"] = sizeof(float) * kLargeDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+        json["disk_pq_dims"] = kLargeDim;
+        json["build_dram_budget_gb"] = 16.0;
+        return json;
+    };
+
+    auto deserialize_gen = [&base_gen, &metric_str, &metric_dir_map]() {
+        knowhere::Json json = base_gen();
+        json["index_prefix"] = metric_dir_map[metric_str];
+        json["use_bfs_cache"] = true;
+        json["search_cache_budget_gb"] = sizeof(float) * kLargeDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+        return json;
+    };
+
+    auto knn_search_gen = [&base_gen, &metric_str, &metric_dir_map]() {
+        knowhere::Json json = base_gen();
+        json["index_prefix"] = metric_dir_map[metric_str];
+        json["beamwidth"] = 8;
+        json["vectors_beamwidth"] = 1;
+        return json;
+    };
+
+    auto fp32_query_ds = GenDataSet(kNumQueries, kLargeDim, 42);
+    knowhere::DataSetPtr knn_gt_ptr = nullptr;
+    knowhere::DataSetPtr range_search_gt_ptr = nullptr;
+    auto fp32_base_ds = GenDataSet(kNumRows, kLargeDim, 30);
+
+    auto base_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(fp32_base_ds);
+    auto query_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(fp32_query_ds);
+
+    {
+        auto base_ptr = static_cast<const DataType*>(base_ds->GetTensor());
+        WriteRawDataToDisk<DataType>(kRawDataPath, base_ptr, kNumRows, kLargeDim);
+
+        // generate the gt of knn search and range search
+        auto base_json = base_gen();
+
+        auto result_knn = knowhere::BruteForce::Search<DataType>(base_ds, query_ds, base_json, nullptr);
+        knn_gt_ptr = result_knn.value();
+        auto result_range = knowhere::BruteForce::RangeSearch<DataType>(base_ds, query_ds, base_json, nullptr);
+        range_search_gt_ptr = result_range.value();
+    }
+    const auto rearrange_list = {false, true};
+    const auto inline_pq_list = {64, 10, 0};
+    const auto pq_cache_size_list = {0};
+    const auto num_entry_points_list = {0};
+    const auto bitset_percentages = {0.80f};
+    const auto bitset_thresholds = {0.9f};
+    const auto l_search_dict = {128};
+    const auto pq_read_page_cache_size_list = {0};
+    SECTION("Test search and range search") {
+        for (const bool rearrange : rearrange_list) {
+            for (const int inline_pq : inline_pq_list) {
+                for (const int pq_cache_size : pq_cache_size_list) {
+                    for (const int num_entry_points : num_entry_points_list) {
+                        std::shared_ptr<milvus::FileManager> file_manager =
+                            std::make_shared<milvus::LocalFileManager>();
+                        auto diskann_index_pack = knowhere::Pack(file_manager);
+                        knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
+                        knowhere::BinarySet binset;
+                        auto build_json = build_gen().dump();
+                        knowhere::Json json = knowhere::Json::parse(build_json);
+                        json["rearrange"] = rearrange;
+                        json["inline_pq"] = inline_pq;
+                        json["pq_cache_size"] = pq_cache_size;
+                        json["num_entry_points"] = num_entry_points;
+                        LOG_KNOWHERE_DEBUG_ << "========== build_json =================";
+                        LOG_KNOWHERE_DEBUG_ << json.dump();
+                        LOG_KNOWHERE_DEBUG_ << "===========================";
+                        LOG_KNOWHERE_DEBUG_ << "========== deserialize_json =================";
+                        LOG_KNOWHERE_DEBUG_ << deserialize_json.dump();
+                        LOG_KNOWHERE_DEBUG_ << "===========================";
+
+                        // build process
+                        knowhere::DataSetPtr ds_ptr = nullptr;
+                        auto diskann = knowhere::IndexFactory::Instance()
+                                           .Create<DataType>(index_type, version, diskann_index_pack)
+                                           .value();
+
+                        diskann.Build(ds_ptr, json);
+                        diskann.Serialize(binset);
+                        // knn search;
+                        if (rearrange)
+                            deserialize_json["use_bfs_cache"] = true;
+                        else
+                            deserialize_json["use_bfs_cache"] = false;
+                        diskann.Deserialize(binset, deserialize_json);
+                        diskann.Size();
+                        REQUIRE(diskann.HasRawData(metric_str) ==
+                                knowhere::IndexStaticFaced<DataType>::HasRawData(index_type, version, json));
+
+                        auto knn_search_json = knn_search_gen().dump();
+                        knowhere::Json knn_json = knowhere::Json::parse(knn_search_json);
+
+                        // knn search with bitset
+                        std::vector<std::function<std::vector<uint8_t>(size_t, size_t)>> gen_bitset_funcs = {
+                            GenerateBitsetWithRandomTbitsSet};
+                        for (const int pq_read_page_cache_size : pq_read_page_cache_size_list) {
+                            for (const int l_search : l_search_dict) {
+                                knn_json["search_list_size"] = l_search;
+                                knn_json["pq_read_page_cache_size"] = pq_read_page_cache_size;
+                                std::cout << " Test parameters: "
+                                          << "metric type: " << metric_str << " rearrange: " << rearrange
+                                          << " node cache size: " << deserialize_json["search_cache_budget_gb"] << " Gb"
+                                          << " inline_pq: " << inline_pq << " pq_cache_size: " << pq_cache_size
+                                          << " pq_read_page_cache_size: " << pq_read_page_cache_size
+                                          << " num_entry_points: " << num_entry_points << " vectors_beamwidth: 4"
+                                          << " search_list_size: " << l_search << std::endl;
+                                for (const float threshold : bitset_thresholds) {
+                                    knn_json["filter_threshold"] = threshold;
+                                    for (const float percentage : bitset_percentages) {
+                                        for (const auto& gen_func : gen_bitset_funcs) {
+                                            auto bitset_data = gen_func(kNumRows, percentage * kNumRows);
+                                            knowhere::BitsetView bitset(bitset_data.data(), kNumRows);
+                                            auto results = diskann.Search(query_ds, knn_json, bitset);
+                                            auto gt = knowhere::BruteForce::Search<DataType>(base_ds, query_ds,
+                                                                                             knn_json, bitset);
+                                            float recall = GetKNNRecall(*gt.value(), *results.value());
+                                            std::cout << " Test the map is " << percentage * 100
+                                                      << "% full -  Recall :" << recall * 100
+                                                      << "%; threshold: " << threshold << " l_search: " << l_search
+                                                      << std::endl;
+                                            if (percentage == 0.98f) {
+                                                REQUIRE(recall >= 0.9f);
+                                            } else {
+                                                REQUIRE(recall >= AiSAQKnnRecall);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    LOG_KNOWHERE_DEBUG_ << "========== Index clean =================";
+                    fs::remove_all(kL2IndexDir);
+                    REQUIRE_NOTHROW(fs::create_directory(kL2IndexDir));
+                    fs::remove_all(kIPIndexDir);
+                    REQUIRE_NOTHROW(fs::create_directory(kIPIndexDir));
+                    fs::remove_all(kCOSINEIndexDir);
+                    REQUIRE_NOTHROW(fs::create_directory(kCOSINEIndexDir));
+                }
+            }
+        }
+    }
+    fs::remove_all(kDir);
+    fs::remove(kDir);
+}
+
+TEST_CASE("Test_AiSAQ_CachedNode", "[diskann]") {
+    cached_node_AiSAQ_search<knowhere::fp32>();
 }
 
 TEST_CASE("Test DiskANN Search Cancellation", "[diskann][cancellation]") {
