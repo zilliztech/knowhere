@@ -89,7 +89,11 @@ install_uv() {
 
     if ! command -v uv >/dev/null 2>&1; then
         echo "[install_deps] Installing uv with pip3..."
-        pip3_install --user uv
+        if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+            pip3_install uv
+        else
+            pip3_install --user uv
+        fi
     fi
 
     if ! command -v uv >/dev/null 2>&1; then
