@@ -334,10 +334,6 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
             //   [total_plists_vals per dim, concatenated]
             size_t res = sizeof(uint32_t) * 3;  // header
 
-            if (nr_dims == 0 || nr_windows_ == 0) {
-                return res;
-            }
-
             // plists windows sizes mask
             const size_t mask_sz = (nr_dims + 7) / 8;
             res += mask_sz * sizeof(uint8_t);

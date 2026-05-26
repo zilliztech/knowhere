@@ -11,7 +11,9 @@
 
 #include <sys/mman.h>
 
+#include <algorithm>
 #include <boost/intrusive/pack_options.hpp>
+#include <cctype>
 #include <exception>
 #include <optional>
 
@@ -420,6 +422,23 @@ class SparseInvertedIndexNode : public IndexNode {
  protected:
     std::unique_ptr<sparse::inverted::InvertedIndex<value_type>> index_;
 
+    Status
+    ValidateInvertedIndexAlgo(const std::string& algo) const {
+        if (algo.empty()) {
+            return Status::success;
+        }
+
+        const auto valid_before_v10 = algo == "TAAT_NAIVE" || algo == "DAAT_WAND" || algo == "DAAT_MAXSCORE" ||
+                                      algo == "BLOCK_MAX_MAXSCORE" || algo == "BLOCK_MAX_WAND";
+        const auto valid = valid_before_v10 || (index_version_ >= 10 && algo == "SINDI");
+        if (!valid) {
+            LOG_KNOWHERE_ERROR_ << "Unsupported sparse inverted index algorithm " << algo << " for index version "
+                                << index_version_;
+            return Status::invalid_args;
+        }
+        return Status::success;
+    }
+
     template <typename DType, typename QType, sparse::inverted::IndexScorerType MetricType>
     expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>
     CreateIndexImpl(const SparseInvertedIndexConfig& cfg, bool is_growable = false,
@@ -428,6 +447,10 @@ class SparseInvertedIndexNode : public IndexNode {
 
         const bool is_bm25 = IsMetricType(cfg.metric_type.value(), metric::BM25);
         const bool is_ip = IsMetricType(cfg.metric_type.value(), metric::IP);
+
+        auto get_inverted_index_algo = [&](const std::string& default_algo) {
+            return NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or(default_algo));
+        };
 
         // Factory for docid-sorted index variants
         auto create_index_before_v10 = [&](const std::string& inverted_index_algo,
@@ -510,11 +533,11 @@ class SparseInvertedIndexNode : public IndexNode {
         };
 
         if (version_default_to_daat_maxscore()) {
-            const std::string algo = cfg.inverted_index_algo.value_or("DAAT_MAXSCORE");
+            const std::string algo = get_inverted_index_algo("DAAT_MAXSCORE");
             const std::string codec = cfg.inverted_index_codec.value_or("block_streamvbyte");
             return create_index_before_v10(algo, codec);
         } else if (is_ip) {
-            const std::string algo = cfg.inverted_index_algo.value_or("SINDI");
+            const std::string algo = get_inverted_index_algo("SINDI");
             const std::string codec = cfg.inverted_index_codec.value_or("block_streamvbyte");
             // When encoding is available and not FIXED_DOCID_WINDOWS, the file was not
             // built with SINDI, so use create_index_before_v10 to match the actual file encoding.
@@ -533,7 +556,7 @@ class SparseInvertedIndexNode : public IndexNode {
                 return create_index_before_v10(algo, codec);
             }
         } else if (is_bm25) {
-            const std::string algo = cfg.inverted_index_algo.value_or("DAAT_MAXSCORE");
+            const std::string algo = get_inverted_index_algo("DAAT_MAXSCORE");
             const std::string codec = cfg.inverted_index_codec.value_or("block_streamvbyte");
             bool use_sindi =
                 algo == "SINDI" && (!encoding.has_value() ||
@@ -560,6 +583,13 @@ class SparseInvertedIndexNode : public IndexNode {
     expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>
     CreateIndex(const SparseInvertedIndexConfig& cfg, bool is_growable = false,
                 std::optional<sparse::inverted::InvertedIndexEncoding> encoding = std::nullopt) const {
+        const auto explicit_algo = NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or(""));
+        const auto status = ValidateInvertedIndexAlgo(explicit_algo);
+        if (status != Status::success) {
+            return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
+                status, "unsupported sparse inverted index algorithm");
+        }
+
         auto qt = cfg.quant_type.value_or("");
         using sparse::inverted::IndexScorerType;
         if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
@@ -696,6 +726,13 @@ class SparseInvertedIndexNode : public IndexNode {
     bool
     version_support_fp16_quant_for_ip() const {
         return index_version_ >= SPARSE_INDEX_VERSION_SUPPORT_FP16_QUANT_FOR_IP;
+    }
+
+    static std::string
+    NormalizeInvertedIndexAlgo(std::string algo) {
+        std::transform(algo.begin(), algo.end(), algo.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        return algo;
     }
 
     bool
