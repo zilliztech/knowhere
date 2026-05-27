@@ -1238,6 +1238,70 @@ TEST_CASE("Test SINDI Index Build and Search", "[sparse][sindi]") {
     }
 }
 
+TEST_CASE("Test SINDI Index Requires Version 10", "[sparse][sindi]") {
+    constexpr int32_t version = 9;
+    auto dim = 16;
+    auto train_ds = GenSparseDataSet(100, dim, 0.8);
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "SINDI";
+
+    auto idx = knowhere::IndexFactory::Instance()
+                   .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                   .value();
+    REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::invalid_args);
+}
+
+TEST_CASE("Test Sparse Index Rejects Unsupported Inverted Index Algo", "[sparse]") {
+    auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    auto dim = 16;
+    auto train_ds = GenSparseDataSet(100, dim, 0.8);
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "NOT_A_REAL_ALGO";
+
+    auto idx = knowhere::IndexFactory::Instance()
+                   .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                   .value();
+    REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::invalid_args);
+
+    constexpr int32_t non_sindi_version = 9;
+    knowhere::Json valid_build_json = build_json;
+    valid_build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "daat_maxscore";
+
+    auto built_idx =
+        knowhere::IndexFactory::Instance()
+            .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, non_sindi_version)
+            .value();
+    REQUIRE(built_idx.Build(train_ds, valid_build_json) == knowhere::Status::success);
+
+    knowhere::BinarySet bs;
+    REQUIRE(built_idx.Serialize(bs) == knowhere::Status::success);
+
+    auto invalid_load_json = valid_build_json;
+    invalid_load_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "NOT_A_REAL_ALGO";
+
+    auto deserialized_idx =
+        knowhere::IndexFactory::Instance()
+            .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, non_sindi_version)
+            .value();
+    REQUIRE(deserialized_idx.Deserialize(bs, invalid_load_json) == knowhere::Status::invalid_args);
+
+    const auto tmp_file = "/tmp/knowhere_sparse_invalid_algo_test";
+    WriteBinaryToFile(tmp_file, bs.GetByName(built_idx.Type()));
+
+    auto file_deserialized_idx =
+        knowhere::IndexFactory::Instance()
+            .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, non_sindi_version)
+            .value();
+    REQUIRE(file_deserialized_idx.DeserializeFromFile(tmp_file, invalid_load_json) == knowhere::Status::invalid_args);
+    REQUIRE(std::remove(tmp_file) == 0);
+}
+
 TEST_CASE("Test SINDI Index Window Size", "[sparse][sindi]") {
     auto nb = 2000;
     auto dim = 1000;
