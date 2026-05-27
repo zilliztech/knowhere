@@ -143,21 +143,73 @@ struct DCTemplate<
         return static_cast<float>(sum) * final_scale_sq;
     }
 
-    float symmetric_dis(idx_t i, idx_t j) override {
-        const uint8_t* c1 = codes + i * code_size;
-        const uint8_t* c2 = codes + j * code_size;
-        int64_t acc = 0;
-        for (size_t k = 0; k < d; k++) {
-            uint8_t a = (k % 2 == 0)
-                    ? static_cast<uint8_t>(c1[k / 2] & 0x0F)
-                    : static_cast<uint8_t>(c1[k / 2] >> 4);
-            uint8_t b = (k % 2 == 0)
-                    ? static_cast<uint8_t>(c2[k / 2] & 0x0F)
-                    : static_cast<uint8_t>(c2[k / 2] >> 4);
-            int diff = int(a) - int(b);
-            acc += diff * diff;
+    float compute_code_distance_l2(
+            const uint8_t* code1,
+            const uint8_t* code2) const {
+        __m256i acc = _mm256_setzero_si256();
+        const __m256i mask_f = _mm256_set1_epi8(0xF);
+        const __m256i one = _mm256_set1_epi16(1);
+        const __m256i zero = _mm256_setzero_si256();
+
+        size_t i = 0;
+        // 64 dims per iteration (32 bytes of packed 4-bit codes).
+        for (; i + 64 <= d; i += 64) {
+            __m256i c1 = _mm256_loadu_si256(
+                    reinterpret_cast<const __m256i*>(code1 + i / 2));
+            __m256i c2 = _mm256_loadu_si256(
+                    reinterpret_cast<const __m256i*>(code2 + i / 2));
+
+            __m256i n1_lo = _mm256_and_si256(c1, mask_f);
+            __m256i n1_hi =
+                    _mm256_and_si256(_mm256_srli_epi16(c1, 4), mask_f);
+            __m256i n2_lo = _mm256_and_si256(c2, mask_f);
+            __m256i n2_hi =
+                    _mm256_and_si256(_mm256_srli_epi16(c2, 4), mask_f);
+
+            __m256i diff_lo = _mm256_sub_epi8(n1_lo, n2_lo);
+            __m256i diff_hi = _mm256_sub_epi8(n1_hi, n2_hi);
+
+            // AVX2 has no _mm256_abs_epi8; emulate via max(x, -x).
+            diff_lo = _mm256_max_epi8(diff_lo, _mm256_sub_epi8(zero, diff_lo));
+            diff_hi = _mm256_max_epi8(diff_hi, _mm256_sub_epi8(zero, diff_hi));
+
+            __m256i sq_lo = _mm256_maddubs_epi16(diff_lo, diff_lo);
+            __m256i sq_hi = _mm256_maddubs_epi16(diff_hi, diff_hi);
+
+            __m256i sum_lo = _mm256_madd_epi16(sq_lo, one);
+            __m256i sum_hi = _mm256_madd_epi16(sq_hi, one);
+
+            acc = _mm256_add_epi32(acc, sum_lo);
+            acc = _mm256_add_epi32(acc, sum_hi);
         }
-        return static_cast<float>(acc) * final_scale_sq;
+
+        __m128i acc_lo = _mm256_castsi256_si128(acc);
+        __m128i acc_hi = _mm256_extracti128_si256(acc, 1);
+        acc_lo = _mm_add_epi32(acc_lo, acc_hi);
+        acc_lo = _mm_hadd_epi32(acc_lo, acc_lo);
+        acc_lo = _mm_hadd_epi32(acc_lo, acc_lo);
+        int32_t sum = _mm_cvtsi128_si32(acc_lo);
+
+        // Scalar tail.
+        for (; i < d; i++) {
+            uint8_t c1 = code1[i / 2];
+            uint8_t c2 = code2[i / 2];
+            uint8_t n1 = (i % 2 == 0)
+                    ? static_cast<uint8_t>(c1 & 0x0F)
+                    : static_cast<uint8_t>((c1 >> 4) & 0x0F);
+            uint8_t n2 = (i % 2 == 0)
+                    ? static_cast<uint8_t>(c2 & 0x0F)
+                    : static_cast<uint8_t>((c2 >> 4) & 0x0F);
+            int diff = int(n1) - int(n2);
+            sum += diff * diff;
+        }
+
+        return static_cast<float>(sum) * final_scale_sq;
+    }
+
+    float symmetric_dis(idx_t i, idx_t j) override {
+        return compute_code_distance_l2(
+                codes + i * code_size, codes + j * code_size);
     }
 
     /// Batch-4: 128 dims per outer iter, two 64-dim chunks sharing q_lo/q_hi
