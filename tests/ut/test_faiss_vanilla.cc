@@ -42,8 +42,18 @@ gen_bin(size_t nb, size_t dim_bits, uint64_t seed = 42) {
 
 TEST_CASE("FaissConfig parses faiss_index_name and captures raw JSON", "[faiss_vanilla]") {
     knowhere::FaissConfig cfg;
-    knowhere::Json j =
-        knowhere::Json::parse(R"({"metric_type":"L2","faiss_index_name":"IVF256,Flat","nprobe":16,"efSearch":32})");
+    knowhere::Json j = knowhere::Json::parse(R"({
+            "metric_type":"L2",
+            "faiss_index_name":"IVF256,Flat",
+            "nprobe":16,
+            "efSearch":32,
+            "index_type":"FAISS",
+            "build_id":"1000",
+            "index_num_rows":1000,
+            "storage_version":2,
+            "build_dram_budget_gb":"4.0",
+            "index.nonEncoding":"false"
+        })");
     std::string msg;
 
     // Replicate LoadConfig's internal sequence using only public-header entry points.
@@ -56,6 +66,12 @@ TEST_CASE("FaissConfig parses faiss_index_name and captures raw JSON", "[faiss_v
     REQUIRE(cfg.raw_params.contains("nprobe"));
     REQUIRE(cfg.raw_params["nprobe"] == 16);
     REQUIRE(cfg.raw_params.contains("efSearch"));
+    REQUIRE_FALSE(cfg.raw_params.contains("index_type"));
+    REQUIRE_FALSE(cfg.raw_params.contains("build_id"));
+    REQUIRE_FALSE(cfg.raw_params.contains("index_num_rows"));
+    REQUIRE_FALSE(cfg.raw_params.contains("storage_version"));
+    REQUIRE_FALSE(cfg.raw_params.contains("build_dram_budget_gb"));
+    REQUIRE_FALSE(cfg.raw_params.contains("index.nonEncoding"));
 }
 
 TEST_CASE("IndexFactory creates FAISS index for fp32", "[faiss_vanilla]") {

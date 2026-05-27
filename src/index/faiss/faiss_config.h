@@ -12,9 +12,52 @@
 
 #pragma once
 
+#include <unordered_set>
+
 #include "knowhere/config.h"
 
 namespace knowhere {
+
+inline bool
+IsFaissRawParamBlacklisted(const std::string& key) {
+    static const std::unordered_set<std::string> kParams = {
+        "analyzer_extra_info",
+        "build_dram_budget_gb",
+        "build_id",
+        "cluster_id",
+        "collection_id",
+        "current_index_version",
+        "current_scalar_index_version",
+        "data_type",
+        "element_type",
+        "field_id",
+        "index.nonEncoding",
+        "index_build_id",
+        "index_engine_version",
+        "index_file_prefix",
+        "index_id",
+        "index_num_rows",
+        "index_store_path_version",
+        "index_type",
+        "index_version",
+        "insert_files",
+        "lack_binlog_rows",
+        "manifest",
+        "num_rows",
+        "num_build_thread_ratio",
+        "opt_fields",
+        "partition_id",
+        "partition_key_isolation",
+        "scalar_index_engine_version",
+        "segment_id",
+        "segment_insert_files",
+        "segment_manifest",
+        "stats_base_path",
+        "storage_version",
+        "tantivy_index_version",
+    };
+    return kParams.count(key) > 0;
+}
 
 class FaissConfig : public BaseConfig {
  public:
@@ -44,10 +87,10 @@ class FaissConfig : public BaseConfig {
     CaptureRawJson(const Json& json) override {
         raw_params = Json::object();
         for (auto it = json.begin(); it != json.end(); ++it) {
-            // Skip any key already declared as a typed field on BaseConfig or
-            // FaissConfig — those are Knowhere's own and will be consumed by
-            // Config::Load. Everything else is a faiss-bound knob we forward.
-            if (__DICT__.count(it.key()) == 0) {
+            // Skip keys consumed by Knowhere's typed config layer and framework
+            // metadata injected by callers such as Milvus. Everything left is a
+            // faiss-bound knob and will be validated by faiss_dispatch.
+            if (__DICT__.count(it.key()) == 0 && !IsFaissRawParamBlacklisted(it.key())) {
                 raw_params[it.key()] = it.value();
             }
         }
