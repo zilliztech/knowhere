@@ -194,22 +194,91 @@ struct DCTemplate<
         return static_cast<float>(sum) * final_scale_sq;
     }
 
-    float symmetric_dis(idx_t i, idx_t j) override {
-        // Not on the critical query path; scalar version suffices.
-        const uint8_t* c1 = codes + i * code_size;
-        const uint8_t* c2 = codes + j * code_size;
-        int64_t acc = 0;
-        for (size_t k = 0; k < d; k++) {
-            uint8_t a = (k % 2 == 0)
-                    ? static_cast<uint8_t>(c1[k / 2] & 0x0F)
-                    : static_cast<uint8_t>(c1[k / 2] >> 4);
-            uint8_t b = (k % 2 == 0)
-                    ? static_cast<uint8_t>(c2[k / 2] & 0x0F)
-                    : static_cast<uint8_t>(c2[k / 2] >> 4);
-            int diff = int(a) - int(b);
-            acc += diff * diff;
+    float compute_code_distance_l2(
+            const uint8_t* code1,
+            const uint8_t* code2) const {
+        __m512i acc = _mm512_setzero_si512();
+        const __m512i mask_f = _mm512_set1_epi8(0xF);
+        const __m512i one = _mm512_set1_epi16(1);
+
+        size_t i = 0;
+        // 128 dims per iteration (64 bytes of packed 4-bit codes).
+        for (; i + 128 <= d; i += 128) {
+            __m512i c1 = _mm512_loadu_si512(
+                    reinterpret_cast<const __m512i*>(code1 + i / 2));
+            __m512i c2 = _mm512_loadu_si512(
+                    reinterpret_cast<const __m512i*>(code2 + i / 2));
+
+            __m512i n1_lo = _mm512_and_si512(c1, mask_f);
+            __m512i n1_hi =
+                    _mm512_and_si512(_mm512_srli_epi16(c1, 4), mask_f);
+            __m512i n2_lo = _mm512_and_si512(c2, mask_f);
+            __m512i n2_hi =
+                    _mm512_and_si512(_mm512_srli_epi16(c2, 4), mask_f);
+
+            __m512i diff_lo = _mm512_sub_epi8(n1_lo, n2_lo);
+            __m512i diff_hi = _mm512_sub_epi8(n1_hi, n2_hi);
+
+            diff_lo = _mm512_abs_epi8(diff_lo);
+            diff_hi = _mm512_abs_epi8(diff_hi);
+
+            __m512i sq_lo = _mm512_maddubs_epi16(diff_lo, diff_lo);
+            __m512i sq_hi = _mm512_maddubs_epi16(diff_hi, diff_hi);
+
+            __m512i sum_lo = _mm512_madd_epi16(sq_lo, one);
+            __m512i sum_hi = _mm512_madd_epi16(sq_hi, one);
+
+            acc = _mm512_add_epi32(acc, sum_lo);
+            acc = _mm512_add_epi32(acc, sum_hi);
         }
-        return static_cast<float>(acc) * final_scale_sq;
+
+        // Tail. The high nibble is masked separately so odd dimensions do not
+        // count the padded half of the final byte.
+        if (i < d) {
+            size_t rem = d - i;
+            uint64_t mask_even = (rem + 1) / 2 >= 64
+                    ? ~0ULL
+                    : (1ULL << ((rem + 1) / 2)) - 1;
+            uint64_t mask_odd =
+                    rem / 2 >= 64 ? ~0ULL : (1ULL << (rem / 2)) - 1;
+
+            __m512i c1 = _mm512_maskz_loadu_epi8(mask_even, code1 + i / 2);
+            __m512i c2 = _mm512_maskz_loadu_epi8(mask_even, code2 + i / 2);
+
+            __m512i n1_lo = _mm512_and_si512(c1, mask_f);
+            __m512i n1_hi =
+                    _mm512_and_si512(_mm512_srli_epi16(c1, 4), mask_f);
+            __m512i n2_lo = _mm512_and_si512(c2, mask_f);
+            __m512i n2_hi =
+                    _mm512_and_si512(_mm512_srli_epi16(c2, 4), mask_f);
+
+            __m512i mask_odd_vec = _mm512_movm_epi8(mask_odd);
+            n1_hi = _mm512_and_si512(n1_hi, mask_odd_vec);
+            n2_hi = _mm512_and_si512(n2_hi, mask_odd_vec);
+
+            __m512i diff_lo = _mm512_sub_epi8(n1_lo, n2_lo);
+            __m512i diff_hi = _mm512_sub_epi8(n1_hi, n2_hi);
+
+            diff_lo = _mm512_abs_epi8(diff_lo);
+            diff_hi = _mm512_abs_epi8(diff_hi);
+
+            __m512i sq_lo = _mm512_maddubs_epi16(diff_lo, diff_lo);
+            __m512i sq_hi = _mm512_maddubs_epi16(diff_hi, diff_hi);
+
+            __m512i sum_lo = _mm512_madd_epi16(sq_lo, one);
+            __m512i sum_hi = _mm512_madd_epi16(sq_hi, one);
+
+            acc = _mm512_add_epi32(acc, sum_lo);
+            acc = _mm512_add_epi32(acc, sum_hi);
+        }
+
+        const int32_t sum = _mm512_reduce_add_epi32(acc);
+        return static_cast<float>(sum) * final_scale_sq;
+    }
+
+    float symmetric_dis(idx_t i, idx_t j) override {
+        return compute_code_distance_l2(
+                codes + i * code_size, codes + j * code_size);
     }
 
     /// Batch-4 entry point: dispatches to VNNI or non-VNNI path based on

@@ -130,21 +130,63 @@ struct DCTemplate<
         return static_cast<float>(sum) * final_scale_sq;
     }
 
-    float symmetric_dis(idx_t i, idx_t j) override {
-        const uint8_t* c1 = codes + i * code_size;
-        const uint8_t* c2 = codes + j * code_size;
-        int64_t acc = 0;
-        for (size_t k = 0; k < d; k++) {
-            uint8_t a = (k % 2 == 0)
-                    ? static_cast<uint8_t>(c1[k / 2] & 0x0F)
-                    : static_cast<uint8_t>(c1[k / 2] >> 4);
-            uint8_t b = (k % 2 == 0)
-                    ? static_cast<uint8_t>(c2[k / 2] & 0x0F)
-                    : static_cast<uint8_t>(c2[k / 2] >> 4);
-            int diff = int(a) - int(b);
-            acc += diff * diff;
+    float compute_code_distance_l2(
+            const uint8_t* code1,
+            const uint8_t* code2) const {
+        uint32x4_t acc = vdupq_n_u32(0);
+        const uint8x16_t mask_f = vdupq_n_u8(0x0F);
+
+        size_t i = 0;
+        // 32 dims per iteration (16 bytes of packed 4-bit codes).
+        for (; i + 32 <= d; i += 32) {
+            uint8x16_t c1 = vld1q_u8(code1 + i / 2);
+            uint8x16_t c2 = vld1q_u8(code2 + i / 2);
+
+            uint8x16_t n1_lo = vandq_u8(c1, mask_f);
+            uint8x16_t n1_hi = vandq_u8(vshrq_n_u8(c1, 4), mask_f);
+            uint8x16_t n2_lo = vandq_u8(c2, mask_f);
+            uint8x16_t n2_hi = vandq_u8(vshrq_n_u8(c2, 4), mask_f);
+
+            uint8x16_t diff_lo = vabdq_u8(n1_lo, n2_lo);
+            uint8x16_t diff_hi = vabdq_u8(n1_hi, n2_hi);
+
+            uint16x8_t sq_lo_1 =
+                    vmull_u8(vget_low_u8(diff_lo), vget_low_u8(diff_lo));
+            uint16x8_t sq_lo_2 =
+                    vmull_u8(vget_high_u8(diff_lo), vget_high_u8(diff_lo));
+            uint16x8_t sq_hi_1 =
+                    vmull_u8(vget_low_u8(diff_hi), vget_low_u8(diff_hi));
+            uint16x8_t sq_hi_2 =
+                    vmull_u8(vget_high_u8(diff_hi), vget_high_u8(diff_hi));
+
+            acc = vpadalq_u16(acc, sq_lo_1);
+            acc = vpadalq_u16(acc, sq_lo_2);
+            acc = vpadalq_u16(acc, sq_hi_1);
+            acc = vpadalq_u16(acc, sq_hi_2);
         }
-        return static_cast<float>(acc) * final_scale_sq;
+
+        uint32_t sum = vaddvq_u32(acc);
+
+        // Scalar tail.
+        for (; i < d; i++) {
+            uint8_t c1 = code1[i / 2];
+            uint8_t c2 = code2[i / 2];
+            uint8_t n1 = (i % 2 == 0)
+                    ? static_cast<uint8_t>(c1 & 0x0F)
+                    : static_cast<uint8_t>((c1 >> 4) & 0x0F);
+            uint8_t n2 = (i % 2 == 0)
+                    ? static_cast<uint8_t>(c2 & 0x0F)
+                    : static_cast<uint8_t>((c2 >> 4) & 0x0F);
+            int diff = int(n1) - int(n2);
+            sum += diff * diff;
+        }
+
+        return static_cast<float>(sum) * final_scale_sq;
+    }
+
+    float symmetric_dis(idx_t i, idx_t j) override {
+        return compute_code_distance_l2(
+                codes + i * code_size, codes + j * code_size);
     }
 
     /// Batch-4: 32 dims per outer iter with four parallel u32 accumulators,
