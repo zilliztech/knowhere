@@ -171,18 +171,12 @@ void PQFlashAisaqIndex<T>::aisaq_async_generate_cache_list_from_sample_queries(
             aisaq_search_config.pq_cache_size = 0;
             aisaq_search_config.pq_read_page_cache_size = 0;
             aisaq_search_config.vector_beamwidth = 1;
-            while (this->search_counter.load() < sample_num && id < sample_num) {
-                {
-                    std::unique_lock<std::mutex> guard(state_controller->status_mtx);
-                    if (state_controller->status.load() == ThreadSafeStateController::Status::DOING) {
-                        aisaq_cached_beam_search(samples + (id * sample_aligned_dim), 1, l_search,
-                                         &tmp_result_id_64, &tmp_result_dist, beamwidth,
-                                         false, nullptr, nullptr,
-                                         bitset, -1.0f,
+            while (this->search_counter.load() < sample_num && id < sample_num &&
+                   state_controller->status.load() != ThreadSafeStateController::Status::STOPPING) {
+                aisaq_cached_beam_search(samples + (id * sample_aligned_dim), 1, l_search, &tmp_result_id_64,
+                                         &tmp_result_dist, beamwidth, false, nullptr, nullptr, bitset, -1.0f,
                                          &aisaq_search_config);
-                        id++;
-                    }
-                }
+                id++;
             }
 
             if (state_controller->status.load() ==
