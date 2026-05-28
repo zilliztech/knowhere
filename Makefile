@@ -90,7 +90,7 @@ ifdef WITH_ASAN
 endif
 
 ifdef WITH_SVS
-    CONAN_FLAGS += -o \&:with_svs=True
+    CONAN_SETTINGS += -o \&:with_svs=True
 endif
 
 ifdef WITH_CARDINAL
