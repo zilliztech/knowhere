@@ -91,10 +91,11 @@ void search_preassigned(
     const idx_t unlimited_list_size = std::numeric_limits<idx_t>::max();
     idx_t cur_max_codes = params ? params->max_codes : index.max_codes;
     const bool ensure_topk_full = params ? params->ensure_topk_full : false;
-    // Baseline-style effective budget: with ensure_topk_full, the per-
-    // list scan cap is raised to max(max_codes, k) so the probe loop
-    // can make progress toward k hits even when the user-set budget is
-    // exhausted.
+    // Baseline-style effective budget: with ensure_topk_full, max_codes
+    // is treated as at least k post-selector scans. The CC list scanner
+    // must not use this as a raw per-list cap, because a restrictive
+    // selector may reject the early entries in a list before enough
+    // results can be collected.
     idx_t effective_max_codes = cur_max_codes;
 
     ::faiss::IDSelector* sel = params ? params->sel : nullptr;
@@ -337,12 +338,15 @@ void search_preassigned(
                         idx_t nscan = 0;
 
                         for (idx_t ik = 0; ik < cur_nprobe; ik++) {
+                            const idx_t list_size_max = ensure_topk_full
+                                    ? unlimited_list_size
+                                    : effective_max_codes - nscan;
                             nscan += scan_one_list(
                                     keys[i * cur_nprobe + ik],
                                     coarse_dis[i * cur_nprobe + ik],
                                     simi,
                                     idxi,
-                                    effective_max_codes - nscan);
+                                    list_size_max);
 
                             if (nscan >= effective_max_codes) {
                                 break;

@@ -16,7 +16,11 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "faiss/cppcontrib/knowhere/IndexFlat.h"
+#include "faiss/cppcontrib/knowhere/IndexIVFFlat.h"
 #include "faiss/cppcontrib/knowhere/invlists/InvertedLists.h"
+#include "knowhere/bitsetview.h"
+#include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_check.h"
 #include "knowhere/index/index_factory.h"
@@ -449,4 +453,55 @@ TEST_CASE("Test IVFFLAT_CC DeserializeFromFile", "[ivfflat_cc][mmap][serde]") {
     }
 
     std::filesystem::remove(path);
+}
+
+TEST_CASE("Test IVFFLAT_CC ensure topk with restrictive bitset", "[ivfflat_cc]") {
+    constexpr int64_t nb = 256;
+    constexpr int64_t dim = 4;
+    constexpr int64_t topk = 10;
+    constexpr int64_t allow_begin = 191;
+    constexpr int64_t allow_end = allow_begin + topk;
+
+    std::vector<float> xb(nb * dim);
+    for (int64_t i = 0; i < nb; ++i) {
+        xb[i * dim] = static_cast<float>(i);
+        xb[i * dim + 1] = static_cast<float>(i % 7);
+        xb[i * dim + 2] = static_cast<float>(i % 11);
+        xb[i * dim + 3] = static_cast<float>(i % 13);
+    }
+    const float xq[dim] = {195.0f, 195.0f / 7.0f, 195.0f / 11.0f, 195.0f / 13.0f};
+
+    auto quantizer = std::make_unique<faiss::cppcontrib::knowhere::IndexFlat>(dim, faiss::METRIC_L2);
+    faiss::cppcontrib::knowhere::IndexIVFFlatCC index(quantizer.release(), dim, 1, 48, faiss::METRIC_L2);
+    index.own_fields = true;
+    index.train(nb, xb.data());
+    index.add(nb, xb.data());
+
+    std::vector<uint8_t> bitset((nb + 7) / 8, 0xff);
+    for (int64_t id = allow_begin; id < allow_end; ++id) {
+        bitset[id >> 3] &= ~(0x1 << (id & 0x7));
+    }
+
+    knowhere::BitsetView bitset_view(bitset.data(), nb, nb - topk);
+    knowhere::BitsetViewIDSelector selector(bitset_view);
+
+    faiss::IVFSearchParameters params;
+    params.nprobe = 1;
+    params.max_codes = topk;
+    params.ensure_topk_full = true;
+    params.sel = &selector;
+
+    std::vector<float> distances(topk);
+    std::vector<faiss::idx_t> labels(topk);
+    index.search(1, xq, topk, distances.data(), labels.data(), &params);
+
+    std::vector<bool> found(topk, false);
+    for (const auto label : labels) {
+        REQUIRE(label >= allow_begin);
+        REQUIRE(label < allow_end);
+        found[label - allow_begin] = true;
+    }
+    for (const bool is_found : found) {
+        CHECK(is_found);
+    }
 }
