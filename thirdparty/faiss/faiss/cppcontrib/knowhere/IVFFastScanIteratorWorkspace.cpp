@@ -55,6 +55,32 @@ struct IVFFastScanIteratorWorkspace::Impl {
             size_t current_backup_count);
 };
 
+template <class Lambda>
+void
+with_single_query_collect_handler(SIMDResultHandlerToFloat& handler, Lambda&& lambda) {
+    auto run = [&]<class C>() {
+        using H = SingleQueryResultCollectHandler<
+                C,
+                true,
+                SINGLE_SIMD_LEVEL_256>;
+        auto* concrete = dynamic_cast<H*>(&handler);
+        FAISS_THROW_IF_NOT_MSG(
+                concrete != nullptr,
+                "Unexpected FastScan iterator result handler type");
+        lambda(*concrete);
+    };
+
+    FAISS_THROW_IF_NOT_MSG(
+            handler.sizeof_ids == sizeof(int64_t) && handler.with_fields,
+            "Unsupported FastScan iterator result handler shape");
+
+    if (handler.is_CMax) {
+        run.template operator()<CMax<uint16_t, int64_t>>();
+    } else {
+        run.template operator()<CMin<uint16_t, int64_t>>();
+    }
+}
+
 // ---- IVFFastScanIteratorWorkspace ----
 
 IVFFastScanIteratorWorkspace::IVFFastScanIteratorWorkspace(
@@ -140,11 +166,12 @@ void IVFFastScanIteratorWorkspace::Impl::next_batch(
     // we convert to knowhere::DistId after scanning.
     std::vector<std::pair<int64_t, float>> pairs;
 
-    std::unique_ptr<SIMDResultHandlerToFloat> handler;
     bool is_max = !faiss::is_similarity_metric(index->metric_type);
     auto id_selector = ws.search_params->sel
             ? ws.search_params->sel
             : nullptr;
+
+    std::unique_ptr<SIMDResultHandlerToFloat> handler;
 
     if (is_max) {
         handler.reset(
@@ -208,7 +235,7 @@ void IVFFastScanIteratorWorkspace::Impl::get_interator_next_batch_implem_10(
         InvertedLists::ScopedIds ids(index->invlists, list_no);
         handler.ntotal = ls;
         handler.id_map = ids.get();
-        with_SIMDResultHandler(handler, [&](auto& concrete_handler) {
+        with_single_query_collect_handler(handler, [&](auto& concrete_handler) {
             ::faiss::DummyScaler<> dummy;
             ::faiss::pq4_accumulate_loop_fixed_scaler(
                     1,
