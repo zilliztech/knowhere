@@ -74,7 +74,7 @@ check_deps() {
     command -v "$PYTHON" >/dev/null || { log_error "Python not found: $PYTHON"; exit 1; }
 
     $PYTHON -c "import numpy" 2>/dev/null || {
-        log_error "numpy not found. Install with: pip3 install 'numpy<2'"
+        log_error "numpy not found. Install with: pip3 install 'numpy>=2,<3'"
         exit 1
     }
 

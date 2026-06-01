@@ -8,7 +8,7 @@ from .swigknowhere import BruteForceSearchInt8, BruteForceRangeSearchInt8
 from .swigknowhere import BruteForceSearchBin, BruteForceRangeSearchBin
 
 import numpy as np
-from bfloat16 import bfloat16
+from ml_dtypes import bfloat16
 
 
 def CreateIndex(name, version, type=np.float32):
