@@ -2,7 +2,7 @@ import knowhere
 import json
 import pytest
 import numpy as np
-from bfloat16 import bfloat16
+from ml_dtypes import bfloat16
 
 test_data = [
     (
