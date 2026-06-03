@@ -1054,11 +1054,6 @@ TEST_CASE("Test Sparse Index CC Build Add Search", "[sparse]") {
     }
 
     SECTION("Build then Add more data to CC index") {
-#if defined(__APPLE__)
-        // TODO: CC sparse index Add() returns all -1 IDs on macOS ARM.
-        // Needs investigation; skip until the root cause is identified.
-        SKIP("CC sparse index Add not supported on macOS yet");
-#else
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(cc_name, version).value();
         // Build with initial data first (required for CC indices)
         REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
@@ -1073,6 +1068,7 @@ TEST_CASE("Test Sparse Index CC Build Add Search", "[sparse]") {
         // but original results should still be findable
         auto* ids = results.value()->GetIds();
         auto k = results.value()->GetDim();
+        const auto* queries = static_cast<const knowhere::sparse::SparseRow<float>*>(query_ds->GetTensor());
         for (int64_t i = 0; i < nq; ++i) {
             bool found_valid = false;
             for (int64_t j = 0; j < k; ++j) {
@@ -1081,9 +1077,12 @@ TEST_CASE("Test Sparse Index CC Build Add Search", "[sparse]") {
                     break;
                 }
             }
-            REQUIRE(found_valid);
+            if (queries[i].size() == 0) {
+                REQUIRE_FALSE(found_valid);
+            } else {
+                REQUIRE(found_valid);
+            }
         }
-#endif
     }
 }
 
