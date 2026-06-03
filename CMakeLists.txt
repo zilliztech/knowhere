@@ -214,6 +214,30 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64)")
         PROPERTIES COMPILE_FLAGS "-mavx512f -mavx512bw -mavx512vl -mavx512dq -mavx512cd -mavx2 -mfma -mf16c")
 endif()
 
+if(__AARCH64)
+    set(KNOWHERE_SVE_COMPILE_OPTIONS "")
+    if(HAS_ARMV9_SVE_BF16)
+        set(KNOWHERE_SVE_COMPILE_OPTIONS "-march=armv9-a+sve+bf16")
+    elseif(HAS_ARMV8_SVE_BF16)
+        set(KNOWHERE_SVE_COMPILE_OPTIONS "-march=armv8-a+sve+bf16")
+    elseif(HAS_ARMV9_SVE)
+        set(KNOWHERE_SVE_COMPILE_OPTIONS "-march=armv9-a+sve")
+    elseif(HAS_ARMV8_SVE)
+        set(KNOWHERE_SVE_COMPILE_OPTIONS "-march=armv8-a+sve")
+    endif()
+
+    if(KNOWHERE_SVE_COMPILE_OPTIONS)
+        set_source_files_properties(
+            src/index/sparse/sindi_simd_sve.cc
+            PROPERTIES
+                COMPILE_OPTIONS "${KNOWHERE_SVE_COMPILE_OPTIONS}"
+                COMPILE_DEFINITIONS KNOWHERE_USE_SVE)
+        set_source_files_properties(
+            src/index/sparse/sindi_simd.cc
+            PROPERTIES COMPILE_DEFINITIONS KNOWHERE_USE_SVE)
+    endif()
+endif()
+
 if(WITH_SVS)
   if(NOT __X86_64)
     message(FATAL_ERROR "SVS is only supported on x86_64 platforms")

@@ -90,7 +90,6 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
 
     void
     append_window_indexes(const SparseRow<DataType>* data, size_t rows) {
-        // Initialize global posting lists
         total_plists_ids_.resize(this->dim_map_.size());
         total_plists_vals_.resize(this->dim_map_.size());
         total_plists_ids_spans_.resize(this->dim_map_.size());
@@ -110,46 +109,19 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
             wif.resize(this->dim_map_.size());
         }
 
-        std::vector<size_t> prev_offsets(this->dim_map_.size(), 0);
-        std::vector<int32_t> cnt_nonempty_windows(this->dim_map_.size(), 0);
-
         for (size_t vecid = 0; vecid < rows; ++vecid) {
+            const uint32_t global_vecid = static_cast<uint32_t>(this->nr_rows_ + vecid);
+            const uint32_t widx = global_vecid / window_size_;
+            const uint16_t local_id = static_cast<uint16_t>(global_vecid % window_size_);
             for (size_t j = 0; j < data[vecid].size(); ++j) {
                 auto [dim, val] = data[vecid][j];
                 if (std::abs(val) < std::numeric_limits<DataType>::epsilon()) {
                     continue;
                 }
                 auto dim_id = this->dim_map_[dim];
-                total_plists_ids_[dim_id].push_back(static_cast<uint16_t>((vecid + this->nr_rows_) % window_size_));
+                total_plists_ids_[dim_id].push_back(local_id);
                 total_plists_vals_[dim_id].push_back(static_cast<QuantType>(static_cast<float>(val)));
-            }
-
-            if ((this->nr_rows_ + vecid + 1) % window_size_ == 0) {
-                for (size_t dim_id = 0; dim_id < this->dim_map_.size(); ++dim_id) {
-                    auto delta_sz = total_plists_ids_[dim_id].size() - prev_offsets[dim_id];
-                    window_index_plists_sz_[curr_widx_][dim_id] = static_cast<uint16_t>(delta_sz);
-                    if (delta_sz > 0) {
-                        cnt_nonempty_windows[dim_id] += 1;
-                    }
-                    prev_offsets[dim_id] = total_plists_ids_[dim_id].size();
-                }
-                ++curr_widx_;
-                // When we've just closed the last existing window, curr_widx_ may point
-                // beyond our current window count. It will become valid when a new window
-                // is opened by subsequent add() calls.
-            }
-        }
-
-        // If the last window is only partially filled, record its offsets as well,
-        // so that window_index_plists_sz_ stores per-window nnz consistently.
-        if ((this->nr_rows_ + rows) % window_size_ != 0 && curr_widx_ < nr_windows_) {
-            for (size_t dim_id = 0; dim_id < this->dim_map_.size(); ++dim_id) {
-                auto delta_sz = total_plists_ids_[dim_id].size() - prev_offsets[dim_id];
-                window_index_plists_sz_[curr_widx_][dim_id] = static_cast<uint16_t>(delta_sz);
-                if (delta_sz > 0) {
-                    cnt_nonempty_windows[dim_id] += 1;
-                }
-                prev_offsets[dim_id] = total_plists_ids_[dim_id].size();
+                ++window_index_plists_sz_[widx][dim_id];
             }
         }
 
@@ -175,9 +147,15 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
         // Encode window nnzs with sparse/dense format selection
         // Sparse format: (wid, wnnz) pairs when cnt_nonempty * 4 < nr_windows * 2
         // Dense format: one uint16_t per window otherwise
-        auto encode_dim_nnzs = [&](size_t dimid, int32_t cnt_nonempty) {
+        auto encode_dim_nnzs = [&](size_t dimid) {
             plists_window_nnzs_[dimid].clear();
             auto* mskptr = plists_wnnzs_fmts_msk_.data() + (dimid >> 3);
+            int32_t cnt_nonempty = 0;
+            for (size_t wid = 0; wid < nr_windows_; ++wid) {
+                if (window_index_plists_sz_spans_[wid][dimid] > 0) {
+                    ++cnt_nonempty;
+                }
+            }
             const bool use_sparse =
                 static_cast<size_t>(cnt_nonempty) * sizeof(uint32_t) < nr_windows_ * sizeof(uint16_t);
 
@@ -211,7 +189,7 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
         };
 
         for (size_t dimid = 0; dimid < this->dim_map_.size(); ++dimid) {
-            encode_dim_nnzs(dimid, cnt_nonempty_windows[dimid]);
+            encode_dim_nnzs(dimid);
         }
 
         plists_wnnzs_fmts_msk_span_ =
@@ -1065,7 +1043,6 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
 
     uint32_t window_size_{max_window_size};
     uint32_t nr_windows_{0};
-    uint32_t curr_widx_{0};
 
     // Cursor for iterating over a dimension's posting list by windows
     struct PostingCursor {
