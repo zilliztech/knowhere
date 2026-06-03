@@ -1302,6 +1302,39 @@ TEST_CASE("Test Sparse Index Rejects Unsupported Inverted Index Algo", "[sparse]
     REQUIRE(std::remove(tmp_file) == 0);
 }
 
+TEST_CASE("Test Sparse Index Rejects Invalid Inverted Index Build Params", "[sparse]") {
+    const auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    constexpr auto dim = 16;
+    auto train_ds = GenSparseDataSet(100, dim, 0.8);
+
+    const std::string name = knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+
+    SECTION("reject invalid inverted index codec") {
+        knowhere::Json build_json;
+        build_json[knowhere::meta::DIM] = dim;
+        build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+        build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "DAAT_MAXSCORE";
+        build_json["inverted_index_codec"] = "invalid_codec";
+
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::invalid_args);
+    }
+
+    SECTION("reject non-positive block max block size") {
+        auto block_size = GENERATE(0, -1);
+        CAPTURE(block_size);
+
+        knowhere::Json build_json;
+        build_json[knowhere::meta::DIM] = dim;
+        build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+        build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "BLOCK_MAX_WAND";
+        build_json["block_max_block_size"] = block_size;
+
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+        REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::out_of_range_in_json);
+    }
+}
+
 TEST_CASE("Test SINDI Index Window Size", "[sparse][sindi]") {
     auto nb = 2000;
     auto dim = 1000;

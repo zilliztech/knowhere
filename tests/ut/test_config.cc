@@ -148,6 +148,33 @@ TEST_CASE("Test config json parse", "[config]") {
         CHECK(s == knowhere::Status::out_of_range_in_json);
     }
 
+    SECTION("check sparse inverted index invalid build params") {
+        auto invalid_sparse_param = GENERATE(table<knowhere::Json, knowhere::Status, std::string>({
+            {knowhere::Json({{knowhere::meta::DIM, 16},
+                             {knowhere::meta::METRIC_TYPE, knowhere::metric::IP},
+                             {knowhere::indexparam::INVERTED_INDEX_ALGO, "DAAT_MAXSCORE"},
+                             {"inverted_index_codec", "invalid_codec"}}),
+             knowhere::Status::invalid_args, "inverted_index_codec"},
+            {knowhere::Json({{knowhere::meta::DIM, 16},
+                             {knowhere::meta::METRIC_TYPE, knowhere::metric::IP},
+                             {knowhere::indexparam::INVERTED_INDEX_ALGO, "BLOCK_MAX_WAND"},
+                             {"block_max_block_size", 0}}),
+             knowhere::Status::out_of_range_in_json, "block_max_block_size"},
+            {knowhere::Json({{knowhere::meta::DIM, 16},
+                             {knowhere::meta::METRIC_TYPE, knowhere::metric::IP},
+                             {knowhere::indexparam::INVERTED_INDEX_ALGO, "NOT_A_REAL_ALGO"}}),
+             knowhere::Status::invalid_args, knowhere::indexparam::INVERTED_INDEX_ALGO},
+        }));
+        const auto& [params, expected_status, expected_msg] = invalid_sparse_param;
+
+        std::string msg;
+        s = knowhere::IndexStaticFaced<knowhere::sparse_u32_f32>::ConfigCheck(
+            knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, knowhere::Version::GetCurrentVersion().VersionNumber(),
+            params, msg);
+        CHECK(s == expected_status);
+        CHECK(msg.find(expected_msg) != std::string::npos);
+    }
+
     SECTION("check invalid json values") {
         auto invalid_json_str = GENERATE(as<std::string>{},
                                          R"({
