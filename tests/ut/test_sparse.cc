@@ -1087,6 +1087,126 @@ TEST_CASE("Test Sparse Index CC Build Add Search", "[sparse]") {
     }
 }
 
+TEST_CASE("Test SINDI Sparse Inverted Index CC Build Add Search", "[sparse][sindi]") {
+    auto nb = 10;
+    auto extra_nb = 4;
+    auto dim = 8;
+    auto topk = 8;
+    auto nq = 3;
+    auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+
+    auto dense_sparse_ds = [](int32_t rows, int32_t dim, float value) {
+        std::vector<std::map<int32_t, float>> data(rows);
+        for (int32_t i = 0; i < rows; ++i) {
+            for (int32_t j = 0; j < dim; ++j) {
+                data[i][j] = value;
+            }
+        }
+        return GenSparseDataSet(data, dim);
+    };
+
+    auto train_ds = dense_sparse_ds(nb, dim, 1.0f);
+    auto query_ds = dense_sparse_ds(nq, dim, 1.0f);
+
+    knowhere::Json json;
+    json[knowhere::meta::DIM] = dim;
+    json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    json[knowhere::meta::TOPK] = topk;
+    json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "SINDI";
+    json[knowhere::indexparam::SEARCH_ALGO] = "SINDI";
+
+    const std::string cc_name = knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC;
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(cc_name, version).value();
+    CAPTURE(cc_name);
+
+    REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+
+    auto extra_ds = dense_sparse_ds(extra_nb, dim, 2.0f);
+    REQUIRE(idx.Add(extra_ds, json) == knowhere::Status::success);
+
+    auto results = idx.Search(query_ds, json, nullptr);
+    REQUIRE(results.has_value());
+
+    auto* ids = results.value()->GetIds();
+    auto k = results.value()->GetDim();
+    for (int64_t i = 0; i < nq; ++i) {
+        int64_t valid_count = 0;
+        for (int64_t j = 0; j < k; ++j) {
+            if (ids[i * k + j] != -1) {
+                ++valid_count;
+            }
+        }
+        REQUIRE(valid_count == topk);
+    }
+}
+
+TEST_CASE("Test SINDI Sparse Inverted Index CC Train Multi Add Cross Window Search", "[sparse][sindi]") {
+    auto window_size = 1024;
+    auto first_nb = window_size;
+    auto second_nb = 8;
+    auto dim = 8;
+    auto topk = 16;
+    int64_t nq = 3;
+    auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+
+    auto dense_sparse_ds = [](int32_t rows, int32_t dim, float value) {
+        std::vector<std::map<int32_t, float>> data(rows);
+        for (int32_t i = 0; i < rows; ++i) {
+            for (int32_t j = 0; j < dim; ++j) {
+                data[i][j] = value;
+            }
+        }
+        return GenSparseDataSet(data, dim);
+    };
+
+    knowhere::Json json;
+    json[knowhere::meta::DIM] = dim;
+    json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    json[knowhere::meta::TOPK] = topk;
+    json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "SINDI";
+    json[knowhere::indexparam::SEARCH_ALGO] = "SINDI";
+    json["sindi_window_size"] = window_size;
+
+    const std::string cc_name = knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC;
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(cc_name, version).value();
+    CAPTURE(cc_name);
+
+    auto train_ds = dense_sparse_ds(1, dim, 1.0f);
+    REQUIRE(idx.Train(train_ds, json) == knowhere::Status::success);
+
+    auto first_ds = dense_sparse_ds(first_nb, dim, 1.0f);
+    REQUIRE(idx.Add(first_ds, json) == knowhere::Status::success);
+
+    auto second_ds = dense_sparse_ds(second_nb, dim, 2.0f);
+    REQUIRE(idx.Add(second_ds, json) == knowhere::Status::success);
+    REQUIRE(idx.Count() == first_nb + second_nb);
+
+    auto query_ds = dense_sparse_ds(nq, dim, 1.0f);
+    auto results = idx.Search(query_ds, json, nullptr);
+    REQUIRE(results.has_value());
+
+    auto* ids = results.value()->GetIds();
+    auto k = results.value()->GetDim();
+    REQUIRE(k == topk);
+    for (int64_t i = 0; i < nq; ++i) {
+        int64_t valid_count = 0;
+        bool found_first_window = false;
+        bool found_second_window = false;
+        for (int64_t j = 0; j < k; ++j) {
+            auto id = ids[i * k + j];
+            if (id == -1) {
+                continue;
+            }
+            ++valid_count;
+            found_first_window = found_first_window || id < first_nb;
+            found_second_window = found_second_window || id >= first_nb;
+        }
+        REQUIRE(valid_count == topk);
+        REQUIRE(found_first_window);
+        REQUIRE(found_second_window);
+    }
+}
+
 TEST_CASE("Test SINDI Index Build and Search", "[sparse][sindi]") {
     auto [nb, dim, doc_sparsity, query_sparsity] = GENERATE(table<int32_t, int32_t, float, float>({
         {2000, 300, 0.95, 0.97},
