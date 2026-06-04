@@ -70,7 +70,8 @@ IndexFactory::Create(const std::string& name, const int32_t& version, const Obje
     }
 
 #ifdef KNOWHERE_WITH_SVS
-    if ((name == knowhere::IndexEnum::INDEX_SVS_VAMANA_LVQ || name == knowhere::IndexEnum::INDEX_SVS_VAMANA_LEANVEC) &&
+    if ((name == knowhere::IndexEnum::INDEX_SVS_VAMANA_LVQ || name == knowhere::IndexEnum::INDEX_SVS_VAMANA_LEANVEC ||
+         name == knowhere::IndexEnum::INDEX_SVS_IVF_LEANVEC) &&
         !faiss::IndexSVSVamana::is_lvq_leanvec_enabled()) {
         LOG_KNOWHERE_ERROR_ << "SVS LVQ/LeanVec indices are only supported on Intel CPUs";
         return expected<Index<IndexNode>>::Err(Status::invalid_index_error,
