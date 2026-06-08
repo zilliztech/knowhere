@@ -10,8 +10,15 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <future>
+#include <limits>
+#include <map>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
+#include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "knowhere/bitsetview.h"
@@ -577,6 +584,114 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
             for (size_t j = 0; j < truth_row.size(); ++j) {
                 REQUIRE(truth_row[j] == res_row[j]);
             }
+        }
+    }
+}
+
+// Bounded-WAND streaming iterator (SPEC 6.2): SparseInvertedIndexNode::AnnIterator
+// returns a streaming iterator that yields (doc_id, score) in descending score in
+// O(batch) memory, instead of the materialising PrecomputedDistanceIterator.
+TEST_CASE("Test Sparse Bounded-WAND Iterator", "[sparse][iterator]") {
+    const int32_t nb = 2000;
+    const int32_t nq = 10;
+    const int32_t dim = 300;
+    const int32_t L = 100;
+    auto version = GenTestVersionList();
+
+    auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
+    auto algo = GENERATE("TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE");
+    auto name = GENERATE(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, knowhere::IndexEnum::INDEX_SPARSE_WAND);
+    CAPTURE(metric, algo, name);
+
+    knowhere::Json json;
+    json[knowhere::meta::DIM] = dim;
+    json[knowhere::meta::METRIC_TYPE] = metric;
+    json[knowhere::meta::TOPK] = L;
+    json[knowhere::meta::BM25_K1] = 1.2;
+    json[knowhere::meta::BM25_B] = 0.75;
+    json[knowhere::meta::BM25_AVGDL] = 100;
+    json[knowhere::indexparam::DROP_RATIO_SEARCH] = 0.0;
+    json[knowhere::indexparam::INVERTED_INDEX_ALGO] = algo;
+
+    auto gen_ds = [&](int32_t rows, float sparsity, int seed) -> knowhere::DataSetPtr {
+        if (metric == knowhere::metric::BM25) {
+            return GenSparseDataSetWithMaxVal(rows, dim, sparsity, 256, true);
+        }
+        return GenSparseDataSet(rows, dim, sparsity, seed);
+    };
+    auto train_ds = gen_ds(nb, 0.95f, 42);
+    auto query_ds = gen_ds(nq, 0.97f, 7);
+
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
+    REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+
+    SECTION("streams Search top-L: complete, deduplicated, descending, exact scores") {
+        auto search_or = idx.Search(query_ds, json, nullptr);
+        REQUIRE(search_or.has_value());
+        const auto search_res = search_or.value();
+        const int64_t search_k = search_res->GetDim();
+        const int64_t* search_ids = search_res->GetIds();
+        const float* search_dists = search_res->GetDistance();
+
+        auto iters_or = idx.AnnIterator(query_ds, json, nullptr);
+        REQUIRE(iters_or.has_value());
+        auto iters = iters_or.value();
+        REQUIRE(iters.size() == static_cast<size_t>(nq));
+
+        for (int q = 0; q < nq; ++q) {
+            // (b) drain the iterator fully -- zero duplicate ids; (d) non-increasing score
+            std::vector<std::pair<int64_t, float>> emitted;
+            std::unordered_set<int64_t> seen;
+            std::unordered_map<int64_t, float> iter_score;
+            float prev = std::numeric_limits<float>::max();
+            auto& it = iters[q];
+            while (it->HasNext()) {
+                auto [id, score] = it->Next();
+                REQUIRE(seen.insert(id).second);
+                REQUIRE(score <= prev);
+                prev = score;
+                emitted.emplace_back(id, score);
+                iter_score.emplace(id, score);
+            }
+
+            // (a) + (c) every doc the two-stage Search returns is in the stream,
+            // carrying the same exact score
+            int64_t valid = 0;
+            for (int64_t j = 0; j < search_k; ++j) {
+                const int64_t sid = search_ids[q * search_k + j];
+                if (sid < 0) {
+                    continue;
+                }
+                ++valid;
+                auto f = iter_score.find(sid);
+                REQUIRE(f != iter_score.end());
+                REQUIRE(f->second == Catch::Approx(search_dists[q * search_k + j]).epsilon(1e-4));
+            }
+            // iterating to L yields the same score-ranked prefix as Search(topK=L)
+            REQUIRE(static_cast<int64_t>(emitted.size()) >= valid);
+            for (int64_t j = 0; j < valid; ++j) {
+                REQUIRE(emitted[j].second == Catch::Approx(search_dists[q * search_k + j]).epsilon(1e-4));
+            }
+        }
+    }
+
+    SECTION("degenerate: empty query yields an immediately exhausted iterator") {
+        std::vector<std::map<int32_t, float>> rows = {{}, {{1, 1.0f}, {7, 2.0f}, {42, 3.0f}}};
+        auto degenerate_query = GenSparseDataSet(rows, dim);
+        auto iters_or = idx.AnnIterator(degenerate_query, json, nullptr);
+        REQUIRE(iters_or.has_value());
+        auto iters = iters_or.value();
+        REQUIRE(iters.size() == 2);
+        // an empty query row has nothing to score
+        REQUIRE(!iters[0]->HasNext());
+        // a non-empty row still streams a well-formed (deduplicated, descending) result
+        std::unordered_set<int64_t> seen;
+        float prev = std::numeric_limits<float>::max();
+        while (iters[1]->HasNext()) {
+            auto [id, score] = iters[1]->Next();
+            REQUIRE(seen.insert(id).second);
+            REQUIRE(score <= prev);
+            prev = score;
         }
     }
 }

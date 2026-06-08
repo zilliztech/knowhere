@@ -100,6 +100,15 @@ class BaseInvertedIndex {
     Search(const SparseRow<T>& query, size_t k, float* distances, label_t* labels, const BitsetView& bitset,
            const DocValueComputer<T>& computer, InvertedIndexApproxSearchParams& approx_params) const = 0;
 
+    // One score-descending batch for the streaming bounded-WAND iterator (SPEC 6.2):
+    // up to `batch_size` results scoring at most `score_ceiling`, excluding ids in
+    // `excluded` at exactly `score_ceiling`. First batch: score_ceiling = +inf,
+    // empty `excluded`. Fewer than `batch_size` results => exhausted below the cursor.
+    virtual std::vector<DistId>
+    IterativeSearch(const SparseRow<T>& query, size_t batch_size, float score_ceiling,
+                    const std::unordered_set<table_t>& excluded, const BitsetView& bitset,
+                    const DocValueComputer<T>& computer, InvertedIndexApproxSearchParams& approx_params) const = 0;
+
     virtual std::vector<float>
     GetAllDistances(const SparseRow<T>& query, float drop_ratio_search, const BitsetView& bitset,
                     const DocValueComputer<T>& computer) const = 0;
@@ -855,6 +864,42 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
     }
 
+    // One score-descending batch for the streaming bounded-WAND iterator: the top
+    // `batch_size` results scoring at most `score_ceiling`, excluding ids in
+    // `excluded` that sit at exactly `score_ceiling`. The same DAAT_WAND /
+    // DAAT_MAXSCORE / TAAT traversal as Search is reused; the BoundedMaxMinHeap
+    // applies the cursor. Fewer than `batch_size` results => exhausted below the
+    // cursor. See SPEC 6.2 / Appendix A.2.
+    std::vector<DistId>
+    IterativeSearch(const SparseRow<DType>& query, size_t batch_size, float score_ceiling,
+                    const std::unordered_set<table_t>& excluded, const BitsetView& bitset,
+                    const DocValueComputer<float>& computer,
+                    InvertedIndexApproxSearchParams& approx_params) const override {
+        std::vector<DistId> results;
+        if (batch_size == 0 || query.size() == 0) {
+            return results;
+        }
+        auto q_vec = parse_query(query, approx_params.drop_ratio_search);
+        if (q_vec.empty()) {
+            return results;
+        }
+        BoundedMaxMinHeap<float> heap(static_cast<int>(batch_size), score_ceiling, excluded);
+        if constexpr (algo == InvertedIndexAlgo::DAAT_WAND) {
+            search_daat_wand(q_vec, heap, bitset, computer, approx_params.dim_max_score_ratio);
+        } else if constexpr (algo == InvertedIndexAlgo::DAAT_MAXSCORE) {
+            search_daat_maxscore(q_vec, heap, bitset, computer, approx_params.dim_max_score_ratio);
+        } else {
+            search_taat_naive(q_vec, heap, bitset, computer);
+        }
+        results.resize(heap.size());
+        for (int i = static_cast<int>(heap.size()) - 1; i >= 0; --i) {
+            auto top = heap.top();
+            results[i] = DistId(static_cast<int64_t>(top.id), top.val);
+            heap.pop();
+        }
+        return results;
+    }
+
     // Returned distances are inaccurate based on the drop_ratio.
     std::vector<float>
     GetAllDistances(const SparseRow<DType>& query, float drop_ratio_search, const BitsetView& bitset,
@@ -1094,9 +1139,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
     // find the top-k candidates using brute force search, k as specified by the capacity of the heap.
     // any value in q_vec that is smaller than q_threshold and any value with dimension >= n_cols() will be ignored.
     // TODO: may switch to row-wise brute force if filter rate is high. Benchmark needed.
-    template <typename DocIdFilter>
+    template <typename HeapType, typename DocIdFilter>
     void
-    search_taat_naive(const std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
+    search_taat_naive(const std::vector<std::pair<size_t, DType>>& q_vec, HeapType& heap, DocIdFilter& filter,
                       const DocValueComputer<float>& computer) const {
         auto scores = compute_all_distances(q_vec, computer);
         for (size_t i = 0; i < n_rows_internal_; ++i) {
@@ -1106,9 +1151,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
     }
 
-    template <typename DocIdFilter>
+    template <typename HeapType, typename DocIdFilter>
     void
-    search_daat_wand(const std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
+    search_daat_wand(const std::vector<std::pair<size_t, DType>>& q_vec, HeapType& heap, DocIdFilter& filter,
                      const DocValueComputer<float>& computer, float dim_max_score_ratio) const {
         std::vector<Cursor<DocIdFilter>> cursors = make_cursors(q_vec, computer, filter, dim_max_score_ratio);
         std::vector<Cursor<DocIdFilter>*> cursor_ptrs(cursors.size());
@@ -1171,9 +1216,9 @@ class InvertedIndex : public BaseInvertedIndex<DType> {
         }
     }
 
-    template <typename DocIdFilter>
+    template <typename HeapType, typename DocIdFilter>
     void
-    search_daat_maxscore(std::vector<std::pair<size_t, DType>>& q_vec, MaxMinHeap<float>& heap, DocIdFilter& filter,
+    search_daat_maxscore(std::vector<std::pair<size_t, DType>>& q_vec, HeapType& heap, DocIdFilter& filter,
                          const DocValueComputer<float>& computer, float dim_max_score_ratio) const {
         std::sort(q_vec.begin(), q_vec.end(), [this](auto& a, auto& b) {
             return a.second * max_score_in_dim_spans_[a.first] > b.second * max_score_in_dim_spans_[b.first];
