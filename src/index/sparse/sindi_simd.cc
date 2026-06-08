@@ -4,27 +4,37 @@
 
 namespace knowhere::sparse::inverted::sindi {
 
-void
-ip_scatter_scalar_fp16(float qval, const knowhere::fp16* vals, const uint16_t* ids, int32_t num, float* out) {
+float
+ip_accumulate_scalar_fp16(float qval, const knowhere::fp16* vals, const uint16_t* ids, int32_t num, float* out) {
+    float max_val = 0.0f;
     for (int32_t i = 0; i < num; ++i) {
-        out[ids[i]] += qval * static_cast<float>(vals[i]);
+        float new_val = (out[ids[i]] += qval * static_cast<float>(vals[i]));
+        if (new_val > max_val) {
+            max_val = new_val;
+        }
     }
+    return max_val;
 }
 
-void
-bm25_scatter_scalar_u16(float qval, const uint16_t* vals, const uint16_t* ids, int32_t num, float* out, float k1,
-                        float b, float avgdl, const float* row_sums) {
+float
+bm25_accumulate_scalar_u16(float qval, const uint16_t* vals, const uint16_t* ids, int32_t num, float* out, float k1,
+                           float b, float avgdl, const float* row_sums) {
     const float p1 = k1 + 1.0f;
     const float p2 = k1 * (1.0f - b);
     const float p3 = k1 * b / avgdl;
 
+    float max_val = 0.0f;
     for (int32_t i = 0; i < num; ++i) {
         float tf = static_cast<float>(vals[i]);
         uint16_t docid = ids[i];
         float dl = row_sums[docid];
         float bm25_score = qval * p1 * tf / (tf + p2 + p3 * dl);
-        out[docid] += bm25_score;
+        float new_val = (out[docid] += bm25_score);
+        if (new_val > max_val) {
+            max_val = new_val;
+        }
     }
+    return max_val;
 }
 
 void
@@ -51,24 +61,25 @@ get_ip_kernels() {
     static const IPKernels kernels = []() {
         IPKernels k{};
 #if defined(__x86_64__)
-        if (faiss::cppcontrib::knowhere::cpu_support_avx512()) {
-            k.accumulate = ip_scatter_avx512_fp16;
+        const bool support_f16c = faiss::cppcontrib::knowhere::cpu_support_f16c();
+        if (support_f16c && faiss::cppcontrib::knowhere::cpu_support_avx512()) {
+            k.accumulate = ip_accumulate_avx512_fp16;
             k.batch_insert = batch_insert_avx512;
             return k;
         }
-        if (faiss::cppcontrib::knowhere::cpu_support_avx2()) {
-            k.accumulate = ip_scatter_avx2_fp16;
+        if (support_f16c && faiss::cppcontrib::knowhere::cpu_support_avx2()) {
+            k.accumulate = ip_accumulate_avx2_fp16;
             k.batch_insert = batch_insert_avx2;
             return k;
         }
-#elif defined(__aarch64__) && defined(__ARM_FEATURE_SVE)
+#elif defined(__aarch64__) && defined(KNOWHERE_USE_SVE)
         if (faiss::cppcontrib::knowhere::supports_sve()) {
-            k.accumulate = ip_scatter_sve_fp16;
+            k.accumulate = ip_accumulate_sve_fp16;
             k.batch_insert = batch_insert_sve;
             return k;
         }
 #endif
-        k.accumulate = ip_scatter_scalar_fp16;
+        k.accumulate = ip_accumulate_scalar_fp16;
         k.batch_insert = batch_insert_scalar;
         return k;
     }();
@@ -80,24 +91,25 @@ get_bm25_kernels() {
     static const BM25Kernels kernels = []() {
         BM25Kernels k{};
 #if defined(__x86_64__)
-        if (faiss::cppcontrib::knowhere::cpu_support_avx512()) {
-            k.accumulate = bm25_scatter_avx512_u16;
+        const bool support_f16c = faiss::cppcontrib::knowhere::cpu_support_f16c();
+        if (support_f16c && faiss::cppcontrib::knowhere::cpu_support_avx512()) {
+            k.accumulate = bm25_accumulate_avx512_u16;
             k.batch_insert = batch_insert_avx512;
             return k;
         }
-        if (faiss::cppcontrib::knowhere::cpu_support_avx2()) {
-            k.accumulate = bm25_scatter_avx2_u16;
+        if (support_f16c && faiss::cppcontrib::knowhere::cpu_support_avx2()) {
+            k.accumulate = bm25_accumulate_avx2_u16;
             k.batch_insert = batch_insert_avx2;
             return k;
         }
-#elif defined(__aarch64__) && defined(__ARM_FEATURE_SVE)
+#elif defined(__aarch64__) && defined(KNOWHERE_USE_SVE)
         if (faiss::cppcontrib::knowhere::supports_sve()) {
-            k.accumulate = bm25_scatter_sve_u16;
+            k.accumulate = bm25_accumulate_sve_u16;
             k.batch_insert = batch_insert_sve;
             return k;
         }
 #endif
-        k.accumulate = bm25_scatter_scalar_u16;
+        k.accumulate = bm25_accumulate_scalar_u16;
         k.batch_insert = batch_insert_scalar;
         return k;
     }();
