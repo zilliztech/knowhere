@@ -81,17 +81,6 @@ ip_accumulate_sve_fp16(float qval, const knowhere::fp16* vals, const uint16_t* i
     return svmaxv_f32(svptrue_b32(), v_max);
 }
 
-namespace {
-
-svfloat32_t
-sv_fast_recip_f32(svbool_t pg, svfloat32_t x) {
-    svfloat32_t recip = svrecpe_f32(x);
-    svfloat32_t step = svrecps_f32(x, recip);
-    return svmul_f32_x(pg, recip, step);
-}
-
-}  // namespace
-
 float
 bm25_accumulate_sve_u16(float qval, const uint16_t* vals, const uint16_t* ids, int32_t num, float* out, float k1,
                         float b, float avgdl, const float* row_sums) {
@@ -133,12 +122,12 @@ bm25_accumulate_sve_u16(float qval, const uint16_t* vals, const uint16_t* ids, i
         svfloat32_t num_even = svmul_f32_x(pg32, tf_even, vqp1);
         svfloat32_t denom_even = svmad_f32_x(pg32, dl_even, vp3, vp2);
         denom_even = svadd_f32_x(pg32, tf_even, denom_even);
-        svfloat32_t bm25_even = svmul_f32_x(pg32, num_even, sv_fast_recip_f32(pg32, denom_even));
+        svfloat32_t bm25_even = svdiv_f32_x(pg32, num_even, denom_even);
 
         svfloat32_t num_odd = svmul_f32_x(pg32, tf_odd, vqp1);
         svfloat32_t denom_odd = svmad_f32_x(pg32, dl_odd, vp3, vp2);
         denom_odd = svadd_f32_x(pg32, tf_odd, denom_odd);
-        svfloat32_t bm25_odd = svmul_f32_x(pg32, num_odd, sv_fast_recip_f32(pg32, denom_odd));
+        svfloat32_t bm25_odd = svdiv_f32_x(pg32, num_odd, denom_odd);
 
         svfloat32_t vold_even = svld1_gather_u32index_f32(pg32, out, vidx_even);
         svfloat32_t vsum_even = svadd_f32_x(pg32, vold_even, bm25_even);
@@ -181,7 +170,7 @@ bm25_accumulate_sve_u16(float qval, const uint16_t* vals, const uint16_t* ids, i
             svfloat32_t num_even = svmul_f32_x(pg32_even, tf_even, vqp1);
             svfloat32_t denom_even = svmad_f32_x(pg32_even, dl_even, vp3, vp2);
             denom_even = svadd_f32_x(pg32_even, tf_even, denom_even);
-            svfloat32_t bm25_even = svmul_f32_x(pg32_even, num_even, sv_fast_recip_f32(pg32_even, denom_even));
+            svfloat32_t bm25_even = svdiv_f32_x(pg32_even, num_even, denom_even);
 
             svfloat32_t vold_even = svld1_gather_u32index_f32(pg32_even, out, vidx_even);
             svfloat32_t vsum_even = svadd_f32_x(pg32_even, vold_even, bm25_even);
@@ -194,7 +183,7 @@ bm25_accumulate_sve_u16(float qval, const uint16_t* vals, const uint16_t* ids, i
             svfloat32_t num_odd = svmul_f32_x(pg32_odd, tf_odd, vqp1);
             svfloat32_t denom_odd = svmad_f32_x(pg32_odd, dl_odd, vp3, vp2);
             denom_odd = svadd_f32_x(pg32_odd, tf_odd, denom_odd);
-            svfloat32_t bm25_odd = svmul_f32_x(pg32_odd, num_odd, sv_fast_recip_f32(pg32_odd, denom_odd));
+            svfloat32_t bm25_odd = svdiv_f32_x(pg32_odd, num_odd, denom_odd);
 
             svfloat32_t vold_odd = svld1_gather_u32index_f32(pg32_odd, out, vidx_odd);
             svfloat32_t vsum_odd = svadd_f32_x(pg32_odd, vold_odd, bm25_odd);
