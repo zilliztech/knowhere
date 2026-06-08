@@ -396,12 +396,12 @@ class InvertedIndex {
 
         std::vector<std::pair<uint32_t, float>> filtered_query;
         for (size_t i = 0; i < query.size(); ++i) {
-            auto [dim, val] = query[i];
-            auto dim_it = dim_map_.find(dim);
+            const auto [dim, val] = query[i];
+            const auto dim_it = dim_map_.find(dim);
             if (dim_it == dim_map_.cend() || std::abs(val) < q_threshold) {
                 continue;
             }
-            filtered_query.emplace_back(dim_it->second, val);
+            filtered_query.emplace_back(dim_it->second, std::abs(val));
         }
 
         return filtered_query;

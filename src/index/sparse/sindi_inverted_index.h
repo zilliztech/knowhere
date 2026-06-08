@@ -198,12 +198,14 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
 
     Status
     add(const SparseRow<DataType>* data, size_t rows, int64_t dim) override {
+        const size_t old_nr_rows = this->nr_rows_;
         this->max_dim_ = std::max(this->max_dim_, static_cast<uint32_t>(dim));
         // update dim_map_
         for (size_t i = 0; i < rows; ++i) {
             for (size_t j = 0; j < data[i].size(); ++j) {
-                auto [dim, val] = data[i][j];
-                if (std::abs(val) < std::numeric_limits<DataType>::epsilon()) {
+                const auto [dim, val] = data[i][j];
+                const auto abs_val = std::abs(val);
+                if (abs_val < std::numeric_limits<DataType>::epsilon()) {
                     continue;
                 }
                 if (this->dim_map_.find(dim) == this->dim_map_.end()) {
@@ -226,28 +228,32 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
                 float row_sum = 0.0f;
                 for (size_t j = 0; j < data[i].size(); ++j) {
                     const auto [dim, val] = data[i][j];
-                    if (std::abs(val) < std::numeric_limits<DataType>::epsilon()) {
+                    const auto abs_val = std::abs(val);
+                    if (abs_val < std::numeric_limits<DataType>::epsilon()) {
                         continue;
                     }
-                    row_sum += static_cast<float>(val);
+                    row_sum += static_cast<float>(abs_val);
                 }
                 row_sums_.push_back(row_sum);
             }
             row_sums_span_ = boost::span<const float>(row_sums_.data(), row_sums_.size());
         }
 
-        // Compute max score per dimension for early termination optimization
-        // For IP: max_score = max(val) across all postings
-        // For BM25: max_score = max((k1+1)*tf / (tf + k1*(1-b+b*dl/avgdl))) for each posting
+        // Incrementally update max score per dimension for early termination optimization.
+        // For IP: max_score = max(abs(val)) across quantized postings.
+        // For BM25: max_score = max((k1+1)*tf / (tf + k1*(1-b+b*dl/avgdl))) across postings.
         max_scores_per_dim_.resize(this->dim_map_.size());
         if constexpr (std::is_same_v<QuantType, knowhere::fp16>) {
-            // IP scoring: just find max value
-            for (size_t dim_id = 0; dim_id < this->dim_map_.size(); ++dim_id) {
-                const auto& vals = total_plists_vals_spans_[dim_id];
-                for (auto val : vals) {
-                    float v = static_cast<float>(val);
-                    if (v > max_scores_per_dim_[dim_id]) {
-                        max_scores_per_dim_[dim_id] = v;
+            for (size_t i = 0; i < rows; ++i) {
+                for (size_t j = 0; j < data[i].size(); ++j) {
+                    const auto [dim, val] = data[i][j];
+                    const auto abs_val = std::abs(val);
+                    if (abs_val < std::numeric_limits<DataType>::epsilon()) {
+                        continue;
+                    }
+                    const auto dim_id = this->dim_map_[dim];
+                    if (abs_val > max_scores_per_dim_[dim_id]) {
+                        max_scores_per_dim_[dim_id] = abs_val;
                     }
                 }
             }
@@ -263,27 +269,20 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
             const float p2 = k1 * (1.0f - b);
             const float p3 = k1 * b / avgdl;
 
-            for (size_t dim_id = 0; dim_id < this->dim_map_.size(); ++dim_id) {
-                const auto& ids = total_plists_ids_spans_[dim_id];
-                const auto& vals = total_plists_vals_spans_[dim_id];
-                const auto& wnnzs = window_index_plists_sz_spans_;
-
-                // Iterate through each posting and compute BM25 score with actual dl
-                size_t posting_idx = 0;
-                for (size_t wid = 0; wid < nr_windows_; ++wid) {
-                    size_t wnnz = wnnzs[wid][dim_id];
-                    size_t docid_base = wid * window_size_;
-                    for (size_t j = 0; j < wnnz; ++j) {
-                        uint16_t local_id = ids[posting_idx];
-                        float tf = static_cast<float>(vals[posting_idx]);
-                        size_t global_docid = docid_base + local_id;
-                        float dl = row_sums_span_[global_docid];
-                        // BM25 right part: (k1+1)*tf / (tf + k1*(1-b) + k1*b*dl/avgdl)
-                        float bm25_score = p1 * tf / (tf + p2 + p3 * dl);
-                        if (bm25_score > max_scores_per_dim_[dim_id]) {
-                            max_scores_per_dim_[dim_id] = bm25_score;
-                        }
-                        ++posting_idx;
+            for (size_t i = 0; i < rows; ++i) {
+                const size_t global_docid = old_nr_rows + i;
+                const float dl = row_sums_span_[global_docid];
+                for (size_t j = 0; j < data[i].size(); ++j) {
+                    const auto [dim, val] = data[i][j];
+                    const auto abs_val = std::abs(val);
+                    if (abs_val < std::numeric_limits<DataType>::epsilon()) {
+                        continue;
+                    }
+                    const auto dim_id = this->dim_map_[dim];
+                    const float tf = static_cast<float>(abs_val);
+                    const float bm25_score = p1 * tf / (tf + p2 + p3 * dl);
+                    if (bm25_score > max_scores_per_dim_[dim_id]) {
+                        max_scores_per_dim_[dim_id] = bm25_score;
                     }
                 }
             }
@@ -714,11 +713,11 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
             return;
         }
 
-        // Compute max contributions for each query term: qval * max_dim_val
+        // Compute max contributions for each query term.
         // and sort query terms by max contributions descending for early termination
         std::vector<float> max_contributions(q_vec.size());
         for (size_t i = 0; i < q_vec.size(); ++i) {
-            auto& [qid, qval] = q_vec[i];
+            const auto& [qid, qval] = q_vec[i];
             float dim_max = (qid < max_scores_per_dim_span_.size()) ? max_scores_per_dim_span_[qid] : 0.0f;
             max_contributions[i] = qval * dim_max;
         }
