@@ -24,7 +24,7 @@ include(cmake/utils/platform_check.cmake)
 
 knowhere_option(WITH_CUVS "Build with CUVS indexes" OFF)
 if(WITH_CUVS)
-  set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
+  set(CMAKE_CUDA_ARCHITECTURES "75-real")
   set(CMAKE_CUDA_STANDARD 20)
   include(cmake/libs/librapids.cmake)
   project(knowhere CXX C CUDA)
@@ -254,8 +254,13 @@ list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_GPU_SRCS})
 
 if(NOT WITH_CUVS)
   knowhere_file_glob(GLOB_RECURSE KNOWHERE_CUVS_SRCS src/common/cuvs/*.cu
-                     src/common/cuvs/*.cc src/index/gpu_cuvs/*.cc)
+                     src/common/cuvs/*.cc src/index/gpu_cuvs/*.cc
+                     src/index/gpu_cuvs/gpu_hnsw/*.cu src/index/gpu_cuvs/gpu_hnsw/*.cc)
   list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_CUVS_SRCS})
+else()
+  # Include the GPU HNSW .cu files so nvcc compiles them alongside the library
+  file(GLOB KNOWHERE_GPU_HNSW_SRCS src/index/gpu_cuvs/gpu_hnsw/*.cu)
+  list(APPEND KNOWHERE_SRCS ${KNOWHERE_GPU_HNSW_SRCS})
 endif()
 
 include_directories(src)
