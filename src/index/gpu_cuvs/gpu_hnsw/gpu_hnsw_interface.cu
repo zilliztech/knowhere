@@ -8,8 +8,7 @@
 #include "gpu_hnsw_impl.cuh"
 #include "gpu_hnsw_types.hpp"
 
-#include <faiss/IndexFlat.h>
-#include <faiss/IndexHNSW.h>
+#include <faiss/cppcontrib/knowhere/IndexHNSW.h>
 #include <faiss/IndexScalarQuantizer.h>
 
 #include <cuda_runtime.h>
@@ -19,7 +18,7 @@
 
 namespace knowhere::detail::gpu_hnsw {
 
-void* build_gpu_index(const faiss::IndexHNSW* faiss_idx, bool use_ip, bool is_cosine) {
+void* build_gpu_index(const ::faiss::cppcontrib::knowhere::IndexHNSW* faiss_idx, bool use_ip, bool is_cosine) {
     if (!faiss_idx) return nullptr;
     try {
         // Try quantized storage (SQ8, FP16, BF16, etc.) first.
@@ -30,7 +29,11 @@ void* build_gpu_index(const faiss::IndexHNSW* faiss_idx, bool use_ip, bool is_co
         // Fall back to plain float32 storage (IndexHNSWFlat / IndexFlat).
         auto idx = from_faiss_hnsw_flat(*faiss_idx, use_ip, is_cosine);
         return static_cast<void*>(idx.release());
+    } catch (const std::exception& e) {
+        fprintf(stderr, "[gpu_hnsw] build_gpu_index failed: %s\n", e.what());
+        return nullptr;
     } catch (...) {
+        fprintf(stderr, "[gpu_hnsw] build_gpu_index failed: unknown exception\n");
         return nullptr;
     }
 }
@@ -89,7 +92,14 @@ int search_gpu(void* handle,
         cudaFree(d_distances);
         return 0;
 
+    } catch (const std::exception& e) {
+        fprintf(stderr, "[gpu_hnsw] search_gpu failed: %s\n", e.what());
+        if (d_queries)   cudaFree(d_queries);
+        if (d_neighbors) cudaFree(d_neighbors);
+        if (d_distances) cudaFree(d_distances);
+        return -1;
     } catch (...) {
+        fprintf(stderr, "[gpu_hnsw] search_gpu failed: unknown exception\n");
         if (d_queries)   cudaFree(d_queries);
         if (d_neighbors) cudaFree(d_neighbors);
         if (d_distances) cudaFree(d_distances);

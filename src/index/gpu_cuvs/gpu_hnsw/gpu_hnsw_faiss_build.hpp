@@ -11,9 +11,9 @@
 #include "gpu_hnsw_types.hpp"
 
 #include <faiss/IndexFlat.h>
-#include <faiss/IndexHNSW.h>
 #include <faiss/IndexScalarQuantizer.h>
-#include <faiss/impl/HNSW.h>
+#include <faiss/cppcontrib/knowhere/IndexHNSW.h>
+#include <faiss/cppcontrib/knowhere/impl/HNSW.h>
 
 #include <cuda_runtime.h>
 #include <cmath>
@@ -42,7 +42,7 @@ namespace knowhere::detail::gpu_hnsw {
 //   For node i at layer L, the neighbor range is:
 //     [offsets[i] + cum_nb_neighbors(L), offsets[i] + cum_nb_neighbors(L+1))
 //   nb_neighbors(0) = 2*M  (maxM0), nb_neighbors(L>0) = M
-inline void extract_faiss_hnsw_layers(const faiss::HNSW& hnsw,
+inline void extract_faiss_hnsw_layers(const faiss::cppcontrib::knowhere::HNSW& hnsw,
                                        int64_t n_rows,
                                        std::vector<device_upper_layer>& h_upper_layers,
                                        std::vector<uint32_t>& h_layer0_flat,
@@ -136,7 +136,7 @@ inline void normalize_vectors(std::vector<float>& h_vectors, int64_t n_rows, int
 // h_vectors may be modified (e.g. for cosine normalization) before calling.
 inline void upload_to_gpu(gpu_hnsw_index& idx,
                            std::vector<float>& h_vectors,
-                           const faiss::HNSW& hnsw,
+                           const faiss::cppcontrib::knowhere::HNSW& hnsw,
                            int64_t n_rows,
                            bool is_cosine)
 {
@@ -173,7 +173,7 @@ inline void upload_to_gpu(gpu_hnsw_index& idx,
 // @param use_ip       true for IP/COSINE metrics (GPU kernel uses inner product)
 // @param is_cosine    true for COSINE metric (stored vectors must be normalized)
 inline std::unique_ptr<gpu_hnsw_index> from_faiss_hnsw_sq(
-    const faiss::IndexHNSW& hnsw_index,
+    const faiss::cppcontrib::knowhere::IndexHNSW& hnsw_index,
     bool use_ip,
     bool is_cosine = false)
 {
@@ -203,7 +203,7 @@ inline std::unique_ptr<gpu_hnsw_index> from_faiss_hnsw_sq(
 // @param use_ip       true for IP/COSINE metrics (GPU kernel uses inner product)
 // @param is_cosine    true for COSINE metric (stored vectors must be normalized)
 inline std::unique_ptr<gpu_hnsw_index> from_faiss_hnsw_flat(
-    const faiss::IndexHNSW& hnsw_index,
+    const faiss::cppcontrib::knowhere::IndexHNSW& hnsw_index,
     bool use_ip,
     bool is_cosine = false)
 {

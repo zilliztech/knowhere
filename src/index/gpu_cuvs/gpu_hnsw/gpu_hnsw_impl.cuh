@@ -67,6 +67,7 @@ inline void search(cudaStream_t stream,
         kernel::upper_layer_search_kernel<<<num_blocks, threads_per_block, 0, stream>>>(
             d_queries, idx.d_dataset, d_layer_ptrs, d_entry_points,
             idx.entry_point, num_queries, dim, num_upper_layers, idx.use_ip);
+        GPU_HNSW_CUDA_CHECK(cudaGetLastError());
 
         GPU_HNSW_CUDA_CHECK(cudaFree(d_layer_ptrs));
     } else {
@@ -91,6 +92,7 @@ inline void search(cudaStream_t stream,
         d_neighbors, d_distances,
         num_queries, N_int, dim, idx.max_degree0,
         k, ef, sw, max_iter, idx.use_ip);
+    GPU_HNSW_CUDA_CHECK(cudaGetLastError());
 
     GPU_HNSW_CUDA_CHECK(cudaStreamSynchronize(stream));
     GPU_HNSW_CUDA_CHECK(cudaFree(d_entry_points));

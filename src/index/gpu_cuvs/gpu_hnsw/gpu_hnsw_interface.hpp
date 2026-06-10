@@ -10,17 +10,16 @@
 
 #include <cstdint>
 
-// Forward declaration — avoids pulling in faiss/CUDA headers here.
-namespace faiss { struct IndexHNSW; }
+// Forward declarations — avoids pulling in faiss/CUDA headers here.
+namespace faiss { namespace cppcontrib { namespace knowhere { struct IndexHNSW; } } }
 
 namespace knowhere::detail::gpu_hnsw {
 
-/// Build a GPU HNSW index from a faiss IndexHNSW whose storage is
-/// IndexScalarQuantizer (QT_8bit).  Dequantizes int8 → float32 before upload.
+/// Build a GPU HNSW index from a faiss::cppcontrib::knowhere::IndexHNSW.
 /// @param use_ip     true for IP or COSINE metrics
 /// @param is_cosine  true for COSINE metric (stored vectors will be normalized)
 /// Returns an opaque handle (heap-allocated gpu_hnsw_index*) or nullptr on error.
-void* build_gpu_index(const faiss::IndexHNSW* faiss_idx, bool use_ip, bool is_cosine);
+void* build_gpu_index(const ::faiss::cppcontrib::knowhere::IndexHNSW* faiss_idx, bool use_ip, bool is_cosine);
 
 /// Free a GPU index created by build_gpu_index.
 void destroy_gpu_index(void* handle);

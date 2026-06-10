@@ -2055,11 +2055,11 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
 
     /// Returns the raw faiss IndexHNSW pointer for GPU conversion.
     /// Returns nullptr if the index is not loaded.
-    const faiss::IndexHNSW*
+    const faiss::cppcontrib::knowhere::IndexHNSW*
     GetFaissHnswIndex() const {
         if (indexes.empty() || !indexes[0])
             return nullptr;
-        return dynamic_cast<const faiss::IndexHNSW*>(indexes[0].get());
+        return dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(indexes[0].get());
     }
 
  protected:
@@ -2549,11 +2549,11 @@ class BaseFaissRegularIndexHNSWSQNode : public BaseFaissRegularIndexHNSWNode {
 
     /// Returns the raw faiss IndexHNSW pointer for GPU conversion.
     /// Returns nullptr if the index is not loaded.
-    const faiss::IndexHNSW*
+    const faiss::cppcontrib::knowhere::IndexHNSW*
     GetFaissHnswIndex() const {
         if (indexes.empty() || !indexes[0])
             return nullptr;
-        return dynamic_cast<const faiss::IndexHNSW*>(indexes[0].get());
+        return dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(indexes[0].get());
     }
 
  protected:
@@ -3303,10 +3303,12 @@ KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexHNSWPRQ
                                           knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST)
 
 #ifdef KNOWHERE_WITH_CUVS
+}  // namespace knowhere — temporarily close to include GPU headers at file scope
 // ── GPU HNSW SQ ─────────────────────────────────────────────────────────────
-// Loads the standard Milvus HNSW_SQ index (IHN8 format) via the inherited
-// Deserialize path, then on first Search converts to GPU and runs the GPU kernel.
 #include "index/gpu_cuvs/gpu_hnsw/gpu_hnsw_interface.hpp"
+namespace knowhere {  // reopen namespace knowhere
+
+namespace gpu_hnsw = ::knowhere::detail::gpu_hnsw;
 
 class GpuHnswSqIndexNode : public BaseFaissRegularIndexHNSWSQNode {
  public:
@@ -3316,15 +3318,24 @@ class GpuHnswSqIndexNode : public BaseFaissRegularIndexHNSWSQNode {
 
     std::string
     Type() const override {
-        return knowhere::IndexEnum::INDEX_GPU_HNSW_SQ;
+        return IndexEnum::INDEX_GPU_HNSW_SQ;
     }
 
     Status
     Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override {
         std::unique_lock lock(gpu_mutex_);
         if (gpu_handle_) {
-            detail::gpu_hnsw::destroy_gpu_index(gpu_handle_);
+            gpu_hnsw::destroy_gpu_index(gpu_handle_);
             gpu_handle_ = nullptr;
+        }
+        // CPU index is serialized under "HNSW_SQ"; alias it to "GPU_HNSW_SQ"
+        // so the base Deserialize (which calls Type()) can find it.
+        if (!binset.Contains(IndexEnum::INDEX_GPU_HNSW_SQ) &&
+             binset.Contains(IndexEnum::INDEX_HNSW_SQ)) {
+            BinarySet aliased = binset;
+            aliased.Append(IndexEnum::INDEX_GPU_HNSW_SQ,
+                           binset.GetByName(IndexEnum::INDEX_HNSW_SQ));
+            return BaseFaissRegularIndexHNSWSQNode::Deserialize(aliased, cfg);
         }
         return BaseFaissRegularIndexHNSWSQNode::Deserialize(binset, cfg);
     }
@@ -3339,14 +3350,14 @@ class GpuHnswSqIndexNode : public BaseFaissRegularIndexHNSWSQNode {
         {
             std::unique_lock lock(gpu_mutex_);
             if (!gpu_handle_) {
-                const faiss::IndexHNSW* faiss_idx = GetFaissHnswIndex();
+                const ::faiss::cppcontrib::knowhere::IndexHNSW* faiss_idx = GetFaissHnswIndex();
                 if (!faiss_idx) {
                     return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
                 }
                 const auto& hnsw_cfg = static_cast<const FaissHnswSqConfig&>(*cfg);
                 bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
                 bool use_ip    = IsMetricType(hnsw_cfg.metric_type.value(), metric::IP) || is_cosine;
-                gpu_handle_ = detail::gpu_hnsw::build_gpu_index(faiss_idx, use_ip, is_cosine);
+                gpu_handle_ = gpu_hnsw::build_gpu_index(faiss_idx, use_ip, is_cosine);
                 if (!gpu_handle_) {
                     return expected<DataSetPtr>::Err(Status::cuvs_inner_error,
                                                      "failed to build GPU HNSW index");
@@ -3381,9 +3392,9 @@ class GpuHnswSqIndexNode : public BaseFaissRegularIndexHNSWSQNode {
         auto h_ids  = std::make_unique<int64_t[]>(nq * k);
         auto h_dist = std::make_unique<float[]>(nq * k);
 
-        int rc = detail::gpu_hnsw::search_gpu(gpu_handle_, h_queries, static_cast<int>(nq),
-                                               static_cast<int>(k), ef,
-                                               h_ids.get(), h_dist.get());
+        int rc = gpu_hnsw::search_gpu(gpu_handle_, h_queries, static_cast<int>(nq),
+                                      static_cast<int>(k), ef,
+                                      h_ids.get(), h_dist.get());
         if (rc != 0) {
             return expected<DataSetPtr>::Err(Status::cuvs_inner_error, "GPU HNSW search failed");
         }
@@ -3402,7 +3413,7 @@ class GpuHnswSqIndexNode : public BaseFaissRegularIndexHNSWSQNode {
 
     ~GpuHnswSqIndexNode() override {
         if (gpu_handle_) {
-            detail::gpu_hnsw::destroy_gpu_index(gpu_handle_);
+            gpu_hnsw::destroy_gpu_index(gpu_handle_);
         }
     }
 
@@ -3415,7 +3426,7 @@ KNOWHERE_REGISTER_GLOBAL(GPU_HNSW_SQ,
                          [](const int32_t& version, const Object& object) {
                              return Index<GpuHnswSqIndexNode>::Create(version, object);
                          },
-                         fp32, true, knowhere::feature::GPU_ANN_FLOAT_INDEX);
+                         fp32, true, feature::GPU_ANN_FLOAT_INDEX);
 
 // ── GPU HNSW (plain F32) ─────────────────────────────────────────────────────
 // Loads the standard Milvus HNSW index (IHNf format) via the inherited
@@ -3428,23 +3439,23 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWFlatNode {
 
     std::string
     Type() const override {
-        return knowhere::IndexEnum::INDEX_GPU_HNSW;
+        return IndexEnum::INDEX_GPU_HNSW;
     }
 
     Status
     Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override {
         std::unique_lock lock(gpu_mutex_);
         if (gpu_handle_) {
-            detail::gpu_hnsw::destroy_gpu_index(gpu_handle_);
+            gpu_hnsw::destroy_gpu_index(gpu_handle_);
             gpu_handle_ = nullptr;
         }
         // The GPU type key is "GPU_HNSW" but the serialized CPU index uses "HNSW".
         // Support loading from either: present the data under the GPU key if needed.
-        if (!binset.Contains(knowhere::IndexEnum::INDEX_GPU_HNSW) &&
-             binset.Contains(knowhere::IndexEnum::INDEX_HNSW)) {
+        if (!binset.Contains(IndexEnum::INDEX_GPU_HNSW) &&
+             binset.Contains(IndexEnum::INDEX_HNSW)) {
             BinarySet aliased = binset;
-            aliased.Append(knowhere::IndexEnum::INDEX_GPU_HNSW,
-                           binset.GetByName(knowhere::IndexEnum::INDEX_HNSW));
+            aliased.Append(IndexEnum::INDEX_GPU_HNSW,
+                           binset.GetByName(IndexEnum::INDEX_HNSW));
             return BaseFaissRegularIndexHNSWFlatNode::Deserialize(aliased, cfg);
         }
         return BaseFaissRegularIndexHNSWFlatNode::Deserialize(binset, cfg);
@@ -3460,14 +3471,14 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWFlatNode {
         {
             std::unique_lock lock(gpu_mutex_);
             if (!gpu_handle_) {
-                const faiss::IndexHNSW* faiss_idx = GetFaissHnswIndex();
+                const ::faiss::cppcontrib::knowhere::IndexHNSW* faiss_idx = GetFaissHnswIndex();
                 if (!faiss_idx) {
                     return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
                 }
                 const auto& hnsw_cfg = static_cast<const FaissHnswFlatConfig&>(*cfg);
                 bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
                 bool use_ip    = IsMetricType(hnsw_cfg.metric_type.value(), metric::IP) || is_cosine;
-                gpu_handle_ = detail::gpu_hnsw::build_gpu_index(faiss_idx, use_ip, is_cosine);
+                gpu_handle_ = gpu_hnsw::build_gpu_index(faiss_idx, use_ip, is_cosine);
                 if (!gpu_handle_) {
                     return expected<DataSetPtr>::Err(Status::cuvs_inner_error,
                                                      "failed to build GPU HNSW index");
@@ -3502,9 +3513,9 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWFlatNode {
         auto h_ids  = std::make_unique<int64_t[]>(nq * k);
         auto h_dist = std::make_unique<float[]>(nq * k);
 
-        int rc = detail::gpu_hnsw::search_gpu(gpu_handle_, h_queries, static_cast<int>(nq),
-                                               static_cast<int>(k), ef,
-                                               h_ids.get(), h_dist.get());
+        int rc = gpu_hnsw::search_gpu(gpu_handle_, h_queries, static_cast<int>(nq),
+                                      static_cast<int>(k), ef,
+                                      h_ids.get(), h_dist.get());
         if (rc != 0) {
             return expected<DataSetPtr>::Err(Status::cuvs_inner_error, "GPU HNSW search failed");
         }
@@ -3523,7 +3534,7 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWFlatNode {
 
     ~GpuHnswIndexNode() override {
         if (gpu_handle_) {
-            detail::gpu_hnsw::destroy_gpu_index(gpu_handle_);
+            gpu_hnsw::destroy_gpu_index(gpu_handle_);
         }
     }
 
@@ -3536,7 +3547,7 @@ KNOWHERE_REGISTER_GLOBAL(GPU_HNSW,
                          [](const int32_t& version, const Object& object) {
                              return Index<GpuHnswIndexNode>::Create(version, object);
                          },
-                         fp32, true, knowhere::feature::GPU_ANN_FLOAT_INDEX);
+                         fp32, true, feature::GPU_ANN_FLOAT_INDEX);
 #endif  // KNOWHERE_WITH_CUVS
 
 }  // namespace knowhere

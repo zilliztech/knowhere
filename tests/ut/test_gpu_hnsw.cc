@@ -131,7 +131,7 @@ TEST_CASE("GPU_HNSW: COSINE metric", "[gpu_hnsw]") {
     REQUIRE(recall >= 0.85f);
 
     // COSINE distances should be in [0, 1] (higher = more similar, normalized)
-    auto* dists = results.value()->GetDistances();
+    auto* dists = results.value()->GetDistance();
     for (int i = 0; i < nq * k; i++) {
         REQUIRE(dists[i] >= -0.01f);  // allow tiny fp noise
         REQUIRE(dists[i] <= 1.01f);
@@ -174,7 +174,7 @@ TEST_CASE("GPU_HNSW: IP metric", "[gpu_hnsw]") {
     REQUIRE(recall >= 0.90f);
 
     // IP distances should be positive (higher = more similar)
-    auto* dists = results.value()->GetDistances();
+    auto* dists = results.value()->GetDistance();
     for (int i = 0; i < nq * k; i++) {
         REQUIRE(dists[i] >= 0.0f);
     }
