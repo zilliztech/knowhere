@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include <boost/core/span.hpp>
+#include <span>
 
 #include "index/sparse/inverted_index_format.h"
 #include "knowhere/expected.h"
@@ -239,7 +239,7 @@ class SealedDimMap {
         clear_legacy_dim_map();
         clear_reverse();
         dim_map_reverse_ =
-            boost::span<const uint32_t>(reinterpret_cast<const uint32_t*>(reader.data() + reader.tellg()), expected_dims);
+            std::span<const uint32_t>(reinterpret_cast<const uint32_t*>(reader.data() + reader.tellg()), expected_dims);
         reader.advance(static_cast<size_t>(reverse_bytes));
         return Status::success;
     }
@@ -342,12 +342,12 @@ class SealedDimMap {
     void
     clear_reverse() {
         owned_dim_map_reverse_.clear();
-        dim_map_reverse_ = boost::span<const uint32_t>();
+        dim_map_reverse_ = std::span<const uint32_t>();
     }
 
     void
     set_owned_reverse_view() {
-        dim_map_reverse_ = boost::span<const uint32_t>(owned_dim_map_reverse_.data(), owned_dim_map_reverse_.size());
+        dim_map_reverse_ = std::span<const uint32_t>(owned_dim_map_reverse_.data(), owned_dim_map_reverse_.size());
     }
 
     void
@@ -363,14 +363,14 @@ class SealedDimMap {
 
     void
     reset_non_owning_views() {
-        dim_map_reverse_ = boost::span<const uint32_t>();
+        dim_map_reverse_ = std::span<const uint32_t>();
         legacy_dim_map_.clear();
         dim_map_mphf_view_ = ptrhash::PtrHashView();
         loaded_mphf_data_ = nullptr;
     }
 
     std::vector<uint32_t> owned_dim_map_reverse_;
-    boost::span<const uint32_t> dim_map_reverse_;
+    std::span<const uint32_t> dim_map_reverse_;
     std::unordered_map<uint32_t, uint32_t> legacy_dim_map_;
     ptrhash::PtrHash dim_map_mphf_;
     ptrhash::PtrHashView dim_map_mphf_view_;

@@ -1,7 +1,6 @@
 #pragma once
 #include <array>
-#include <boost/core/make_span.hpp>
-#include <boost/core/span.hpp>
+#include <span>
 #include <iostream>
 #include <unordered_set>
 #include <vector>
@@ -18,7 +17,7 @@ namespace knowhere::sparse::inverted {
 template <typename DType, typename QType>
 class FlattenInvertedIndexCursor {
  public:
-    FlattenInvertedIndexCursor(boost::span<uint32_t> plist_ids, boost::span<QType> plist_vals, size_t universe,
+    FlattenInvertedIndexCursor(std::span<uint32_t> plist_ids, std::span<QType> plist_vals, size_t universe,
                                BitsetView bitset)
         : plist_ids_(plist_ids),
           plist_vals_(plist_vals),
@@ -89,8 +88,8 @@ class FlattenInvertedIndexCursor {
         }
     }
 
-    boost::span<uint32_t> plist_ids_;
-    boost::span<QType> plist_vals_;
+    std::span<uint32_t> plist_ids_;
+    std::span<QType> plist_vals_;
     const size_t plist_size_;
     const size_t universe_;
     BitsetView bitset_;
@@ -226,13 +225,13 @@ class FlattenInvertedIndex : public CRTPInvertedIndex<FlattenInvertedIndex<DType
     // Inverted lists start offsets
     // Each dimension's inverted list is stored contiguously in a flattened array
     // The start offset of each dimension's list is stored in raw_index_offsets_
-    boost::span<size_t> raw_index_offsets_;
+    std::span<size_t> raw_index_offsets_;
 
     // Inverted lists storing vector IDs
-    boost::span<uint32_t> raw_index_ids_;
+    std::span<uint32_t> raw_index_ids_;
 
     // Inverted lists storing corresponding values
-    boost::span<QType> raw_index_vals_;
+    std::span<QType> raw_index_vals_;
 };
 
 template <typename DType, typename QType>
@@ -301,10 +300,10 @@ FlattenInvertedIndex<DType, QType>::build_raw_index(MemoryIOReader& reader, bool
     index_container_->seal();
 
     auto* data = index_container_->data();
-    raw_index_offsets_ = boost::span<size_t>(reinterpret_cast<size_t*>(data), this->nr_inner_dims_ + 1);
-    raw_index_ids_ = boost::span<uint32_t>(reinterpret_cast<uint32_t*>(data + raw_index_offsets_byte_sz), nnz);
+    raw_index_offsets_ = std::span<size_t>(reinterpret_cast<size_t*>(data), this->nr_inner_dims_ + 1);
+    raw_index_ids_ = std::span<uint32_t>(reinterpret_cast<uint32_t*>(data + raw_index_offsets_byte_sz), nnz);
     raw_index_vals_ =
-        boost::span<QType>(reinterpret_cast<QType*>(data + raw_index_ids_byte_sz + raw_index_offsets_byte_sz), nnz);
+        std::span<QType>(reinterpret_cast<QType*>(data + raw_index_ids_byte_sz + raw_index_offsets_byte_sz), nnz);
 
     std::size_t offset = 0;
     for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
@@ -375,14 +374,14 @@ FlattenInvertedIndex<DType, QType>::build_block_max_data(bool enable_mmap, const
     auto block_max_data_container_data_ = this->meta_data_.block_max_data_.container_->data();
 
     size_t container_offset = 0;
-    this->meta_data_.block_max_data_.block_offsets_ = boost::span<size_t>(
+    this->meta_data_.block_max_data_.block_offsets_ = std::span<size_t>(
         reinterpret_cast<size_t*>(block_max_data_container_data_ + container_offset), this->nr_inner_dims_);
     container_offset += this->nr_inner_dims_ * sizeof(size_t);
-    this->meta_data_.block_max_data_.block_max_ids_ = boost::span<uint32_t>(
+    this->meta_data_.block_max_data_.block_max_ids_ = std::span<uint32_t>(
         reinterpret_cast<uint32_t*>(block_max_data_container_data_ + container_offset), total_blocks);
     container_offset += total_blocks * sizeof(uint32_t);
     this->meta_data_.block_max_data_.block_max_scores_ =
-        boost::span<float>(reinterpret_cast<float*>(block_max_data_container_data_ + container_offset), total_blocks);
+        std::span<float>(reinterpret_cast<float*>(block_max_data_container_data_ + container_offset), total_blocks);
     container_offset += total_blocks * sizeof(float);
     assert(container_offset == this->meta_data_.block_max_data_.container_->size());
 
@@ -543,11 +542,11 @@ FlattenInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t row
     this->index_container_->seal();
 
     auto* buffer = this->index_container_->data();
-    this->raw_index_offsets_ = boost::span<size_t>(reinterpret_cast<size_t*>(buffer), this->nr_inner_dims_ + 1);
+    this->raw_index_offsets_ = std::span<size_t>(reinterpret_cast<size_t*>(buffer), this->nr_inner_dims_ + 1);
     buffer += raw_index_offsets_byte_sz;
-    this->raw_index_ids_ = boost::span<uint32_t>(reinterpret_cast<uint32_t*>(buffer), total_nnz);
+    this->raw_index_ids_ = std::span<uint32_t>(reinterpret_cast<uint32_t*>(buffer), total_nnz);
     buffer += raw_index_ids_byte_sz;
-    this->raw_index_vals_ = boost::span<QType>(reinterpret_cast<QType*>(buffer), total_nnz);
+    this->raw_index_vals_ = std::span<QType>(reinterpret_cast<QType*>(buffer), total_nnz);
 
     std::size_t offset = 0;
     for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
@@ -751,15 +750,15 @@ FlattenInvertedIndex<DType, QType>::deserialize(MemoryIOReader& reader) {
                     if (index_encoding_type != static_cast<uint32_t>(InvertedIndexEncoding::FLAT)) {
                         return Status::invalid_serialized_index_type;
                     }
-                    this->raw_index_offsets_ = boost::span<size_t>(
+                    this->raw_index_offsets_ = std::span<size_t>(
                         reinterpret_cast<size_t*>(reader.data() + reader.tellg()), this->nr_inner_dims_ + 1);
                     reader.advance(sizeof(size_t) * (this->nr_inner_dims_ + 1));
                     auto nnz = this->raw_index_offsets_[this->nr_inner_dims_];
                     this->raw_index_ids_ =
-                        boost::span<uint32_t>(reinterpret_cast<uint32_t*>(reader.data() + reader.tellg()), nnz);
+                        std::span<uint32_t>(reinterpret_cast<uint32_t*>(reader.data() + reader.tellg()), nnz);
                     reader.advance(nnz * sizeof(uint32_t));
                     this->raw_index_vals_ =
-                        boost::span<QType>(reinterpret_cast<QType*>(reader.data() + reader.tellg()), nnz);
+                        std::span<QType>(reinterpret_cast<QType*>(reader.data() + reader.tellg()), nnz);
                     reader.advance(nnz * sizeof(QType));
                     // deserialize will use the memory from reader, so containers are not needed
                     // explicitly assign nullptr to them
@@ -795,14 +794,14 @@ FlattenInvertedIndex<DType, QType>::deserialize(MemoryIOReader& reader) {
                     size_t total_blocks = 0;
                     reader.read(&total_blocks, sizeof(size_t));
                     reader.read(&this->meta_data_.block_max_data_.block_size_, sizeof(uint32_t));
-                    this->meta_data_.block_max_data_.block_offsets_ = boost::span<size_t>(
+                    this->meta_data_.block_max_data_.block_offsets_ = std::span<size_t>(
                         reinterpret_cast<size_t*>(reader.data() + reader.tellg()), this->nr_inner_dims_);
                     reader.advance(this->nr_inner_dims_ * sizeof(size_t));
-                    this->meta_data_.block_max_data_.block_max_ids_ = boost::span<uint32_t>(
+                    this->meta_data_.block_max_data_.block_max_ids_ = std::span<uint32_t>(
                         reinterpret_cast<uint32_t*>(reader.data() + reader.tellg()), total_blocks);
                     reader.advance(total_blocks * sizeof(uint32_t));
                     this->meta_data_.block_max_data_.block_max_scores_ =
-                        boost::span<float>(reinterpret_cast<float*>(reader.data() + reader.tellg()), total_blocks);
+                        std::span<float>(reinterpret_cast<float*>(reader.data() + reader.tellg()), total_blocks);
                     this->meta_data_.block_max_data_.container_ = nullptr;
                     reader.advance(total_blocks * sizeof(float));
                     break;

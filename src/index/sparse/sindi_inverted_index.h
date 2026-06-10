@@ -5,7 +5,7 @@
 
 #include <algorithm>
 #include <array>
-#include <boost/core/span.hpp>
+#include <span>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -139,18 +139,18 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         for (size_t dim_id = 0; dim_id < dim_count; ++dim_id) {
             plists_dim_offsets_[dim_id] = total_postings;
             total_plists_ids_spans_[dim_id] =
-                boost::span<const uint16_t>(total_plists_ids_[dim_id].data(), total_plists_ids_[dim_id].size());
+                std::span<const uint16_t>(total_plists_ids_[dim_id].data(), total_plists_ids_[dim_id].size());
             total_plists_vals_spans_[dim_id] =
-                boost::span<const QuantType>(total_plists_vals_[dim_id].data(), total_plists_vals_[dim_id].size());
+                std::span<const QuantType>(total_plists_vals_[dim_id].data(), total_plists_vals_[dim_id].size());
             total_postings += total_plists_ids_[dim_id].size();
         }
         plists_dim_offsets_[dim_count] = total_postings;
-        plists_dim_offsets_span_ = boost::span<const uint32_t>(plists_dim_offsets_.data(), plists_dim_offsets_.size());
+        plists_dim_offsets_span_ = std::span<const uint32_t>(plists_dim_offsets_.data(), plists_dim_offsets_.size());
 
         // Update window_index_plists_sz_spans_
         for (size_t wid = 0; wid < nr_windows_; ++wid) {
             window_index_plists_sz_spans_[wid] =
-                boost::span<const uint16_t>(window_index_plists_sz_[wid].data(), window_index_plists_sz_[wid].size());
+                std::span<const uint16_t>(window_index_plists_sz_[wid].data(), window_index_plists_sz_[wid].size());
         }
 
         // Encode window nnzs with sparse/dense format selection
@@ -194,7 +194,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 }
             }
             plists_window_nnzs_spans_[dimid] =
-                boost::span<const uint8_t>(plists_window_nnzs_[dimid].data(), plists_window_nnzs_[dimid].size());
+                std::span<const uint8_t>(plists_window_nnzs_[dimid].data(), plists_window_nnzs_[dimid].size());
         };
 
         for (size_t dimid = 0; dimid < dim_count; ++dimid) {
@@ -202,7 +202,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         }
 
         plists_wnnzs_fmts_msk_span_ =
-            boost::span<const uint8_t>(plists_wnnzs_fmts_msk_.data(), plists_wnnzs_fmts_msk_.size());
+            std::span<const uint8_t>(plists_wnnzs_fmts_msk_.data(), plists_wnnzs_fmts_msk_.size());
     }
 
     Status
@@ -263,7 +263,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 }
                 row_sums_.push_back(row_sum);
             }
-            row_sums_span_ = boost::span<const float>(row_sums_.data(), row_sums_.size());
+            row_sums_span_ = std::span<const float>(row_sums_.data(), row_sums_.size());
         }
 
         // Incrementally update max score per dimension for early termination optimization.
@@ -322,7 +322,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 }
             }
         }
-        max_scores_per_dim_span_ = boost::span<const float>(max_scores_per_dim_.data(), max_scores_per_dim_.size());
+        max_scores_per_dim_span_ = std::span<const float>(max_scores_per_dim_.data(), max_scores_per_dim_.size());
 
         return Status::success;
     }
@@ -586,7 +586,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                         uint64_t bytes_mask = 0;
                         if (mask_sz > 0) {
                             const uint8_t* mask_base = reinterpret_cast<const uint8_t*>(reader.data() + reader.tellg());
-                            plists_wnnzs_fmts_msk_span_ = boost::span<const uint8_t>(mask_base, mask_sz);
+                            plists_wnnzs_fmts_msk_span_ = std::span<const uint8_t>(mask_base, mask_sz);
                             reader.advance(mask_sz);
                             bytes_mask = static_cast<uint64_t>(mask_sz) * sizeof(uint8_t);
                         } else {
@@ -599,13 +599,13 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                             uint32_t span_sz = 0;
                             reader.read(&span_sz, sizeof(uint32_t));
                             const uint8_t* dbase = reinterpret_cast<const uint8_t*>(reader.data() + reader.tellg());
-                            plists_window_nnzs_spans_[dimid] = boost::span<const uint8_t>(dbase, span_sz);
+                            plists_window_nnzs_spans_[dimid] = std::span<const uint8_t>(dbase, span_sz);
                             reader.advance(static_cast<size_t>(span_sz) * sizeof(uint8_t));
                             bytes_win_nnzs += sizeof(uint32_t) + static_cast<size_t>(span_sz) * sizeof(uint8_t);
                         }
 
                         // plists dim offsets
-                        plists_dim_offsets_span_ = boost::span<const uint32_t>(
+                        plists_dim_offsets_span_ = std::span<const uint32_t>(
                             reinterpret_cast<const uint32_t*>(reader.data() + reader.tellg()), nr_dims + 1);
                         reader.advance((nr_dims + 1) * sizeof(uint32_t));
                         total_postings = plists_dim_offsets_span_[nr_dims];
@@ -629,7 +629,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                         size_t base = 0;
                         for (size_t dim_id = 0; dim_id < nr_dims; ++dim_id) {
                             uint32_t len = plists_dim_offsets_span_[dim_id + 1] - plists_dim_offsets_span_[dim_id];
-                            total_plists_ids_spans_[dim_id] = boost::span<const uint16_t>(ids_region + base, len);
+                            total_plists_ids_spans_[dim_id] = std::span<const uint16_t>(ids_region + base, len);
                             base += len;
                         }
                         reader.advance(total_postings * sizeof(uint16_t));
@@ -641,7 +641,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                         const uint64_t bytes_vals = static_cast<uint64_t>(total_postings) * sizeof(QuantType);
                         for (size_t dim_id = 0; dim_id < nr_dims; ++dim_id) {
                             uint32_t len = plists_dim_offsets_span_[dim_id + 1] - plists_dim_offsets_span_[dim_id];
-                            total_plists_vals_spans_[dim_id] = boost::span<const QuantType>(vals_region + base, len);
+                            total_plists_vals_spans_[dim_id] = std::span<const QuantType>(vals_region + base, len);
                             base += len;
                         }
                         reader.advance(total_postings * sizeof(QuantType));
@@ -663,7 +663,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                     }
                     case InvertedIndexSectionType::MAX_SCORES_PER_DIM: {
                         reader.seekg(section_header.offset);
-                        max_scores_per_dim_span_ = boost::span<const float>(
+                        max_scores_per_dim_span_ = std::span<const float>(
                             reinterpret_cast<const float*>(reader.data() + section_header.offset),
                             this->nr_inner_dims_);
                         reader.advance(sizeof(float) * this->nr_inner_dims_);
@@ -672,7 +672,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                     case InvertedIndexSectionType::ROW_SUMS: {
                         // Row sums section for BM25
                         reader.seekg(section_header.offset);
-                        row_sums_span_ = boost::span<const float>(
+                        row_sums_span_ = std::span<const float>(
                             reinterpret_cast<const float*>(reader.data() + section_header.offset), this->nr_rows_);
                         reader.advance(sizeof(float) * this->nr_rows_);
 
@@ -1017,9 +1017,9 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     /**
      * @brief Get the row sums span for BM25 scoring
      *
-     * @return boost::span<const float> The row sums span (empty if not BM25 index)
+     * @return std::span<const float> The row sums span (empty if not BM25 index)
      */
-    [[nodiscard]] boost::span<const float>
+    [[nodiscard]] std::span<const float>
     get_row_sums_span() const noexcept {
         return row_sums_span_;
     }
@@ -1035,25 +1035,25 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     using aligned_quant_vec = std::vector<QuantType, aligned_allocator<QuantType, 64>>;
     std::vector<aligned_u16_vec> total_plists_ids_;
     std::vector<aligned_quant_vec> total_plists_vals_;
-    std::vector<boost::span<const uint16_t>> total_plists_ids_spans_;
-    std::vector<boost::span<const QuantType>> total_plists_vals_spans_;
+    std::vector<std::span<const uint16_t>> total_plists_ids_spans_;
+    std::vector<std::span<const QuantType>> total_plists_vals_spans_;
 
     // Window sizes encoding (per-dim window nnz) and bitset of formats
     // Bit=1 means sparse format (wid, wnnz pairs), Bit=0 means dense format (one entry per window)
     std::vector<uint8_t> plists_wnnzs_fmts_msk_;
-    boost::span<const uint8_t> plists_wnnzs_fmts_msk_span_;
+    std::span<const uint8_t> plists_wnnzs_fmts_msk_span_;
     std::vector<std::vector<uint16_t>> window_index_plists_sz_;
-    std::vector<boost::span<const uint16_t>> window_index_plists_sz_spans_;
+    std::vector<std::span<const uint16_t>> window_index_plists_sz_spans_;
     std::vector<std::vector<uint8_t>> plists_window_nnzs_;
-    std::vector<boost::span<const uint8_t>> plists_window_nnzs_spans_;
+    std::vector<std::span<const uint8_t>> plists_window_nnzs_spans_;
     std::vector<uint32_t> plists_dim_offsets_;
-    boost::span<const uint32_t> plists_dim_offsets_span_;
+    std::span<const uint32_t> plists_dim_offsets_span_;
     std::vector<float> max_scores_per_dim_;
-    boost::span<const float> max_scores_per_dim_span_;
+    std::span<const float> max_scores_per_dim_span_;
 
     // Row sums only needed for BM25
     std::vector<float> row_sums_;
-    boost::span<const float> row_sums_span_;
+    std::span<const float> row_sums_span_;
 
     bool legacy_dim_map_mphf_trailer_workaround_{true};
     uint32_t window_size_{max_window_size};

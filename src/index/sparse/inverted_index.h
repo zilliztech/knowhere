@@ -4,8 +4,7 @@
 #include <sys/mman.h>
 
 #include <algorithm>
-#include <boost/core/make_span.hpp>
-#include <boost/core/span.hpp>
+#include <span>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -75,7 +74,7 @@ struct InvertedIndexMetaData {
 
     std::vector<float> row_sums_;
     std::vector<float> max_score_per_dim_container_;
-    boost::span<float> max_score_per_dim_;
+    std::span<float> max_score_per_dim_;
     BlockMaxData block_max_data_;
 
     InvertedIndexMetaData() = default;
@@ -90,7 +89,7 @@ struct InvertedIndexMetaData {
           max_score_per_dim_(other.max_score_per_dim_),
           block_max_data_(std::move(other.block_max_data_)) {
         refresh_max_score_per_dim_view_after_transfer();
-        other.max_score_per_dim_ = boost::span<float>();
+        other.max_score_per_dim_ = std::span<float>();
     }
 
     InvertedIndexMetaData&
@@ -105,7 +104,7 @@ struct InvertedIndexMetaData {
         max_score_per_dim_ = other.max_score_per_dim_;
         block_max_data_ = std::move(other.block_max_data_);
         refresh_max_score_per_dim_view_after_transfer();
-        other.max_score_per_dim_ = boost::span<float>();
+        other.max_score_per_dim_ = std::span<float>();
         return *this;
     }
 
@@ -113,20 +112,20 @@ struct InvertedIndexMetaData {
     resize_max_score_per_dim(size_t size, float value) {
         max_score_per_dim_container_.resize(size, value);
         max_score_per_dim_ =
-            boost::span<float>(max_score_per_dim_container_.data(), max_score_per_dim_container_.size());
+            std::span<float>(max_score_per_dim_container_.data(), max_score_per_dim_container_.size());
     }
 
     void
     set_max_score_per_dim_view(float* data, size_t size) {
         max_score_per_dim_container_.clear();
-        max_score_per_dim_ = boost::span<float>(data, size);
+        max_score_per_dim_ = std::span<float>(data, size);
     }
 
     void
     refresh_max_score_per_dim_view_after_transfer() {
         if (!max_score_per_dim_container_.empty()) {
             max_score_per_dim_ =
-                boost::span<float>(max_score_per_dim_container_.data(), max_score_per_dim_container_.size());
+                std::span<float>(max_score_per_dim_container_.data(), max_score_per_dim_container_.size());
         }
     }
 };
