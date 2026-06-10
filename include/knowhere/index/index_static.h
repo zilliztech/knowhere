@@ -60,11 +60,11 @@ class IndexStaticFaced {
      * @return generate the config binding with the corresponding vector index
      */
     static std::unique_ptr<BaseConfig>
-    CreateConfig(const knowhere::IndexType& indexType, const knowhere::IndexVersion& version);
+    CreateConfig(const knowhere::IndexType& indexType, const knowhere::IndexVersion& version) noexcept;
 
     static knowhere::Status
     ConfigCheck(const knowhere::IndexType& indexType, const knowhere::IndexVersion& version,
-                const knowhere::Json& params, std::string& msg);
+                const knowhere::Json& params, std::string& msg) noexcept;
 
     /**
      * @brief estimate the memory and disk resource usage before index loading by index params
@@ -79,7 +79,7 @@ class IndexStaticFaced {
     static expected<Resource>
     EstimateLoadResource(const knowhere::IndexType& indexType, const knowhere::IndexVersion& version,
                          const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
-                         const knowhere::Json& params);
+                         const knowhere::Json& params) noexcept;
 
     /**
      * @brief determine whether the index contains the raw data before loading the index by index params
@@ -90,7 +90,7 @@ class IndexStaticFaced {
      */
     static bool
     HasRawData(const knowhere::IndexType& indexType, const knowhere::IndexVersion& version,
-               const knowhere::Json& params);
+               const knowhere::Json& params) noexcept;
 
     template <typename VecIndexNode>
     IndexStaticFaced&

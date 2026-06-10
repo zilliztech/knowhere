@@ -20,6 +20,13 @@ namespace knowhere {
 inline Status
 LoadStaticConfig(BaseConfig* cfg, const Json& json, knowhere::PARAM_TYPE param_type, const std::string& method,
                  std::string* const msg = nullptr) {
+    if (cfg == nullptr) {
+        if (msg != nullptr) {
+            *msg = "failed to create config";
+        }
+        LOG_KNOWHERE_ERROR_ << method << " failed to create config";
+        return Status::knowhere_inner_error;
+    }
     Json json_(json);
     auto res = Config::FormatAndCheck(*cfg, json_, msg);
     LOG_KNOWHERE_DEBUG_ << method << " config dump: " << json_.dump();
@@ -36,39 +43,43 @@ IndexStaticFaced<DataType>::Instance() {
 
 template <typename DataType>
 std::unique_ptr<BaseConfig>
-IndexStaticFaced<DataType>::CreateConfig(const IndexType& indexType, const IndexVersion& version) {
-    if (Instance().staticCreateConfigMap.find(indexType) != Instance().staticCreateConfigMap.end()) {
-        return Instance().staticCreateConfigMap[indexType]();
-    }
-    LOG_KNOWHERE_WARNING_ << "unhandled create config for indexType: " << indexType;
-    return std::make_unique<BaseConfig>();
+IndexStaticFaced<DataType>::CreateConfig(const IndexType& indexType, const IndexVersion& version) noexcept {
+    return GuardedCall([&]() -> std::unique_ptr<BaseConfig> {
+        if (Instance().staticCreateConfigMap.find(indexType) != Instance().staticCreateConfigMap.end()) {
+            return Instance().staticCreateConfigMap[indexType]();
+        }
+        LOG_KNOWHERE_WARNING_ << "unhandled create config for indexType: " << indexType;
+        return std::make_unique<BaseConfig>();
+    });
 }
 
 template <typename DataType>
 knowhere::Status
 IndexStaticFaced<DataType>::ConfigCheck(const IndexType& indexType, const IndexVersion& version, const Json& params,
-                                        std::string& msg) {
-    auto cfg = IndexStaticFaced<DataType>::CreateConfig(indexType, version);
+                                        std::string& msg) noexcept {
+    return GuardedCall([&]() -> Status {
+        auto cfg = IndexStaticFaced<DataType>::CreateConfig(indexType, version);
 
-    const Status status = LoadStaticConfig(cfg.get(), params, knowhere::PARAM_TYPE::TRAIN, "ConfigCheck", &msg);
-    if (status != Status::success) {
-        LOG_KNOWHERE_ERROR_ << "Load Config failed, msg = " << msg;
-        return status;
-    }
-
-    if constexpr (!std::is_same_v<DataType, knowhere::fp32>) {
-        auto strategy = cfg->emb_list_strategy.value_or("");
-        if (strategy == meta::EMB_LIST_STRATEGY_MUVERA || strategy == meta::EMB_LIST_STRATEGY_LEMUR) {
-            msg = "MUVERA/LEMUR strategies only support fp32 data type, got '" + strategy + "'";
-            return Status::invalid_args;
+        const Status status = LoadStaticConfig(cfg.get(), params, knowhere::PARAM_TYPE::TRAIN, "ConfigCheck", &msg);
+        if (status != Status::success) {
+            LOG_KNOWHERE_ERROR_ << "Load Config failed, msg = " << msg;
+            return status;
         }
-    }
 
-    if (Instance().staticConfigCheckMap.find(indexType) != Instance().staticConfigCheckMap.end()) {
-        return Instance().staticConfigCheckMap[indexType](*cfg, knowhere::PARAM_TYPE::TRAIN, msg);
-    }
+        if constexpr (!std::is_same_v<DataType, knowhere::fp32>) {
+            auto strategy = cfg->emb_list_strategy.value_or("");
+            if (strategy == meta::EMB_LIST_STRATEGY_MUVERA || strategy == meta::EMB_LIST_STRATEGY_LEMUR) {
+                msg = "MUVERA/LEMUR strategies only support fp32 data type, got '" + strategy + "'";
+                return Status::invalid_args;
+            }
+        }
 
-    return knowhere::Status::success;
+        if (Instance().staticConfigCheckMap.find(indexType) != Instance().staticConfigCheckMap.end()) {
+            return Instance().staticConfigCheckMap[indexType](*cfg, knowhere::PARAM_TYPE::TRAIN, msg);
+        }
+
+        return knowhere::Status::success;
+    });
 }
 
 template <typename DataType>
@@ -76,21 +87,25 @@ expected<Resource>
 IndexStaticFaced<DataType>::EstimateLoadResource(const knowhere::IndexType& indexType,
                                                  const knowhere::IndexVersion& version,
                                                  const uint64_t file_size_in_bytes, const int64_t num_rows,
-                                                 const int64_t dim, const knowhere::Json& params) {
-    auto cfg = IndexStaticFaced<DataType>::CreateConfig(indexType, version);
+                                                 const int64_t dim, const knowhere::Json& params) noexcept {
+    return GuardedCall([&]() -> expected<Resource> {
+        auto cfg = IndexStaticFaced<DataType>::CreateConfig(indexType, version);
 
-    std::string msg;
-    const Status status = LoadStaticConfig(cfg.get(), params, knowhere::STATIC, "EstimateLoadResource", &msg);
-    if (status != Status::success) {
-        LOG_KNOWHERE_ERROR_ << "Load Config failed, msg = " << msg;
-        return expected<Resource>::Err(status, msg);
-    }
+        std::string msg;
+        const Status status = LoadStaticConfig(cfg.get(), params, knowhere::STATIC, "EstimateLoadResource", &msg);
+        if (status != Status::success) {
+            LOG_KNOWHERE_ERROR_ << "Load Config failed, msg = " << msg;
+            return expected<Resource>::Err(status, msg);
+        }
 
-    if (Instance().staticEstimateLoadResourceMap.find(indexType) != Instance().staticEstimateLoadResourceMap.end()) {
-        return Instance().staticEstimateLoadResourceMap[indexType](file_size_in_bytes, num_rows, dim, *cfg, version);
-    }
+        if (Instance().staticEstimateLoadResourceMap.find(indexType) !=
+            Instance().staticEstimateLoadResourceMap.end()) {
+            return Instance().staticEstimateLoadResourceMap[indexType](file_size_in_bytes, num_rows, dim, *cfg,
+                                                                       version);
+        }
 
-    return InternalEstimateLoadResource(file_size_in_bytes, num_rows, dim, *cfg, version);
+        return InternalEstimateLoadResource(file_size_in_bytes, num_rows, dim, *cfg, version);
+    });
 }
 
 template <typename DataType>
@@ -111,32 +126,36 @@ IndexStaticFaced<DataType>::InternalEstimateLoadResource(const uint64_t file_siz
 
 template <typename DataType>
 bool
-IndexStaticFaced<DataType>::HasRawData(const IndexType& indexType, const IndexVersion& version, const Json& params) {
-    auto cfg = IndexStaticFaced<DataType>::CreateConfig(indexType, version);
-    std::string msg;
-    const Status status = LoadStaticConfig(cfg.get(), params, knowhere::STATIC, "HasRawData", &msg);
+IndexStaticFaced<DataType>::HasRawData(const IndexType& indexType, const IndexVersion& version,
+                                       const Json& params) noexcept {
+    return GuardedCall([&]() {
+        auto cfg = IndexStaticFaced<DataType>::CreateConfig(indexType, version);
+        std::string msg;
+        const Status status = LoadStaticConfig(cfg.get(), params, knowhere::STATIC, "HasRawData", &msg);
 
-    if (status != Status::success) {
-        LOG_KNOWHERE_ERROR_ << "Load Config failed, msg = " << msg;
-        return false;
-    }
+        if (status != Status::success) {
+            LOG_KNOWHERE_ERROR_ << "Load Config failed, msg = " << msg;
+            return false;
+        }
 
-    if (Instance().staticHasRawDataMap.find(indexType) != Instance().staticHasRawDataMap.end()) {
-        return Instance().staticHasRawDataMap[indexType](*cfg, version);
-    }
+        if (Instance().staticHasRawDataMap.find(indexType) != Instance().staticHasRawDataMap.end()) {
+            return Instance().staticHasRawDataMap[indexType](*cfg, version);
+        }
 
-    static std::set<knowhere::IndexType> has_raw_data_index_set = {
-        IndexEnum::INDEX_FAISS_BIN_IDMAP, IndexEnum::INDEX_FAISS_BIN_IVFFLAT, IndexEnum::INDEX_FAISS_IVFFLAT,
-        IndexEnum::INDEX_FAISS_IVFFLAT_CC};
+        static std::set<knowhere::IndexType> has_raw_data_index_set = {
+            IndexEnum::INDEX_FAISS_BIN_IDMAP, IndexEnum::INDEX_FAISS_BIN_IVFFLAT, IndexEnum::INDEX_FAISS_IVFFLAT,
+            IndexEnum::INDEX_FAISS_IVFFLAT_CC};
 
-    static std::set<knowhere::IndexType> has_raw_data_index_alias_set = {"IVFBIN", "BINFLAT", "IVFFLAT", "IVFFLATCC"};
+        static std::set<knowhere::IndexType> has_raw_data_index_alias_set = {"IVFBIN", "BINFLAT", "IVFFLAT",
+                                                                             "IVFFLATCC"};
 
-    if (has_raw_data_index_set.find(indexType) != has_raw_data_index_set.end() ||
-        has_raw_data_index_alias_set.find(indexType) != has_raw_data_index_alias_set.end()) {
-        return true;
-    }
+        if (has_raw_data_index_set.find(indexType) != has_raw_data_index_set.end() ||
+            has_raw_data_index_alias_set.find(indexType) != has_raw_data_index_alias_set.end()) {
+            return true;
+        }
 
-    return InternalStaticHasRawData(*cfg, version);
+        return InternalStaticHasRawData(*cfg, version);
+    });
 }
 
 template <typename DataType>

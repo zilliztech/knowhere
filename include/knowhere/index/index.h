@@ -140,81 +140,81 @@ class Index {
     }
 
     Status
-    Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true);
+    Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true) noexcept;
 
 #ifdef KNOWHERE_WITH_CARDINAL
     const std::shared_ptr<Interrupt>
     BuildAsync(const DataSetPtr dataset, const Json& json,
-               const std::chrono::seconds timeout = std::chrono::seconds::max());
+               const std::chrono::seconds timeout = std::chrono::seconds::max()) noexcept;
 #else
     const std::shared_ptr<Interrupt>
-    BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true);
+    BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true) noexcept;
 #endif
 
     Status
-    Train(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true);
+    Train(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true) noexcept;
 
     Status
-    Add(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true);
+    Add(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true) noexcept;
 
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, const Json& json, const BitsetView& bitset,
-           milvus::OpContext* op_context = nullptr) const;
+           milvus::OpContext* op_context = nullptr) const noexcept;
 
     expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetView& bitset,
-                bool use_knowhere_search_pool = true, milvus::OpContext* op_context = nullptr) const;
+                bool use_knowhere_search_pool = true, milvus::OpContext* op_context = nullptr) const noexcept;
 
     expected<DataSetPtr>
     RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetView& bitset,
-                milvus::OpContext* op_context = nullptr) const;
+                milvus::OpContext* op_context = nullptr) const noexcept;
 
     expected<DataSetPtr>
-    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const;
+    GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const noexcept;
 
     expected<DataSetPtr>
     GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_type,
-                    milvus::OpContext* op_context = nullptr) const;
+                    milvus::OpContext* op_context = nullptr) const noexcept;
 
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
-                  const bool is_cosine, milvus::OpContext* op_context = nullptr) const;
+                  const bool is_cosine, milvus::OpContext* op_context = nullptr) const noexcept;
 
     bool
-    HasRawData(const std::string& metric_type) const;
+    HasRawData(const std::string& metric_type) const noexcept;
 
     bool
-    IsAdditionalScalarSupported(bool is_mv_only) const;
+    IsAdditionalScalarSupported(bool is_mv_only) const noexcept;
 
     bool
-    IsIndexRefineEnabled() const;
+    IsIndexRefineEnabled() const noexcept;
 
     expected<DataSetPtr>
-    GetIndexMeta(const Json& json) const;
+    GetIndexMeta(const Json& json) const noexcept;
 
     Status
-    Serialize(BinarySet& binset) const;
+    Serialize(BinarySet& binset) const noexcept;
 
     Status
-    Deserialize(const BinarySet& binset, const Json& json = {});
+    Deserialize(const BinarySet& binset, const Json& json = {}) noexcept;
 
     Status
-    DeserializeFromFile(const std::string& filename, const Json& json = {});
+    DeserializeFromFile(const std::string& filename, const Json& json = {}) noexcept;
 
     int64_t
-    Dim() const;
+    Dim() const noexcept;
 
     int64_t
-    Size() const;
+    Size() const noexcept;
 
     int64_t
-    Count() const;
+    Count() const noexcept;
 
     std::string
-    Type() const;
+    Type() const noexcept;
 
     [[nodiscard]] bool
-    LoadIndexWithStream() const;
+    LoadIndexWithStream() const noexcept;
 
     ~Index() {
         if (node == nullptr)

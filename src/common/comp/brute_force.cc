@@ -143,9 +143,26 @@ GetInverseVecNorms(const DataSetPtr& base) {
 }  // namespace
 
 template <typename DataType>
+Status
+BruteForceSearchWithBufImpl(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
+                            const Json& config, const BitsetView& bitset, milvus::OpContext* op_context);
+
+template <typename DataType>
+Status
+BruteForceSearchOnChunkWithBufImpl(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids,
+                                   float* dis, const Json& config, const BitsetView& bitset,
+                                   milvus::OpContext* op_context);
+
+template <typename DataType>
+expected<std::vector<IndexNode::IteratorPtr>>
+BruteForceAnnIteratorOnChunkImpl(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                                 const BitsetView& bitset, bool use_knowhere_search_pool,
+                                 milvus::OpContext* op_context);
+
+template <typename DataType>
 expected<DataSetPtr>
-BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                   const BitsetView& bitset_, milvus::OpContext* op_context) {
+BruteForceSearchImpl(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                     const BitsetView& bitset_, milvus::OpContext* op_context) {
     BruteForceConfig cfg;
     std::string msg;
     auto status = Config::Load(cfg, config, knowhere::SEARCH, &msg);
@@ -172,11 +189,11 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     Status search_status;
     bool base_is_chunk = base_dataset->GetIsChunk();
     if (base_is_chunk) {
-        search_status = SearchOnChunkWithBuf<DataType>(base_dataset, query_dataset, labels.get(), distances.get(),
-                                                       config, bitset_, op_context);
+        search_status = BruteForceSearchOnChunkWithBufImpl<DataType>(base_dataset, query_dataset, labels.get(),
+                                                                     distances.get(), config, bitset_, op_context);
     } else {
-        search_status = SearchWithBuf<DataType>(base_dataset, query_dataset, labels.get(), distances.get(), config,
-                                                bitset_, op_context);
+        search_status = BruteForceSearchWithBufImpl<DataType>(base_dataset, query_dataset, labels.get(),
+                                                              distances.get(), config, bitset_, op_context);
     }
     if (search_status != Status::success) {
         return expected<DataSetPtr>::Err(search_status, "search failed");
@@ -468,11 +485,12 @@ brute_force_emb_list_impl(const void* xq, size_t query_el_idx, const void* xb, i
 
 template <typename DataType>
 Status
-BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
-                          const Json& config, const BitsetView& bitset_, milvus::OpContext* op_context) {
+BruteForceSearchWithBufImpl(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
+                            const Json& config, const BitsetView& bitset_, milvus::OpContext* op_context) {
     auto base_is_chunk = base_dataset->GetIsChunk();
     if (base_is_chunk) {
-        return SearchOnChunkWithBuf<DataType>(base_dataset, query_dataset, ids, dis, config, bitset_, op_context);
+        return BruteForceSearchOnChunkWithBufImpl<DataType>(base_dataset, query_dataset, ids, dis, config, bitset_,
+                                                            op_context);
     }
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
@@ -612,9 +630,9 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
 
 template <typename DataType>
 Status
-BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids,
-                                 float* dis, const Json& config, const BitsetView& bitset_,
-                                 milvus::OpContext* op_context) {
+BruteForceSearchOnChunkWithBufImpl(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids,
+                                   float* dis, const Json& config, const BitsetView& bitset_,
+                                   milvus::OpContext* op_context) {
     auto base_is_chunk = base_dataset->GetIsChunk();
     if (!base_is_chunk) {
         LOG_KNOWHERE_ERROR_ << "Base dataset is not chunk, should NOT use it.";
@@ -912,8 +930,8 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
  */
 template <typename DataType>
 expected<DataSetPtr>
-BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                        const BitsetView& bitset_, milvus::OpContext* op_context) {
+BruteForceRangeSearchImpl(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                          const BitsetView& bitset_, milvus::OpContext* op_context) {
     DataSetPtr query(query_dataset);
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
@@ -1132,9 +1150,9 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
 }
 
 Status
-BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, sparse::label_t* labels,
-                                float* distances, const Json& config, const BitsetView& bitset,
-                                milvus::OpContext* op_context) {
+BruteForceSearchSparseWithBufImpl(const DataSetPtr base_dataset, const DataSetPtr query_dataset,
+                                  sparse::label_t* labels, float* distances, const Json& config,
+                                  const BitsetView& bitset, milvus::OpContext* op_context) {
     auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
     auto rows = base_dataset->GetRows();
     auto xb_id_offset = base_dataset->GetTensorBeginId();
@@ -1235,8 +1253,8 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
 }
 
 expected<DataSetPtr>
-BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                         const BitsetView& bitset, milvus::OpContext* op_context) {
+BruteForceSearchSparseImpl(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                           const BitsetView& bitset, milvus::OpContext* op_context) {
     auto nq = query_dataset->GetRows();
     BruteForceConfig cfg;
     std::string msg;
@@ -1249,18 +1267,22 @@ BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_d
     auto labels = std::make_unique<sparse::label_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
 
-    SearchSparseWithBuf(base_dataset, query_dataset, labels.get(), distances.get(), config, bitset, op_context);
+    auto search_status = BruteForceSearchSparseWithBufImpl(base_dataset, query_dataset, labels.get(), distances.get(),
+                                                           config, bitset, op_context);
+    if (search_status != Status::success) {
+        return expected<DataSetPtr>::Err(search_status, "sparse search failed");
+    }
     return GenResultDataSet(nq, topk, std::move(labels), std::move(distances));
 }
 
 template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
-BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                        const BitsetView& bitset_, bool use_knowhere_search_pool, milvus::OpContext* op_context) {
+BruteForceAnnIteratorImpl(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                          const BitsetView& bitset_, bool use_knowhere_search_pool, milvus::OpContext* op_context) {
     auto base_is_chunk = base_dataset->GetIsChunk();
     if (base_is_chunk) {
-        return AnnIteratorOnChunk<DataType>(base_dataset, query_dataset, config, bitset_, use_knowhere_search_pool,
-                                            op_context);
+        return BruteForceAnnIteratorOnChunkImpl<DataType>(base_dataset, query_dataset, config, bitset_,
+                                                          use_knowhere_search_pool, op_context);
     }
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
@@ -1450,9 +1472,9 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
 
 template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
-BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                               const BitsetView& bitset_, bool use_knowhere_search_pool,
-                               milvus::OpContext* op_context) {
+BruteForceAnnIteratorOnChunkImpl(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                                 const BitsetView& bitset_, bool use_knowhere_search_pool,
+                                 milvus::OpContext* op_context) {
     auto base_is_chunk = base_dataset->GetIsChunk();
     if (!base_is_chunk) {
         LOG_KNOWHERE_ERROR_ << "Base dataset is not chunk, should NOT use it.";
@@ -1705,10 +1727,10 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
 
 template <>
 expected<std::vector<IndexNode::IteratorPtr>>
-BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr base_dataset,
-                                                            const DataSetPtr query_dataset, const Json& config,
-                                                            const BitsetView& bitset, bool use_knowhere_search_pool,
-                                                            milvus::OpContext* op_context) {
+BruteForceAnnIteratorImpl<knowhere::sparse::SparseRow<float>>(const DataSetPtr base_dataset,
+                                                              const DataSetPtr query_dataset, const Json& config,
+                                                              const BitsetView& bitset, bool use_knowhere_search_pool,
+                                                              milvus::OpContext* op_context) {
     auto rows = base_dataset->GetRows();
     auto xb_id_offset = base_dataset->GetTensorBeginId();
     auto nq = query_dataset->GetRows();
@@ -1797,6 +1819,84 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
 #endif
 
     return vec;
+}
+
+template <typename DataType>
+expected<DataSetPtr>
+BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                   const BitsetView& bitset, milvus::OpContext* op_context) noexcept {
+    return GuardedCall([&]() -> expected<DataSetPtr> {
+        return BruteForceSearchImpl<DataType>(base_dataset, query_dataset, config, bitset, op_context);
+    });
+}
+
+template <typename DataType>
+Status
+BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
+                          const Json& config, const BitsetView& bitset, milvus::OpContext* op_context) noexcept {
+    return GuardedCall([&]() -> Status {
+        return BruteForceSearchWithBufImpl<DataType>(base_dataset, query_dataset, ids, dis, config, bitset, op_context);
+    });
+}
+
+template <typename DataType>
+Status
+BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids,
+                                 float* dis, const Json& config, const BitsetView& bitset,
+                                 milvus::OpContext* op_context) noexcept {
+    return GuardedCall([&]() -> Status {
+        return BruteForceSearchOnChunkWithBufImpl<DataType>(base_dataset, query_dataset, ids, dis, config, bitset,
+                                                            op_context);
+    });
+}
+
+template <typename DataType>
+expected<DataSetPtr>
+BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                        const BitsetView& bitset, milvus::OpContext* op_context) noexcept {
+    return GuardedCall([&]() -> expected<DataSetPtr> {
+        return BruteForceRangeSearchImpl<DataType>(base_dataset, query_dataset, config, bitset, op_context);
+    });
+}
+
+Status
+BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, sparse::label_t* labels,
+                                float* distances, const Json& config, const BitsetView& bitset,
+                                milvus::OpContext* op_context) noexcept {
+    return GuardedCall([&]() -> Status {
+        return BruteForceSearchSparseWithBufImpl(base_dataset, query_dataset, labels, distances, config, bitset,
+                                                 op_context);
+    });
+}
+
+expected<DataSetPtr>
+BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                         const BitsetView& bitset, milvus::OpContext* op_context) noexcept {
+    return GuardedCall([&]() -> expected<DataSetPtr> {
+        return BruteForceSearchSparseImpl(base_dataset, query_dataset, config, bitset, op_context);
+    });
+}
+
+template <typename DataType>
+expected<std::vector<IndexNode::IteratorPtr>>
+BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                        const BitsetView& bitset, bool use_knowhere_search_pool,
+                        milvus::OpContext* op_context) noexcept {
+    return GuardedCall([&]() -> expected<std::vector<IndexNode::IteratorPtr>> {
+        return BruteForceAnnIteratorImpl<DataType>(base_dataset, query_dataset, config, bitset,
+                                                   use_knowhere_search_pool, op_context);
+    });
+}
+
+template <typename DataType>
+expected<std::vector<IndexNode::IteratorPtr>>
+BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
+                               const BitsetView& bitset, bool use_knowhere_search_pool,
+                               milvus::OpContext* op_context) noexcept {
+    return GuardedCall([&]() -> expected<std::vector<IndexNode::IteratorPtr>> {
+        return BruteForceAnnIteratorOnChunkImpl<DataType>(base_dataset, query_dataset, config, bitset,
+                                                          use_knowhere_search_pool, op_context);
+    });
 }
 
 template knowhere::expected<knowhere::DataSetPtr>
@@ -1903,5 +2003,9 @@ knowhere::BruteForce::AnnIterator<knowhere::bin1>(const knowhere::DataSetPtr bas
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
                                                   bool use_knowhere_search_pool, milvus::OpContext* op_context);
+template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
+knowhere::BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(
+    const knowhere::DataSetPtr base_dataset, const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
+    const knowhere::BitsetView& bitset, bool use_knowhere_search_pool, milvus::OpContext* op_context);
 
 }  // namespace knowhere

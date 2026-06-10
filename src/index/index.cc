@@ -40,392 +40,419 @@ LoadConfig(BaseConfig* cfg, const Json& json, knowhere::PARAM_TYPE param_type, c
 #ifdef KNOWHERE_WITH_CARDINAL
 template <typename T>
 inline const std::shared_ptr<Interrupt>
-Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chrono::seconds timeout) {
-    auto pool = ThreadPool::GetGlobalBuildThreadPool();
-    auto interrupt = std::make_shared<Interrupt>(timeout);
-    interrupt->Set(pool->push([this, dataset, json, interrupt]() {
-        auto cfg = this->node->CreateConfig();
-        RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
+Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chrono::seconds timeout) noexcept {
+    return GuardedCall([&]() -> std::shared_ptr<Interrupt> {
+        auto pool = ThreadPool::GetGlobalBuildThreadPool();
+        auto interrupt = std::make_shared<Interrupt>(timeout);
+        interrupt->Set(pool->push([this, dataset, json, interrupt]() {
+            return GuardedCall([&]() -> Status {
+                auto cfg = this->node->CreateConfig();
+                RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-        TimeRecorder rc("BuildAsync index ", 2);
-        auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt.get());
-        auto time = rc.ElapseFromBegin("done");
-        time *= 0.000001;  // convert to s
-        this->node->GetBuildLatencyMetric().Observe(time);
+                TimeRecorder rc("BuildAsync index ", 2);
+                auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt.get());
+                auto time = rc.ElapseFromBegin("done");
+                time *= 0.000001;  // convert to s
+                this->node->GetBuildLatencyMetric().Observe(time);
 #else
-        auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), Interrupt.get());
+                auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), Interrupt.get());
 #endif
-        return res;
-    }));
-    return interrupt;
+                return res;
+            });
+        }));
+        return interrupt;
+    });
 }
 #else
 template <typename T>
 inline const std::shared_ptr<Interrupt>
-Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) {
-    auto pool = ThreadPool::GetGlobalBuildThreadPool();
-    auto interrupt = std::make_shared<Interrupt>();
-    interrupt->Set(pool->push([this, dataset, json]() { return this->Build(dataset, json); }));
-    return interrupt;
+Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) noexcept {
+    return GuardedCall([&]() -> std::shared_ptr<Interrupt> {
+        auto pool = ThreadPool::GetGlobalBuildThreadPool();
+        auto interrupt = std::make_shared<Interrupt>();
+        interrupt->Set(pool->push([this, dataset, json, use_knowhere_build_pool]() {
+            return this->Build(dataset, json, use_knowhere_build_pool);
+        }));
+        return interrupt;
+    });
 }
 #endif
 
 template <typename T>
 inline Status
-Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) {
-    auto cfg = this->node->CreateConfig();
-    RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
+Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) noexcept {
+    return GuardedCall([&]() -> Status {
+        auto cfg = this->node->CreateConfig();
+        RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    TimeRecorder rc("Build index", 2);
-    auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
-    auto time = rc.ElapseFromBegin("done");
-    time *= 0.000001;  // convert to s
-    this->node->GetBuildLatencyMetric().Observe(time);
+        TimeRecorder rc("Build index", 2);
+        auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        auto time = rc.ElapseFromBegin("done");
+        time *= 0.000001;  // convert to s
+        this->node->GetBuildLatencyMetric().Observe(time);
 #else
-    auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
 #endif
-    return res;
+        return res;
+    });
 }
 
 template <typename T>
 inline Status
-Index<T>::Train(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) {
-    bool is_emb_list = dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
-    if (is_emb_list) {
-        // should use Index::Build instead.
-        LOG_KNOWHERE_WARNING_ << "EmbList should use Index::Build instead.";
-        return Status::emb_list_inner_error;
-    }
-    auto cfg = this->node->CreateConfig();
-    std::string msg;
-    RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Train", &msg));
-    return this->node->Train(dataset, std::move(cfg), use_knowhere_build_pool);
+Index<T>::Train(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) noexcept {
+    return GuardedCall([&]() -> Status {
+        bool is_emb_list = dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
+        if (is_emb_list) {
+            // should use Index::Build instead.
+            LOG_KNOWHERE_WARNING_ << "EmbList should use Index::Build instead.";
+            return Status::emb_list_inner_error;
+        }
+        auto cfg = this->node->CreateConfig();
+        std::string msg;
+        RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Train", &msg));
+        return this->node->Train(dataset, std::move(cfg), use_knowhere_build_pool);
+    });
 }
 
 template <typename T>
 inline Status
-Index<T>::Add(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) {
-    auto cfg = this->node->CreateConfig();
-    std::string msg;
-    RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Add", &msg));
-    return this->node->AddEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+Index<T>::Add(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) noexcept {
+    return GuardedCall([&]() -> Status {
+        auto cfg = this->node->CreateConfig();
+        std::string msg;
+        RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Add", &msg));
+        return this->node->AddEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+    });
 }
 
 template <typename T>
 inline expected<DataSetPtr>
 Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_,
-                 milvus::OpContext* op_context) const {
-    auto cfg = this->node->CreateConfig();
-    std::string msg;
-    const Status load_status = LoadConfig(cfg.get(), json, knowhere::SEARCH, "Search", &msg);
-    if (load_status != Status::success) {
-        return expected<DataSetPtr>::Err(load_status, msg);
-    }
-    // when index is immutable, bitset size should always equal to data count in index
-    // when index is mutable, it could happen that data count larger than bitset size, see
-    // https://github.com/zilliztech/knowhere/issues/70
-    // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > static_cast<size_t>(this->Count())) {
-        msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
-                          bitset_.size(), this->Count());
-        LOG_KNOWHERE_ERROR_ << msg;
-        return expected<DataSetPtr>::Err(Status::invalid_args, msg);
-    }
+                 milvus::OpContext* op_context) const noexcept {
+    return GuardedCall([&]() -> expected<DataSetPtr> {
+        auto cfg = this->node->CreateConfig();
+        std::string msg;
+        const Status load_status = LoadConfig(cfg.get(), json, knowhere::SEARCH, "Search", &msg);
+        if (load_status != Status::success) {
+            return expected<DataSetPtr>::Err(load_status, msg);
+        }
+        // when index is immutable, bitset size should always equal to data count in index
+        // when index is mutable, it could happen that data count larger than bitset size, see
+        // https://github.com/zilliztech/knowhere/issues/70
+        // so something must be wrong at caller side when passed bitset size larger than data count
+        if (bitset_.size() > static_cast<size_t>(this->Count())) {
+            msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
+                              bitset_.size(), this->Count());
+            LOG_KNOWHERE_ERROR_ << msg;
+            return expected<DataSetPtr>::Err(Status::invalid_args, msg);
+        }
 
-    BitsetView bitset;
-    if (bitset_.count() == 0) {
-        // traverse bitset to get the filtered out num
-        auto filtered_out_num = bitset_.get_filtered_out_num_();
-        bitset = BitsetView(bitset_.data(), bitset_.size(), filtered_out_num);
-    } else {
-        // if bitset has filtered out num, use it
-        bitset = bitset_;
-    }
+        BitsetView bitset;
+        if (bitset_.count() == 0) {
+            // traverse bitset to get the filtered out num
+            auto filtered_out_num = bitset_.get_filtered_out_num_();
+            bitset = BitsetView(bitset_.data(), bitset_.size(), filtered_out_num);
+        } else {
+            // if bitset has filtered out num, use it
+            bitset = bitset_;
+        }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
-    // LCOV_EXCL_START
-    std::shared_ptr<tracer::trace::Span> span = nullptr;
-    if (b_cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::GetIDFromHexStr(b_cfg.trace_id.value());
-        auto span_id_str = tracer::GetIDFromHexStr(b_cfg.span_id.value());
-        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
-                                        .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
-                                        .traceFlags = static_cast<uint8_t>(b_cfg.trace_flags.value())};
-        span = tracer::StartSpan("knowhere search", &ctx);
-        span->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
-        span->SetAttribute(meta::TOPK, b_cfg.k.value());
-        span->SetAttribute(meta::ROWS, Count());
-        span->SetAttribute(meta::DIM, Dim());
-        span->SetAttribute(meta::NQ, dataset->GetRows());
-    }
-    // LCOV_EXCL_STOP
+        const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
+        // LCOV_EXCL_START
+        std::shared_ptr<tracer::trace::Span> span = nullptr;
+        if (b_cfg.trace_id.has_value()) {
+            auto trace_id_str = tracer::GetIDFromHexStr(b_cfg.trace_id.value());
+            auto span_id_str = tracer::GetIDFromHexStr(b_cfg.span_id.value());
+            auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
+                                            .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
+                                            .traceFlags = static_cast<uint8_t>(b_cfg.trace_flags.value())};
+            span = tracer::StartSpan("knowhere search", &ctx);
+            span->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
+            span->SetAttribute(meta::TOPK, b_cfg.k.value());
+            span->SetAttribute(meta::ROWS, Count());
+            span->SetAttribute(meta::DIM, Dim());
+            span->SetAttribute(meta::NQ, dataset->GetRows());
+        }
+        // LCOV_EXCL_STOP
 
-    TimeRecorder rc("Search");
-    bool has_trace_id = b_cfg.trace_id.has_value();
-    auto k = cfg->k.value();
-    auto res = this->node->SearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
-    auto time = rc.ElapseFromBegin("done");
-    time *= 0.001;  // convert to ms
-    this->node->GetSearchLatencyMetric().Observe(time);
-    knowhere_search_topk.Observe(k);
+        TimeRecorder rc("Search");
+        bool has_trace_id = b_cfg.trace_id.has_value();
+        auto k = cfg->k.value();
+        auto res = this->node->SearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
+        auto time = rc.ElapseFromBegin("done");
+        time *= 0.001;  // convert to ms
+        this->node->GetSearchLatencyMetric().Observe(time);
+        knowhere_search_topk.Observe(k);
 
-    // LCOV_EXCL_START
-    if (has_trace_id) {
-        span->End();
-    }
-    // LCOV_EXCL_STOP
+        // LCOV_EXCL_START
+        if (has_trace_id) {
+            span->End();
+        }
+        // LCOV_EXCL_STOP
 #else
-    auto res = this->node->SearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
+        auto res = this->node->SearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
 #endif
-    return res;
+        return res;
+    });
 }
 
 template <typename T>
 inline expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
 Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_,
-                      bool use_knowhere_search_pool, milvus::OpContext* op_context) const {
-    auto cfg = this->node->CreateConfig();
-    std::string msg;
-    Status status = LoadConfig(cfg.get(), json, knowhere::ITERATOR, "Iterator", &msg);
-    if (status != Status::success) {
-        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(status, msg);
-    }
-    // when index is immutable, bitset size should always equal to data count in index
-    // when index is mutable, it could happen that data count larger than bitset size, see
-    // https://github.com/zilliztech/knowhere/issues/70
-    // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > static_cast<size_t>(this->Count())) {
-        msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
-                          bitset_.size(), this->Count());
-        LOG_KNOWHERE_ERROR_ << msg;
-        return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::invalid_args, msg);
-    }
+                      bool use_knowhere_search_pool, milvus::OpContext* op_context) const noexcept {
+    return GuardedCall([&]() -> expected<std::vector<std::shared_ptr<IndexNode::iterator>>> {
+        auto cfg = this->node->CreateConfig();
+        std::string msg;
+        Status status = LoadConfig(cfg.get(), json, knowhere::ITERATOR, "Iterator", &msg);
+        if (status != Status::success) {
+            return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(status, msg);
+        }
+        // when index is immutable, bitset size should always equal to data count in index
+        // when index is mutable, it could happen that data count larger than bitset size, see
+        // https://github.com/zilliztech/knowhere/issues/70
+        // so something must be wrong at caller side when passed bitset size larger than data count
+        if (bitset_.size() > static_cast<size_t>(this->Count())) {
+            msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
+                              bitset_.size(), this->Count());
+            LOG_KNOWHERE_ERROR_ << msg;
+            return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::invalid_args, msg);
+        }
 
-    const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
+        const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    // note that this time includes only the initial search phase of iterator.
-    TimeRecorder rc("AnnIterator");
-    auto res =
-        this->node->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
-    auto time = rc.ElapseFromBegin("done");
-    time *= 0.001;  // convert to ms
-    this->node->GetSearchLatencyMetric().Observe(time);
+        // note that this time includes only the initial search phase of iterator.
+        TimeRecorder rc("AnnIterator");
+        auto res =
+            this->node->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
+        auto time = rc.ElapseFromBegin("done");
+        time *= 0.001;  // convert to ms
+        this->node->GetSearchLatencyMetric().Observe(time);
 #else
-    auto res =
-        this->node->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
+        auto res =
+            this->node->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
 #endif
-    return res;
+        return res;
+    });
 }
 
 template <typename T>
 inline expected<DataSetPtr>
 Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_,
-                      milvus::OpContext* op_context) const {
-    auto cfg = this->node->CreateConfig();
-    std::string msg;
-    auto status = LoadConfig(cfg.get(), json, knowhere::RANGE_SEARCH, "RangeSearch", &msg);
-    if (status != Status::success) {
-        return expected<DataSetPtr>::Err(status, std::move(msg));
-    }
-    // when index is immutable, bitset size should always equal to data count in index
-    // when index is mutable, it could happen that data count larger than bitset size, see
-    // https://github.com/zilliztech/knowhere/issues/70
-    // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > static_cast<size_t>(this->Count())) {
-        msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
-                          bitset_.size(), this->Count());
-        LOG_KNOWHERE_ERROR_ << msg;
-        return expected<DataSetPtr>::Err(Status::invalid_args, msg);
-    }
+                      milvus::OpContext* op_context) const noexcept {
+    return GuardedCall([&]() -> expected<DataSetPtr> {
+        auto cfg = this->node->CreateConfig();
+        std::string msg;
+        auto status = LoadConfig(cfg.get(), json, knowhere::RANGE_SEARCH, "RangeSearch", &msg);
+        if (status != Status::success) {
+            return expected<DataSetPtr>::Err(status, std::move(msg));
+        }
+        // when index is immutable, bitset size should always equal to data count in index
+        // when index is mutable, it could happen that data count larger than bitset size, see
+        // https://github.com/zilliztech/knowhere/issues/70
+        // so something must be wrong at caller side when passed bitset size larger than data count
+        if (bitset_.size() > static_cast<size_t>(this->Count())) {
+            msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
+                              bitset_.size(), this->Count());
+            LOG_KNOWHERE_ERROR_ << msg;
+            return expected<DataSetPtr>::Err(Status::invalid_args, msg);
+        }
 
-    const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
+        const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
-    // LCOV_EXCL_START
-    std::shared_ptr<tracer::trace::Span> span = nullptr;
-    if (b_cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::GetIDFromHexStr(b_cfg.trace_id.value());
-        auto span_id_str = tracer::GetIDFromHexStr(b_cfg.span_id.value());
-        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
-                                        .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
-                                        .traceFlags = static_cast<uint8_t>(b_cfg.trace_flags.value())};
-        span = tracer::StartSpan("knowhere range search", &ctx);
-        span->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
-        span->SetAttribute(meta::RADIUS, b_cfg.radius.value());
-        if (b_cfg.range_filter.value() != defaultRangeFilter) {
-            span->SetAttribute(meta::RANGE_FILTER, b_cfg.range_filter.value());
+        const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
+        // LCOV_EXCL_START
+        std::shared_ptr<tracer::trace::Span> span = nullptr;
+        if (b_cfg.trace_id.has_value()) {
+            auto trace_id_str = tracer::GetIDFromHexStr(b_cfg.trace_id.value());
+            auto span_id_str = tracer::GetIDFromHexStr(b_cfg.span_id.value());
+            auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
+                                            .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
+                                            .traceFlags = static_cast<uint8_t>(b_cfg.trace_flags.value())};
+            span = tracer::StartSpan("knowhere range search", &ctx);
+            span->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
+            span->SetAttribute(meta::RADIUS, b_cfg.radius.value());
+            if (b_cfg.range_filter.value() != defaultRangeFilter) {
+                span->SetAttribute(meta::RANGE_FILTER, b_cfg.range_filter.value());
+            }
+            span->SetAttribute(meta::ROWS, Count());
+            span->SetAttribute(meta::DIM, Dim());
+            span->SetAttribute(meta::NQ, dataset->GetRows());
         }
-        span->SetAttribute(meta::ROWS, Count());
-        span->SetAttribute(meta::DIM, Dim());
-        span->SetAttribute(meta::NQ, dataset->GetRows());
-    }
-    // LCOV_EXCL_STOP
+        // LCOV_EXCL_STOP
 
-    TimeRecorder rc("Range Search");
-    bool has_trace_id = b_cfg.trace_id.has_value();
-    auto res = this->node->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
-    auto time = rc.ElapseFromBegin("done");
-    time *= 0.001;  // convert to ms
-    this->node->GetRangeSearchLatencyMetric().Observe(time);
+        TimeRecorder rc("Range Search");
+        bool has_trace_id = b_cfg.trace_id.has_value();
+        auto res = this->node->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
+        auto time = rc.ElapseFromBegin("done");
+        time *= 0.001;  // convert to ms
+        this->node->GetRangeSearchLatencyMetric().Observe(time);
 
-    // LCOV_EXCL_START
-    if (has_trace_id) {
-        span->End();
-    }
-    // LCOV_EXCL_STOP
+        // LCOV_EXCL_START
+        if (has_trace_id) {
+            span->End();
+        }
+        // LCOV_EXCL_STOP
 #else
-    auto res = this->node->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
+        auto res = this->node->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
 #endif
-    return res;
+        return res;
+    });
 }
 
 template <typename T>
 inline expected<DataSetPtr>
-Index<T>::GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
-    return this->node->GetVectorByIds(dataset, op_context);
+Index<T>::GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const noexcept {
+    return GuardedCall([&]() { return this->node->GetVectorByIds(dataset, op_context); });
 }
 
 template <typename T>
 inline expected<DataSetPtr>
 Index<T>::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_type,
-                          milvus::OpContext* op_context) const {
-    return this->node->GetEmbListByIds(dataset, metric_type, op_context);
+                          milvus::OpContext* op_context) const noexcept {
+    return GuardedCall([&]() { return this->node->GetEmbListByIds(dataset, metric_type, op_context); });
 }
 
 template <typename T>
 inline expected<DataSetPtr>
 Index<T>::CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
-                        const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const {
-    return this->node->CalcDistByIDs(dataset, bitset, labels, labels_len, is_cosine, op_context);
+                        const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const noexcept {
+    return GuardedCall(
+        [&]() { return this->node->CalcDistByIDs(dataset, bitset, labels, labels_len, is_cosine, op_context); });
 }
 
 template <typename T>
 inline bool
-Index<T>::HasRawData(const std::string& metric_type) const {
-    return this->node->HasRawData(metric_type);
+Index<T>::HasRawData(const std::string& metric_type) const noexcept {
+    return GuardedCall([&]() { return this->node->HasRawData(metric_type); });
 }
 
 template <typename T>
 inline bool
-Index<T>::IsAdditionalScalarSupported(bool is_mv_only) const {
-    return this->node->IsAdditionalScalarSupported(is_mv_only);
+Index<T>::IsAdditionalScalarSupported(bool is_mv_only) const noexcept {
+    return GuardedCall([&]() { return this->node->IsAdditionalScalarSupported(is_mv_only); });
 }
 
 template <typename T>
 inline bool
-Index<T>::IsIndexRefineEnabled() const {
-    return this->node->IsIndexRefineEnabled();
+Index<T>::IsIndexRefineEnabled() const noexcept {
+    return GuardedCall([&]() { return this->node->IsIndexRefineEnabled(); });
 }
 
 template <typename T>
 inline expected<DataSetPtr>
-Index<T>::GetIndexMeta(const Json& json) const {
-    auto cfg = this->node->CreateConfig();
-    std::string msg;
-    auto status = LoadConfig(cfg.get(), json, knowhere::FEDER, "GetIndexMeta", &msg);
-    if (status != Status::success) {
-        return expected<DataSetPtr>::Err(status, msg);
-    }
-    return this->node->GetIndexMeta(std::move(cfg));
+Index<T>::GetIndexMeta(const Json& json) const noexcept {
+    return GuardedCall([&]() -> expected<DataSetPtr> {
+        auto cfg = this->node->CreateConfig();
+        std::string msg;
+        auto status = LoadConfig(cfg.get(), json, knowhere::FEDER, "GetIndexMeta", &msg);
+        if (status != Status::success) {
+            return expected<DataSetPtr>::Err(status, msg);
+        }
+        return this->node->GetIndexMeta(std::move(cfg));
+    });
 }
 
 template <typename T>
 inline Status
-Index<T>::Serialize(BinarySet& binset) const {
-    return this->node->SerializeEmbListIfNeed(binset);
+Index<T>::Serialize(BinarySet& binset) const noexcept {
+    return GuardedCall([&]() { return this->node->SerializeEmbListIfNeed(binset); });
 }
 
 template <typename T>
 inline Status
-Index<T>::Deserialize(const BinarySet& binset, const Json& json) {
-    Json json_(json);
-    auto cfg = this->node->CreateConfig();
-    {
-        auto res = Config::FormatAndCheck(*cfg, json_);
-        LOG_KNOWHERE_DEBUG_ << "Deserialize config dump: " << json_.dump();
+Index<T>::Deserialize(const BinarySet& binset, const Json& json) noexcept {
+    return GuardedCall([&]() -> Status {
+        Json json_(json);
+        auto cfg = this->node->CreateConfig();
+        {
+            auto res = Config::FormatAndCheck(*cfg, json_);
+            LOG_KNOWHERE_DEBUG_ << "Deserialize config dump: " << json_.dump();
+            if (res != Status::success) {
+                return res;
+            }
+        }
+        auto res = Config::Load(*cfg, json_, knowhere::DESERIALIZE);
         if (res != Status::success) {
             return res;
         }
-    }
-    auto res = Config::Load(*cfg, json_, knowhere::DESERIALIZE);
-    if (res != Status::success) {
-        return res;
-    }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    TimeRecorder rc("Load index", 2);
-    res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
-    auto time = rc.ElapseFromBegin("done");
-    time *= 0.001;  // convert to ms
-    this->node->GetLoadLatencyMetric().Observe(time);
+        TimeRecorder rc("Load index", 2);
+        res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
+        auto time = rc.ElapseFromBegin("done");
+        time *= 0.001;  // convert to ms
+        this->node->GetLoadLatencyMetric().Observe(time);
 #else
-    res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
+        res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
 #endif
-    return res;
+        return res;
+    });
 }
 
 template <typename T>
 inline Status
-Index<T>::DeserializeFromFile(const std::string& filename, const Json& json) {
-    Json json_(json);
-    auto cfg = this->node->CreateConfig();
-    {
-        auto res = Config::FormatAndCheck(*cfg, json_);
-        LOG_KNOWHERE_DEBUG_ << "DeserializeFromFile config dump: " << json_.dump();
+Index<T>::DeserializeFromFile(const std::string& filename, const Json& json) noexcept {
+    return GuardedCall([&]() -> Status {
+        Json json_(json);
+        auto cfg = this->node->CreateConfig();
+        {
+            auto res = Config::FormatAndCheck(*cfg, json_);
+            LOG_KNOWHERE_DEBUG_ << "DeserializeFromFile config dump: " << json_.dump();
+            if (res != Status::success) {
+                return res;
+            }
+        }
+        auto res = Config::Load(*cfg, json_, knowhere::DESERIALIZE_FROM_FILE);
         if (res != Status::success) {
             return res;
         }
-    }
-    auto res = Config::Load(*cfg, json_, knowhere::DESERIALIZE_FROM_FILE);
-    if (res != Status::success) {
-        return res;
-    }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    TimeRecorder rc("Load index from file", 2);
-    res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
-    auto time = rc.ElapseFromBegin("done");
-    time *= 0.001;  // convert to ms
-    this->node->GetLoadLatencyMetric().Observe(time);
+        TimeRecorder rc("Load index from file", 2);
+        res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
+        auto time = rc.ElapseFromBegin("done");
+        time *= 0.001;  // convert to ms
+        this->node->GetLoadLatencyMetric().Observe(time);
 #else
-    res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
+        res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
 #endif
-    return res;
+        return res;
+    });
 }
 
 template <typename T>
 inline int64_t
-Index<T>::Dim() const {
-    return this->node->Dim();
+Index<T>::Dim() const noexcept {
+    return GuardedCall([&]() { return this->node->Dim(); });
 }
 
 template <typename T>
 inline int64_t
-Index<T>::Size() const {
-    return this->node->Size();
+Index<T>::Size() const noexcept {
+    return GuardedCall([&]() { return this->node->Size(); });
 }
 
 template <typename T>
 inline int64_t
-Index<T>::Count() const {
-    return this->node->Count();
+Index<T>::Count() const noexcept {
+    return GuardedCall([&]() { return this->node->Count(); });
 }
 
 template <typename T>
 inline std::string
-Index<T>::Type() const {
-    return this->node->Type();
+Index<T>::Type() const noexcept {
+    return GuardedCall([&]() { return this->node->Type(); });
 }
 
 template <typename T>
 inline bool
-Index<T>::LoadIndexWithStream() const {
-    return this->node->LoadIndexWithStream();
+Index<T>::LoadIndexWithStream() const noexcept {
+    return GuardedCall([&]() { return this->node->LoadIndexWithStream(); });
 }
 
 template class Index<IndexNode>;

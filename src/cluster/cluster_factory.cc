@@ -17,18 +17,20 @@ namespace knowhere {
 
 template <typename DataType>
 expected<Cluster<ClusterNode>>
-ClusterFactory::Create(const std::string& name, const Object& object) {
-    static_assert(KnowhereDataTypeCheck<DataType>::value == true);
-    auto& func_mapping_ = MapInstance();
-    auto key = GetKey<DataType>(name);
-    if (func_mapping_.find(key) == func_mapping_.end()) {
-        LOG_KNOWHERE_ERROR_ << "failed to find cluster type " << key << " in factory";
-        return expected<Cluster<ClusterNode>>::Err(Status::invalid_cluster_error, "cluster type not supported");
-    }
-    LOG_KNOWHERE_INFO_ << "use key " << key << " to create knowhere cluster worker " << name;
-    auto fun_map_v = static_cast<FunMapValue<Cluster<ClusterNode>>*>(func_mapping_[key].get());
+ClusterFactory::Create(const std::string& name, const Object& object) noexcept {
+    return GuardedCall([&]() -> expected<Cluster<ClusterNode>> {
+        static_assert(KnowhereDataTypeCheck<DataType>::value == true);
+        auto& func_mapping_ = MapInstance();
+        auto key = GetKey<DataType>(name);
+        if (func_mapping_.find(key) == func_mapping_.end()) {
+            LOG_KNOWHERE_ERROR_ << "failed to find cluster type " << key << " in factory";
+            return expected<Cluster<ClusterNode>>::Err(Status::invalid_cluster_error, "cluster type not supported");
+        }
+        LOG_KNOWHERE_INFO_ << "use key " << key << " to create knowhere cluster worker " << name;
+        auto fun_map_v = static_cast<FunMapValue<Cluster<ClusterNode>>*>(func_mapping_[key].get());
 
-    return fun_map_v->fun_value(object);
+        return fun_map_v->fun_value(object);
+    });
 }
 
 template <typename DataType>
@@ -43,7 +45,7 @@ ClusterFactory::Register(const std::string& name, std::function<Cluster<ClusterN
 }
 
 ClusterFactory&
-ClusterFactory::Instance() {
+ClusterFactory::Instance() noexcept {
     static ClusterFactory factory;
     return factory;
 }
