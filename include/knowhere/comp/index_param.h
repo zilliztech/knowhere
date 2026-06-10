@@ -57,7 +57,6 @@ constexpr const char* INDEX_GPU_CAGRA = "GPU_CAGRA";
 constexpr const char* INDEX_HNSW = "HNSW";
 constexpr const char* INDEX_HNSW_SQ = "HNSW_SQ";
 constexpr const char* INDEX_GPU_HNSW = "GPU_HNSW";
-constexpr const char* INDEX_GPU_HNSW_SQ = "GPU_HNSW_SQ";
 constexpr const char* INDEX_HNSW_PQ = "HNSW_PQ";
 constexpr const char* INDEX_HNSW_PRQ = "HNSW_PRQ";
 
