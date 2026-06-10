@@ -117,14 +117,24 @@ class GpuIvfIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "Can not add data to not trained GpuIvfIndex.";
             return Status::index_not_trained;
         }
+        auto old_rows = Count();
         auto rows = dataset->GetRows();
         auto tensor = dataset->GetTensor();
+        if (rows == 0) {
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+            }
+            return Status::success;
+        }
         try {
             ResScope rs(res_, false);
             index_->add(rows, (const float*)tensor);
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
             return Status::faiss_inner_error;
+        }
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
         }
         return Status::success;
     }
@@ -141,13 +151,15 @@ class GpuIvfIndexNode : public IndexNode {
         auto dim = dataset->GetDim();
         float* dis = new (std::nothrow) float[rows * k];
         int64_t* ids = new (std::nothrow) int64_t[rows * k];
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
         try {
             ResScope rs(res_, false);
             auto gpu_index = dynamic_cast<faiss::gpu::GpuIndexIVF*>(index_.get());
             for (int i = 0; i < rows; i += block_size) {
                 int64_t search_size = (rows - i > block_size) ? block_size : (rows - i);
                 gpu_index->search_thread_safe(search_size, reinterpret_cast<const float*>(tensor) + i * dim, k,
-                                              ivf_gpu_cfg.nprobe, dis + i * k, ids + i * k, bitset);
+                                              ivf_gpu_cfg.nprobe, dis + i * k, ids + i * k, mapped_bitset);
             }
         } catch (std::exception& e) {
             std::unique_ptr<float> auto_delete_dis(dis);
@@ -156,6 +168,7 @@ class GpuIvfIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
+        external_id_map_.MapResultIds(ids, rows * k);
         return GenResultDataSet(rows, ivf_gpu_cfg.k, ids, dis);
     }
 
@@ -195,6 +208,9 @@ class GpuIvfIndexNode : public IndexNode {
             }
             std::shared_ptr<uint8_t[]> data(writer.data());
             binset.Append(Type(), data, writer.tellg());
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP));
+            }
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
             return Status::faiss_inner_error;
@@ -221,6 +237,9 @@ class GpuIvfIndexNode : public IndexNode {
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
             return Status::faiss_inner_error;
+        }
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP);
         }
         return Status::success;
     }

@@ -92,12 +92,6 @@ class DiskANNIndexNode : public IndexNode {
         return std::nullopt;
     }
 
-    Status
-    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
-        internal_id_to_most_external_id_map_ = std::move(map);
-        return Status::success;
-    }
-
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
                   const bool is_cosine, milvus::OpContext* op_context) const override;
@@ -132,12 +126,16 @@ class DiskANNIndexNode : public IndexNode {
     Status
     Serialize(BinarySet& binset) const override {
         LOG_KNOWHERE_INFO_ << "DiskANN does nothing for serialize";
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP));
+        }
         return Status::success;
     }
 
     Status
     SerializeEmbListIfNeed(BinarySet& binset) const override {
         LOG_KNOWHERE_INFO_ << "DiskANN does nothing for serialize (with emb list if needed)";
+        RETURN_IF_ERROR(AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP));
         return Status::success;
     }
 
@@ -226,8 +224,9 @@ class DiskANNIndexNode : public IndexNode {
      public:
         iterator(const bool transform, const DataType* query_data, const uint64_t lsearch, const uint64_t beam_width,
                  const float filter_ratio, const knowhere::BitsetView& bitset, diskann::PQFlashIndex<DataType>* index,
+                 const ExternalIdMap& external_id_map,
                  bool use_knowhere_search_pool = true)
-            : IndexIterator(transform, use_knowhere_search_pool),
+            : IndexIterator(transform, external_id_map, use_knowhere_search_pool),
               index_(index),
               transform_(transform),
               workspace_(index_->getIteratorWorkspace(query_data, lsearch, beam_width, filter_ratio, bitset)) {
@@ -246,7 +245,7 @@ class DiskANNIndexNode : public IndexNode {
             workspace_->backup_res.clear();
         }
 
-     private:
+    private:
         diskann::PQFlashIndex<DataType>* index_;
         const bool transform_;
         std::unique_ptr<diskann::IteratorWorkspace<DataType>> workspace_;
@@ -282,7 +281,6 @@ class DiskANNIndexNode : public IndexNode {
     std::atomic_int64_t dim_;
     std::atomic_int64_t count_;
     std::shared_ptr<ThreadPool> search_pool_;
-    std::vector<uint32_t> internal_id_to_most_external_id_map_;  // for 1-hop bitset check
 };
 
 }  // namespace knowhere
@@ -448,12 +446,18 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
     auto data_path = build_conf.data_path.value();
 
     index_prefix_ = build_conf.index_prefix.value();
+    if (emb_list_strategy_ == nullptr) {
+        RETURN_IF_ERROR(SetExternalIdMapFromDataset(dataset));
+    }
 
     size_t count;
     size_t dim;
     diskann::get_bin_metadata(build_conf.data_path.value(), count, dim);
     count_.store(count);
     dim_.store(dim);
+    if (count == 0) {
+        return Status::empty_index;
+    }
 
     bool need_norm = IsMetricType(build_conf.metric_type.value(), knowhere::metric::IP) ||
                      IsMetricType(build_conf.metric_type.value(), knowhere::metric::COSINE);
@@ -509,6 +513,9 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << filename << ".";
             return Status::disk_file_error;
         }
+    }
+    if (emb_list_strategy_ == nullptr) {
+        RETURN_IF_ERROR(SaveExternalIdMapToFileManager(file_manager_, index_prefix_ + "_id_map"));
     }
 
     is_prepared_.store(false);
@@ -576,6 +583,8 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
         }
     }
 
+    RETURN_IF_ERROR(SaveExternalIdMapToFileManager(file_manager_, index_prefix_ + "_id_map"));
+
     return Status::success;
 }
 
@@ -623,6 +632,13 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         }
         if (is_exist_op.value() && !LoadFile(filename)) {
             return Status::disk_file_error;
+        }
+    }
+    if (emb_list_strategy_ == nullptr) {
+        if (binset.GetByName(meta::EXTERNAL_ID_MAP) != nullptr) {
+            RETURN_IF_ERROR(LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP));
+        } else {
+            RETURN_IF_ERROR(LoadExternalIdMapFromFileManager(file_manager_, index_prefix_ + "_id_map"));
         }
     }
 
@@ -780,10 +796,18 @@ DiskANNIndexNode<DataType>::DeserializeEmbListIfNeed(const BinarySet& binset, st
     }
     config.metric_type = sub_metric_type_or.value();
 
-    // Step 2: Deserialize base index with sub_metric_type
+    // Step 2: Create strategy before base index deserialize, so base index skips id-map loading.
+    auto strategy_or = CreateEmbListStrategy(meta::EMB_LIST_STRATEGY_TOKENANN, config);
+    if (!strategy_or.has_value()) {
+        LOG_KNOWHERE_ERROR_ << "Failed to create emb_list strategy";
+        return strategy_or.error();
+    }
+    emb_list_strategy_ = std::move(strategy_or.value());
+
+    // Step 3: Deserialize base index with sub_metric_type
     RETURN_IF_ERROR(Deserialize(binset, cfg));
 
-    // Step 3: Deserialize emb_list offset from file
+    // Step 4: Deserialize emb_list offset from file
     // Note: emb_list_offset_file is in optional files list, but for emb_list metric type it should exist
     const auto emb_list_offset_file = diskann::get_emb_list_offset_file(index_prefix_);
     auto is_exist_op = file_manager_->IsExisted(emb_list_offset_file);
@@ -809,20 +833,14 @@ DiskANNIndexNode<DataType>::DeserializeEmbListIfNeed(const BinarySet& binset, st
     LOG_KNOWHERE_INFO_ << "Read emb_list offset from file: " << emb_list_offset_file << ", size: " << offset.size()
                        << ", first offset: " << offset.front() << ", last offset: " << offset.back();
 
-    // Step 4: Create strategy and set offset directly
-    auto strategy_or = CreateEmbListStrategy(meta::EMB_LIST_STRATEGY_TOKENANN, config);
-    if (!strategy_or.has_value()) {
-        LOG_KNOWHERE_ERROR_ << "Failed to create emb_list strategy";
-        return strategy_or.error();
-    }
-    emb_list_strategy_ = std::move(strategy_or.value());
-
+    // Step 5: Set offset directly.
     emb_list_offset_ = std::make_shared<EmbListOffset>(std::move(offset));
     RETURN_IF_ERROR(emb_list_strategy_->SetEmbListOffset(emb_list_offset_));
     LOG_KNOWHERE_INFO_ << "Created emb_list strategy: " << emb_list_strategy_->Type()
                        << ", doc_count=" << emb_list_strategy_->GetDocCount();
 
-    // Step 5: Set base index id map for 1-hop bitset check
+    // Step 6: Load emb-list id map and set base index id map for 1-hop bitset check.
+    RETURN_IF_ERROR(LoadExternalIdMapFromFileManager(file_manager_, index_prefix_ + "_id_map"));
     return SetBaseIndexIDMap();
 }
 
@@ -853,13 +871,15 @@ DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_pt
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
     auto metric = search_conf.metric_type.value();
     bool transform = metric != knowhere::metric::L2;
+    BitsetView mapped_bitset(bitset);
+    external_id_map_.SetOutIdsToBitset(mapped_bitset);
 
     try {
         for (int i = 0; i < nq; i++) {
             auto single_query = static_cast<const DataType*>(xq) + i * dim;
-            auto it = std::make_shared<iterator>(transform, single_query, lsearch, beamwidth, filter_ratio, bitset,
-                                                 pq_flash_index_.get(), use_knowhere_search_pool);
-            vec[i] = it;
+            vec[i] = std::make_shared<iterator>(transform, single_query, lsearch, beamwidth, filter_ratio,
+                                                mapped_bitset, pq_flash_index_.get(), external_id_map_,
+                                                use_knowhere_search_pool);
         }
     } catch (const std::exception& e) {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::diskann_inner_error, e.what());
@@ -900,29 +920,7 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
     }
 
     BitsetView bitset(bitset_);
-    if (!internal_id_to_most_external_id_map_.empty()) {
-        if (emb_list_offset_ != nullptr) {
-            // if emb list, manually calculate the number of filtered out ids
-            size_t num_filtered_out_ids = 0;
-            const auto num_el = std::min(
-                bitset.size(), emb_list_offset_->offset.empty() ? size_t{0} : emb_list_offset_->offset.size() - 1);
-            if (emb_list_offset_->offset.size() < bitset.size() + 1) {
-                LOG_KNOWHERE_WARNING_ << "Bitset size(" << bitset.size() << ") doesn't match emb_list offset size("
-                                      << emb_list_offset_->offset.size()
-                                      << "), will compute filtered ids using min size(" << num_el << ")";
-            }
-            for (size_t i = 0; i < num_el; i++) {
-                if (bitset.test(i)) {
-                    num_filtered_out_ids += emb_list_offset_->offset[i + 1] - emb_list_offset_->offset[i];
-                }
-            }
-            bitset.set_out_ids(internal_id_to_most_external_id_map_.data(), internal_id_to_most_external_id_map_.size(),
-                               num_filtered_out_ids);
-        } else {
-            bitset.set_out_ids(internal_id_to_most_external_id_map_.data(),
-                               internal_id_to_most_external_id_map_.size());
-        }
-    }
+    external_id_map_.SetOutIdsToBitset(bitset);
 
     auto p_id = std::make_unique<int64_t[]>(k * nq);
     auto p_dist = std::make_unique<DistType[]>(k * nq);
@@ -945,6 +943,7 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
     if (TryDiskANNCall([&]() { WaitAllSuccess(futures); }) != Status::success) {
         return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
     }
+    external_id_map_.MapResultIds(p_id.get(), k * nq);
 
     auto res = GenResultDataSet(nq, k, std::move(p_id), std::move(p_dist));
 
@@ -988,13 +987,23 @@ DiskANNIndexNode<DataType>::CalcDistByIDs(const DataSetPtr dataset, const Bitset
     auto dim = dataset->GetDim();
     auto xq = static_cast<const DataType*>(dataset->GetTensor());
     auto p_dist = std::make_unique<DistType[]>(nq * labels_len);
+    std::vector<int64_t> internal_labels;
+    const int64_t* labels_to_calc = labels;
+    if (emb_list_strategy_ == nullptr) {
+        labels_to_calc = external_id_map_.ToInternalIds(labels, labels_len, internal_labels);
+    }
+    for (size_t i = 0; i < labels_len; ++i) {
+        if (labels_to_calc[i] < 0 || labels_to_calc[i] >= count_.load()) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "invalid label id");
+        }
+    }
 
     std::vector<folly::Future<folly::Unit>> futures;
     futures.reserve(nq);
     for (int64_t row = 0; row < nq; ++row) {
         futures.emplace_back(search_pool_->push([&, index = row, p_dist_ptr = p_dist.get()]() {
             knowhere::checkCancellation(op_context);
-            pq_flash_index_->calc_dist_by_ids(xq + (index * dim), labels, static_cast<int64_t>(labels_len),
+            pq_flash_index_->calc_dist_by_ids(xq + (index * dim), labels_to_calc, static_cast<int64_t>(labels_len),
                                               p_dist_ptr + index * labels_len);
         }));
     }
@@ -1021,6 +1030,15 @@ DiskANNIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpC
     auto dim = Dim();
     auto rows = dataset->GetRows();
     auto ids = dataset->GetIds();
+    std::vector<int64_t> internal_ids;
+    if (emb_list_strategy_ == nullptr) {
+        ids = external_id_map_.ToInternalIds(ids, rows, internal_ids);
+    }
+    for (int64_t i = 0; i < rows; ++i) {
+        if (ids[i] < 0 || ids[i] >= count_.load()) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "invalid vector id");
+        }
+    }
     auto* data = new DataType[dim * rows];
     if (data == nullptr) {
         LOG_KNOWHERE_ERROR_ << "Failed to allocate memory for data.";

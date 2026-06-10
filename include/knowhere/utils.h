@@ -135,7 +135,7 @@ data_type_conversion(const DataSet& src, const std::optional<int64_t> start = st
 
     // check the acceptable range
     int64_t start_row = start.value_or(0);
-    if (start_row < 0 || start_row >= rows) {
+    if (start_row < 0 || start_row > rows) {
         return nullptr;
     }
 
@@ -200,8 +200,8 @@ data_type_conversion(const DataSet& src, const std::optional<int64_t> start = st
 
     // for emb_list
     auto lims = src.Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+    size_t lims_size = 0;
     if (lims != nullptr) {
-        size_t lims_size = 0;
         if (is_chunk) {
             lims_size = src.GetNumChunk();
         } else {
@@ -220,6 +220,31 @@ data_type_conversion(const DataSet& src, const std::optional<int64_t> start = st
         }
         const size_t* lims_data_const = lims_data.release();
         des->Set(knowhere::meta::EMB_LIST_OFFSET, lims_data_const);
+    }
+    const auto& internal_to_external_ids = src.GetInternalToExternalIds();
+    if (!internal_to_external_ids.empty() || src.GetExternalCount() != 0) {
+        if (internal_to_external_ids.empty()) {
+            des->SetInternalToExternalIds({}, src.GetExternalCount());
+        } else if (lims != nullptr) {
+            if (internal_to_external_ids.size() < lims_size) {
+                throw std::runtime_error("emb_list internal-to-external id map does not match offsets.");
+            }
+            des->SetInternalToExternalIds(
+                std::vector<int32_t>(internal_to_external_ids.begin(),
+                                     internal_to_external_ids.begin() + lims_size),
+                src.GetExternalCount());
+        } else if (internal_to_external_ids.size() == static_cast<size_t>(rows)) {
+            if (start_row == 0 && count_rows == rows) {
+                des->SetInternalToExternalIds(internal_to_external_ids, src.GetExternalCount());
+            } else {
+                des->SetInternalToExternalIds(
+                    std::vector<int32_t>(internal_to_external_ids.begin() + start_row,
+                                         internal_to_external_ids.begin() + start_row + count_rows),
+                    src.GetExternalCount());
+            }
+        } else {
+            throw std::runtime_error("internal-to-external id map does not match dataset rows.");
+        }
     }
     return des;
 }

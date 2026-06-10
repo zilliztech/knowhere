@@ -66,9 +66,23 @@ class FlatIndexNode : public IndexNode {
 
     Status
     Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
+        if (!index_) {
+            LOG_KNOWHERE_ERROR_ << "Can not add data to empty Flat index.";
+            return Status::empty_index;
+        }
+        auto old_rows = Count();
         auto x = dataset->GetTensor();
         auto n = dataset->GetRows();
+        if (n == 0) {
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+            }
+            return Status::success;
+        }
         index_->add(n, static_cast<const DataType*>(x));
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+        }
         return Status::success;
     }
 
@@ -88,6 +102,8 @@ class FlatIndexNode : public IndexNode {
         auto nq = dataset->GetRows();
         auto x = dataset->GetTensor();
         auto dim = dataset->GetDim();
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
 
         auto len = k * nq;
         int64_t* ids = nullptr;
@@ -105,8 +121,8 @@ class FlatIndexNode : public IndexNode {
                     auto cur_ids = ids + k * index;
                     auto cur_dis = distances + k * index;
 
-                    BitsetViewIDSelector bw_idselector(bitset);
-                    faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+                    BitsetViewIDSelector bw_idselector(mapped_bitset);
+                    faiss::IDSelector* id_selector = (mapped_bitset.empty()) ? nullptr : &bw_idselector;
 
                     if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexFlat>) {
                         auto cur_query = static_cast<const DataType*>(x) + dim * index;
@@ -146,6 +162,7 @@ class FlatIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
+        external_id_map_.MapResultIds(ids, len);
         return GenResultDataSet(nq, k, ids, distances);
     }
 
@@ -163,6 +180,8 @@ class FlatIndexNode : public IndexNode {
         auto nq = dataset->GetRows();
         auto xq = dataset->GetTensor();
         auto dim = dataset->GetDim();
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
 
         float radius = f_cfg.radius.value();
         float range_filter = f_cfg.range_filter.value();
@@ -181,8 +200,8 @@ class FlatIndexNode : public IndexNode {
                     ThreadPool::ScopedSearchOmpSetter setter(1);
                     faiss::RangeSearchResult res(1);
 
-                    BitsetViewIDSelector bw_idselector(bitset);
-                    faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+                    BitsetViewIDSelector bw_idselector(mapped_bitset);
+                    faiss::IDSelector* id_selector = (mapped_bitset.empty()) ? nullptr : &bw_idselector;
 
                     if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexFlat>) {
                         auto cur_query = static_cast<const DataType*>(xq) + dim * index;
@@ -219,6 +238,7 @@ class FlatIndexNode : public IndexNode {
             }
             // wait for the completion
             WaitAllSuccess(futs);
+            external_id_map_.MapResultIds(result_id_array);
             range_search_result =
                 GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter);
         } catch (const std::exception& e) {
@@ -239,7 +259,13 @@ class FlatIndexNode : public IndexNode {
             try {
                 data = new DataType[rows * dim];
                 for (int64_t i = 0; i < rows; i++) {
-                    index_->reconstruct(ids[i], data + i * dim);
+                    auto id = emb_list_strategy_ == nullptr ? external_id_map_.ToInternalId(ids[i]) : ids[i];
+                    if (id < 0 || id >= index_->ntotal) {
+                        delete[] data;
+                        data = nullptr;
+                        return expected<DataSetPtr>::Err(Status::invalid_args, "invalid vector id");
+                    }
+                    index_->reconstruct(id, data + i * dim);
                 }
                 return GenResultDataSet(rows, dim, data);
             } catch (const std::exception& e) {
@@ -253,7 +279,13 @@ class FlatIndexNode : public IndexNode {
             try {
                 data = new uint8_t[rows * ((dim + 7) / 8)];
                 for (int64_t i = 0; i < rows; i++) {
-                    index_->reconstruct(ids[i], data + i * ((dim + 7) / 8));
+                    auto id = emb_list_strategy_ == nullptr ? external_id_map_.ToInternalId(ids[i]) : ids[i];
+                    if (id < 0 || id >= index_->ntotal) {
+                        delete[] data;
+                        data = nullptr;
+                        return expected<DataSetPtr>::Err(Status::invalid_args, "invalid vector id");
+                    }
+                    index_->reconstruct(id, data + i * ((dim + 7) / 8));
                 }
                 return GenResultDataSet(rows, dim, data);
             } catch (const std::exception& e) {
@@ -315,6 +347,9 @@ class FlatIndexNode : public IndexNode {
             }
             std::shared_ptr<uint8_t[]> data(writer.data());
             binset.Append(Type(), data, writer.tellg());
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP));
+            }
             return Status::success;
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
@@ -342,12 +377,15 @@ class FlatIndexNode : public IndexNode {
             faiss::cppcontrib::knowhere::IndexBinary* index = faiss::cppcontrib::knowhere::read_index_binary(&reader);
             index_.reset(static_cast<IndexType*>(index));
         }
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP);
+        }
         return Status::success;
     }
 
     Status
     DeserializeFromFile(const std::string& filename, std::shared_ptr<Config> cfg) override {
-        auto flat_cfg = static_cast<const knowhere::BaseConfig&>(*cfg);
+        const auto& flat_cfg = static_cast<const knowhere::BaseConfig&>(*cfg);
 
         int io_flags = 0;
         if (flat_cfg.enable_mmap.value()) {
@@ -362,6 +400,9 @@ class FlatIndexNode : public IndexNode {
             faiss::cppcontrib::knowhere::IndexBinary* index =
                 faiss::cppcontrib::knowhere::read_index_binary(filename.data(), io_flags);
             index_.reset(static_cast<IndexType*>(index));
+        }
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromLocalFile(flat_cfg.external_id_map_file_path.value_or(""));
         }
         return Status::success;
     }

@@ -55,6 +55,14 @@ class SvsFlatIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "Can not add data to empty index.";
             return Status::empty_index;
         }
+        auto old_rows = Count();
+        auto n = dataset->GetRows();
+        if (n == 0) {
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+            }
+            return Status::success;
+        }
 
         const BaseConfig& f_cfg = static_cast<const BaseConfig&>(*cfg);
         bool is_cosine = IsMetricType(f_cfg.metric_type.value(), knowhere::metric::COSINE);
@@ -63,8 +71,10 @@ class SvsFlatIndexNode : public IndexNode {
         }
 
         auto x = dataset->GetTensor();
-        auto n = dataset->GetRows();
         index_->add(n, (const float*)x);
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+        }
         return Status::success;
     }
 
@@ -76,7 +86,9 @@ class SvsFlatIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
-        if (!bitset.empty() && bitset.count() > 0) {
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
+        if (!mapped_bitset.empty() && mapped_bitset.count() > 0) {
             return expected<DataSetPtr>::Err(Status::not_implemented, "SVS Flat does not support bitset filtering");
         }
 
@@ -116,6 +128,7 @@ class SvsFlatIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
+        external_id_map_.MapResultIds(ids.get(), k * nq);
         return GenResultDataSet(nq, k, std::move(ids), std::move(distances));
     }
 
@@ -157,6 +170,9 @@ class SvsFlatIndexNode : public IndexNode {
             faiss::write_index(index_.get(), &writer);
             std::shared_ptr<uint8_t[]> data(writer.data());
             binset.Append(Type(), data, writer.tellg());
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP));
+            }
             return Status::success;
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
@@ -184,6 +200,9 @@ class SvsFlatIndexNode : public IndexNode {
             return Status::faiss_inner_error;
         }
 
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP);
+        }
         return Status::success;
     }
 
@@ -217,6 +236,9 @@ class SvsFlatIndexNode : public IndexNode {
             return Status::faiss_inner_error;
         }
 
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromLocalFile(base_cfg.external_id_map_file_path.value_or(""));
+        }
         return Status::success;
     }
 

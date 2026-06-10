@@ -210,6 +210,9 @@ class Index {
     int64_t
     Count() const;
 
+    int64_t
+    ExternalCount() const;
+
     std::string
     Type() const;
 

@@ -13,14 +13,19 @@
 #define DATASET_H
 
 #include <any>
+#include <cstdint>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <stdexcept>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "comp/index_param.h"
+#include "knowhere/external_id_map.h"
 #include "knowhere/range_util.h"
 #include "knowhere/sparse_utils.h"
 
@@ -172,6 +177,25 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     SetTensorBeginId(const int64_t offset) {
         std::unique_lock lock(mutex_);
         this->data_[meta::INPUT_BEG_ID] = Var(std::in_place_index<4>, offset);
+    }
+
+    void
+    SetValidBitmap(const uint8_t* valid_bitmap, int64_t total_count) {
+        auto rows = GetRows();
+        auto internal_to_external_ids =
+            BuildInternalToExternalIds(valid_bitmap, total_count, rows);
+        std::unique_lock lock(mutex_);
+        internal_to_external_ids_ = std::move(internal_to_external_ids);
+        external_count_ = rows == total_count ? 0 : static_cast<size_t>(total_count);
+    }
+
+    void
+    SetInternalToExternalIds(
+        std::vector<int32_t> internal_to_external_ids,
+        size_t external_count) {
+        std::unique_lock lock(mutex_);
+        internal_to_external_ids_ = std::move(internal_to_external_ids);
+        external_count_ = external_count;
     }
 
     void
@@ -327,6 +351,37 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
         return 0;
     }
 
+    const std::vector<int32_t>&
+    GetInternalToExternalIds() const {
+        std::shared_lock lock(mutex_);
+        return internal_to_external_ids_;
+    }
+
+    size_t
+    GetExternalCount() const {
+        std::shared_lock lock(mutex_);
+        return external_count_;
+    }
+
+    ExternalIdMap
+    GetExternalIdMap(bool include_tensor_begin_id = false) const {
+        std::shared_lock lock(mutex_);
+        ExternalIdMap external_id_map;
+        if (!internal_to_external_ids_.empty() || external_count_ != 0) {
+            external_id_map.SetInternalToExternalIds(
+                internal_to_external_ids_.empty() ? nullptr : internal_to_external_ids_.data(),
+                static_cast<int64_t>(internal_to_external_ids_.size()),
+                static_cast<int64_t>(external_count_));
+        }
+        if (include_tensor_begin_id) {
+            auto it = data_.find(meta::INPUT_BEG_ID);
+            if (it != data_.end()) {
+                external_id_map.SetExternalIdOffset(*std::get_if<4>(&it->second));
+            }
+        }
+        return external_id_map;
+    }
+
     // deprecated API
     template <typename T>
     void
@@ -347,12 +402,58 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     }
 
  private:
+    static std::vector<int32_t>
+    BuildInternalToExternalIds(const uint8_t* valid_bitmap, int64_t total_count, int64_t rows) {
+        if (valid_bitmap == nullptr || total_count == 0) {
+            return {};
+        }
+        if (total_count < 0 || rows < 0) {
+            throw std::runtime_error("invalid nullable vector valid data size");
+        }
+        if (rows == total_count) {
+            return {};
+        }
+        if (static_cast<uint64_t>(total_count) >
+            static_cast<uint64_t>(std::numeric_limits<int32_t>::max())) {
+            throw std::runtime_error("nullable vector external row count exceeds int32_t");
+        }
+
+        std::vector<int32_t> internal_to_external_ids;
+        internal_to_external_ids.reserve(static_cast<size_t>(rows));
+        const auto full_bytes = total_count / 8;
+        for (int64_t byte_idx = 0; byte_idx < full_bytes; ++byte_idx) {
+            AppendInternalToExternalIdsFromByte(
+                internal_to_external_ids, valid_bitmap[byte_idx], byte_idx * 8);
+        }
+        const auto remaining_bits = total_count & 7;
+        if (remaining_bits != 0) {
+            const auto mask = static_cast<uint8_t>((1U << remaining_bits) - 1U);
+            AppendInternalToExternalIdsFromByte(
+                internal_to_external_ids, valid_bitmap[full_bytes] & mask, full_bytes * 8);
+        }
+        if (internal_to_external_ids.size() != static_cast<size_t>(rows)) {
+            throw std::runtime_error("nullable vector valid row count does not match dataset rows");
+        }
+        return internal_to_external_ids;
+    }
+
+    static void
+    AppendInternalToExternalIdsFromByte(std::vector<int32_t>& internal_to_external_ids, uint8_t bits, int64_t base) {
+        while (bits != 0) {
+            const auto bit = __builtin_ctz(static_cast<unsigned int>(bits));
+            internal_to_external_ids.push_back(static_cast<int32_t>(base + bit));
+            bits &= static_cast<uint8_t>(bits - 1);
+        }
+    }
+
     mutable std::shared_mutex mutex_;
     std::map<std::string, Var> data_;
     bool is_owner = true;
     bool is_sparse = false;
     bool is_chunk = false;
     int64_t num_chunk = 1;
+    std::vector<int32_t> internal_to_external_ids_;
+    size_t external_count_ = 0;
 };
 using DataSetPtr = std::shared_ptr<DataSet>;
 

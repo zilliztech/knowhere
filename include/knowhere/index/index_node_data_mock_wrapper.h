@@ -57,11 +57,6 @@ class IndexNodeDataMockWrapper : public IndexNode {
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
                   const bool is_cosine, milvus::OpContext* op_context) const override;
-    Status
-    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
-        return index_node_->SetInternalIdToMostExternalIdMap(std::move(map));
-    }
-
     std::optional<size_t>
     GetQueryCodeSize(const DataSetPtr dataset) const override {
         auto dim = dataset->GetDim();
@@ -119,6 +114,26 @@ class IndexNodeDataMockWrapper : public IndexNode {
     int64_t
     Count() const override {
         return index_node_->Count();
+    }
+
+    int64_t
+    ExternalCount() const override {
+        return index_node_->ExternalCount();
+    }
+
+    const ExternalIdMap&
+    GetExternalIdMap() const override {
+        return index_node_->GetExternalIdMap();
+    }
+
+    Status
+    SetExternalIdMap(ExternalIdMap map) override {
+        return index_node_->SetExternalIdMap(std::move(map));
+    }
+
+    const EmbListOffset*
+    GetEmbListOffset() const override {
+        return index_node_->GetEmbListOffset();
     }
 
     std::string

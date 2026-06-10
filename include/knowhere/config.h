@@ -632,6 +632,7 @@ class BaseConfig : public Config {
      * - A factor for top-k in the first ANNS round.
      */
     CFG_FLOAT retrieval_ann_ratio;
+    CFG_STRING external_id_map_file_path;     // for mmap external id map
     CFG_STRING emb_list_meta_file_path;       // for mmap
     CFG_STRING emb_list_raw_index_file_path;  // for mmap (raw vector index)
     CFG_STRING emb_list_offset_file_path;     // for build
@@ -822,6 +823,10 @@ class BaseConfig : public Config {
             .description("Factor for top-k in the first ANNS round, only used for emb_list")
             .set_default(3.0f)
             .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(external_id_map_file_path)
+            .description("file name of external id map for mmap load")
+            .allow_empty_without_default()
+            .for_deserialize_from_file();
         KNOWHERE_CONFIG_DECLARE_FIELD(emb_list_meta_file_path)
             .description("file name of emb_list meta for mmap load")
             .allow_empty_without_default()

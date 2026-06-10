@@ -78,6 +78,9 @@ class AisaqIndexNode : public IndexNode {
     Status
     Serialize(BinarySet& binset) const override {
         LOG_KNOWHERE_INFO_ << "AiSAQ does nothing for serialize";
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP));
+        }
         return Status::success;
     }
 
@@ -351,11 +354,18 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
     auto data_path = build_conf.data_path.value();
 
     index_prefix_ = build_conf.index_prefix.value();
+    if (emb_list_strategy_ == nullptr) {
+        RETURN_IF_ERROR(SetExternalIdMapFromDataset(dataset));
+    }
+
     size_t count;
     size_t dim;
     diskann::get_bin_metadata(build_conf.data_path.value(), count, dim);
     count_.store(count);
     dim_.store(dim);
+    if (count == 0) {
+        return Status::empty_index;
+    }
 
     bool need_norm = IsMetricType(build_conf.metric_type.value(), knowhere::metric::IP) ||
                      IsMetricType(build_conf.metric_type.value(), knowhere::metric::COSINE);
@@ -429,6 +439,10 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
             return Status::disk_file_error;
         }
     }
+    if (emb_list_strategy_ == nullptr) {
+        RETURN_IF_ERROR(SaveExternalIdMapToFileManager(file_manager_, index_prefix_ + "_id_map"));
+    }
+
     is_prepared_.store(false);
     return Status::success;
 }
@@ -492,6 +506,13 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         }
         if (is_exist_op.value() && !LoadFile(filename)) {
             return Status::disk_file_error;
+        }
+    }
+    if (emb_list_strategy_ == nullptr) {
+        if (binset.GetByName(meta::EXTERNAL_ID_MAP) != nullptr) {
+            RETURN_IF_ERROR(LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP));
+        } else {
+            RETURN_IF_ERROR(LoadExternalIdMapFromFileManager(file_manager_, index_prefix_ + "_id_map"));
         }
     }
 
@@ -694,6 +715,8 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
 
     auto p_id = std::make_unique<int64_t[]>(k * nq);
     auto p_dist = std::make_unique<DistType[]>(k * nq);
+    BitsetView mapped_bitset(bitset);
+    external_id_map_.SetOutIdsToBitset(mapped_bitset);
 
     std::vector<folly::Future<folly::Unit>> futures;
     futures.reserve(nq);
@@ -703,7 +726,7 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
             diskann::QueryStats stats;
             pq_flash_index_->aisaq_cached_beam_search(xq + (index * dim), k, lsearch, p_id_ptr + (index * k),
                                                       p_dist_ptr + (index * k), beamwidth, false, &stats, feder_result,
-                                                      bitset, filter_ratio, &aisaq_search_config);
+                                                      mapped_bitset, filter_ratio, &aisaq_search_config);
 #ifdef NOT_COMPILE_FOR_SWIG
             knowhere_diskann_search_hops.Observe(stats.n_hops);
 #endif
@@ -714,6 +737,7 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
         return expected<DataSetPtr>::Err(Status::aisaq_error, "some search failed");
     }
 
+    external_id_map_.MapResultIds(p_id.get(), k * nq);
     auto res = GenResultDataSet(nq, k, std::move(p_id), std::move(p_dist));
 
     // set visit_info json string into result dataset
@@ -742,6 +766,15 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
     auto dim = Dim();
     auto rows = dataset->GetRows();
     auto ids = dataset->GetIds();
+    std::vector<int64_t> internal_ids;
+    if (emb_list_strategy_ == nullptr) {
+        ids = external_id_map_.ToInternalIds(ids, rows, internal_ids);
+    }
+    for (int64_t i = 0; i < rows; ++i) {
+        if (ids[i] < 0 || ids[i] >= count_.load()) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "invalid vector id");
+        }
+    }
     auto* data = new DataType[dim * rows];
     if (data == nullptr) {
         LOG_KNOWHERE_ERROR_ << "Failed to allocate memory for data.";

@@ -12,9 +12,14 @@
 #ifndef INDEX_NODE_H
 #define INDEX_NODE_H
 
+#include <algorithm>
 #include <functional>
+#include <memory>
 #include <mutex>
+#include <numeric>
+#include <optional>
 #include <queue>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -24,6 +29,7 @@
 #include "knowhere/dataset.h"
 #include "knowhere/emb_list_utils.h"
 #include "knowhere/expected.h"
+#include "knowhere/external_id_map.h"
 #include "knowhere/index/emb_list_strategy.h"
 #include "knowhere/object.h"
 #include "knowhere/operands.h"
@@ -87,6 +93,12 @@ class IndexNode : public Object {
      */
     virtual Status
     Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
+        if (dataset != nullptr && dataset->GetRows() == 0) {
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(SetExternalIdMapFromDataset(dataset));
+            }
+            return Status::empty_index;
+        }
         RETURN_IF_ERROR(Train(dataset, cfg, use_knowhere_build_pool));
         return Add(dataset, std::move(cfg), use_knowhere_build_pool);
     }
@@ -219,6 +231,7 @@ class IndexNode : public Object {
      * the same as the input data when we do @see Add or @see Build. For example, if the datatype is BF16, then we need
      * to return a dataset with BF16 vectors.
      * 2. It doesn't guarantee the index contains raw data, so it's better to check with @see HasRawData() before
+     * 3. When called by GetEmbListByIds(), the input IDs are internal vector IDs expanded from emb-list rows.
      */
     virtual expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const = 0;
@@ -318,6 +331,31 @@ class IndexNode : public Object {
     virtual int64_t
     Count() const = 0;
 
+    virtual int64_t
+    ExternalCount() const {
+        auto default_count = Count();
+        if (emb_list_offset_ != nullptr) {
+            default_count = static_cast<int64_t>(emb_list_offset_->num_el());
+        }
+        return external_id_map_.ExternalCount(default_count);
+    }
+
+    virtual const ExternalIdMap&
+    GetExternalIdMap() const {
+        return external_id_map_;
+    }
+
+    virtual Status
+    SetExternalIdMap(ExternalIdMap map) {
+        external_id_map_ = std::move(map);
+        return Status::success;
+    }
+
+    virtual const EmbListOffset*
+    GetEmbListOffset() const {
+        return emb_list_offset_.get();
+    }
+
     virtual std::string
     Type() const = 0;
 
@@ -361,24 +399,12 @@ class IndexNode : public Object {
      * @return A reference to the mapping vector.
      * @note If not implemented, the default implementation is to return a mapping, from 0 to Count()-1.
      */
-    virtual std::shared_ptr<std::vector<uint32_t>>
+    virtual std::shared_ptr<std::vector<int32_t>>
     GetInternalIdToExternalIdMap() const {
         auto n_rows = Count();
-        auto internal_id_to_external_id_map = std::make_shared<std::vector<uint32_t>>(n_rows);
+        auto internal_id_to_external_id_map = std::make_shared<std::vector<int32_t>>(n_rows);
         std::iota(internal_id_to_external_id_map->begin(), internal_id_to_external_id_map->end(), 0);
         return internal_id_to_external_id_map;
-    }
-
-    /**
-     * @brief Sets the mapping from internal IDs to "most external" IDs for 1-hop bitset check!
-     * Only used for hierarchical indexnode, such as emb_list + hnsw, each index node has its own relayout mapping.
-     *
-     * @param map The mapping vector to set.
-     * @return Status indicating success or failure of the mapping.
-     */
-    virtual Status
-    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) {
-        return Status::not_implemented;
     }
 
     virtual Status
@@ -550,26 +576,30 @@ class IndexNode : public Object {
         int64_t strategy_blob_size;
     };
 
-    /**
-     * @brief Establishes the mapping from internal base-index IDs to emb_list IDs.
-     *
-     * This mapping is essential for base indexes to correctly apply bitset filtering using only a 1-hop mapping during
-     * search. In some cases, such as with mv-only *relayout*, a base-index may have its own
-     * (base)internal-to-external ID mapping.
-     * However, the emb_list search bitset operates on emb_list IDs, which we refer to as the "most external" IDs.
-     * Therefore, we need to create a mapping from the base_internal_id (used by the base-index) to the most external
-     * emb_list_id, ensuring that bitset checks and search results are consistent at the emb_list level.
-     */
     Status
     SetBaseIndexIDMap() {
         auto internal_id_to_external_id_map = GetInternalIdToExternalIdMap();
         size_t id_map_size = internal_id_to_external_id_map->size();
         assert(id_map_size == static_cast<size_t>(Count()));
-        std::vector<uint32_t> internal_id_to_most_external_id_map(id_map_size);
-        for (size_t i = 0; i < id_map_size; i++) {
-            internal_id_to_most_external_id_map[i] = emb_list_offset_->get_el_id(internal_id_to_external_id_map->at(i));
+
+        size_t source_size = emb_list_strategy_->NeedsBaseIndexIDMap() ? emb_list_offset_->offset.back()
+                                                                       : emb_list_offset_->num_el();
+        std::vector<int32_t> internal_id_to_emb_list_id_map(source_size);
+        if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
+            for (size_t i = 0; i < emb_list_offset_->num_el(); ++i) {
+                std::fill(internal_id_to_emb_list_id_map.begin() + emb_list_offset_->offset[i],
+                          internal_id_to_emb_list_id_map.begin() + emb_list_offset_->offset[i + 1],
+                          external_id_map_.ToExternalId(i));
+            }
+        } else {
+            for (size_t i = 0; i < internal_id_to_emb_list_id_map.size(); ++i) {
+                internal_id_to_emb_list_id_map[i] = external_id_map_.ToExternalId(i);
+            }
         }
-        return SetInternalIdToMostExternalIdMap(std::move(internal_id_to_most_external_id_map));
+        external_id_map_.SetInternalToEmbListIds(std::move(internal_id_to_emb_list_id_map));
+        external_id_map_.ApplyInternalToEmbListRelayout(id_map_size,
+                                                        [&](size_t i) { return internal_id_to_external_id_map->at(i); });
+        return SetExternalIdMap(external_id_map_);
     }
 
     virtual Status
@@ -617,6 +647,39 @@ class IndexNode : public Object {
     static EmbListMetaHeader
     ParseEmbListMetaHeader(const uint8_t* data, int64_t size);
 
+    Status
+    SetExternalIdMapFromDataset(const DataSetPtr dataset);
+
+    Status
+    AddExternalIdMapFromDataset(const DataSetPtr dataset, int64_t internal_id_begin);
+
+    Status
+    AddEmbListExternalIdMapFromDataset(const DataSetPtr dataset, int64_t internal_el_id_begin,
+                                       int64_t internal_el_count);
+
+    Status
+    AppendExternalIdMapToBinarySet(BinarySet& binset, const std::string& key) const;
+
+    Status
+    LoadExternalIdMap(const uint8_t* data, int64_t size);
+
+    Status
+    LoadExternalIdMapFromBinarySet(const BinarySet& binset, const std::string& key);
+
+    Status
+    SaveExternalIdMapToLocalFile(const std::string& id_map_file_path) const;
+
+    Status
+    LoadExternalIdMapFromLocalFile(const std::string& id_map_file_path);
+
+    Status
+    SaveExternalIdMapToFileManager(std::shared_ptr<milvus::FileManager> file_manager,
+                                   const std::string& id_map_file_path) const;
+
+    Status
+    LoadExternalIdMapFromFileManager(std::shared_ptr<milvus::FileManager> file_manager,
+                                     const std::string& id_map_file_path);
+
  protected:
     /**
      * @brief Compute distances using emb_list_raw_index_ (raw vector storage).
@@ -634,6 +697,7 @@ class IndexNode : public Object {
 
     Version version_;
     std::shared_ptr<EmbListOffset> emb_list_offset_;  // emb_list group offset structure (shared with strategy)
+    ExternalIdMap external_id_map_;
     std::string el_metric_type_;
     EmbListStrategyPtr emb_list_strategy_;  // emb_list encoding strategy (tokenann/muvera)
     // Raw vector storage for EmbList strategies (MUVERA/LEMUR) that encode documents
@@ -667,12 +731,14 @@ class IndexNode : public Object {
 //   If False, will Not involve thread scheduling internally, so please take caution.
 class IndexIterator : public IndexNode::iterator {
  public:
-    IndexIterator(bool larger_is_closer, bool use_knowhere_search_pool = true, float refine_ratio = 0.0f,
+    IndexIterator(bool larger_is_closer, const ExternalIdMap& external_id_map = EmptyExternalIdMap(),
+                  bool use_knowhere_search_pool = true, float refine_ratio = 0.0f,
                   bool retain_iterator_order = false)
         : refine_ratio_(refine_ratio),
           refine_(refine_ratio != 0.0f),
           retain_iterator_order_(retain_iterator_order),
           sign_(larger_is_closer ? -1 : 1),
+          external_id_map_(external_id_map),
           use_knowhere_search_pool_(use_knowhere_search_pool) {
     }
 
@@ -720,7 +786,7 @@ class IndexIterator : public IndexNode::iterator {
             update_next_func();
         }
 
-        return std::make_pair(ret.id, ret.val * sign_);
+        return std::make_pair(external_id_map_.MapResultId(ret.id), ret.val * sign_);
     }
 
     [[nodiscard]] bool
@@ -771,6 +837,8 @@ class IndexIterator : public IndexNode::iterator {
     std::priority_queue<DistId, std::vector<DistId>, std::greater<DistId>> refined_res_;
 
  private:
+    const ExternalIdMap& external_id_map_;
+
     void
     UpdateNext() {
         auto batch_handler = [this](const std::vector<DistId>& batch) {
@@ -799,9 +867,11 @@ class IndexIterator : public IndexNode::iterator {
 class PrecomputedDistanceIterator : public IndexNode::iterator {
  public:
     PrecomputedDistanceIterator(std::function<std::vector<DistId>()> compute_dist_func, bool larger_is_closer,
+                                const ExternalIdMap& external_id_map = EmptyExternalIdMap(),
                                 bool use_knowhere_search_pool = true)
         : compute_dist_func_(compute_dist_func),
           larger_is_closer_(larger_is_closer),
+          external_id_map_(external_id_map),
           use_knowhere_search_pool_(use_knowhere_search_pool) {
     }
 
@@ -825,7 +895,7 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
             sort_next();
         }
         auto& result = results_[next_++];
-        return std::make_pair(result.id, result.val);
+        return std::make_pair(external_id_map_.MapResultId(result.id), result.val);
     }
 
     [[nodiscard]] bool
@@ -886,6 +956,7 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
 
     std::function<std::vector<DistId>()> compute_dist_func_;
     const bool larger_is_closer_;
+    const ExternalIdMap& external_id_map_;
     bool use_knowhere_search_pool_ = true;
     bool initialized_ = false;
     std::vector<DistId> results_;

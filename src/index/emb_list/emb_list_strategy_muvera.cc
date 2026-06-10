@@ -142,6 +142,10 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         // 7. Create encoded dataset (takes ownership of encoded_data)
         auto encoded_dataset = GenDataSet(num_docs_, encoded_dim_, encoded_data.release());
         encoded_dataset->SetIsOwner(true);
+        const auto& internal_to_external_ids = dataset->GetInternalToExternalIds();
+        if (!internal_to_external_ids.empty() || dataset->GetExternalCount() != 0) {
+            encoded_dataset->SetInternalToExternalIds(internal_to_external_ids, dataset->GetExternalCount());
+        }
 
         return std::optional<DataSetPtr>(encoded_dataset);
     }
@@ -219,6 +223,8 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         LOG_KNOWHERE_DEBUG_ << "[MUVERA] Stage2 ANN search: ann_k=" << ann_k << ", encoded_dim=" << encoded_dim_
                             << ", rerank=" << do_rerank;
 
+        const auto& external_id_map = index->GetExternalIdMap();
+
         // 5. If reranking disabled, directly return ANN results
         if (!do_rerank) {
             auto ids = std::make_unique<int64_t[]>(num_query_docs * k);
@@ -265,7 +271,7 @@ class MuveraEmbListStrategy : public EmbListStrategy {
             // Collect candidate doc IDs (no dedup needed — ANN returns doc-level IDs)
             candidate_docs.clear();
             for (int32_t i = 0; i < ann_k; ++i) {
-                int64_t doc_id = ann_ids[q * ann_k + i];
+                int64_t doc_id = external_id_map.ToInternalId(ann_ids[q * ann_k + i]);
                 if (doc_id >= 0 && doc_id < num_docs_) {
                     candidate_docs.push_back(doc_id);
                 }

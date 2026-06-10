@@ -31,6 +31,7 @@
 #include "knowhere/comp/task.h"
 #include "knowhere/config.h"
 #include "knowhere/context.h"
+#include "knowhere/external_id_map.h"
 #include "knowhere/operands.h"
 #include "knowhere/range_util.h"
 
@@ -46,14 +47,16 @@ DataViewIndexBase only keep index meta and data codes(!= raw data) in memory.
 class DataViewIndexBase {
  public:
     DataViewIndexBase(idx_t d, DataFormatEnum data_type, MetricType metric_type, ViewDataOp view, bool is_cosine,
-                      RefineType refine_type, std::optional<int> build_thread_num)
+                      RefineType refine_type, std::optional<int> build_thread_num,
+                      const ExternalIdMap& external_id_map)
         : d_(d),
           data_type_(data_type),
           metric_type_(metric_type),
           view_data_(view),
           is_cosine_(is_cosine),
           refine_type_(refine_type),
-          build_thread_num_(build_thread_num) {
+          build_thread_num_(build_thread_num),
+          external_id_map_(external_id_map) {
         if (metric_type != metric::L2 && metric_type != metric::IP) {
             throw std::runtime_error("DataViewIndexBase only support L2 or IP.");
         }
@@ -185,13 +188,15 @@ class DataViewIndexBase {
     RefineType refine_type_;
     std::shared_ptr<QuantRefine> quant_data_ = nullptr;
     std::optional<int> build_thread_num_ = std::nullopt;
+    const ExternalIdMap& external_id_map_;
 };
 
 class DataViewIndexFlat : public DataViewIndexBase {
  public:
     DataViewIndexFlat(idx_t d, DataFormatEnum data_type, MetricType metric_type, ViewDataOp view, bool is_cosine,
-                      RefineType refine_type, std::optional<int> build_thread_num = std::nullopt)
-        : DataViewIndexBase(d, data_type, metric_type, view, is_cosine, refine_type, build_thread_num) {
+                      RefineType refine_type, std::optional<int> build_thread_num, const ExternalIdMap& external_id_map)
+        : DataViewIndexBase(d, data_type, metric_type, view, is_cosine, refine_type, build_thread_num,
+                            external_id_map) {
         this->ntotal_.store(0);
     }
     void
@@ -290,13 +295,14 @@ class DataViewIndexFlat : public DataViewIndexBase {
 
     float
     GetDataNorm(idx_t id) const {
-        assert(id < ntotal_);
+        auto norm_id = external_id_map_.HasInternalToEmbListIds() ? id
+                                                                  : static_cast<idx_t>(external_id_map_.ToInternalId(id));
         idx_t current_norms_size = 0;
         {
             std::shared_lock lock(norms_mutex_);
             current_norms_size = norms_.size();
         }
-        if (current_norms_size < id) {  // maybe cosine is false, get norm in place
+        if (norm_id < 0 || current_norms_size <= norm_id) {  // maybe cosine is false, get norm in place
             auto data = view_data_(id);
             if (data_type_ == DataFormatEnum::fp32) {
                 return GetL2Norm<fp32>((const fp32*)data, d_);
@@ -307,7 +313,7 @@ class DataViewIndexFlat : public DataViewIndexBase {
             }
         } else {
             std::shared_lock lock(norms_mutex_);
-            return norms_[id];
+            return norms_[norm_id];
         }
     }
 
@@ -459,10 +465,14 @@ DataViewIndexFlat::SearchWithIds(const idx_t n, const void* __restrict x, const 
             assert(base_n >= k);
             ComputeDistanceSubset(x_i, base_n, base_dist.get(), base_ids, use_quant);
             if (is_cosine_) {
+                std::vector<idx_t> internal_ids;
+                const auto* norm_ids = external_id_map_.HasInternalToEmbListIds()
+                                           ? base_ids
+                                           : external_id_map_.ToInternalIds(base_ids, base_n, internal_ids);
                 std::shared_lock lock(norms_mutex_);
                 for (auto j = 0; j < base_n; j++) {
                     if (base_ids[j] != -1) {
-                        base_dist[j] /= norms_[base_ids[j]];
+                        base_dist[j] /= norms_[norm_ids[j]];
                     }
                 }
             }
@@ -491,9 +501,13 @@ DataViewIndexFlat::CalcDistByIDs(const idx_t num_queries, const void* __restrict
             auto query = (const char*)queries + code_size_ * idx;
             ComputeDistanceSubset(query, num_ids, out_dist + idx * num_ids, ids, use_quant);
             if (is_cosine_) {
+                std::vector<idx_t> internal_ids;
+                const auto* norm_ids = external_id_map_.HasInternalToEmbListIds()
+                                           ? ids
+                                           : external_id_map_.ToInternalIds(ids, num_ids, internal_ids);
                 std::shared_lock lock(norms_mutex_);
                 for (auto j = 0; j < num_ids; j++) {
-                    out_dist[idx * num_ids + j] /= norms_[ids[j]];
+                    out_dist[idx * num_ids + j] /= norms_[norm_ids[j]];
                 }
             }
         }));
@@ -606,9 +620,13 @@ DataViewIndexFlat::RangeSearchWithIds(const idx_t n, const void* __restrict x, c
             auto x_i = (const char*)x + code_size_ * i;
             ComputeDistanceSubset((const void*)x_i, base_n, base_dist.get(), base_ids, use_quant);
             if (is_cosine_) {
+                std::vector<idx_t> internal_ids;
+                const auto* norm_ids = external_id_map_.HasInternalToEmbListIds()
+                                           ? base_ids
+                                           : external_id_map_.ToInternalIds(base_ids, base_n, internal_ids);
                 std::shared_lock lock(norms_mutex_);
                 for (auto j = 0; j < base_n; j++) {
-                    base_dist[j] = base_dist[j] / norms_[base_ids[j]];
+                    base_dist[j] = base_dist[j] / norms_[norm_ids[j]];
                 }
             }
             for (auto j = 0; j < base_n; j++) {

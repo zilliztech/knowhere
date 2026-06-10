@@ -73,12 +73,6 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
         return refine_offset_index_->GetQueryCodeSize();
     }
 
-    Status
-    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
-        internal_offset_to_most_external_id_ = std::move(map);
-        return Status::success;
-    }
-
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
                   const bool is_cosine, milvus::OpContext* op_context) const override;
@@ -206,11 +200,13 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
      public:
         iterator(std::shared_ptr<DataViewIndexFlat> refine_offset_index, IndexNode::IteratorPtr base_workspace,
                  std::unique_ptr<DataType[]>&& copied_query, bool larger_is_closer, bool use_quant,
-                 float refine_ratio = 0.5f, bool retain_iterator_order = false)
-            : IndexIterator(larger_is_closer, false, refine_ratio, retain_iterator_order),
+                 float refine_ratio = 0.5f, bool retain_iterator_order = false,
+                 const ExternalIdMap& external_id_map = EmptyExternalIdMap())
+            : IndexIterator(larger_is_closer, external_id_map, false, refine_ratio, retain_iterator_order),
               refine_offset_index_(refine_offset_index),
               copied_query_(std::move(copied_query)),
-              base_workspace_(base_workspace) {
+              base_workspace_(base_workspace),
+              external_id_map_(external_id_map) {
             refine_computer_ = SelectDataViewComputer(refine_offset_index->GetViewData(),
                                                       refine_offset_index->DataFormat(), refine_offset_index->Metric(),
                                                       refine_offset_index_->Dim(), refine_offset_index_->IsCosine(),
@@ -224,7 +220,8 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
                 initialize();
             }
             if (!refine_) {
-                return base_workspace_->Next();
+                auto ret = base_workspace_->Next();
+                return ret;
             } else {
                 auto ret = refined_res_.top();
                 refined_res_.pop();
@@ -239,7 +236,8 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
                         UpdateNext();
                     }
                 }
-                return std::make_pair(ret.id, ret.val * sign_);
+                auto id = external_id_map_.HasInternalToEmbListIds() ? external_id_map_.MapResultId(ret.id) : ret.id;
+                return std::make_pair(id, ret.val * sign_);
             }
         }
 
@@ -270,9 +268,6 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
             if (refine_computer_ == nullptr) {
                 throw std::runtime_error("refine computer is null in offset refine index.");
             }
-            if (refine_offset_index_->Count() <= id) {
-                throw std::runtime_error("the id of result larger than index rows count.");
-            }
             float dis = refine_computer_->operator()(id);
             dis = refine_offset_index_->IsCosine() ? dis / refine_offset_index_->GetDataNorm(id) : dis;
             return dis;
@@ -290,11 +285,11 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
             }
         }
 
-     private:
         bool initialized_ = false;
         std::shared_ptr<DataViewIndexFlat> refine_offset_index_ = nullptr;
         std::unique_ptr<DataType[]> copied_query_ = nullptr;
         IndexNode::IteratorPtr base_workspace_ = nullptr;
+        const ExternalIdMap& external_id_map_;
         std::unique_ptr<faiss::DistanceComputer> refine_computer_ = nullptr;
     };
     bool is_cosine_;
@@ -304,7 +299,6 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
     std::unique_ptr<IndexNode> base_index_;  // base_index will hold data codes in memory, datatype is fp32
     std::unique_ptr<FairRWLock>
         base_index_lock_;  // base_index_lock_ protect all concurrent writes/reads access of base_index_
-    std::vector<uint32_t> internal_offset_to_most_external_id_;
 };
 
 namespace {
@@ -360,7 +354,8 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Train(const DataSetPtr da
     auto [fp32_train_ds, _] =
         ConvertToBaseIndexFp32DataSet<DataType>(dataset, this->is_cosine_, 0, train_rows, base_index_dim);
     refine_offset_index_ = std::make_unique<DataViewIndexFlat>(
-        dim, datatype_v<DataType>, refine_metric, this->view_data_op_, is_cosine_, refine_type, build_thread_num);
+        dim, datatype_v<DataType>, refine_metric, this->view_data_op_, is_cosine_, refine_type, build_thread_num,
+        external_id_map_);
     try {
         refine_offset_index_->Train(train_rows, data, use_knowhere_build_pool);
     } catch (const std::exception& e) {
@@ -379,6 +374,17 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Add(const DataSetPtr data
     auto rows = dataset->GetRows();
     auto dim = dataset->GetDim();
     auto data = (const DataType*)dataset->GetTensor();
+    if (refine_offset_index_ == nullptr) {
+        LOG_KNOWHERE_ERROR_ << "Can not add data to empty Data View Index.";
+        return Status::empty_index;
+    }
+    auto old_rows = Count();
+    if (rows == 0) {
+        if (this->emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+        }
+        return Status::success;
+    }
     AdaptToBaseIndexConfig(cfg.get(), PARAM_TYPE::TRAIN, dim);
     Status add_stat;
     for (auto blk_i = 0; blk_i < rows; blk_i += kBatchSize) {
@@ -399,6 +405,12 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Add(const DataSetPtr data
         if (add_stat != Status::success) {
             return add_stat;
         }
+        if (this->emb_list_strategy_ != nullptr) {
+            RETURN_IF_ERROR(base_index_->SetExternalIdMap(ExternalIdMap{}));
+        }
+    }
+    if (this->emb_list_strategy_ == nullptr) {
+        RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
     }
     return Status::success;
 }
@@ -442,27 +454,29 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AddEmbList(const DataSetP
             LOG_KNOWHERE_WARNING_ << "emb list offset is not continuous";
             return Status::emb_list_inner_error;
         }
+        if (num_rows == 0) {
+            RETURN_IF_ERROR(AddEmbListExternalIdMapFromDataset(dataset, old_num_el, 0));
+            return Status::success;
+        }
+
         idx++;
-        internal_offset_to_most_external_id_.resize(new_rows_cnt);
         while (lims[idx] < new_rows_cnt) {
             if (lims[idx] < lims[idx - 1]) {
                 LOG_KNOWHERE_WARNING_ << "emb list offset is not increasing";
                 return Status::emb_list_inner_error;
             }
-            emb_list_offset_->offset.push_back(lims[idx]);
-            auto cur_el_id = old_num_el + idx - 1;
-            std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], lims[idx] - lims[idx - 1],
-                        cur_el_id);
             idx++;
         }
         if (lims[idx] != new_rows_cnt) {
             LOG_KNOWHERE_WARNING_ << "emb list offset should end with the total_cnt of the whole index";
             return Status::emb_list_inner_error;
         }
-        emb_list_offset_->offset.push_back(new_rows_cnt);
-        auto cur_el_id = old_num_el + idx - 1;
-        std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], new_rows_cnt - lims[idx - 1],
-                    cur_el_id);
+        RETURN_IF_ERROR(AddEmbListExternalIdMapFromDataset(dataset, old_num_el, static_cast<int64_t>(idx)));
+        for (size_t offset_idx = 1; offset_idx <= idx; ++offset_idx) {
+            emb_list_offset_->offset.push_back(lims[offset_idx]);
+            auto cur_el_id = old_num_el + offset_idx - 1;
+            external_id_map_.AppendInternalToEmbListIds(lims[offset_idx - 1], lims[offset_idx], cur_el_id);
+        }
     }
 
     // 3. add to index
@@ -496,19 +510,7 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Search(const DataSetPtr d
     {
         FairReadLockGuard guard(*this->base_index_lock_);
         BitsetView new_bitset(bitset);
-        if (!internal_offset_to_most_external_id_.empty()) {
-            size_t num_filtered_out_ids = 0;
-            if (!bitset.empty()) {
-                // todo: optimize the calculation
-                for (size_t i = 0; i < new_bitset.size(); i++) {
-                    if (new_bitset.test(i)) {
-                        num_filtered_out_ids += emb_list_offset_->offset[i + 1] - emb_list_offset_->offset[i];
-                    }
-                }
-            }
-            new_bitset.set_out_ids(internal_offset_to_most_external_id_.data(),
-                                   internal_offset_to_most_external_id_.size(), num_filtered_out_ids);
-        }
+        external_id_map_.SetOutIdsToBitset(new_bitset);
         quant_res = base_index_->Search(base_index_ds, std::move(cfg), new_bitset, op_context);
     }
     if (!quant_res.has_value()) {
@@ -529,6 +531,9 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Search(const DataSetPtr d
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "data view index inner error: " << e.what();
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
+    }
+    if (external_id_map_.HasInternalToEmbListIds()) {
+        external_id_map_.MapResultIds(labels.get(), nq * topk);
     }
     return GenResultDataSet(nq, topk, std::move(labels), std::move(distances));
 }
@@ -553,9 +558,19 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::CalcDistByIDs(const DataS
     auto num_queries = dataset->GetRows();
     auto query_data = dataset->GetTensor();
     auto distances = std::make_unique<float[]>(num_queries * labels_len);
+    std::vector<int64_t> internal_labels;
+    const int64_t* labels_to_calc = labels;
+    if (this->emb_list_strategy_ == nullptr) {
+        labels_to_calc = this->external_id_map_.ToInternalIds(labels, labels_len, internal_labels);
+    }
+    for (size_t i = 0; i < labels_len; ++i) {
+        if (labels_to_calc[i] < 0 || labels_to_calc[i] >= Count()) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "invalid label id");
+        }
+    }
     try {
         bool refine_with_quant = false;
-        refine_offset_index_->CalcDistByIDs(num_queries, query_data, labels_len, labels, distances.get(),
+        refine_offset_index_->CalcDistByIDs(num_queries, query_data, labels_len, labels_to_calc, distances.get(),
                                             refine_with_quant);
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "data view index inner error: " << e.what();
@@ -596,8 +611,10 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AnnIterator(const DataSet
     knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>> base_index_init;
     {
         FairReadLockGuard guard(*this->base_index_lock_);
+        BitsetView new_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(new_bitset);
         base_index_init =
-            base_index_->AnnIterator(base_index_ds, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
+            base_index_->AnnIterator(base_index_ds, std::move(cfg), new_bitset, use_knowhere_search_pool, op_context);
     }
     if (!base_index_init.has_value()) {
         return base_index_init;
@@ -615,7 +632,7 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AnnIterator(const DataSet
         std::copy_n(cur_query, dim, copied_query.get());
         vec[i] = std::shared_ptr<iterator>(new iterator(this->refine_offset_index_, base_workspace_iters[i],
                                                         std::move(copied_query), larger_is_closer, refine_with_quant,
-                                                        refine_ratio));
+                                                        refine_ratio, false, this->external_id_map_));
     }
     return vec;
 }

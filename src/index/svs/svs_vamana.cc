@@ -115,6 +115,14 @@ class SvsVamanaIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "Can not add data to empty index.";
             return Status::empty_index;
         }
+        auto old_rows = Count();
+        auto n = dataset->GetRows();
+        if (n == 0) {
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+            }
+            return Status::success;
+        }
 
         const SvsVamanaConfig& v_cfg = static_cast<const SvsVamanaConfig&>(*cfg);
         bool is_cosine = IsMetricType(v_cfg.metric_type.value(), knowhere::metric::COSINE);
@@ -123,7 +131,6 @@ class SvsVamanaIndexNode : public IndexNode {
         }
 
         auto x = dataset->GetTensor();
-        auto n = dataset->GetRows();
         try {
             index_->add(n, (const float*)x);
         } catch (const std::exception& e) {
@@ -131,6 +138,9 @@ class SvsVamanaIndexNode : public IndexNode {
             return Status::faiss_inner_error;
         }
 
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+        }
         return Status::success;
     }
 
@@ -148,6 +158,8 @@ class SvsVamanaIndexNode : public IndexNode {
         auto x = dataset->GetTensor();
         auto dim = dataset->GetDim();
         bool is_cosine = IsMetricType(v_cfg.metric_type.value(), knowhere::metric::COSINE);
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
 
         auto ids = std::make_unique<int64_t[]>(k * nq);
         auto distances = std::make_unique<float[]>(k * nq);
@@ -173,8 +185,8 @@ class SvsVamanaIndexNode : public IndexNode {
                     sp.search_window_size = v_cfg.svs_search_window_size.value();
                     sp.search_buffer_capacity = v_cfg.svs_search_buffer_capacity.value();
                     std::unique_ptr<BitsetViewIDSelector> bw_idselector;
-                    if (!bitset.empty()) {
-                        bw_idselector = std::make_unique<BitsetViewIDSelector>(bitset);
+                    if (!mapped_bitset.empty()) {
+                        bw_idselector = std::make_unique<BitsetViewIDSelector>(mapped_bitset);
                         sp.sel = bw_idselector.get();
                     }
 
@@ -187,6 +199,7 @@ class SvsVamanaIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
+        external_id_map_.MapResultIds(ids.get(), k * nq);
         return GenResultDataSet(nq, k, std::move(ids), std::move(distances));
     }
 
@@ -206,6 +219,8 @@ class SvsVamanaIndexNode : public IndexNode {
         auto range_filter = v_cfg.range_filter.value();
         bool is_cosine = IsMetricType(v_cfg.metric_type.value(), knowhere::metric::COSINE);
         bool is_similarity = faiss::cppcontrib::knowhere::is_similarity_metric(index_->metric_type);
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
 
         std::vector<std::vector<float>> result_dist_array(nq);
         std::vector<std::vector<int64_t>> result_id_array(nq);
@@ -229,8 +244,8 @@ class SvsVamanaIndexNode : public IndexNode {
                     sp.search_window_size = v_cfg.svs_search_window_size.value();
                     sp.search_buffer_capacity = v_cfg.svs_search_buffer_capacity.value();
                     std::unique_ptr<BitsetViewIDSelector> bw_idselector;
-                    if (!bitset.empty()) {
-                        bw_idselector = std::make_unique<BitsetViewIDSelector>(bitset);
+                    if (!mapped_bitset.empty()) {
+                        bw_idselector = std::make_unique<BitsetViewIDSelector>(mapped_bitset);
                         sp.sel = bw_idselector.get();
                     }
 
@@ -251,6 +266,7 @@ class SvsVamanaIndexNode : public IndexNode {
                 }));
             }
             WaitAllSuccess(futs);
+            external_id_map_.MapResultIds(result_id_array);
             auto range_search_result =
                 GetRangeSearchResult(result_dist_array, result_id_array, is_similarity, nq, radius, range_filter);
             return GenResultDataSet(nq, std::move(range_search_result));
@@ -292,6 +308,9 @@ class SvsVamanaIndexNode : public IndexNode {
             faiss::write_index(index_.get(), &writer);
             std::shared_ptr<uint8_t[]> data(writer.data());
             binset.Append(Type(), data, writer.tellg());
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP));
+            }
             return Status::success;
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
@@ -319,6 +338,9 @@ class SvsVamanaIndexNode : public IndexNode {
             return Status::faiss_inner_error;
         }
 
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP);
+        }
         return Status::success;
     }
 
@@ -352,6 +374,9 @@ class SvsVamanaIndexNode : public IndexNode {
             return Status::faiss_inner_error;
         }
 
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromLocalFile(base_cfg.external_id_map_file_path.value_or(""));
+        }
         return Status::success;
     }
 

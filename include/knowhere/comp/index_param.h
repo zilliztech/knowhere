@@ -113,6 +113,7 @@ constexpr const char* TRACE_FLAGS = "trace_flags";
 constexpr const char* SCALAR_INFO = "scalar_info";
 constexpr const char* MATERIALIZED_VIEW_SEARCH_INFO = "materialized_view_search_info";
 constexpr const char* MATERIALIZED_VIEW_OPT_FIELDS_PATH = "opt_fields_path";
+constexpr const char* EXTERNAL_ID_MAP = "EXTERNAL_ID_MAP";
 constexpr const char* MAX_EMPTY_RESULT_BUCKETS = "max_empty_result_buckets";
 constexpr const char* BM25_K1 = "bm25_k1";
 constexpr const char* BM25_B = "bm25_b";

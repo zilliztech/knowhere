@@ -144,13 +144,21 @@ class SparseInvertedIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "Could not add data to uninitialized " << Type() << " index";
             return Status::empty_index;
         }
+        auto old_rows = Count();
+        auto rows = dataset->GetRows();
+        if (rows == 0) {
+            if (emb_list_strategy_ == nullptr) {
+                return AddExternalIdMapFromDataset(dataset, old_rows);
+            }
+            return Status::success;
+        }
 
         auto build_pool_wrapper = std::make_shared<ThreadPoolWrapper>(build_pool_, use_knowhere_build_pool);
         auto tryObj =
             build_pool_wrapper
                 ->push([&] {
                     return index_->add(static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor()),
-                                       dataset->GetRows(), dataset->GetDim());
+                                       rows, dataset->GetDim());
                 })
                 .getTry();
         if (!tryObj.hasValue()) {
@@ -158,7 +166,11 @@ class SparseInvertedIndexNode : public IndexNode {
             return Status::sparse_inner_error;
         }
 
-        return tryObj.value();
+        RETURN_IF_ERROR(tryObj.value());
+        if (emb_list_strategy_ == nullptr) {
+            return AddExternalIdMapFromDataset(dataset, old_rows);
+        }
+        return Status::success;
     }
 
     [[nodiscard]] expected<DataSetPtr>
@@ -183,16 +195,19 @@ class SparseInvertedIndexNode : public IndexNode {
         auto k = cfg.k.value();
         auto p_id = std::make_unique<sparse::label_t[]>(nq * k);
         auto p_dist = std::make_unique<float[]>(nq * k);
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
 
         std::vector<folly::Future<folly::Unit>> futs;
         futs.reserve(nq);
         for (int64_t idx = 0; idx < nq; ++idx) {
             futs.emplace_back(search_pool_->push([&, idx = idx, p_id = p_id.get(), p_dist = p_dist.get()]() {
-                index_->search(queries[idx], k, p_dist + idx * k, p_id + idx * k, bitset, search_params);
+                index_->search(queries[idx], k, p_dist + idx * k, p_id + idx * k, mapped_bitset, search_params);
             }));
         }
         WaitAllSuccess(futs);
 
+        external_id_map_.MapResultIds(p_id.get(), nq * k);
         return GenResultDataSet(nq, k, p_id.release(), p_dist.release());
     }
 
@@ -216,6 +231,8 @@ class SparseInvertedIndexNode : public IndexNode {
                                                                       search_params_or.what());
         }
         auto search_params = search_params_or.value();
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
 
         auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
         try {
@@ -224,7 +241,7 @@ class SparseInvertedIndexNode : public IndexNode {
                 // 'Iterator->Next()'.
                 auto compute_dist_func = [=, this]() -> std::vector<DistId> {
                     auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
-                    std::vector<float> distances = index_->get_all_distances(queries[i], bitset, search_params);
+                    std::vector<float> distances = index_->get_all_distances(queries[i], mapped_bitset, search_params);
                     std::vector<DistId> distances_ids;
                     // 30% is a ratio guesstimate of non-zero distances: probability of 2 random sparse splade
                     // vectors(100 non zero dims out of 30000 total dims) sharing at least 1 common non-zero
@@ -239,7 +256,8 @@ class SparseInvertedIndexNode : public IndexNode {
                 };
 
                 auto it =
-                    std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, true, use_knowhere_search_pool);
+                    std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, true, this->external_id_map_,
+                                                                  use_knowhere_search_pool);
                 vec[i] = it;
             }
         } catch (const std::exception& e) {
@@ -284,6 +302,9 @@ class SparseInvertedIndexNode : public IndexNode {
         }
         std::shared_ptr<uint8_t[]> data(writer.data());
         binset.Append(Type(), data, writer.tellg());
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP));
+        }
 
         return Status::success;
     }
@@ -327,11 +348,15 @@ class SparseInvertedIndexNode : public IndexNode {
 
         if (this->version_use_raw_data()) {
             LOG_KNOWHERE_INFO_ << "raw data will be used, rebuild index from raw data";
-            return index_->build_from_raw_data(reader, false, "");
+            RETURN_IF_ERROR(index_->build_from_raw_data(reader, false, ""));
         } else {
             binary_ = binary;
-            return index_->deserialize(reader);
+            RETURN_IF_ERROR(index_->deserialize(reader));
         }
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP);
+        }
+        return Status::success;
     }
 
     Status
@@ -381,11 +406,15 @@ class SparseInvertedIndexNode : public IndexNode {
 
         if (this->version_use_raw_data()) {
             auto supplement_target_filename = filename + ".knowhere_sparse_index_supplement";
-            return index_->build_from_raw_data(map_reader, true, supplement_target_filename);
+            RETURN_IF_ERROR(index_->build_from_raw_data(map_reader, true, supplement_target_filename));
         } else {
             this->mmap_guard_ = std::move(mmap_guard);
-            return index_->deserialize(map_reader);
+            RETURN_IF_ERROR(index_->deserialize(map_reader));
         }
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromLocalFile(cfg.external_id_map_file_path.value_or(""));
+        }
+        return Status::success;
     }
 
     static std::unique_ptr<BaseConfig>
@@ -911,7 +940,11 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
 
         try {
             for (int64_t i = 0; i < rows; ++i) {
-                data[i] = raw_data_[ids[i]];
+                auto id = this->emb_list_strategy_ == nullptr ? this->external_id_map_.ToInternalId(ids[i]) : ids[i];
+                if (id < 0 || static_cast<size_t>(id) >= raw_data_.size()) {
+                    return expected<DataSetPtr>::Err(Status::invalid_args, "invalid vector id");
+                }
+                data[i] = raw_data_[id];
                 dim = std::max(dim, data[i].dim());
             }
         } catch (std::exception& e) {

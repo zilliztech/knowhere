@@ -91,6 +91,26 @@ class IndexNodeThreadPoolWrapper : public IndexNode {
         return index_node_->Count();
     }
 
+    int64_t
+    ExternalCount() const override {
+        return index_node_->ExternalCount();
+    }
+
+    const ExternalIdMap&
+    GetExternalIdMap() const override {
+        return index_node_->GetExternalIdMap();
+    }
+
+    Status
+    SetExternalIdMap(ExternalIdMap map) override {
+        return index_node_->SetExternalIdMap(std::move(map));
+    }
+
+    const EmbListOffset*
+    GetEmbListOffset() const override {
+        return index_node_->GetEmbListOffset();
+    }
+
     std::string
     Type() const override {
         return index_node_->Type();

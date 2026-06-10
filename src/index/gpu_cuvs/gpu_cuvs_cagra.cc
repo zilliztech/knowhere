@@ -60,12 +60,14 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
         hnswlib::SearchParam param{(size_t)cagra_cfg.ef.value()};
         bool transform = (hnsw_index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT ||
                           hnsw_index_->metric_type_ == hnswlib::Metric::COSINE);
+        BitsetView mapped_bitset(bitset);
+        this->external_id_map_.SetOutIdsToBitset(mapped_bitset);
 
         for (int i = 0; i < nq; ++i) {
             auto p_id_ptr = p_id.get();
             auto p_dist_ptr = p_dist.get();
             auto single_query = (const char*)xq + i * hnsw_index_->data_size_;
-            auto rst = hnsw_index_->searchKnn(single_query, k, bitset, &param);
+            auto rst = hnsw_index_->searchKnn(single_query, k, mapped_bitset, &param);
             size_t rst_size = rst.size();
             auto p_single_dis = p_dist_ptr + i * k;
             auto p_single_id = p_id_ptr + i * k;
@@ -80,6 +82,7 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
             }
         }
 
+        this->external_id_map_.MapResultIds(p_id.get(), k * nq);
         auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
 
         return res;
@@ -108,6 +111,9 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
             memcpy(index_binary.get(), buf.str().c_str(), buf.str().size());
             // Use the key to differentiate whether CPU search support is needed.
             binset.Append(std::string(this->Type()) + "_cpu", index_binary, buf.str().size());
+            if (this->emb_list_strategy_ == nullptr) {
+                result = this->AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP);
+            }
         }
         return result;
     }
@@ -152,6 +158,9 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
                 } catch (std::exception& e) {
                     LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
                     return Status::hnsw_inner_error;
+                }
+                if (this->emb_list_strategy_ == nullptr) {
+                    return this->LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP);
                 }
                 return Status::success;
             }

@@ -127,6 +127,11 @@ CopyAndNormalizeDataset(const DataSetPtr dataset) {
     auto norms = NormalizeVecs<DataType>(x_normalized, rows, dim);
     auto normalize_bs = GenDataSet(rows, dim, x_normalized);
     normalize_bs->SetIsOwner(true);
+    const auto& internal_to_external_ids = dataset->GetInternalToExternalIds();
+    if (!internal_to_external_ids.empty() || dataset->GetExternalCount() != 0) {
+        normalize_bs->SetInternalToExternalIds(
+            internal_to_external_ids, dataset->GetExternalCount());
+    }
     return std::make_tuple(normalize_bs, norms);
 }
 

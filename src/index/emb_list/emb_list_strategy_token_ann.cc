@@ -122,6 +122,7 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
 
         std::vector<int64_t> candidate_docs;
         std::unordered_set<size_t> el_ids_set;
+        const auto& external_id_map = index->GetExternalIdMap();
         for (size_t i = 0; i < num_q_el; i++) {
             auto start_offset = query_offset.offset[i];
             auto end_offset = query_offset.offset[i + 1];
@@ -133,7 +134,11 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
                 if (stage1_ids[j] < 0) {
                     continue;
                 }
-                el_ids_set.emplace(emb_list_offset_->get_el_id(static_cast<size_t>(stage1_ids[j])));
+                auto internal_el_id = external_id_map.ToInternalId(stage1_ids[j]);
+                if (internal_el_id < 0) {
+                    continue;
+                }
+                el_ids_set.emplace(static_cast<size_t>(internal_el_id));
             }
 
             // Convert to vector for RerankByCalcDistByIDs

@@ -243,7 +243,7 @@ MinHashBandIndex::Search(KeyType key, MinHashLSHResultHandler* res, faiss::IDSel
         ValueType* blk_v = reinterpret_cast<ValueType*>(data_ + block_size_ * block_id + rows * sizeof(KeyType));
         int inner_id = faiss::cppcontrib::knowhere::u64_binary_search_eq(blk_k, rows, key);
         if (inner_id != -1) {
-            for (; key == blk_k[inner_id] && (size_t)inner_id < rows; inner_id++) {
+            for (; (size_t)inner_id < rows && key == blk_k[inner_id]; inner_id++) {
                 if (id_selector == nullptr || id_selector->is_member(blk_v[inner_id])) {
                     res->push(blk_v[inner_id], 1.0);
                 }
@@ -446,7 +446,7 @@ MinHashLSH::Search(const char* query, float* distances, idx_t* labels, MinHashLS
     }
     if (search_with_jaccard) {
         MinHashJaccardKNNSearchByIDs(query, this->raw_data_, reorder_ids.get(), this->mh_vec_length_,
-                                     this->mh_vec_elememt_size_, res->topk_, topk, distances, labels);
+                                     this->mh_vec_elememt_size_, res->count(), topk, distances, labels);
     }
     return Status::success;
 }
@@ -551,11 +551,11 @@ MinHashLSH::BatchSearch(const char* query, size_t nq, float* distances, idx_t* l
         futures.reserve(nq);
         for (size_t i = 0; i < nq; i++) {
             futures.emplace_back(pool->push([&, id = i]() {
-                const char* q = query + i * mh_vec_elememt_size_ * mh_vec_length_;
-                auto reorder_ids = all_res[i].ids_list_;
-                auto refine_k = all_res[i].topk_;
-                auto res_ids = labels + i * topk;
-                auto res_dis = distances + i * topk;
+                const char* q = query + id * mh_vec_elememt_size_ * mh_vec_length_;
+                auto reorder_ids = all_res[id].ids_list_;
+                auto refine_k = all_res[id].count();
+                auto res_ids = labels + id * topk;
+                auto res_dis = distances + id * topk;
                 MinHashJaccardKNNSearchByIDs(q, this->raw_data_, reorder_ids, this->mh_vec_length_,
                                              this->mh_vec_elememt_size_, refine_k, topk, res_dis, res_ids);
                 return;

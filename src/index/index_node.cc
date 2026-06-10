@@ -33,6 +33,189 @@
 namespace knowhere {
 
 // NOLINTBEGIN(google-default-arguments)
+Status
+IndexNode::SetExternalIdMapFromDataset(const DataSetPtr dataset) {
+    external_id_map_.Clear();
+    if (dataset == nullptr) {
+        return Status::success;
+    }
+
+    try {
+        external_id_map_ = dataset->GetExternalIdMap();
+    } catch (const std::exception& e) {
+        LOG_KNOWHERE_WARNING_ << "invalid external id map: " << e.what();
+        return Status::invalid_args;
+    }
+    return Status::success;
+}
+
+Status
+IndexNode::AddExternalIdMapFromDataset(const DataSetPtr dataset, int64_t internal_id_begin) {
+    if (internal_id_begin <= 0) {
+        return SetExternalIdMapFromDataset(dataset);
+    }
+    if (dataset == nullptr) {
+        return Status::success;
+    }
+
+    const auto& internal_to_external_ids = dataset->GetInternalToExternalIds();
+    const auto internal_count =
+        internal_to_external_ids.empty() ? dataset->GetRows() : static_cast<int64_t>(internal_to_external_ids.size());
+    try {
+        external_id_map_.AddInternalToExternalIds(
+            internal_to_external_ids.empty() ? nullptr : internal_to_external_ids.data(), internal_count,
+            static_cast<int64_t>(dataset->GetExternalCount()), internal_id_begin);
+    } catch (const std::exception& e) {
+        LOG_KNOWHERE_WARNING_ << "invalid external id map: " << e.what();
+        return Status::invalid_args;
+    }
+    return Status::success;
+}
+
+Status
+IndexNode::AddEmbListExternalIdMapFromDataset(const DataSetPtr dataset, int64_t internal_el_id_begin,
+                                              int64_t internal_el_count) {
+    if (dataset == nullptr) {
+        if (internal_el_id_begin <= 0) {
+            external_id_map_.Clear();
+        }
+        return Status::success;
+    }
+
+    const auto& internal_to_external_ids = dataset->GetInternalToExternalIds();
+    const auto internal_count =
+        internal_to_external_ids.empty() ? internal_el_count : static_cast<int64_t>(internal_to_external_ids.size());
+    try {
+        external_id_map_.AddInternalToExternalIds(
+            internal_to_external_ids.empty() ? nullptr : internal_to_external_ids.data(), internal_count,
+            static_cast<int64_t>(dataset->GetExternalCount()), internal_el_id_begin);
+    } catch (const std::exception& e) {
+        LOG_KNOWHERE_WARNING_ << "invalid external id map: " << e.what();
+        return Status::invalid_args;
+    }
+    return Status::success;
+}
+
+Status
+IndexNode::AppendExternalIdMapToBinarySet(BinarySet& binset, const std::string& key) const {
+    if (!external_id_map_.HasInternalToExternalIds() && external_id_map_.ExternalCount(0) == 0) {
+        return Status::success;
+    }
+
+    auto bytes = external_id_map_.BinarySize();
+    std::shared_ptr<uint8_t[]> data(new uint8_t[bytes]);
+    external_id_map_.Serialize(data.get(), bytes);
+    binset.Append(key, data, bytes);
+    return Status::success;
+}
+
+Status
+IndexNode::LoadExternalIdMap(const uint8_t* data, int64_t size) {
+    external_id_map_.Clear();
+    try {
+        external_id_map_.Deserialize(data, size);
+    } catch (const std::exception& e) {
+        LOG_KNOWHERE_WARNING_ << "invalid external id map: " << e.what();
+        return Status::invalid_binary_set;
+    }
+    return Status::success;
+}
+
+Status
+IndexNode::LoadExternalIdMapFromBinarySet(const BinarySet& binset, const std::string& key) {
+    auto bin = binset.GetByName(key);
+    if (bin == nullptr) {
+        external_id_map_.Clear();
+        return Status::success;
+    }
+    return LoadExternalIdMap(bin->data.get(), bin->size);
+}
+
+Status
+IndexNode::SaveExternalIdMapToLocalFile(const std::string& id_map_file_path) const {
+    if ((!external_id_map_.HasInternalToExternalIds() && external_id_map_.ExternalCount(0) == 0) ||
+        id_map_file_path.empty()) {
+        return Status::success;
+    }
+
+    std::ofstream out(id_map_file_path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        LOG_KNOWHERE_WARNING_ << "Failed to open external id map file: " << id_map_file_path;
+        return Status::disk_file_error;
+    }
+    auto bytes = external_id_map_.BinarySize();
+    std::vector<uint8_t> data(bytes);
+    external_id_map_.Serialize(data.data(), bytes);
+    out.write(reinterpret_cast<const char*>(data.data()), bytes);
+    if (!out) {
+        LOG_KNOWHERE_WARNING_ << "Failed to write external id map file: " << id_map_file_path;
+        return Status::disk_file_error;
+    }
+    return Status::success;
+}
+
+Status
+IndexNode::LoadExternalIdMapFromLocalFile(const std::string& id_map_file_path) {
+    external_id_map_.Clear();
+    if (id_map_file_path.empty()) {
+        return Status::success;
+    }
+
+    std::ifstream in(id_map_file_path, std::ios::binary | std::ios::ate);
+    if (!in) {
+        LOG_KNOWHERE_WARNING_ << "Failed to open external id map file: " << id_map_file_path;
+        return Status::disk_file_error;
+    }
+    auto id_map_size = static_cast<int64_t>(in.tellg());
+    in.seekg(0);
+    auto id_map_data = std::make_unique<uint8_t[]>(id_map_size);
+    in.read(reinterpret_cast<char*>(id_map_data.get()), id_map_size);
+    if (!in) {
+        LOG_KNOWHERE_WARNING_ << "Failed to read external id map file: " << id_map_file_path;
+        return Status::disk_file_error;
+    }
+    return LoadExternalIdMap(id_map_data.get(), id_map_size);
+}
+
+Status
+IndexNode::SaveExternalIdMapToFileManager(std::shared_ptr<milvus::FileManager> file_manager,
+                                          const std::string& id_map_file_path) const {
+    if ((!external_id_map_.HasInternalToExternalIds() && external_id_map_.ExternalCount(0) == 0) ||
+        file_manager == nullptr || id_map_file_path.empty()) {
+        return Status::success;
+    }
+
+    auto output_stream = file_manager->OpenOutputStream(id_map_file_path);
+    auto bytes = external_id_map_.BinarySize();
+    std::vector<uint8_t> data(bytes);
+    external_id_map_.Serialize(data.data(), bytes);
+    output_stream->Write(data.data(), bytes);
+    size_t file_size = output_stream->Tell();
+    file_manager->AddFileMeta({id_map_file_path, file_size});
+    output_stream->Close();
+    return Status::success;
+}
+
+Status
+IndexNode::LoadExternalIdMapFromFileManager(std::shared_ptr<milvus::FileManager> file_manager,
+                                            const std::string& id_map_file_path) {
+    external_id_map_.Clear();
+    if (file_manager == nullptr || id_map_file_path.empty()) {
+        return Status::success;
+    }
+
+    try {
+        auto input_stream = file_manager->OpenInputStream(id_map_file_path);
+        auto id_map_size = input_stream->Size();
+        auto id_map_data = std::make_unique<uint8_t[]>(id_map_size);
+        input_stream->Read(id_map_data.get(), id_map_size);
+        return LoadExternalIdMap(id_map_data.get(), id_map_size);
+    } catch (const std::exception& e) {
+        LOG_KNOWHERE_INFO_ << "external id map file not loaded: " << id_map_file_path << ", error: " << e.what();
+        return Status::success;
+    }
+}
+
 expected<DataSetPtr>
 IndexNode::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                        milvus::OpContext* op_context) const {
@@ -310,12 +493,15 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
     out_offsets[0] = 0;
     for (int64_t i = 0; i < num_el_ids; i++) {
         auto el_id = el_ids[i];
-        if (el_id < 0 || static_cast<size_t>(el_id) >= emb_list_offset_->num_el()) {
+        auto internal_el_id = external_id_map_.ToInternalId(el_id);
+        if (internal_el_id < 0 || static_cast<size_t>(internal_el_id) >= emb_list_offset_->num_el()) {
             return expected<DataSetPtr>::Err(Status::invalid_args,
                                              "GetEmbListByIds: el_id " + std::to_string(el_id) + " out of range [0, " +
-                                                 std::to_string(emb_list_offset_->num_el()) + ")");
+                                                 std::to_string(external_id_map_.ExternalCount(
+                                                     static_cast<int64_t>(emb_list_offset_->num_el()))) +
+                                                 ")");
         }
-        out_offsets[i + 1] = out_offsets[i] + emb_list_offset_->get_el_len(el_id);
+        out_offsets[i + 1] = out_offsets[i] + emb_list_offset_->get_el_len(internal_el_id);
     }
 
     auto total_vecs = out_offsets[num_el_ids];
@@ -336,7 +522,8 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
         auto data = std::make_unique<float[]>(total_vecs * dim);
         float* ptr = data.get();
         for (int64_t i = 0; i < num_el_ids; i++) {
-            auto start = static_cast<int64_t>(emb_list_offset_->offset[el_ids[i]]);
+            auto internal_el_id = external_id_map_.ToInternalId(el_ids[i]);
+            auto start = static_cast<int64_t>(emb_list_offset_->offset[internal_el_id]);
             auto len = static_cast<int64_t>(out_offsets[i + 1] - out_offsets[i]);
             if (len > 0) {
                 emb_list_raw_index_->reconstruct_n(start, len, ptr);
@@ -357,13 +544,15 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
         std::vector<int64_t> vec_ids;
         vec_ids.reserve(total_vecs);
         for (int64_t i = 0; i < num_el_ids; i++) {
-            size_t start = emb_list_offset_->offset[el_ids[i]];
+            auto internal_el_id = external_id_map_.ToInternalId(el_ids[i]);
+            size_t start = emb_list_offset_->offset[internal_el_id];
             size_t len = out_offsets[i + 1] - out_offsets[i];
             for (size_t j = 0; j < len; j++) {
                 vec_ids.push_back(static_cast<int64_t>(start + j));
             }
         }
 
+        // GetVectorByIds() receives internal vector IDs in this emb-list path.
         // Build result: transfer tensor ownership from GetVectorByIds result to new dataset
         auto vec_dataset = GenIdsDataSet(vec_ids.size(), vec_ids.data());
         auto res = GetVectorByIds(vec_dataset, op_context);
@@ -398,8 +587,16 @@ IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, c
     el_metric_type_ = metric_info_or.value().el_metric_type;
     auto sub_metric_type = metric_info_or.value().sub_metric_type;
 
+    RETURN_IF_ERROR(SetExternalIdMapFromDataset(dataset));
+    if (num_rows == 0) {
+        return Status::empty_index;
+    }
+
     // 2. Create document offset structure
     EmbListOffset doc_offset(lims, num_rows);
+    if (doc_offset.num_el() == 0 || doc_offset.offset.back() == 0) {
+        return Status::empty_index;
+    }
 
     // 3. Create emb_list strategy
     auto strategy_type = config.emb_list_strategy.value_or(meta::EMB_LIST_STRATEGY_TOKENANN);
@@ -449,7 +646,7 @@ IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, c
 
     // 8. Set ID mapping if strategy requires it (Direct needs vector->doc mapping)
     emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
-    if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
+    if (emb_list_strategy_->NeedsBaseIndexIDMap() || external_id_map_.HasInternalToExternalIds()) {
         return SetBaseIndexIDMap();
     }
 
@@ -495,6 +692,7 @@ IndexNode::SerializeEmbList(BinarySet& binset) const {
 
         std::shared_ptr<uint8_t[]> meta_data(writer.data());
         binset.Append(meta::EMB_LIST_META, meta_data, writer.tellg());
+        RETURN_IF_ERROR(AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP));
 
         // 3. Raw vector index as separate key (large, needs mmap in file path)
         if (emb_list_raw_index_) {
@@ -523,12 +721,8 @@ IndexNode::DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_
     }
     el_metric_type_ = metric_info_or.value().el_metric_type;
 
-    // 2. Deserialize base index from BinarySet (override metric_type for base index)
-    cfg.metric_type = metric_info_or.value().sub_metric_type;
-    RETURN_IF_ERROR(Deserialize(binset, config));
-
     try {
-        // 3. Read EMB_LIST_META and parse strategy type + strategy blob
+        // 2. Read EMB_LIST_META and parse strategy type + strategy blob
         auto meta_bin = binset.GetByName(meta::EMB_LIST_META);
         if (!meta_bin) {
             LOG_KNOWHERE_WARNING_ << "EMB_LIST_META not found in binary set";
@@ -538,7 +732,8 @@ IndexNode::DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_
         auto [strategy_type, strategy_blob, strategy_blob_size] =
             ParseEmbListMetaHeader(meta_bin->data.get(), meta_bin->size);
 
-        // 4. Create strategy and deserialize strategy-specific data
+        // 3. Create strategy before base index deserialize, so base index skips id-map loading.
+        cfg.metric_type = metric_info_or.value().sub_metric_type;
         auto strategy_or = CreateEmbListStrategy(strategy_type, cfg);
         if (!strategy_or.has_value()) {
             LOG_KNOWHERE_WARNING_ << "Failed to create emb_list strategy: " << strategy_type;
@@ -548,6 +743,9 @@ IndexNode::DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_
 
         LOG_KNOWHERE_INFO_ << "Deserialize emb_list with strategy: " << strategy_type;
         RETURN_IF_ERROR(emb_list_strategy_->Deserialize(strategy_blob, strategy_blob_size, cfg));
+
+        // 4. Deserialize base index from BinarySet.
+        RETURN_IF_ERROR(Deserialize(binset, config));
 
         // 5. Deserialize raw vector index from BinarySet (if present)
         auto raw_index_bin = binset.GetByName(meta::EMB_LIST_RAW_INDEX);
@@ -568,8 +766,10 @@ IndexNode::DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_
         }
 
         // 6. Set ID mapping if needed
+        RETURN_IF_ERROR(LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP));
+
         emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
-        if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
+        if (emb_list_strategy_->NeedsBaseIndexIDMap() || external_id_map_.HasInternalToExternalIds()) {
             return SetBaseIndexIDMap();
         }
     } catch (const std::exception& e) {
@@ -591,11 +791,7 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
     }
     el_metric_type_ = metric_info_or.value().el_metric_type;
 
-    // 2. Deserialize base index from file (override metric_type for base index)
-    cfg.metric_type = metric_info_or.value().sub_metric_type;
-    RETURN_IF_ERROR(DeserializeFromFile(filename, config));
-
-    // 3. Read meta file and parse strategy type + strategy blob
+    // 2. Read meta file and parse strategy type + strategy blob
     if (!cfg.emb_list_meta_file_path.has_value() || cfg.emb_list_meta_file_path.value().empty()) {
         LOG_KNOWHERE_WARNING_ << "emb_list_meta_file is empty, but metric type is emb_list";
         return Status::emb_list_inner_error;
@@ -629,7 +825,8 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
     auto [strategy_type, strategy_blob, strategy_blob_size] = ParseEmbListMetaHeader(file_data.get(), file_size);
 
     try {
-        // 4. Create strategy and deserialize strategy-specific data
+        // 3. Create strategy before base index deserialize, so base index skips id-map loading.
+        cfg.metric_type = metric_info_or.value().sub_metric_type;
         auto strategy_or = CreateEmbListStrategy(strategy_type, cfg);
         if (!strategy_or.has_value()) {
             LOG_KNOWHERE_WARNING_ << "Failed to create emb_list strategy: " << strategy_type;
@@ -639,6 +836,9 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
 
         LOG_KNOWHERE_INFO_ << "Deserialize emb_list from file with strategy: " << strategy_type;
         RETURN_IF_ERROR(emb_list_strategy_->Deserialize(strategy_blob, strategy_blob_size, cfg));
+
+        // 4. Deserialize base index from file.
+        RETURN_IF_ERROR(DeserializeFromFile(filename, config));
 
         // 5. Load raw vector index from separate file (if strategy needs it)
         if (emb_list_strategy_->NeedsRawVectorStorage()) {
@@ -667,8 +867,10 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
         }
 
         // 6. Set ID mapping if needed
+        RETURN_IF_ERROR(LoadExternalIdMapFromLocalFile(cfg.external_id_map_file_path.value_or("")));
+
         emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
-        if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
+        if (emb_list_strategy_->NeedsBaseIndexIDMap() || external_id_map_.HasInternalToExternalIds()) {
             return SetBaseIndexIDMap();
         }
     } catch (const std::exception& e) {

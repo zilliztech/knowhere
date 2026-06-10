@@ -276,6 +276,10 @@ class LemurEmbListStrategy : public EmbListStrategy {
         }
         auto W_dataset = GenDataSet(num_docs_, final_hidden_dim_, W_data.release());
         W_dataset->SetIsOwner(true);
+        const auto& internal_to_external_ids = dataset->GetInternalToExternalIds();
+        if (!internal_to_external_ids.empty() || dataset->GetExternalCount() != 0) {
+            W_dataset->SetInternalToExternalIds(internal_to_external_ids, dataset->GetExternalCount());
+        }
 
         auto end_time = std::chrono::high_resolution_clock::now();
         double total_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
@@ -376,6 +380,8 @@ class LemurEmbListStrategy : public EmbListStrategy {
 
         LOG_KNOWHERE_DEBUG_ << "[LEMUR] Stage2 ANN search: ann_k=" << ann_k;
 
+        const auto& external_id_map = index->GetExternalIdMap();
+
         // 5. If reranking disabled, return ANN results directly
         if (!do_rerank) {
             auto ids = std::make_unique<int64_t[]>(num_query_docs * k);
@@ -423,7 +429,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
             // Collect candidate doc IDs (no dedup needed — ANN returns doc-level IDs)
             candidate_docs.clear();
             for (int32_t i = 0; i < ann_k; ++i) {
-                int64_t doc_id = ann_ids[q * ann_k + i];
+                int64_t doc_id = external_id_map.ToInternalId(ann_ids[q * ann_k + i]);
                 if (doc_id >= 0 && doc_id < num_docs_) {
                     candidate_docs.push_back(doc_id);
                 }

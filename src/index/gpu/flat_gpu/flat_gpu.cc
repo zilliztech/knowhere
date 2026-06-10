@@ -16,6 +16,7 @@
 #include "index/flat_gpu/flat_gpu_config.h"
 #include "index/gpu/gpu_res_mgr.h"
 #include "io/memory_io.h"
+#include "knowhere/comp/index_param.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 
@@ -41,14 +42,28 @@ class GpuFlatIndexNode : public IndexNode {
 
     Status
     Add(const DataSetPtr dataset, const Config& cfg, bool use_knowhere_build_pool) override {
+        if (!index_) {
+            LOG_KNOWHERE_ERROR_ << "Can not add data to empty GpuFlatIndex.";
+            return Status::empty_index;
+        }
+        auto old_rows = Count();
         const void* x = dataset->GetTensor();
         const int64_t n = dataset->GetRows();
+        if (n == 0) {
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+            }
+            return Status::success;
+        }
         try {
             index_->add(n, (const float*)x);
             // need not copy index from CPU to GPU for IDMAP
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
             return Status::faiss_inner_error;
+        }
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
         }
         return Status::success;
     }
@@ -67,12 +82,14 @@ class GpuFlatIndexNode : public IndexNode {
         auto len = f_cfg.k * nq;
         int64_t* ids = nullptr;
         float* dis = nullptr;
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
         try {
             ids = new (std::nothrow) int64_t[len];
             dis = new (std::nothrow) float[len];
 
             ResScope rs(res_, false);
-            index_->search(nq, (const float*)x, f_cfg.k, dis, ids, bitset);
+            index_->search(nq, (const float*)x, f_cfg.k, dis, ids, mapped_bitset);
         } catch (const std::exception& e) {
             std::unique_ptr<int64_t[]> auto_delete_ids(ids);
             std::unique_ptr<float[]> auto_delete_dis(dis);
@@ -80,6 +97,7 @@ class GpuFlatIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
+        external_id_map_.MapResultIds(ids, len);
         return GenResultDataSet(nq, f_cfg.k, ids, dis);
     }
 
@@ -98,7 +116,11 @@ class GpuFlatIndexNode : public IndexNode {
         try {
             float* xq = new (std::nothrow) float[nq * dim];
             for (int64_t i = 0; i < nq; i++) {
-                int64_t id = in_ids[i];
+                int64_t id = emb_list_strategy_ == nullptr ? external_id_map_.ToInternalId(in_ids[i]) : in_ids[i];
+                if (id < 0 || id >= index_->ntotal) {
+                    delete[] xq;
+                    return expected<DataSetPtr>::Err(Status::invalid_args, "invalid vector id");
+                }
                 index_->reconstruct(id, xq + i * dim);
             }
             return GenResultDataSet(xq);
@@ -125,6 +147,9 @@ class GpuFlatIndexNode : public IndexNode {
             faiss::write_index(index_.get(), &writer);
             std::shared_ptr<uint8_t[]> data(writer.data());
             binset.Append(Type(), data, writer.tellg());
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP));
+            }
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error, " << e.what();
             return Status::faiss_inner_error;
@@ -153,6 +178,9 @@ class GpuFlatIndexNode : public IndexNode {
             return Status::faiss_inner_error;
         }
 
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP);
+        }
         return Status::success;
     }
 

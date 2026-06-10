@@ -2354,7 +2354,7 @@ TEST_CASE("External ID Map for 1-hop Bitset Check", "[external_id_map]") {
 #endif
 
             // Verify the external id mapping
-            std::shared_ptr<std::vector<uint32_t>> external_id_map = index.Node()->GetInternalIdToExternalIdMap();
+            std::shared_ptr<std::vector<int32_t>> external_id_map = index.Node()->GetInternalIdToExternalIdMap();
             REQUIRE(external_id_map != nullptr);
             REQUIRE(external_id_map->size() == NB);
 
@@ -2407,16 +2407,18 @@ TEST_CASE("External ID Map for 1-hop Bitset Check", "[external_id_map]") {
                          ++selected_partition_idx) {
                         printf("selected_partition_idx: %d\n", selected_partition_idx);
 
-                        std::vector<uint32_t> internal_id_to_most_external_id_map(NB, 1);
+                        std::vector<int32_t> internal_id_to_emb_list_id_map(NB, 1);
                         for (int64_t i = 0; i < NB; ++i) {
                             if (external_id_map->at(i) < valid_cnt &&
                                 std::find(scalar_info[0][selected_partition_idx].begin(),
                                           scalar_info[0][selected_partition_idx].end(),
                                           external_id_map->at(i)) != scalar_info[0][selected_partition_idx].end()) {
-                                internal_id_to_most_external_id_map[i] = 0;
+                                internal_id_to_emb_list_id_map[i] = 0;
                             }
                         }
-                        index.Node()->SetInternalIdToMostExternalIdMap(std::move(internal_id_to_most_external_id_map));
+                        knowhere::ExternalIdMap id_map;
+                        id_map.SetInternalToEmbListIds(std::move(internal_id_to_emb_list_id_map));
+                        index.Node()->SetExternalIdMap(std::move(id_map));
                         auto knn_result = index.Search(query_dataset, conf, bitset_view).value();
                         check_mv_only_result(knn_result, selected_partition_idx);
 
@@ -2424,13 +2426,15 @@ TEST_CASE("External ID Map for 1-hop Bitset Check", "[external_id_map]") {
                         check_mv_only_result(range_result, selected_partition_idx);
                     }
                 } else {
-                    std::vector<uint32_t> internal_id_to_most_external_id_map(NB, 1);
+                    std::vector<int32_t> internal_id_to_emb_list_id_map(NB, 1);
                     for (int64_t i = 0; i < NB; ++i) {
                         if (external_id_map->at(i) < valid_cnt) {
-                            internal_id_to_most_external_id_map[i] = 0;
+                            internal_id_to_emb_list_id_map[i] = 0;
                         }
                     }
-                    index.Node()->SetInternalIdToMostExternalIdMap(std::move(internal_id_to_most_external_id_map));
+                    knowhere::ExternalIdMap id_map;
+                    id_map.SetInternalToEmbListIds(std::move(internal_id_to_emb_list_id_map));
+                    index.Node()->SetExternalIdMap(std::move(id_map));
                     auto knn_result = index.Search(query_dataset, conf, bitset_view).value();
                     check_not_mv_only_result(knn_result);
 

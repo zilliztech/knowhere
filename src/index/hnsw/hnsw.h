@@ -132,17 +132,20 @@ class HnswIndexNode : public IndexNode {
         }
 
         knowhere::TimeRecorder build_time("Building HNSW cost", 2);
+        auto old_rows = Count();
         auto rows = dataset->GetRows();
-        if (rows <= 0) {
-            LOG_KNOWHERE_ERROR_ << "Can not add empty data to HNSW index.";
-            return Status::empty_index;
+        if (rows == 0) {
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+            }
+            return Status::success;
         }
         auto tensor = dataset->GetTensor();
         auto hnsw_cfg = static_cast<const BaseHnswConfig&>(*cfg);
         bool shuffle_build = hnsw_cfg.shuffle_build.value();
 
         std::atomic<uint64_t> counter{0};
-        uint64_t one_tenth_row = rows / 10;
+        uint64_t one_tenth_row = rows < 10 ? 1 : rows / 10;
 
         std::vector<int> shuffle_batch_ids;
         constexpr int64_t batch_size = 8192;  // same with diskann
@@ -201,6 +204,9 @@ class HnswIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
             return Status::hnsw_inner_error;
         }
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+        }
         return Status::success;
     }
 
@@ -228,6 +234,8 @@ class HnswIndexNode : public IndexNode {
         auto p_id = std::make_unique<int64_t[]>(k * nq);
         auto p_dist = std::make_unique<DistType[]>(k * nq);
 
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
         hnswlib::SearchParam param{(size_t)hnsw_cfg.ef.value()};
         bool transform =
             (index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT || index_->metric_type_ == hnswlib::Metric::COSINE);
@@ -237,7 +245,7 @@ class HnswIndexNode : public IndexNode {
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(search_pool_->push([&, idx = i, p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
-                auto rst = index_->searchKnn(single_query, k, bitset, &param, feder_result);
+                auto rst = index_->searchKnn(single_query, k, mapped_bitset, &param, feder_result);
                 size_t rst_size = rst.size();
                 auto p_single_dis = p_dist_ptr + idx * k;
                 auto p_single_id = p_id_ptr + idx * k;
@@ -254,6 +262,7 @@ class HnswIndexNode : public IndexNode {
         }
         WaitAllSuccess(futs);
 
+        external_id_map_.MapResultIds(p_id.get(), k * nq);
         auto res = GenResultDataSet(nq, k, std::move(p_id), std::move(p_dist));
 
         // set visit_info json string into result dataset
@@ -272,8 +281,10 @@ class HnswIndexNode : public IndexNode {
      public:
         iterator(const hnswlib::HierarchicalNSW<DataType, DistType, quant_type>* index, const char* query,
                  const bool transform, const BitsetView& bitset, const size_t ef = kIteratorSeedEf,
-                 const float refine_ratio = 0.5f, bool use_knowhere_search_pool = true)
-            : IndexIterator(transform, use_knowhere_search_pool,
+                 const float refine_ratio = 0.5f,
+                 const ExternalIdMap& external_id_map = EmptyExternalIdMap(),
+                 bool use_knowhere_search_pool = true)
+            : IndexIterator(transform, external_id_map, use_knowhere_search_pool,
                             (hnswlib::HierarchicalNSW<DataType, DistType, quant_type>::sq_enabled &&
                              hnswlib::HierarchicalNSW<DataType, DistType, quant_type>::has_raw_data)
                                 ? refine_ratio
@@ -326,12 +337,15 @@ class HnswIndexNode : public IndexNode {
 
         bool transform =
             (index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT || index_->metric_type_ == hnswlib::Metric::COSINE);
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
         auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
         try {
             for (int i = 0; i < nq; ++i) {
                 auto single_query = (const char*)xq + i * index_->data_size_;
-                auto it = std::make_shared<iterator>(this->index_, single_query, transform, bitset, ef,
-                                                     hnsw_cfg.iterator_refine_ratio.value(), use_knowhere_search_pool);
+                auto it = std::make_shared<iterator>(this->index_, single_query, transform, mapped_bitset, ef,
+                                                     hnsw_cfg.iterator_refine_ratio.value(), this->external_id_map_,
+                                                     use_knowhere_search_pool);
                 vec[i] = it;
             }
         } catch (const std::exception& e) {
@@ -369,6 +383,8 @@ class HnswIndexNode : public IndexNode {
         }
 
         hnswlib::SearchParam param{(size_t)hnsw_cfg.ef.value()};
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
 
         std::vector<std::vector<int64_t>> result_id_array(nq);
         std::vector<std::vector<DistType>> result_dist_array(nq);
@@ -378,7 +394,7 @@ class HnswIndexNode : public IndexNode {
         for (int64_t i = 0; i < nq; ++i) {
             futs.emplace_back(search_pool_->push([&, idx = i]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
-                auto rst = index_->searchRange(single_query, radius_for_calc, bitset, &param, feder_result);
+                auto rst = index_->searchRange(single_query, radius_for_calc, mapped_bitset, &param, feder_result);
                 auto elem_cnt = rst.size();
                 result_dist_array[idx].resize(elem_cnt);
                 result_id_array[idx].resize(elem_cnt);
@@ -396,6 +412,7 @@ class HnswIndexNode : public IndexNode {
         WaitAllSuccess(futs);
 
         // filter range search result
+        external_id_map_.MapResultIds(result_id_array);
         auto range_search_result =
             GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius_for_filter, range_filter);
 
@@ -425,8 +442,10 @@ class HnswIndexNode : public IndexNode {
         try {
             auto data = std::make_unique<uint8_t[]>(index_->data_size_ * rows);
             for (int64_t i = 0; i < rows; i++) {
-                int64_t id = ids[i];
-                assert(id >= 0 && id < (int64_t)index_->cur_element_count);
+                int64_t id = emb_list_strategy_ == nullptr ? external_id_map_.ToInternalId(ids[i]) : ids[i];
+                if (id < 0 || id >= static_cast<int64_t>(index_->cur_element_count)) {
+                    return expected<DataSetPtr>::Err(Status::invalid_args, "invalid vector id");
+                }
                 std::copy_n(index_->getDataByInternalId(id), index_->data_size_, data.get() + i * index_->data_size_);
             }
             return GenResultDataSet(rows, dim, std::move(data));
@@ -490,6 +509,10 @@ class HnswIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
             return Status::hnsw_inner_error;
         }
+        if (emb_list_strategy_ == nullptr &&
+            external_id_map_.ExternalCount(Count()) != Count()) {
+            RETURN_IF_ERROR(AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP));
+        }
         return Status::success;
     }
 
@@ -518,6 +541,9 @@ class HnswIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
             return Status::hnsw_inner_error;
         }
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP);
+        }
         return Status::success;
     }
 
@@ -533,6 +559,10 @@ class HnswIndexNode : public IndexNode {
         } catch (std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "hnsw inner error: " << e.what();
             return Status::hnsw_inner_error;
+        }
+        auto id_map_file_path = static_cast<const BaseConfig&>(*cfg).external_id_map_file_path.value_or("");
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromLocalFile(id_map_file_path);
         }
         return Status::success;
     }

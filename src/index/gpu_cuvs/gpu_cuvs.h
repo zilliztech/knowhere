@@ -103,6 +103,9 @@ struct GpuCuvsIndexNode : public IndexNode {
                 result = Status::cuvs_inner_error;
             }
         }
+        if (result == Status::success && emb_list_strategy_ == nullptr) {
+            result = SetExternalIdMapFromDataset(dataset);
+        }
         return result;
     }
 
@@ -133,10 +136,24 @@ struct GpuCuvsIndexNode : public IndexNode {
                     LOG_KNOWHERE_ERROR_ << "Empty index.";
                     return expected<DataSetPtr>::Err(Status::empty_index, "empty index");
                 }
+                BitsetView mapped_bitset(bitset);
+                external_id_map_.SetOutIdsToBitset(mapped_bitset);
+                std::vector<uint8_t> internal_bitset;
+                if (!mapped_bitset.empty() && mapped_bitset.has_out_ids()) {
+                    internal_bitset.assign((mapped_bitset.size() + 7) / 8, 0);
+                    for (size_t i = 0; i < mapped_bitset.size(); ++i) {
+                        if (mapped_bitset.test(i)) {
+                            internal_bitset[i >> 3] |= static_cast<uint8_t>(1U << (i & 7));
+                        }
+                    }
+                    mapped_bitset = BitsetView(internal_bitset.data(), mapped_bitset.size(), mapped_bitset.count());
+                }
                 auto search_result =
-                    index_->search(cuvs_cfg, data, rows, dim, bitset.data(), bitset.byte_size(), bitset.size());
+                    index_->search(cuvs_cfg, data, rows, dim, mapped_bitset.data(), mapped_bitset.byte_size(),
+                                   mapped_bitset.size());
                 std::this_thread::yield();
                 index_->synchronize();
+                external_id_map_.MapResultIds(std::get<0>(search_result), rows * cuvs_cfg.k);
                 return GenResultDataSet(rows, cuvs_cfg.k, std::get<0>(search_result), std::get<1>(search_result));
             } catch (const std::exception& e) {
                 err_msg = std::string{e.what()};
@@ -185,6 +202,9 @@ struct GpuCuvsIndexNode : public IndexNode {
             std::shared_ptr<uint8_t[]> index_binary(new (std::nothrow) uint8_t[buf.str().size()]);
             memcpy(index_binary.get(), buf.str().c_str(), buf.str().size());
             binset.Append(this->Type(), index_binary, buf.str().size());
+            if (emb_list_strategy_ == nullptr) {
+                result = AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP);
+            }
         }
         return result;
     }
@@ -201,6 +221,9 @@ struct GpuCuvsIndexNode : public IndexNode {
             buf.sputn((char*)binary->data.get(), binary->size);
             std::istream is(&buf);
             result = DeserializeFromStream(is);
+        }
+        if (result == Status::success && emb_list_strategy_ == nullptr) {
+            result = LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP);
         }
         return result;
     }

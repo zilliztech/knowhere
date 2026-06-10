@@ -133,12 +133,6 @@ class IvfIndexNode : public IndexNode {
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
                   const bool is_cosine, milvus::OpContext* op_context) const override;
-    Status
-    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
-        internal_offset_to_most_external_id_ = std::move(map);
-        return Status::success;
-    };
-
     static Status
     StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
         auto ivf_cfg = static_cast<const IvfConfig&>(cfg);
@@ -402,8 +396,9 @@ class IvfIndexNode : public IndexNode {
      public:
         iterator(const IndexType* index, std::unique_ptr<float[]>&& copied_query, const BitsetView& bitset,
                  size_t nprobe, bool larger_is_closer, const float refine_ratio = 0.5f,
+                 const ExternalIdMap& external_id_map = EmptyExternalIdMap(),
                  bool use_knowhere_search_pool = true)
-            : IndexIterator(larger_is_closer, use_knowhere_search_pool, refine_ratio),
+            : IndexIterator(larger_is_closer, external_id_map, use_knowhere_search_pool, refine_ratio),
               index_(index),
               copied_query_(std::move(copied_query)) {
             if (!bitset.empty()) {
@@ -464,7 +459,6 @@ class IvfIndexNode : public IndexNode {
     // spawded during index training/building can inherit the low nice value of
     // threads in build_pool_.
     std::shared_ptr<ThreadPool> build_pool_;
-    std::vector<uint32_t> internal_offset_to_most_external_id_;
     std::unique_ptr<FairRWLock> base_index_lock_;
 };
 
@@ -814,6 +808,13 @@ IvfIndexNode<DataType, IndexType>::Add(const DataSetPtr dataset, std::shared_ptr
     auto data = dataset->GetTensor();
     auto rows = dataset->GetRows();
     const BaseConfig& base_cfg = static_cast<const IvfConfig&>(*cfg);
+    auto old_rows = Count();
+    if (rows == 0) {
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+        }
+        return Status::success;
+    }
     // use build_pool_ to make sure the OMP threads spawded by index_->add
     // can inherit the low nice value of threads in build_pool_.
     auto build_pool_wrapper = std::make_shared<ThreadPoolWrapper>(build_pool_, use_knowhere_build_pool);
@@ -836,6 +837,20 @@ IvfIndexNode<DataType, IndexType>::Add(const DataSetPtr dataset, std::shared_ptr
     if (tryObj.hasException()) {
         LOG_KNOWHERE_WARNING_ << "faiss internal error: " << tryObj.exception().what();
         return Status::faiss_inner_error;
+    }
+    if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlat> ||
+                  std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexBinaryIVF>) {
+        if (HasRawData(base_cfg.metric_type.value())) {
+            try {
+                index_->make_direct_map(true);
+            } catch (const std::exception& e) {
+                LOG_KNOWHERE_WARNING_ << "faiss internal error: " << e.what();
+                return Status::faiss_inner_error;
+            }
+        }
+    }
+    if (emb_list_strategy_ == nullptr) {
+        RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
     }
     return Status::success;
 }
@@ -882,29 +897,31 @@ IvfIndexNode<DataType, IndexType>::AddEmbList(const DataSetPtr dataset, std::sha
             LOG_KNOWHERE_WARNING_ << "lims[0] is not equal to the total_cnt of the old index";
             return Status::emb_list_inner_error;
         }
-        size_t idx = 1;
-        internal_offset_to_most_external_id_.resize(new_num_rows);
-        while (lims[idx] < new_num_rows) {
-            if (lims[idx] < lims[idx - 1]) {
-                LOG_KNOWHERE_WARNING_ << "lims is not increasing, lims[" << idx << "] = " << lims[idx] << " < lims["
-                                      << idx - 1 << "] = " << lims[idx - 1];
+        if (dataset_rows == 0) {
+            RETURN_IF_ERROR(AddEmbListExternalIdMapFromDataset(dataset, old_num_el, 0));
+            return Status::success;
+        }
+
+        size_t new_num_el = 1;
+        while (lims[new_num_el] < new_num_rows) {
+            if (lims[new_num_el] < lims[new_num_el - 1]) {
+                LOG_KNOWHERE_WARNING_ << "lims is not increasing, lims[" << new_num_el << "] = " << lims[new_num_el]
+                                      << " < lims[" << new_num_el - 1 << "] = " << lims[new_num_el - 1];
                 return Status::emb_list_inner_error;
             }
-            emb_list_offset_->offset.push_back(lims[idx]);
-            auto cur_el_id = old_num_el + idx - 1;
-            std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], lims[idx] - lims[idx - 1],
-                        cur_el_id);
-            idx++;
+            ++new_num_el;
         }
-        if (lims[idx] != new_num_rows) {
-            LOG_KNOWHERE_WARNING_ << "lims should end with the total_cnt of the new index, lims[" << idx
-                                  << "] = " << lims[idx] << " != " << new_num_rows;
+        if (lims[new_num_el] != new_num_rows) {
+            LOG_KNOWHERE_WARNING_ << "lims should end with the total_cnt of the new index, lims[" << new_num_el
+                                  << "] = " << lims[new_num_el] << " != " << new_num_rows;
             return Status::emb_list_inner_error;
         }
-        emb_list_offset_->offset.push_back(new_num_rows);
-        auto cur_el_id = old_num_el + idx - 1;
-        std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], new_num_rows - lims[idx - 1],
-                    cur_el_id);
+        RETURN_IF_ERROR(AddEmbListExternalIdMapFromDataset(dataset, old_num_el, static_cast<int64_t>(new_num_el)));
+        for (size_t idx = 1; idx <= new_num_el; ++idx) {
+            emb_list_offset_->offset.push_back(lims[idx]);
+            auto cur_el_id = old_num_el + idx - 1;
+            external_id_map_.AppendInternalToEmbListIds(lims[idx - 1], lims[idx], cur_el_id);
+        }
     }
 
     // 3. add to index
@@ -935,22 +952,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
     auto nprobe = ivf_cfg.nprobe.value();
 
     BitsetView bitset(bitset_);
-    if (!internal_offset_to_most_external_id_.empty()) {
-        if (emb_list_offset_ != nullptr) {
-            // if emb list, manually calculate the number of filtered out ids
-            size_t num_filtered_out_ids = 0;
-            for (size_t i = 0; i < bitset.size(); i++) {
-                if (bitset.test(i)) {
-                    num_filtered_out_ids += emb_list_offset_->offset[i + 1] - emb_list_offset_->offset[i];
-                }
-            }
-            bitset.set_out_ids(internal_offset_to_most_external_id_.data(), internal_offset_to_most_external_id_.size(),
-                               num_filtered_out_ids);
-        } else {
-            bitset.set_out_ids(internal_offset_to_most_external_id_.data(),
-                               internal_offset_to_most_external_id_.size());
-        }
-    }
+    external_id_map_.SetOutIdsToBitset(bitset);
 
     auto ids = std::make_unique<int64_t[]>(rows * k);
     auto distances = std::make_unique<float[]>(rows * k);
@@ -1205,6 +1207,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
     }
 
+    external_id_map_.MapResultIds(ids.get(), rows * k);
     auto res = GenResultDataSet(rows, k, std::move(ids), std::move(distances));
     return res;
 }
@@ -1234,6 +1237,16 @@ IvfIndexNode<DataType, IndexType>::CalcDistByIDs(const DataSetPtr dataset, const
         auto query_data = dataset->GetTensor();
         auto dim = dataset->GetDim();
         auto distances = std::make_unique<float[]>(num_queries * labels_len);
+        std::vector<int64_t> internal_labels;
+        const int64_t* labels_to_calc = labels;
+        if (emb_list_strategy_ == nullptr) {
+            labels_to_calc = external_id_map_.ToInternalIds(labels, labels_len, internal_labels);
+        }
+        for (size_t i = 0; i < labels_len; ++i) {
+            if (labels_to_calc[i] < 0 || labels_to_calc[i] >= index_->ntotal) {
+                return expected<DataSetPtr>::Err(Status::invalid_args, "invalid label id");
+            }
+        }
 
         try {
             std::vector<folly::Future<folly::Unit>> futs;
@@ -1248,7 +1261,7 @@ IvfIndexNode<DataType, IndexType>::CalcDistByIDs(const DataSetPtr dataset, const
                         query = copied_query.get();
                     }
                     auto cur_distances = distances.get() + index * labels_len;
-                    index_->calc_dist_by_ids(1, query, labels_len, labels, cur_distances);
+                    index_->calc_dist_by_ids(1, query, labels_len, labels_to_calc, cur_distances);
                 }));
             }
             WaitAllSuccess(futs);
@@ -1305,6 +1318,8 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
 
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<float>> result_dist_array(nq);
+    BitsetView mapped_bitset(bitset);
+    external_id_map_.SetOutIdsToBitset(mapped_bitset);
 
     try {
         std::vector<folly::Future<folly::Unit>> futs;
@@ -1316,8 +1331,8 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
                 faiss::RangeSearchResult res(1);
                 std::unique_ptr<float[]> copied_query = nullptr;
 
-                BitsetViewIDSelector bw_idselector(bitset);
-                faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+                BitsetViewIDSelector bw_idselector(mapped_bitset);
+                faiss::IDSelector* id_selector = (mapped_bitset.empty()) ? nullptr : &bw_idselector;
 
                 if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexBinaryIVF>) {
                     auto cur_data = static_cast<const uint8_t*>(xq) + index * ((dim + 7) / 8);
@@ -1526,6 +1541,7 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
         }
         // wait for the completion
         WaitAllSuccess(futs);
+        external_id_map_.MapResultIds(result_id_array);
         range_search_result = GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter);
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
@@ -1571,6 +1587,8 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
         const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(*cfg);
         bool is_cosine = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::COSINE);
         auto larger_is_closer = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::IP) || is_cosine;
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
 
         size_t nprobe = ivf_cfg.nprobe.value();
         // set iterator_refine_ratio = 0.0. If quantizer != flat, faiss:indexivf will not keep raw data;
@@ -1593,8 +1611,9 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
                 }
 
                 // iterator only own the copied_query.
-                auto it = std::make_shared<iterator>(index_.get(), std::move(copied_query), bitset, nprobe,
-                                                     larger_is_closer, iterator_refine_ratio, use_knowhere_search_pool);
+                auto it = std::make_shared<iterator>(index_.get(), std::move(copied_query), mapped_bitset, nprobe,
+                                                     larger_is_closer, iterator_refine_ratio, this->external_id_map_,
+                                                     use_knowhere_search_pool);
                 vec[i] = it;
             }
 
@@ -1623,8 +1642,10 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset, milv
         try {
             auto data = std::make_unique<uint8_t[]>(rows * ((dim + 7) / 8));
             for (int64_t i = 0; i < rows; i++) {
-                int64_t id = ids[i];
-                assert(id >= 0 && id < index_->ntotal);
+                int64_t id = emb_list_strategy_ == nullptr ? external_id_map_.ToInternalId(ids[i]) : ids[i];
+                if (id < 0 || id >= index_->ntotal) {
+                    return expected<DataSetPtr>::Err(Status::invalid_args, "invalid vector id");
+                }
                 index_->reconstruct(id, data.get() + i * ((dim + 7) / 8));
             }
             return GenResultDataSet(rows, dim, std::move(data));
@@ -1641,8 +1662,10 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset, milv
         try {
             auto data = std::make_unique<float[]>(dim * rows);
             for (int64_t i = 0; i < rows; i++) {
-                int64_t id = ids[i];
-                assert(id >= 0 && id < index_->ntotal);
+                int64_t id = emb_list_strategy_ == nullptr ? external_id_map_.ToInternalId(ids[i]) : ids[i];
+                if (id < 0 || id >= index_->ntotal) {
+                    return expected<DataSetPtr>::Err(Status::invalid_args, "invalid vector id");
+                }
                 index_->reconstruct(id, data.get() + i * dim);
             }
             return GenResultDataSet(rows, dim, std::move(data));
@@ -1663,8 +1686,10 @@ IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset, milv
         try {
             auto data = std::make_unique<float[]>(dim * rows);
             for (int64_t i = 0; i < rows; i++) {
-                int64_t id = ids[i];
-                assert(id >= 0 && id < index_->ntotal);
+                int64_t id = emb_list_strategy_ == nullptr ? external_id_map_.ToInternalId(ids[i]) : ids[i];
+                if (id < 0 || id >= index_->ntotal) {
+                    return expected<DataSetPtr>::Err(Status::invalid_args, "invalid vector id");
+                }
                 index_->reconstruct(id, data.get() + i * dim);
             }
             return GenResultDataSet(rows, dim, std::move(data));
@@ -1746,6 +1771,9 @@ IvfIndexNode<DataType, IndexType>::SerializeImpl(BinarySet& binset) const {
         }
         std::shared_ptr<uint8_t[]> data(writer.data());
         binset.Append(Type(), data, writer.tellg());
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP));
+        }
         return Status::success;
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
@@ -1838,6 +1866,9 @@ IvfIndexNode<DataType, IndexType>::Deserialize(const BinarySet& binset, std::sha
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
         return Status::faiss_inner_error;
     }
+    if (emb_list_strategy_ == nullptr) {
+        return LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP);
+    }
     return Status::success;
 }
 
@@ -1919,6 +1950,9 @@ IvfIndexNode<DataType, IndexType>::DeserializeFromFile(const std::string& filena
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
         return Status::faiss_inner_error;
+    }
+    if (emb_list_strategy_ == nullptr) {
+        return LoadExternalIdMapFromLocalFile(cfg.external_id_map_file_path.value_or(""));
     }
     return Status::success;
 }

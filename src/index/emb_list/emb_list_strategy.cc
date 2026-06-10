@@ -94,14 +94,15 @@ RerankByCalcDistByIDs(const std::vector<int64_t>& candidate_docs, const DataSetP
 
     // Extract results in sorted order
     size_t result_count = larger_is_closer ? minheap.size() : maxheap.size();
+    const auto& external_id_map = index->GetExternalIdMap();
     for (size_t j = 0; j < result_count; ++j) {
         size_t idx = result_count - j - 1;
         if (larger_is_closer) {
-            out_ids[idx] = minheap.top().id;
+            out_ids[idx] = external_id_map.ToExternalId(minheap.top().id);
             out_dists[idx] = minheap.top().val;
             minheap.pop();
         } else {
-            out_ids[idx] = maxheap.top().id;
+            out_ids[idx] = external_id_map.ToExternalId(maxheap.top().id);
             out_dists[idx] = maxheap.top().val;
             maxheap.pop();
         }

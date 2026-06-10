@@ -114,9 +114,16 @@ class FaissIndexNode : public IndexNode {
         if (!index_) {
             return Status::empty_index;
         }
+        auto old_rows = Count();
+        const auto n = dataset->GetRows();
+        if (n == 0) {
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+            }
+            return Status::success;
+        }
         try {
             const auto* raw = dataset->GetTensor();
-            const auto n = dataset->GetRows();
             if constexpr (std::is_same_v<DataType, fp32>) {
                 auto data = static_cast<const float*>(raw);
                 std::unique_ptr<float[]> copy;
@@ -132,6 +139,9 @@ class FaissIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "faiss add failed: " << e.what();
             return Status::faiss_inner_error;
         }
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(AddExternalIdMapFromDataset(dataset, old_rows));
+        }
         return Status::success;
     }
 
@@ -146,8 +156,10 @@ class FaissIndexNode : public IndexNode {
         const auto nq = dataset->GetRows();
         const auto dim = dataset->GetDim();
 
-        BitsetViewIDSelector bw_sel(bitset);
-        ::faiss::IDSelector* sel = bitset.empty() ? nullptr : &bw_sel;
+        BitsetView mapped_bitset(bitset);
+        external_id_map_.SetOutIdsToBitset(mapped_bitset);
+        BitsetViewIDSelector bw_sel(mapped_bitset);
+        ::faiss::IDSelector* sel = mapped_bitset.empty() ? nullptr : &bw_sel;
 
         std::unique_ptr<::faiss::SearchParameters> search_params;
         std::string err_msg;
@@ -215,6 +227,7 @@ class FaissIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "faiss search failed: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
+        external_id_map_.MapResultIds(ids.get(), nq * k);
         return GenResultDataSet(nq, k, std::move(ids), std::move(distances));
     }
 
@@ -235,8 +248,10 @@ class FaissIndexNode : public IndexNode {
             const auto nq = dataset->GetRows();
             const auto dim = dataset->GetDim();
 
-            BitsetViewIDSelector bw_sel(bitset);
-            ::faiss::IDSelector* sel = bitset.empty() ? nullptr : &bw_sel;
+            BitsetView mapped_bitset(bitset);
+            external_id_map_.SetOutIdsToBitset(mapped_bitset);
+            BitsetViewIDSelector bw_sel(mapped_bitset);
+            ::faiss::IDSelector* sel = mapped_bitset.empty() ? nullptr : &bw_sel;
 
             std::unique_ptr<::faiss::SearchParameters> search_params;
             std::string err_msg;
@@ -281,6 +296,7 @@ class FaissIndexNode : public IndexNode {
             }
 
             const bool is_ip = is_cosine_ || IsMetricType(fc->metric_type.value(), knowhere::metric::IP);
+            external_id_map_.MapResultIds(result_labels);
             auto rr = GetRangeSearchResult(result_distances, result_labels, is_ip, nq, radius, range_filter);
             return GenResultDataSet(nq, std::move(rr));
         }
@@ -321,6 +337,9 @@ class FaissIndexNode : public IndexNode {
             std::shared_ptr<uint8_t[]> buf(new uint8_t[sz]);
             std::memcpy(buf.get(), writer.data.data(), sz);
             binset.Append(Type(), buf, static_cast<int64_t>(sz));
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(AppendExternalIdMapToBinarySet(binset, meta::EXTERNAL_ID_MAP));
+            }
             return Status::success;
         } catch (const ::faiss::FaissException& e) {
             LOG_KNOWHERE_ERROR_ << "Serialize failed: " << e.what();
@@ -342,11 +361,14 @@ class FaissIndexNode : public IndexNode {
             } else {
                 index_.reset(::faiss::read_index_binary(&reader));
             }
-            return Status::success;
         } catch (const ::faiss::FaissException& e) {
             LOG_KNOWHERE_ERROR_ << "Deserialize failed: " << e.what();
             return Status::faiss_inner_error;
         }
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromBinarySet(binset, meta::EXTERNAL_ID_MAP);
+        }
+        return Status::success;
     }
 
     Status
@@ -373,11 +395,14 @@ class FaissIndexNode : public IndexNode {
                     index_.reset(faiss::read_index_binary(&reader));
                 }
             }
-            return Status::success;
         } catch (const ::faiss::FaissException& e) {
             LOG_KNOWHERE_ERROR_ << "DeserializeFromFile failed: " << e.what();
             return Status::faiss_inner_error;
         }
+        if (emb_list_strategy_ == nullptr) {
+            return LoadExternalIdMapFromLocalFile(fc->external_id_map_file_path.value_or(""));
+        }
+        return Status::success;
     }
 
     static std::unique_ptr<BaseConfig>

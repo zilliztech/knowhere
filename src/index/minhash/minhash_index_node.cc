@@ -68,6 +68,15 @@ class MinHashLSHNode : public IndexNode {
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
         if (minhash_lsh_->HasRawData()) {
+            std::vector<int64_t> internal_ids;
+            if (emb_list_strategy_ == nullptr) {
+                ids = external_id_map_.ToInternalIds(ids, rows, internal_ids);
+            }
+            for (int64_t i = 0; i < rows; ++i) {
+                if (ids[i] < 0 || ids[i] >= Count()) {
+                    return expected<DataSetPtr>::Err(Status::invalid_args, "invalid vector id");
+                }
+            }
             auto data = std::make_unique<char[]>(rows * ((this->Dim() + 7) / 8));
             minhash_lsh_->GetDataByIds(ids, rows, data.get());
             return GenResultDataSet(rows, dim, std::move(data));
@@ -208,6 +217,12 @@ class MinHashLSHNode : public IndexNode {
     std::shared_ptr<ThreadPool> search_pool_;
     bool is_loaded_ = false;
     const std::string fname_ = "minhash_lsh_index";
+    const std::string id_map_fname_ = "external_id_map";
+
+    std::string
+    IdMapFilePath() const {
+        return index_prefix_ + id_map_fname_;
+    }
 };
 template <typename DataType>
 Status
@@ -218,6 +233,10 @@ MinHashLSHNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
         return Status::internal_error;
     }
     try {
+        index_prefix_ = build_conf.index_prefix.value();
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(SetExternalIdMapFromDataset(dataset));
+        }
         if (!LoadFile(build_conf.data_path.value())) {
             LOG_KNOWHERE_ERROR_ << "Failed load the raw data before building.";
             return Status::disk_file_error;
@@ -227,6 +246,12 @@ MinHashLSHNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
         if (dim % 8 != 0 || build_conf.mh_element_bit_width.value() % 8 != 0) {
             LOG_KNOWHERE_ERROR_ << "Expecting (dim % 8 == 0) and (mh_element_bit_width % 8 == 0)";
             return Status::invalid_args;
+        }
+        if (rows == 0) {
+            if (emb_list_strategy_ == nullptr) {
+                RETURN_IF_ERROR(SaveExternalIdMapToFileManager(file_manager_, IdMapFilePath()));
+            }
+            return Status::empty_index;
         }
         size_t mh_vec_element_size = static_cast<size_t>(build_conf.mh_element_bit_width.value() / 8);
         size_t mh_vec_length = (dim / build_conf.mh_element_bit_width.value());
@@ -247,6 +272,9 @@ MinHashLSHNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << index_params.index_file_path << ".";
             return Status::disk_file_error;
         }
+        if (emb_list_strategy_ == nullptr) {
+            RETURN_IF_ERROR(SaveExternalIdMapToFileManager(file_manager_, IdMapFilePath()));
+        }
     } catch (const std::exception& e) {
         LOG_KNOWHERE_ERROR_ << "minhash lsh inner error: " << e.what();
         return Status::internal_error;
@@ -258,6 +286,7 @@ template <typename DataType>
 Status
 MinHashLSHNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) {
     auto load_conf = static_cast<const MinHashLSHConfig&>(*cfg);
+    index_prefix_ = load_conf.index_prefix.value();
     auto index_params_ptr = std::make_unique<minhash::MinHashLSHLoadParams>();
     index_params_ptr->index_file_path = load_conf.index_prefix.value() + fname_;
     index_params_ptr->hash_code_in_memory = load_conf.mh_lsh_code_in_mem.value();
@@ -277,6 +306,10 @@ MinHashLSHNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
     } catch (const std::exception& e) {
         LOG_KNOWHERE_ERROR_ << "minhash lsh inner error: " << e.what();
         return Status::internal_error;
+    }
+    RETURN_IF_ERROR(stat);
+    if (emb_list_strategy_ == nullptr) {
+        RETURN_IF_ERROR(LoadExternalIdMapFromFileManager(file_manager_, IdMapFilePath()));
     }
     return stat;
 }
@@ -301,12 +334,14 @@ MinHashLSHNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
     auto xq = static_cast<const char*>(dataset->GetTensor());
     auto p_id = std::make_unique<int64_t[]>(nq * topk);
     auto p_dist = std::make_unique<DistType[]>(nq * topk);
+    BitsetView mapped_bitset(bitset);
+    external_id_map_.SetOutIdsToBitset(mapped_bitset);
     minhash::MinHashLSHSearchParams search_params;
     search_params.k = topk;
     search_params.search_with_jaccard = search_conf.mh_search_with_jaccard.value();
     search_params.refine_k = search_conf.refine_k.value_or(topk);
-    BitsetViewIDSelector bw_idselector(bitset);
-    search_params.id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+    BitsetViewIDSelector bw_idselector(mapped_bitset);
+    search_params.id_selector = (mapped_bitset.empty()) ? nullptr : &bw_idselector;
     try {
         if (search_conf.mh_lsh_batch_search.value() == true) {
             minhash_lsh_->BatchSearch(xq, nq, p_dist.get(), p_id.get(), search_pool_, &search_params);
@@ -331,6 +366,7 @@ MinHashLSHNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
         LOG_KNOWHERE_WARNING_ << "minhash lsh inner error: " << e.what();
         return expected<DataSetPtr>::Err(Status::internal_error, e.what());
     }
+    external_id_map_.MapResultIds(p_id.get(), nq * topk);
     auto res = GenResultDataSet(nq, topk, std::move(p_id), std::move(p_dist));
     return res;
 }
