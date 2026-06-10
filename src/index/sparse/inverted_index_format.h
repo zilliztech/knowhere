@@ -102,9 +102,8 @@ read_section_headers(MemoryIOReader& reader, uint32_t nr_sections) {
 
 inline const InvertedIndexSectionHeader*
 find_section_header(const std::vector<InvertedIndexSectionHeader>& section_headers, InvertedIndexSectionType type) {
-    auto it = std::find_if(section_headers.cbegin(), section_headers.cend(), [type](const auto& section_header) {
-        return section_header.type == type;
-    });
+    auto it = std::find_if(section_headers.cbegin(), section_headers.cend(),
+                           [type](const auto& section_header) { return section_header.type == type; });
     return it == section_headers.cend() ? nullptr : &*it;
 }
 

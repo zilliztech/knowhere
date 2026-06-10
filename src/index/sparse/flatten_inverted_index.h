@@ -1,7 +1,7 @@
 #pragma once
 #include <array>
-#include <span>
 #include <iostream>
+#include <span>
 #include <unordered_set>
 #include <vector>
 
@@ -733,9 +733,8 @@ FlattenInvertedIndex<DType, QType>::deserialize(MemoryIOReader& reader) {
         uint32_t nr_sections = 0;
         reader.read(&nr_sections, sizeof(uint32_t));
         const auto section_headers = read_section_headers(reader, nr_sections);
-        if (auto status =
-                this->dim_map_.load_sections(reader, section_headers, this->nr_inner_dims_,
-                                             DimMapMphfStorage::SeparateSection);
+        if (auto status = this->dim_map_.load_sections(reader, section_headers, this->nr_inner_dims_,
+                                                       DimMapMphfStorage::SeparateSection);
             status != Status::success) {
             return status;
         }
@@ -797,8 +796,8 @@ FlattenInvertedIndex<DType, QType>::deserialize(MemoryIOReader& reader) {
                     this->meta_data_.block_max_data_.block_offsets_ = std::span<size_t>(
                         reinterpret_cast<size_t*>(reader.data() + reader.tellg()), this->nr_inner_dims_);
                     reader.advance(this->nr_inner_dims_ * sizeof(size_t));
-                    this->meta_data_.block_max_data_.block_max_ids_ = std::span<uint32_t>(
-                        reinterpret_cast<uint32_t*>(reader.data() + reader.tellg()), total_blocks);
+                    this->meta_data_.block_max_data_.block_max_ids_ =
+                        std::span<uint32_t>(reinterpret_cast<uint32_t*>(reader.data() + reader.tellg()), total_blocks);
                     reader.advance(total_blocks * sizeof(uint32_t));
                     this->meta_data_.block_max_data_.block_max_scores_ =
                         std::span<float>(reinterpret_cast<float*>(reader.data() + reader.tellg()), total_blocks);

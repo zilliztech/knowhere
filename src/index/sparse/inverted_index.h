@@ -4,12 +4,12 @@
 #include <sys/mman.h>
 
 #include <algorithm>
-#include <span>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -111,8 +111,7 @@ struct InvertedIndexMetaData {
     void
     resize_max_score_per_dim(size_t size, float value) {
         max_score_per_dim_container_.resize(size, value);
-        max_score_per_dim_ =
-            std::span<float>(max_score_per_dim_container_.data(), max_score_per_dim_container_.size());
+        max_score_per_dim_ = std::span<float>(max_score_per_dim_container_.data(), max_score_per_dim_container_.size());
     }
 
     void
@@ -569,9 +568,8 @@ CRTPInvertedIndex<IndexType, DType, IsGrowable>::convert_to_raw_data(MemoryIOWri
 
 template <typename IndexType, typename DType, bool IsGrowable>
 std::vector<float>
-CRTPInvertedIndex<IndexType, DType, IsGrowable>::get_all_distances(const SparseRow<DType>& query,
-                                                                   const BitsetView& bitset,
-                                                                   const InvertedIndexSearchParams& search_params) const {
+CRTPInvertedIndex<IndexType, DType, IsGrowable>::get_all_distances(
+    const SparseRow<DType>& query, const BitsetView& bitset, const InvertedIndexSearchParams& search_params) const {
     if (query.size() == 0) {
         return {};
     }

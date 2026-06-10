@@ -2,13 +2,12 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
-
-#include <span>
 
 #include "index/sparse/inverted_index_format.h"
 #include "knowhere/expected.h"
@@ -251,8 +250,7 @@ class SealedDimMap {
             if (view.serialized_size() != data_size || view.n() != expected_dims) {
                 LOG_KNOWHERE_ERROR_ << "Sparse inverted index MPHF dim map size mismatch, mphf_n=" << view.n()
                                     << ", nr_inner_dims=" << expected_dims
-                                    << ", serialized_size=" << view.serialized_size() << ", section_size="
-                                    << data_size;
+                                    << ", serialized_size=" << view.serialized_size() << ", section_size=" << data_size;
                 return Status::invalid_serialized_index_type;
             }
             if (reverse_size() != expected_dims) {

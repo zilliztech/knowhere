@@ -5,8 +5,8 @@
 #include <unistd.h>
 
 #include <array>
-#include <span>
 #include <cstring>
+#include <span>
 #include <unordered_set>
 
 #include "index/sparse/codec/block_codec.h"
@@ -610,8 +610,7 @@ BlockInvertedIndex<DType, QType, MetricType>::build_block_max_data(std::span<uin
 template <typename DType, typename QType, IndexScorerType MetricType>
 void
 BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<uint8_t>& out_buf,
-                                                                  std::span<uint32_t> vec_ids,
-                                                                  std::span<QType> vals) {
+                                                                  std::span<uint32_t> vec_ids, std::span<QType> vals) {
     // Posting list layout:
     // +----------------+------------------------------------------+
     // | list_sz       | uint32_t: total number of postings       |
@@ -676,8 +675,8 @@ template <typename DType, typename QType, IndexScorerType MetricType>
 void
 BlockInvertedIndex<DType, QType, MetricType>::build_block_index(std::span<uint32_t>& raw_index_ids,
                                                                 std::span<QType>& raw_index_vals,
-                                                                std::span<size_t>& raw_index_offsets,
-                                                                bool enable_mmap, const std::string& backed_filename) {
+                                                                std::span<size_t>& raw_index_offsets, bool enable_mmap,
+                                                                const std::string& backed_filename) {
     // fill the postings container
     if (enable_mmap) {
         index_container_ = std::make_unique<FileBinaryContainer>(backed_filename + ".block_index");
@@ -710,7 +709,7 @@ BlockInvertedIndex<DType, QType, MetricType>::build_block_index(std::span<uint32
     auto data_ptr = index_container_->data();
     posting_blocks_dim_offsets_ = std::span<size_t>(reinterpret_cast<size_t*>(data_ptr), this->nr_inner_dims_ + 1);
     posting_blocks_data_ = std::span<uint8_t>(data_ptr + sizeof(size_t) * (this->nr_inner_dims_ + 1),
-                                                index_container_->size() - sizeof(size_t) * (this->nr_inner_dims_ + 1));
+                                              index_container_->size() - sizeof(size_t) * (this->nr_inner_dims_ + 1));
 }
 
 template <typename DType, typename QType, IndexScorerType MetricType>
@@ -1008,9 +1007,8 @@ BlockInvertedIndex<DType, QType, MetricType>::deserialize(MemoryIOReader& reader
         uint32_t nr_sections = 0;
         reader.read(&nr_sections, sizeof(uint32_t));
         const auto section_headers = read_section_headers(reader, nr_sections);
-        if (auto status =
-                this->dim_map_.load_sections(reader, section_headers, this->nr_inner_dims_,
-                                             DimMapMphfStorage::SeparateSection);
+        if (auto status = this->dim_map_.load_sections(reader, section_headers, this->nr_inner_dims_,
+                                                       DimMapMphfStorage::SeparateSection);
             status != Status::success) {
             return status;
         }
@@ -1082,8 +1080,8 @@ BlockInvertedIndex<DType, QType, MetricType>::deserialize(MemoryIOReader& reader
                     this->meta_data_.block_max_data_.block_offsets_ = std::span<size_t>(
                         reinterpret_cast<size_t*>(reader.data() + reader.tellg()), this->nr_inner_dims_);
                     reader.advance(this->nr_inner_dims_ * sizeof(size_t));
-                    this->meta_data_.block_max_data_.block_max_ids_ = std::span<uint32_t>(
-                        reinterpret_cast<uint32_t*>(reader.data() + reader.tellg()), total_blocks);
+                    this->meta_data_.block_max_data_.block_max_ids_ =
+                        std::span<uint32_t>(reinterpret_cast<uint32_t*>(reader.data() + reader.tellg()), total_blocks);
                     reader.advance(total_blocks * sizeof(uint32_t));
                     this->meta_data_.block_max_data_.block_max_scores_ =
                         std::span<float>(reinterpret_cast<float*>(reader.data() + reader.tellg()), total_blocks);

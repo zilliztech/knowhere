@@ -4,12 +4,12 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include <span>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <new>
+#include <span>
 #include <vector>
 
 #include "index/sparse/aligned_allocator.h"
