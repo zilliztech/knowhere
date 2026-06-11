@@ -468,7 +468,7 @@ if(__X86_64)
     if(NOT svs_runtime_FOUND)
       include(FetchContent)
       set(SVS_TARBALL_URL
-          "https://github.com/intel/ScalableVectorSearch/releases/download/nightly/svs-cpp-runtime-bindings-nightly-2026-05-18-1299.tar.gz"
+          "https://github.com/intel/ScalableVectorSearch/releases/download/v0.4.0/svs-cpp-runtime-bindings.tar.gz"
           CACHE STRING "URL for pre-built SVS runtime bindings tarball")
       FetchContent_Declare(svs URL "${SVS_TARBALL_URL}" DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
       FetchContent_MakeAvailable(svs)

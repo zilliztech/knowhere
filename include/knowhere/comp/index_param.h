@@ -221,6 +221,7 @@ constexpr const char* SVS_SEARCH_WINDOW_SIZE = "svs_search_window_size";
 constexpr const char* SVS_SEARCH_BUFFER_CAPACITY = "svs_search_buffer_capacity";
 constexpr const char* SVS_ALPHA = "svs_alpha";
 constexpr const char* SVS_STORAGE_KIND = "svs_storage_kind";
+constexpr const char* SVS_IS_STATIC = "svs_is_static";
 constexpr const char* SVS_LEANVEC_DIM = "svs_leanvec_dim";
 constexpr const char* SVS_LEANVEC_OOD = "svs_leanvec_ood";
 constexpr const char* SVS_IVF_NLIST = "svs_ivf_nlist";

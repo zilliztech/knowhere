@@ -11,6 +11,8 @@
 
 #ifdef KNOWHERE_WITH_SVS
 
+#include <tuple>
+
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -572,6 +574,210 @@ TEST_CASE("Test SVS IVF LeanVec OOD Build and Search", "[svs][ivf][leanvec][ood]
         {
             auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
                 knowhere::IndexEnum::INDEX_SVS_IVF_LEANVEC, version);
+            REQUIRE(idx.has_value());
+            auto index = idx.value();
+
+            auto cfg_json = gen().dump();
+            knowhere::Json json = knowhere::Json::parse(cfg_json);
+            REQUIRE(index.Deserialize(bs, json) == knowhere::Status::success);
+            REQUIRE(index.Count() == nb);
+            REQUIRE(index.Dim() == dim);
+
+            auto res = index.Search(query_ds, json, nullptr);
+            REQUIRE(res.has_value());
+
+            auto ids_before = first_result->GetIds();
+            auto ids_after = res.value()->GetIds();
+            for (int64_t i = 0; i < nq * topk; i++) {
+                REQUIRE(ids_before[i] == ids_after[i]);
+            }
+        }
+    }
+}
+
+TEST_CASE("Test SVS Static Vamana Build and Search", "[svs][vamana][static]") {
+    const int64_t nb = 10000, nq = 10;
+    const int64_t dim = 128;
+    const int64_t topk = 10;
+
+    auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::IP);
+    auto version = GenTestVersionList();
+
+    const auto train_ds = GenDataSet(nb, dim);
+    const auto query_ds = GenDataSet(nq, dim);
+
+    const knowhere::Json gt_conf = {
+        {knowhere::meta::METRIC_TYPE, metric},
+        {knowhere::meta::TOPK, topk},
+    };
+    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, gt_conf, nullptr);
+    REQUIRE(gt.has_value());
+
+    auto gen = [&]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = topk;
+        json[knowhere::indexparam::SVS_GRAPH_MAX_DEGREE] = 64;
+        json[knowhere::indexparam::SVS_CONSTRUCTION_WINDOW_SIZE] = 200;
+        json[knowhere::indexparam::SVS_SEARCH_WINDOW_SIZE] = 40;
+        json[knowhere::indexparam::SVS_SEARCH_BUFFER_CAPACITY] = 40;
+        json[knowhere::indexparam::SVS_ALPHA] = 1.2f;
+        json[knowhere::indexparam::SVS_STORAGE_KIND] = std::string("fp32");
+        json[knowhere::indexparam::SVS_IS_STATIC] = true;
+        return json;
+    };
+
+    SECTION("Build and KNN Search") {
+        auto idx =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_SVS_VAMANA, version);
+        REQUIRE(idx.has_value());
+        auto index = idx.value();
+
+        auto cfg_json = gen().dump();
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+
+        REQUIRE(index.Build(train_ds, json) == knowhere::Status::success);
+        REQUIRE(index.Size() > 0);
+        REQUIRE(index.Count() == nb);
+
+        auto res = index.Search(query_ds, json, nullptr);
+        REQUIRE(res.has_value());
+
+        float recall = GetKNNRecall(*gt.value(), *res.value());
+        LOG_KNOWHERE_INFO_ << "SVS Static Vamana recall@" << topk << " = " << recall << " (metric=" << metric << ")";
+        REQUIRE(recall >= 0.80f);
+    }
+
+    SECTION("Serialize and Deserialize") {
+        knowhere::BinarySet bs;
+        knowhere::DataSetPtr first_result;
+        {
+            auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_SVS_VAMANA,
+                                                                                 version);
+            REQUIRE(idx.has_value());
+            auto index = idx.value();
+
+            auto cfg_json = gen().dump();
+            knowhere::Json json = knowhere::Json::parse(cfg_json);
+            REQUIRE(index.Build(train_ds, json) == knowhere::Status::success);
+
+            auto res = index.Search(query_ds, json, nullptr);
+            REQUIRE(res.has_value());
+            first_result = res.value();
+
+            REQUIRE(index.Serialize(bs) == knowhere::Status::success);
+        }
+        {
+            auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_SVS_VAMANA,
+                                                                                 version);
+            REQUIRE(idx.has_value());
+            auto index = idx.value();
+
+            auto cfg_json = gen().dump();
+            knowhere::Json json = knowhere::Json::parse(cfg_json);
+            REQUIRE(index.Deserialize(bs, json) == knowhere::Status::success);
+            REQUIRE(index.Count() == nb);
+            REQUIRE(index.Dim() == dim);
+
+            auto res = index.Search(query_ds, json, nullptr);
+            REQUIRE(res.has_value());
+
+            auto ids_before = first_result->GetIds();
+            auto ids_after = res.value()->GetIds();
+            for (int64_t i = 0; i < nq * topk; i++) {
+                REQUIRE(ids_before[i] == ids_after[i]);
+            }
+        }
+    }
+}
+
+TEST_CASE("Test SVS Static Vamana LVQ/LeanVec Build and Search", "[svs][vamana][static][leanvec]") {
+    if (!faiss::IndexSVSVamana::is_lvq_leanvec_enabled()) {
+        SKIP("LVQ/LeanVec not available in this SVS runtime build");
+    }
+
+    const int64_t nb = 10000, nq = 10;
+    const int64_t dim = 128;
+    const int64_t topk = 10;
+
+    auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::IP);
+    auto version = GenTestVersionList();
+
+    // {index type, storage kind} pairs for the compressed static variants
+    auto variant = GENERATE(table<std::string, std::string>({
+        {knowhere::IndexEnum::INDEX_SVS_VAMANA_LVQ, "lvq4x4"},
+        {knowhere::IndexEnum::INDEX_SVS_VAMANA_LEANVEC, "leanvec4x8"},
+    }));
+    const auto& index_type = std::get<0>(variant);
+    const auto& storage_kind = std::get<1>(variant);
+
+    const auto train_ds = GenDataSet(nb, dim);
+    const auto query_ds = GenDataSet(nq, dim);
+
+    const knowhere::Json gt_conf = {
+        {knowhere::meta::METRIC_TYPE, metric},
+        {knowhere::meta::TOPK, topk},
+    };
+    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, gt_conf, nullptr);
+    REQUIRE(gt.has_value());
+
+    auto gen = [&]() {
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = dim;
+        json[knowhere::meta::METRIC_TYPE] = metric;
+        json[knowhere::meta::TOPK] = topk;
+        json[knowhere::indexparam::SVS_GRAPH_MAX_DEGREE] = 64;
+        json[knowhere::indexparam::SVS_CONSTRUCTION_WINDOW_SIZE] = 200;
+        json[knowhere::indexparam::SVS_SEARCH_WINDOW_SIZE] = 40;
+        json[knowhere::indexparam::SVS_SEARCH_BUFFER_CAPACITY] = 40;
+        json[knowhere::indexparam::SVS_STORAGE_KIND] = storage_kind;
+        json[knowhere::indexparam::SVS_IS_STATIC] = true;
+        return json;
+    };
+
+    SECTION("Build and KNN Search") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type, version);
+        REQUIRE(idx.has_value());
+        auto index = idx.value();
+
+        auto cfg_json = gen().dump();
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+
+        REQUIRE(index.Type() == index_type);
+        REQUIRE(index.Build(train_ds, json) == knowhere::Status::success);
+        REQUIRE(index.Size() > 0);
+        REQUIRE(index.Count() == nb);
+
+        auto res = index.Search(query_ds, json, nullptr);
+        REQUIRE(res.has_value());
+
+        float recall = GetKNNRecall(*gt.value(), *res.value());
+        LOG_KNOWHERE_INFO_ << "SVS Static Vamana " << storage_kind << " recall@" << topk << " = " << recall
+                           << " (metric=" << metric << ")";
+        REQUIRE(recall >= 0.70f);
+    }
+
+    SECTION("Serialize and Deserialize") {
+        knowhere::BinarySet bs;
+        knowhere::DataSetPtr first_result;
+        {
+            auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type, version);
+            REQUIRE(idx.has_value());
+            auto index = idx.value();
+
+            auto cfg_json = gen().dump();
+            knowhere::Json json = knowhere::Json::parse(cfg_json);
+            REQUIRE(index.Build(train_ds, json) == knowhere::Status::success);
+
+            auto res = index.Search(query_ds, json, nullptr);
+            REQUIRE(res.has_value());
+            first_result = res.value();
+
+            REQUIRE(index.Serialize(bs) == knowhere::Status::success);
+        }
+        {
+            auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type, version);
             REQUIRE(idx.has_value());
             auto index = idx.value();
 

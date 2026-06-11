@@ -31,6 +31,8 @@ class SvsVamanaConfig : public BaseConfig {
     CFG_FLOAT svs_alpha;
     // Data storage format: "fp32", "fp16", "sqi8".
     CFG_STRING svs_storage_kind;
+    // Build an immutable static Vamana index (no incremental add/remove) instead of the dynamic variant.
+    CFG_BOOL svs_is_static;
     KNOWHERE_DECLARE_CONFIG(SvsVamanaConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_graph_max_degree)
             .description("maximum degree of the Vamana graph.")
@@ -65,6 +67,10 @@ class SvsVamanaConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_storage_kind)
             .description("data storage format: fp32, fp16, sqi8.")
             .set_default("fp32")
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(svs_is_static)
+            .description("build an immutable static Vamana index instead of the dynamic variant.")
+            .set_default(false)
             .for_train();
     }
 };

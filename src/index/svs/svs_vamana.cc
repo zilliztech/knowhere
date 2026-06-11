@@ -402,7 +402,7 @@ class SvsVamanaIndexNode : public IndexNode {
     virtual std::unique_ptr<faiss::IndexSVSVamana>
     CreateFaissIndex(int64_t dim, int64_t degree, faiss::MetricType metric, faiss::SVSStorageKind storage,
                      const SvsVamanaConfig& cfg) {
-        return std::make_unique<faiss::IndexSVSVamana>(dim, degree, metric, storage);
+        return std::make_unique<faiss::IndexSVSVamana>(dim, degree, metric, storage, cfg.svs_is_static.value());
     }
 
     std::unique_ptr<faiss::IndexSVSVamana> index_;
@@ -443,7 +443,7 @@ class SvsVamanaLvqIndexNode : public SvsVamanaIndexNode<DataType> {
     std::unique_ptr<faiss::IndexSVSVamana>
     CreateFaissIndex(int64_t dim, int64_t degree, faiss::MetricType metric, faiss::SVSStorageKind storage,
                      const SvsVamanaConfig& cfg) override {
-        return std::make_unique<faiss::IndexSVSVamanaLVQ>(dim, degree, metric, storage);
+        return std::make_unique<faiss::IndexSVSVamanaLVQ>(dim, degree, metric, storage, cfg.svs_is_static.value());
     }
 };
 
@@ -481,7 +481,8 @@ class SvsVamanaLeanVecIndexNode : public SvsVamanaIndexNode<DataType> {
         try {
             size_t leanvec_dim = lv_cfg.svs_leanvec_dim.value();
             auto idx = std::make_unique<faiss::IndexSVSVamanaLeanVec>(
-                dataset->GetDim(), lv_cfg.svs_graph_max_degree.value(), metric.value(), leanvec_dim, storage.value());
+                dataset->GetDim(), lv_cfg.svs_graph_max_degree.value(), metric.value(), leanvec_dim, storage.value(),
+                lv_cfg.svs_is_static.value());
             idx->construction_window_size = lv_cfg.svs_construction_window_size.value();
             if (lv_cfg.svs_alpha.has_value()) {
                 idx->alpha = lv_cfg.svs_alpha.value();
