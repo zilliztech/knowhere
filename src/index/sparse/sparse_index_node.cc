@@ -439,6 +439,15 @@ class SparseInvertedIndexNode : public IndexNode {
         return Status::success;
     }
 
+    Status
+    ValidateInvertedIndexCodec(const std::string& codec) const {
+        if (IsSupportedSparseInvertedIndexCodec(codec)) {
+            return Status::success;
+        }
+        LOG_KNOWHERE_ERROR_ << "Unsupported sparse inverted index codec " << codec;
+        return Status::invalid_args;
+    }
+
     template <typename DType, typename QType, sparse::inverted::IndexScorerType MetricType>
     expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>
     CreateIndexImpl(const SparseInvertedIndexConfig& cfg, bool is_growable = false,
@@ -504,6 +513,8 @@ class SparseInvertedIndexNode : public IndexNode {
                             codec = std::make_shared<sparse::inverted::MaskedVByteBlockCodec>();
                         }
                         index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
+                    } else if (!inverted_index_codec.empty()) {
+                        return expected<IndexPtr>::Err(Status::invalid_args, "unsupported sparse inverted index codec");
                     } else {
                         index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
                     }
@@ -588,6 +599,11 @@ class SparseInvertedIndexNode : public IndexNode {
         if (status != Status::success) {
             return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
                 status, "unsupported sparse inverted index algorithm");
+        }
+        const auto codec_status = ValidateInvertedIndexCodec(cfg.inverted_index_codec.value_or(""));
+        if (codec_status != Status::success) {
+            return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
+                codec_status, "unsupported sparse inverted index codec");
         }
 
         auto qt = cfg.quant_type.value_or("");

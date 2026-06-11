@@ -12,6 +12,11 @@
 #ifndef SPARSE_INVERTED_INDEX_CONFIG_H
 #define SPARSE_INVERTED_INDEX_CONFIG_H
 
+#include <algorithm>
+#include <cctype>
+#include <limits>
+#include <string>
+
 // Compile-time option: index versions below this threshold use raw data format; others use codec.
 // Default is 8. Override at compile time, e.g. -DSPARSE_INDEX_VERSION_USE_RAW_DATA_THRESHOLD=10
 #ifndef SPARSE_INDEX_VERSION_USE_RAW_DATA_THRESHOLD
@@ -28,6 +33,26 @@
 #include "knowhere/config.h"
 
 namespace knowhere {
+
+inline std::string
+NormalizeSparseInvertedIndexAlgo(std::string algo) {
+    std::transform(algo.begin(), algo.end(), algo.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return algo;
+}
+
+inline bool
+IsSupportedSparseInvertedIndexAlgo(const std::string& algo) {
+    const auto normalized_algo = NormalizeSparseInvertedIndexAlgo(algo);
+    return normalized_algo.empty() || normalized_algo == "TAAT_NAIVE" || normalized_algo == "DAAT_WAND" ||
+           normalized_algo == "DAAT_MAXSCORE" || normalized_algo == "BLOCK_MAX_MAXSCORE" ||
+           normalized_algo == "BLOCK_MAX_WAND" || normalized_algo == "SINDI";
+}
+
+inline bool
+IsSupportedSparseInvertedIndexCodec(const std::string& codec) {
+    return codec.empty() || codec == "block_streamvbyte" || codec == "block_maskedvbyte";
+}
 
 class SparseInvertedIndexConfig : public BaseConfig {
  public:
@@ -120,6 +145,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(block_max_block_size)
             .description("block max block size")
             .set_default(128)
+            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_train()
             .for_deserialize()
             .for_deserialize_from_file();
@@ -138,6 +164,20 @@ class SparseInvertedIndexConfig : public BaseConfig {
 
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        if (inverted_index_algo.has_value() && !IsSupportedSparseInvertedIndexAlgo(inverted_index_algo.value())) {
+            return HandleError(
+                err_msg,
+                "inverted_index_algo " + inverted_index_algo.value() +
+                    " not found or not supported, supported: [TAAT_NAIVE DAAT_WAND DAAT_MAXSCORE BLOCK_MAX_MAXSCORE "
+                    "BLOCK_MAX_WAND SINDI]",
+                Status::invalid_args);
+        }
+        if (inverted_index_codec.has_value() && !IsSupportedSparseInvertedIndexCodec(inverted_index_codec.value())) {
+            return HandleError(err_msg,
+                               "inverted_index_codec " + inverted_index_codec.value() +
+                                   " not found or not supported, supported: [block_streamvbyte block_maskedvbyte]",
+                               Status::invalid_args);
+        }
         if (quant_type.has_value() && !quant_type.value().empty()) {
             auto qt = quant_type.value();
             auto mt = metric_type.value();
