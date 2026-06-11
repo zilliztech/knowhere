@@ -455,7 +455,7 @@ class InvertedIndex {
     uint32_t nr_inner_dims_{0};
 
     // The algorithm used to build the index
-    InvertedIndexAlgo build_algo_;
+    InvertedIndexAlgo build_algo_{InvertedIndexAlgo::TAAT_NAIVE};
 
     // The scorer used to build the index
     std::shared_ptr<IndexScorer> build_scorer_;
