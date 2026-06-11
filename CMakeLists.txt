@@ -24,7 +24,7 @@ include(cmake/utils/platform_check.cmake)
 
 knowhere_option(WITH_CUVS "Build with CUVS indexes" OFF)
 if(WITH_CUVS)
-  set(CMAKE_CUDA_ARCHITECTURES "89-real")
+  set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
   set(CMAKE_CUDA_STANDARD 20)
   include(cmake/libs/librapids.cmake)
   project(knowhere CXX C CUDA)
