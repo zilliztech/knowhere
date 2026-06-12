@@ -8,6 +8,9 @@
 #include <cuda_runtime.h>
 #include <cstdint>
 #include <cfloat>
+#ifdef GPU_HNSW_DIAGNOSTICS
+#include <cstdio>
+#endif
 
 namespace cuvs::neighbors::gpu_hnsw::detail {
 
@@ -201,6 +204,12 @@ __global__ void upper_layer_search_kernel(
 
   if (lane == 0) {
     d_entry_points[warp_id] = current;
+#ifdef GPU_HNSW_DIAGNOSTICS
+    if (warp_id == 0) {
+      printf("[beam_diag] q0 upper_layer: ep=%u dist=%.6f (global_ep=%u)\n",
+             current, best_dist, global_entry_point);
+    }
+#endif
   }
 }
 
@@ -314,6 +323,12 @@ __global__ void layer0_beam_search_kernel(
     is_expanded[0]  = 0;
     meta[0] = 1;
     bitmap_visit(visited_bmap, ep);
+#ifdef GPU_HNSW_DIAGNOSTICS
+    if (query_idx == 0) {
+      printf("[beam_diag] q0 seed: ep=%u ep_dist=%.6f ef=%d sw=%d max_iter=%d N=%d\n",
+             ep, ep_dist, ef, search_width, max_iterations, N);
+    }
+#endif
   }
   __syncthreads();
 
@@ -397,7 +412,16 @@ __global__ void layer0_beam_search_kernel(
     __syncthreads();
 
     int num_parents = meta[2];
-    if (num_parents == 0) break;
+    if (num_parents == 0) {
+#ifdef GPU_HNSW_DIAGNOSTICS
+      if (query_idx == 0 && threadIdx.x == 0) {
+        printf("[beam_diag] q0 converged at iter=%d rc=%d best=%.6f worst=%.6f\n",
+               iter, meta[0], result_dists[0],
+               meta[0] > 0 ? result_dists[meta[0] - 1] : 999.0f);
+      }
+#endif
+      break;
+    }
 
     // Step 2: Expand parents' neighbors in parallel
     if (threadIdx.x == 0) meta[1] = 0;
@@ -455,9 +479,44 @@ __global__ void layer0_beam_search_kernel(
         if (rc < ef) rc++;
       }
       meta[0] = rc;
+#ifdef GPU_HNSW_DIAGNOSTICS
+      if (query_idx == 0 && (iter < 5 || iter % 20 == 0)) {
+        printf("[beam_diag] q0 iter=%d parents=%d staged=%d rc=%d best=%.6f worst=%.6f\n",
+               iter, num_parents, staging_count, rc,
+               result_dists[0], rc > 0 ? result_dists[rc - 1] : 999.0f);
+      }
+#endif
     }
     __syncthreads();
   }
+
+#ifdef GPU_HNSW_DIAGNOSTICS
+  if (query_idx == 0 && threadIdx.x == 0) {
+    int final_rc = meta[0];
+    printf("[beam_diag] q0 FINAL: rc=%d\n", final_rc);
+    for (int i = 0; i < min(10, final_rc); i++) {
+      printf("[beam_diag] q0 result[%d]: id=%u dist=%.6f expanded=%u\n",
+             i, result_ids[i], result_dists[i], is_expanded[i]);
+    }
+    int sample_step = N > 10 ? N / 10 : 1;
+    float best_sample_dist = FLT_MAX;
+    uint32_t best_sample_id = UINT32_MAX;
+    for (int si = 0; si < N && si < 10 * sample_step; si += sample_step) {
+      float d;
+      if (use_inner_product) {
+        d = thread_ip_distance(query, d_dataset + static_cast<int64_t>(si) * dim, dim);
+      } else {
+        d = thread_l2_distance(query, d_dataset + static_cast<int64_t>(si) * dim, dim);
+      }
+      if (d < best_sample_dist) {
+        best_sample_dist = d;
+        best_sample_id = si;
+      }
+    }
+    printf("[beam_diag] q0 brute_sample(10 of %d): best_id=%u best_dist=%.6f\n",
+           N, best_sample_id, best_sample_dist);
+  }
+#endif
 
   // --- Copy top-k results to global memory ---
   int rc = meta[0];

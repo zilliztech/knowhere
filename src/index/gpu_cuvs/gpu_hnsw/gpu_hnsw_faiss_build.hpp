@@ -61,8 +61,10 @@ inline void extract_faiss_hnsw_layers(const faiss::cppcontrib::knowhere::HNSW& h
     max_degree0 = maxM0;
     num_layers  = max_lv + 1;
 
+#ifdef GPU_HNSW_DIAGNOSTICS
     fprintf(stderr, "[gpu_hnsw_diag] n_rows=%ld entry_point=%u max_level=%d maxM0=%d maxM=%d\n",
             (long)n_rows, entry_point, max_lv, maxM0, maxM);
+#endif
 
     // --- Layer 0: dense [n_rows x maxM0] ---
     h_layer0_flat.assign(n_rows * maxM0, UINT32_MAX);
@@ -76,6 +78,31 @@ inline void extract_faiss_hnsw_layers(const faiss::cppcontrib::knowhere::HNSW& h
                 h_layer0_flat[i * maxM0 + j] = static_cast<uint32_t>(nb);
         }
     }
+
+#ifdef GPU_HNSW_DIAGNOSTICS
+    {
+        uint32_t check_ids[] = {entry_point, 0, 1, 2};
+        int num_check = (n_rows >= 3) ? 4 : static_cast<int>(n_rows) + 1;
+        for (int ci = 0; ci < num_check; ci++) {
+            uint32_t nid = check_ids[ci];
+            if (nid >= static_cast<uint32_t>(n_rows)) continue;
+            int valid = 0;
+            for (int j = 0; j < maxM0; j++) {
+                if (h_layer0_flat[nid * maxM0 + j] != UINT32_MAX) valid++;
+            }
+            fprintf(stderr,
+                    "[gpu_hnsw_diag] layer0 node %u: %d/%d valid neighbors",
+                    nid, valid, maxM0);
+            fprintf(stderr, " [");
+            for (int j = 0; j < std::min(5, maxM0); j++) {
+                uint32_t nb = h_layer0_flat[nid * maxM0 + j];
+                if (nb != UINT32_MAX) fprintf(stderr, "%u ", nb);
+                else fprintf(stderr, "- ");
+            }
+            fprintf(stderr, "...]\n");
+        }
+    }
+#endif
 
     // --- Upper layers (1 .. max_level): sparse [num_nodes_at_L x maxM] ---
     h_upper_layers.resize(max_lv);
@@ -107,7 +134,7 @@ inline void extract_faiss_hnsw_layers(const faiss::cppcontrib::knowhere::HNSW& h
             }
         }
 
-        // Diagnose neighbor occupancy: count UINT32_MAX slots in first 10 nodes
+#ifdef GPU_HNSW_DIAGNOSTICS
         {
             uint32_t check_nodes = std::min(ul.num_nodes, (uint32_t)10);
             uint32_t total_slots = check_nodes * maxM;
@@ -127,6 +154,7 @@ inline void extract_faiss_hnsw_layers(const faiss::cppcontrib::knowhere::HNSW& h
                     layer, ul.num_nodes, ep_in_layer ? "YES" : "NO",
                     check_nodes, empty_slots, total_slots);
         }
+#endif
 
         // Upload to device
         GPU_HNSW_BUILD_CUDA_CHECK(cudaMalloc(&ul.d_node_ids,

@@ -21,12 +21,25 @@ namespace knowhere::detail::gpu_hnsw {
 void* build_gpu_index(const ::faiss::cppcontrib::knowhere::IndexHNSW* faiss_idx, bool use_ip, bool is_cosine) {
     if (!faiss_idx) return nullptr;
     try {
+#ifdef GPU_HNSW_DIAGNOSTICS
+        fprintf(stderr, "[gpu_hnsw_diag] build: use_ip=%d is_cosine=%d metric_type=%d ntotal=%ld d=%d\n",
+                (int)use_ip, (int)is_cosine, (int)faiss_idx->metric_type,
+                (long)faiss_idx->ntotal, (int)faiss_idx->d);
+#endif
         // Try quantized storage (SQ8, FP16, BF16, etc.) first.
         if (dynamic_cast<const faiss::IndexScalarQuantizer*>(faiss_idx->storage)) {
+#ifdef GPU_HNSW_DIAGNOSTICS
+            const auto* sq = dynamic_cast<const faiss::IndexScalarQuantizer*>(faiss_idx->storage);
+            fprintf(stderr, "[gpu_hnsw_diag] build: storage=SQ qtype=%d storage_metric=%d\n",
+                    (int)sq->sq.qtype, (int)sq->metric_type);
+#endif
             auto idx = from_faiss_hnsw_sq(*faiss_idx, use_ip, is_cosine);
             return static_cast<void*>(idx.release());
         }
         // Fall back to plain float32 storage (IndexHNSWFlat / IndexFlat).
+#ifdef GPU_HNSW_DIAGNOSTICS
+        fprintf(stderr, "[gpu_hnsw_diag] build: storage=Flat\n");
+#endif
         auto idx = from_faiss_hnsw_flat(*faiss_idx, use_ip, is_cosine);
         return static_cast<void*>(idx.release());
     } catch (const std::exception& e) {

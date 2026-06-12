@@ -71,23 +71,26 @@ inline void search(cudaStream_t stream,
             d_queries, idx.d_dataset, d_layer_ptrs, d_entry_points,
             idx.entry_point, num_queries, dim, num_upper_layers, idx.use_ip);
         GPU_HNSW_CUDA_CHECK(cudaGetLastError());
+        GPU_HNSW_CUDA_CHECK(cudaStreamSynchronize(stream));
 
-        // Log entry point diversity once to diagnose recall collapse
-        static bool logged_ep_diversity = false;
-        if (!logged_ep_diversity) {
-            GPU_HNSW_CUDA_CHECK(cudaStreamSynchronize(stream));
-            std::vector<uint32_t> h_eps(num_queries);
-            GPU_HNSW_CUDA_CHECK(cudaMemcpy(h_eps.data(), d_entry_points,
-                                            num_queries * sizeof(uint32_t),
-                                            cudaMemcpyDeviceToHost));
-            std::set<uint32_t> unique_eps(h_eps.begin(), h_eps.end());
-            fprintf(stderr,
-                    "[gpu_hnsw_diag] search: %d queries, %zu unique entry points "
-                    "(global_ep=%u, first_ep=%u, last_ep=%u)\n",
-                    num_queries, (size_t)unique_eps.size(), idx.entry_point,
-                    h_eps.front(), h_eps.back());
-            logged_ep_diversity = true;
+#ifdef GPU_HNSW_DIAGNOSTICS
+        {
+            static bool ep_diag_logged = false;
+            if (!ep_diag_logged) {
+                ep_diag_logged = true;
+                std::vector<uint32_t> h_eps(num_queries);
+                GPU_HNSW_CUDA_CHECK(cudaMemcpy(h_eps.data(), d_entry_points,
+                                                num_queries * sizeof(uint32_t),
+                                                cudaMemcpyDeviceToHost));
+                std::set<uint32_t> unique_eps(h_eps.begin(), h_eps.end());
+                fprintf(stderr,
+                        "[gpu_hnsw_diag] search: %d queries, %zu unique entry points "
+                        "(global_ep=%u, first_ep=%u, last_ep=%u)\n",
+                        num_queries, unique_eps.size(), idx.entry_point,
+                        h_eps.front(), h_eps.back());
+            }
         }
+#endif
 
         GPU_HNSW_CUDA_CHECK(cudaFree(d_layer_ptrs));
     } else {
@@ -99,12 +102,14 @@ inline void search(cudaStream_t stream,
 
     int    block_size   = params.thread_block_size > 0 ? params.thread_block_size : 128;
 
-    // Clamp ef to fit within 48KB shared memory limit
+    // Clamp ef to avoid shared memory overflow (48 KB limit)
+    // smem = ef*12 + sw*max_degree0*8 + sw*4 + 12
+    // Solve: ef*12 <= 49152 - (sw*max_degree0*8 + sw*4 + 12)
     {
-        int fixed_overhead = sw * idx.max_degree0 * 8 + sw * 4 + 3 * 4;
-        int max_ef = (49152 - fixed_overhead) / 12;
+        int smem_overhead = sw * idx.max_degree0 * 8 + sw * 4 + 12;
+        int max_ef = (49152 - smem_overhead) / 12;
         if (ef > max_ef) {
-            fprintf(stderr, "[gpu_hnsw] clamping ef %d->%d (smem limit)\n", ef, max_ef);
+            fprintf(stderr, "[gpu_hnsw] clamping ef %d -> %d (smem limit)\n", ef, max_ef);
             ef = max_ef;
         }
     }
@@ -112,6 +117,19 @@ inline void search(cudaStream_t stream,
     size_t smem_size    = kernel::calc_layer0_smem_size(ef, sw, idx.max_degree0);
     int    N_int        = static_cast<int>(idx.n_rows);
     size_t bitmap_bytes = kernel::calc_visited_bitmap_size(num_queries, N_int);
+
+#ifdef GPU_HNSW_DIAGNOSTICS
+    {
+        static bool search_diag_logged = false;
+        if (!search_diag_logged) {
+            search_diag_logged = true;
+            fprintf(stderr, "[gpu_hnsw_diag] search params: ef=%d sw=%d max_iter=%d k=%d "
+                    "block_size=%d smem=%zu bitmap=%zu N=%d dim=%d use_ip=%d\n",
+                    ef, sw, max_iter, k, block_size, smem_size, bitmap_bytes,
+                    N_int, dim, (int)idx.use_ip);
+        }
+    }
+#endif
 
     uint32_t* d_visited_bitmaps = nullptr;
     GPU_HNSW_CUDA_CHECK(cudaMalloc(&d_visited_bitmaps, bitmap_bytes));
