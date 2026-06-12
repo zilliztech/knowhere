@@ -225,24 +225,32 @@ upload_fp32_dataset(gpu_hnsw_index& idx, std::vector<float>& h_vectors, int64_t 
     idx.dataset_int8 = false;
 }
 
-// Upload raw INT8 codes directly to GPU (4x smaller than float32).
+// Upload INT8 codes to GPU (4x smaller than float32).
+// QT_8bit_direct_signed stores original+128 as uint8; we convert to true signed int8
+// so the kernel's load_elem(int8_t*) gives the correct decoded float directly.
 // For COSINE metric: also computes and uploads reciprocal L2 norms of decoded vectors.
 inline void
 upload_int8_dataset(gpu_hnsw_index& idx, const uint8_t* codes, int64_t n_rows, bool is_cosine) {
     int64_t dim = idx.dim;
-
-    // Upload raw INT8 codes (1 byte per element)
     size_t dataset_bytes = static_cast<size_t>(n_rows) * dim;
+
+    // Convert from biased-uint8 (code = original + 128) to true signed int8.
+    // This matches QT_8bit_direct_signed's decode: float(code) - 128.
+    std::vector<int8_t> signed_codes(dataset_bytes);
+    for (size_t i = 0; i < dataset_bytes; i++) {
+        signed_codes[i] = static_cast<int8_t>(static_cast<int>(codes[i]) - 128);
+    }
+
     GPU_HNSW_BUILD_CUDA_CHECK(cudaMalloc(&idx.d_dataset, dataset_bytes));
-    GPU_HNSW_BUILD_CUDA_CHECK(cudaMemcpy(idx.d_dataset, codes, dataset_bytes, cudaMemcpyHostToDevice));
+    GPU_HNSW_BUILD_CUDA_CHECK(cudaMemcpy(idx.d_dataset, signed_codes.data(), dataset_bytes, cudaMemcpyHostToDevice));
     idx.dataset_int8 = true;
 
-    // For COSINE: compute reciprocal norms so kernel can normalize on-the-fly.
+    // For COSINE: compute reciprocal norms from correctly decoded values.
     // cosine_dist(q_norm, v) = -dot(q_norm, v) * inv_norm[v] = -dot(q_norm, v/|v|)
     if (is_cosine) {
         std::vector<float> h_inv_norms(n_rows);
         for (int64_t i = 0; i < n_rows; i++) {
-            const auto* row = reinterpret_cast<const int8_t*>(codes + i * dim);
+            const int8_t* row = signed_codes.data() + i * dim;
             float sq_norm = 0.0f;
             for (int64_t d = 0; d < dim; d++) {
                 float v = static_cast<float>(row[d]);
