@@ -685,4 +685,108 @@ TEST_CASE("GPU_HNSW SQ8: high-dim (384-d COSINE, N=50K)", "[gpu_hnsw]") {
     REQUIRE(recall >= 0.90f);
 }
 
+// ─── INT8 bias decode regression test ─────────────────────────────────────────
+// Verifies that QT_8bit_direct_signed codes (biased uint8, code = original + 128)
+// are correctly converted to signed int8 before GPU upload (commit 60ca031b).
+// Without the fix: kernel reads biased values → garbage distances → R@1 = 0%.
+
+TEST_CASE("GPU_HNSW SQ8: INT8 bias decode correctness (COSINE, 384-d)", "[gpu_hnsw][int8_bias]") {
+    constexpr int nb = 10000, nq = 200, dim = 384, k = 1;
+    const std::string metric = knowhere::metric::COSINE;
+
+    auto train_ds = GenDataSet(nb, dim, 42);
+    auto query_ds = GenDataSet(nq, dim, 99);
+    auto binset = build_hnsw_sq_binset(nb, dim, 32, 200, metric, train_ds);
+
+    knowhere::Json search_cfg;
+    search_cfg[knowhere::meta::DIM] = dim;
+    search_cfg[knowhere::meta::METRIC_TYPE] = metric;
+    search_cfg[knowhere::meta::TOPK] = k;
+    search_cfg[knowhere::indexparam::EF] = 200;
+
+    auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+
+    // GPU search
+    auto gpu_idx =
+        knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_GPU_HNSW, version).value();
+    REQUIRE(gpu_idx.Deserialize(binset, search_cfg) == knowhere::Status::success);
+    auto gpu_results = gpu_idx.Search(query_ds, search_cfg, nullptr);
+    REQUIRE(gpu_results.has_value());
+
+    // Brute-force ground truth (uses exact float32 distances)
+    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, search_cfg, nullptr);
+    REQUIRE(gt.has_value());
+
+    // R@1 must be >= 0.90 (was 0.00 before the bias decode fix)
+    float recall = GetKNNRecall(*gt.value(), *gpu_results.value());
+    INFO("GPU INT8 COSINE R@1 (384-d, N=10K): " << recall);
+    REQUIRE(recall >= 0.90f);
+
+    // Self-search: query with the first nq training vectors
+    auto self_query = CopyDataSet(train_ds, nq);
+    auto self_results = gpu_idx.Search(self_query, search_cfg, nullptr);
+    REQUIRE(self_results.has_value());
+
+    auto* self_ids = self_results.value()->GetIds();
+    int self_match = 0;
+    for (int i = 0; i < nq; i++) {
+        if (self_ids[i] == i)
+            self_match++;
+    }
+    float self_recall = static_cast<float>(self_match) / nq;
+    INFO("GPU INT8 COSINE self-match rate: " << self_recall);
+    REQUIRE(self_recall >= 0.80f);
+}
+
+// ─── smem overflow clamp test ────────────────────────────────────────────────
+// Verifies that ef values exceeding shared memory capacity are clamped rather
+// than causing CUDA launch failures. The kernel computes:
+//   smem_overhead = sw * max_degree0 * 8 + sw * 4 + 12
+//   max_ef = (49152 - smem_overhead) / 12
+// For sw=1, max_degree0=32: max_ef = (49152 - 268) / 12 = 4073
+// ef=8192 would overflow without the clamp.
+
+TEST_CASE("GPU_HNSW: ef overflow is clamped (no CUDA error)", "[gpu_hnsw][smem_clamp]") {
+    constexpr int nb = 5000, nq = 50, dim = 64, k = 10;
+    const std::string metric = knowhere::metric::L2;
+
+    auto train_ds = GenDataSet(nb, dim, 42);
+    auto query_ds = GenDataSet(nq, dim, 99);
+    auto binset = build_hnsw_binset(nb, dim, 32, 200, metric, train_ds);
+
+    auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    auto gpu_idx =
+        knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_GPU_HNSW, version).value();
+
+    knowhere::Json cfg;
+    cfg[knowhere::meta::DIM] = dim;
+    cfg[knowhere::meta::METRIC_TYPE] = metric;
+    cfg[knowhere::meta::TOPK] = k;
+
+    REQUIRE(gpu_idx.Deserialize(binset, cfg) == knowhere::Status::success);
+
+    // ef=8192 exceeds the 49152-byte smem limit for typical graph configs
+    cfg[knowhere::indexparam::EF] = 8192;
+    auto results = gpu_idx.Search(query_ds, cfg, nullptr);
+    REQUIRE(results.has_value());
+    REQUIRE(results.value()->GetRows() == nq);
+    REQUIRE(results.value()->GetDim() == k);
+
+    // Results should still be valid (IDs in range, distances non-negative for L2)
+    auto* ids = results.value()->GetIds();
+    auto* dists = results.value()->GetDistance();
+    for (int i = 0; i < nq * k; i++) {
+        REQUIRE(ids[i] >= 0);
+        REQUIRE(ids[i] < nb);
+        REQUIRE(dists[i] >= 0.0f);
+    }
+
+    // Recall should still be reasonable (clamped ef is still large)
+    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, cfg, nullptr);
+    REQUIRE(gt.has_value());
+    float recall = GetKNNRecall(*gt.value(), *results.value());
+    INFO("Recall with clamped ef: " << recall);
+    REQUIRE(recall >= 0.85f);
+}
+
 #endif  // KNOWHERE_WITH_CUVS
