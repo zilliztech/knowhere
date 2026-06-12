@@ -71,13 +71,13 @@ inline void search(cudaStream_t stream,
             d_queries, idx.d_dataset, d_layer_ptrs, d_entry_points,
             idx.entry_point, num_queries, dim, num_upper_layers, idx.use_ip);
         GPU_HNSW_CUDA_CHECK(cudaGetLastError());
-        GPU_HNSW_CUDA_CHECK(cudaStreamSynchronize(stream));
 
 #ifdef GPU_HNSW_DIAGNOSTICS
         {
             static bool ep_diag_logged = false;
             if (!ep_diag_logged) {
                 ep_diag_logged = true;
+                GPU_HNSW_CUDA_CHECK(cudaStreamSynchronize(stream));
                 std::vector<uint32_t> h_eps(num_queries);
                 GPU_HNSW_CUDA_CHECK(cudaMemcpy(h_eps.data(), d_entry_points,
                                                 num_queries * sizeof(uint32_t),
