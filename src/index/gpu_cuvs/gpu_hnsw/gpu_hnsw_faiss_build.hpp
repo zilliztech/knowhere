@@ -8,29 +8,29 @@
 
 #pragma once
 
-#include "gpu_hnsw_types.hpp"
-
+#include <cuda_runtime.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexScalarQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSW.h>
 #include <faiss/cppcontrib/knowhere/impl/HNSW.h>
 
-#include <cuda_runtime.h>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include <memory>
 
-#define GPU_HNSW_BUILD_CUDA_CHECK(expr)                                             \
-    do {                                                                            \
-        cudaError_t _e = (expr);                                                    \
-        if (_e != cudaSuccess) {                                                    \
-            throw std::runtime_error(std::string("CUDA error: ") +                 \
-                                     cudaGetErrorString(_e) + " at " +             \
-                                     __FILE__ + ":" + std::to_string(__LINE__));   \
-        }                                                                           \
+#include "gpu_hnsw_search_kernel.cuh"
+#include "gpu_hnsw_types.hpp"
+
+#define GPU_HNSW_BUILD_CUDA_CHECK(expr)                                                                               \
+    do {                                                                                                              \
+        cudaError_t _e = (expr);                                                                                      \
+        if (_e != cudaSuccess) {                                                                                      \
+            throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(_e) + " at " + __FILE__ + ":" + \
+                                     std::to_string(__LINE__));                                                       \
+        }                                                                                                             \
     } while (0)
 
 namespace knowhere::detail::gpu_hnsw {
@@ -43,27 +43,22 @@ namespace knowhere::detail::gpu_hnsw {
 //   For node i at layer L, the neighbor range is:
 //     [offsets[i] + cum_nb_neighbors(L), offsets[i] + cum_nb_neighbors(L+1))
 //   nb_neighbors(0) = 2*M  (maxM0), nb_neighbors(L>0) = M
-inline void extract_faiss_hnsw_layers(const faiss::cppcontrib::knowhere::HNSW& hnsw,
-                                       int64_t n_rows,
-                                       std::vector<device_upper_layer>& h_upper_layers,
-                                       std::vector<uint32_t>& h_layer0_flat,
-                                       uint32_t& entry_point,
-                                       int& M,
-                                       int& max_degree0,
-                                       int& num_layers)
-{
-    const int maxM0  = hnsw.nb_neighbors(0);  // 2*M
-    const int maxM   = hnsw.nb_neighbors(1);  // M  (for layers > 0)
-    const int max_lv = hnsw.max_level;        // number of upper layers
+inline void
+extract_faiss_hnsw_layers(const faiss::cppcontrib::knowhere::HNSW& hnsw, int64_t n_rows,
+                          std::vector<device_upper_layer>& h_upper_layers, std::vector<uint32_t>& h_layer0_flat,
+                          uint32_t& entry_point, int& M, int& max_degree0, int& num_layers) {
+    const int maxM0 = hnsw.nb_neighbors(0);  // 2*M
+    const int maxM = hnsw.nb_neighbors(1);   // M  (for layers > 0)
+    const int max_lv = hnsw.max_level;       // number of upper layers
 
     entry_point = static_cast<uint32_t>(hnsw.entry_point);
-    M           = maxM;
+    M = maxM;
     max_degree0 = maxM0;
-    num_layers  = max_lv + 1;
+    num_layers = max_lv + 1;
 
 #ifdef GPU_HNSW_DIAGNOSTICS
-    fprintf(stderr, "[gpu_hnsw_diag] n_rows=%ld entry_point=%u max_level=%d maxM0=%d maxM=%d\n",
-            (long)n_rows, entry_point, max_lv, maxM0, maxM);
+    fprintf(stderr, "[gpu_hnsw_diag] n_rows=%ld entry_point=%u max_level=%d maxM0=%d maxM=%d\n", (long)n_rows,
+            entry_point, max_lv, maxM0, maxM);
 #endif
 
     // --- Layer 0: dense [n_rows x maxM0] ---
@@ -85,19 +80,21 @@ inline void extract_faiss_hnsw_layers(const faiss::cppcontrib::knowhere::HNSW& h
         int num_check = (n_rows >= 3) ? 4 : static_cast<int>(n_rows) + 1;
         for (int ci = 0; ci < num_check; ci++) {
             uint32_t nid = check_ids[ci];
-            if (nid >= static_cast<uint32_t>(n_rows)) continue;
+            if (nid >= static_cast<uint32_t>(n_rows))
+                continue;
             int valid = 0;
             for (int j = 0; j < maxM0; j++) {
-                if (h_layer0_flat[nid * maxM0 + j] != UINT32_MAX) valid++;
+                if (h_layer0_flat[nid * maxM0 + j] != UINT32_MAX)
+                    valid++;
             }
-            fprintf(stderr,
-                    "[gpu_hnsw_diag] layer0 node %u: %d/%d valid neighbors",
-                    nid, valid, maxM0);
+            fprintf(stderr, "[gpu_hnsw_diag] layer0 node %u: %d/%d valid neighbors", nid, valid, maxM0);
             fprintf(stderr, " [");
             for (int j = 0; j < std::min(5, maxM0); j++) {
                 uint32_t nb = h_layer0_flat[nid * maxM0 + j];
-                if (nb != UINT32_MAX) fprintf(stderr, "%u ", nb);
-                else fprintf(stderr, "- ");
+                if (nb != UINT32_MAX)
+                    fprintf(stderr, "%u ", nb);
+                else
+                    fprintf(stderr, "- ");
             }
             fprintf(stderr, "...]\n");
         }
@@ -141,39 +138,38 @@ inline void extract_faiss_hnsw_layers(const faiss::cppcontrib::knowhere::HNSW& h
             uint32_t empty_slots = 0;
             for (uint32_t idx2 = 0; idx2 < check_nodes; idx2++) {
                 for (int j = 0; j < maxM; j++) {
-                    if (h_neighbors[idx2 * maxM + j] == UINT32_MAX) empty_slots++;
+                    if (h_neighbors[idx2 * maxM + j] == UINT32_MAX)
+                        empty_slots++;
                 }
             }
             bool ep_in_layer = false;
             for (uint32_t idx2 = 0; idx2 < ul.num_nodes; idx2++) {
-                if (node_ids[idx2] == entry_point) { ep_in_layer = true; break; }
+                if (node_ids[idx2] == entry_point) {
+                    ep_in_layer = true;
+                    break;
+                }
             }
             fprintf(stderr,
                     "[gpu_hnsw_diag]   layer %d: %u nodes, ep_in_layer=%s, "
                     "first-%u-nodes empty_neighbor_slots=%u/%u\n",
-                    layer, ul.num_nodes, ep_in_layer ? "YES" : "NO",
-                    check_nodes, empty_slots, total_slots);
+                    layer, ul.num_nodes, ep_in_layer ? "YES" : "NO", check_nodes, empty_slots, total_slots);
         }
 #endif
 
         // Upload to device
-        GPU_HNSW_BUILD_CUDA_CHECK(cudaMalloc(&ul.d_node_ids,
-                                              ul.num_nodes * sizeof(uint32_t)));
-        GPU_HNSW_BUILD_CUDA_CHECK(cudaMemcpy(ul.d_node_ids, h_node_ids.data(),
-                                              ul.num_nodes * sizeof(uint32_t),
-                                              cudaMemcpyHostToDevice));
+        GPU_HNSW_BUILD_CUDA_CHECK(cudaMalloc(&ul.d_node_ids, ul.num_nodes * sizeof(uint32_t)));
+        GPU_HNSW_BUILD_CUDA_CHECK(
+            cudaMemcpy(ul.d_node_ids, h_node_ids.data(), ul.num_nodes * sizeof(uint32_t), cudaMemcpyHostToDevice));
 
-        GPU_HNSW_BUILD_CUDA_CHECK(cudaMalloc(&ul.d_neighbors,
-                                              ul.num_nodes * maxM * sizeof(uint32_t)));
-        GPU_HNSW_BUILD_CUDA_CHECK(cudaMemcpy(ul.d_neighbors, h_neighbors.data(),
-                                              ul.num_nodes * maxM * sizeof(uint32_t),
-                                              cudaMemcpyHostToDevice));
+        GPU_HNSW_BUILD_CUDA_CHECK(cudaMalloc(&ul.d_neighbors, ul.num_nodes * maxM * sizeof(uint32_t)));
+        GPU_HNSW_BUILD_CUDA_CHECK(cudaMemcpy(ul.d_neighbors, h_neighbors.data(), ul.num_nodes * maxM * sizeof(uint32_t),
+                                             cudaMemcpyHostToDevice));
     }
 }
 
 // Normalize stored vectors in-place to unit L2 length (for COSINE metric).
-inline void normalize_vectors(std::vector<float>& h_vectors, int64_t n_rows, int64_t dim)
-{
+inline void
+normalize_vectors(std::vector<float>& h_vectors, int64_t n_rows, int64_t dim) {
     for (int64_t i = 0; i < n_rows; i++) {
         float* v = h_vectors.data() + i * dim;
         float sq_norm = 0.0f;
@@ -187,12 +183,9 @@ inline void normalize_vectors(std::vector<float>& h_vectors, int64_t n_rows, int
 
 // Upload float32 vectors and HNSW graph to GPU, populating idx in-place.
 // h_vectors may be modified (e.g. for cosine normalization) before calling.
-inline void upload_to_gpu(gpu_hnsw_index& idx,
-                           std::vector<float>& h_vectors,
-                           const faiss::cppcontrib::knowhere::HNSW& hnsw,
-                           int64_t n_rows,
-                           bool is_cosine)
-{
+inline void
+upload_to_gpu(gpu_hnsw_index& idx, std::vector<float>& h_vectors, const faiss::cppcontrib::knowhere::HNSW& hnsw,
+              int64_t n_rows, bool is_cosine) {
     int64_t dim = idx.dim;
 
     // For COSINE metric: pre-normalize stored vectors to unit length.
@@ -205,19 +198,37 @@ inline void upload_to_gpu(gpu_hnsw_index& idx,
     // Upload float32 vectors
     size_t dataset_bytes = static_cast<size_t>(n_rows) * dim * sizeof(float);
     GPU_HNSW_BUILD_CUDA_CHECK(cudaMalloc(&idx.d_dataset, dataset_bytes));
-    GPU_HNSW_BUILD_CUDA_CHECK(cudaMemcpy(idx.d_dataset, h_vectors.data(),
-                                          dataset_bytes, cudaMemcpyHostToDevice));
+    GPU_HNSW_BUILD_CUDA_CHECK(cudaMemcpy(idx.d_dataset, h_vectors.data(), dataset_bytes, cudaMemcpyHostToDevice));
 
     // Extract and upload graph
     std::vector<uint32_t> h_layer0_flat;
-    extract_faiss_hnsw_layers(hnsw, n_rows,
-                               idx.upper_layers, h_layer0_flat,
-                               idx.entry_point, idx.M, idx.max_degree0, idx.num_layers);
+    extract_faiss_hnsw_layers(hnsw, n_rows, idx.upper_layers, h_layer0_flat, idx.entry_point, idx.M, idx.max_degree0,
+                              idx.num_layers);
 
     size_t graph0_bytes = static_cast<size_t>(n_rows) * idx.max_degree0 * sizeof(uint32_t);
     GPU_HNSW_BUILD_CUDA_CHECK(cudaMalloc(&idx.d_layer0_graph, graph0_bytes));
-    GPU_HNSW_BUILD_CUDA_CHECK(cudaMemcpy(idx.d_layer0_graph, h_layer0_flat.data(),
-                                          graph0_bytes, cudaMemcpyHostToDevice));
+    GPU_HNSW_BUILD_CUDA_CHECK(
+        cudaMemcpy(idx.d_layer0_graph, h_layer0_flat.data(), graph0_bytes, cudaMemcpyHostToDevice));
+
+    // Pre-build upper layer device pointer array (avoids per-search alloc + upload).
+    // Layout mirrors kernel::upper_layer_ptrs: {d_node_ids, d_neighbors, num_nodes, max_degree}.
+    int num_upper = static_cast<int>(idx.upper_layers.size());
+    idx.num_upper_layers_built = num_upper;
+    if (num_upper > 0) {
+        using kernel_ptrs = cuvs::neighbors::gpu_hnsw::detail::upper_layer_ptrs;
+        std::vector<kernel_ptrs> h_ptrs(num_upper);
+        for (int i = 0; i < num_upper; i++) {
+            const auto& ul = idx.upper_layers[i];
+            h_ptrs[i] = {ul.d_node_ids, ul.d_neighbors, ul.num_nodes, ul.max_degree};
+        }
+        size_t ptrs_bytes = num_upper * sizeof(kernel_ptrs);
+        GPU_HNSW_BUILD_CUDA_CHECK(cudaMalloc(&idx.d_upper_layer_ptrs, ptrs_bytes));
+        GPU_HNSW_BUILD_CUDA_CHECK(
+            cudaMemcpy(idx.d_upper_layer_ptrs, h_ptrs.data(), ptrs_bytes, cudaMemcpyHostToDevice));
+    }
+
+    // Create a dedicated CUDA stream for async search operations.
+    GPU_HNSW_BUILD_CUDA_CHECK(cudaStreamCreateWithFlags(&idx.search_stream, cudaStreamNonBlocking));
 }
 
 // Build a gpu_hnsw_index from a faiss::IndexHNSW whose storage is
@@ -225,27 +236,23 @@ inline void upload_to_gpu(gpu_hnsw_index& idx,
 // The quantized codes are dequantized to float32 before uploading to the GPU.
 // @param use_ip       true for IP/COSINE metrics (GPU kernel uses inner product)
 // @param is_cosine    true for COSINE metric (stored vectors must be normalized)
-inline std::unique_ptr<gpu_hnsw_index> from_faiss_hnsw_sq(
-    const faiss::cppcontrib::knowhere::IndexHNSW& hnsw_index,
-    bool use_ip,
-    bool is_cosine = false)
-{
-    const auto* sq_storage = dynamic_cast<const faiss::IndexScalarQuantizer*>(
-        hnsw_index.storage);
+inline std::unique_ptr<gpu_hnsw_index>
+from_faiss_hnsw_sq(const faiss::cppcontrib::knowhere::IndexHNSW& hnsw_index, bool use_ip, bool is_cosine = false) {
+    const auto* sq_storage = dynamic_cast<const faiss::IndexScalarQuantizer*>(hnsw_index.storage);
     if (!sq_storage)
         throw std::runtime_error("gpu_hnsw: storage is not IndexScalarQuantizer");
 
     int64_t n_rows = hnsw_index.ntotal;
-    int64_t dim    = hnsw_index.d;
+    int64_t dim = hnsw_index.d;
 
     // Dequantize all vectors: quantized codes → float32
     std::vector<float> h_vectors(n_rows * dim);
     sq_storage->sa_decode(n_rows, sq_storage->codes.data(), h_vectors.data());
 
     auto idx = std::make_unique<gpu_hnsw_index>();
-    idx->n_rows  = n_rows;
-    idx->dim     = dim;
-    idx->use_ip  = use_ip;
+    idx->n_rows = n_rows;
+    idx->dim = dim;
+    idx->use_ip = use_ip;
 
     upload_to_gpu(*idx, h_vectors, hnsw_index.hnsw, n_rows, is_cosine);
     return idx;
@@ -255,27 +262,23 @@ inline std::unique_ptr<gpu_hnsw_index> from_faiss_hnsw_sq(
 // IndexFlat (plain float32 — i.e. the standard HNSW / IndexHNSWFlat).
 // @param use_ip       true for IP/COSINE metrics (GPU kernel uses inner product)
 // @param is_cosine    true for COSINE metric (stored vectors must be normalized)
-inline std::unique_ptr<gpu_hnsw_index> from_faiss_hnsw_flat(
-    const faiss::cppcontrib::knowhere::IndexHNSW& hnsw_index,
-    bool use_ip,
-    bool is_cosine = false)
-{
-    const auto* flat_storage = dynamic_cast<const faiss::IndexFlat*>(
-        hnsw_index.storage);
+inline std::unique_ptr<gpu_hnsw_index>
+from_faiss_hnsw_flat(const faiss::cppcontrib::knowhere::IndexHNSW& hnsw_index, bool use_ip, bool is_cosine = false) {
+    const auto* flat_storage = dynamic_cast<const faiss::IndexFlat*>(hnsw_index.storage);
     if (!flat_storage)
         throw std::runtime_error("gpu_hnsw: storage is not IndexFlat");
 
     int64_t n_rows = hnsw_index.ntotal;
-    int64_t dim    = hnsw_index.d;
+    int64_t dim = hnsw_index.d;
 
     // Copy raw float32 vectors from IndexFlat (stored as uint8 codes, accessed via get_xb())
     const float* xb = flat_storage->get_xb();
     std::vector<float> h_vectors(xb, xb + n_rows * dim);
 
     auto idx = std::make_unique<gpu_hnsw_index>();
-    idx->n_rows  = n_rows;
-    idx->dim     = dim;
-    idx->use_ip  = use_ip;
+    idx->n_rows = n_rows;
+    idx->dim = dim;
+    idx->use_ip = use_ip;
 
     upload_to_gpu(*idx, h_vectors, hnsw_index.hnsw, n_rows, is_cosine);
     return idx;
