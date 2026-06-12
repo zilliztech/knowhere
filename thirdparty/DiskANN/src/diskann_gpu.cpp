@@ -41,6 +41,7 @@
 #include <fstream>
 #include <iostream>
 #include <raft/core/resources.hpp>
+#include <raft/core/host_mdarray.hpp>
 #include <cuvs/neighbors/brute_force.hpp>
 
 template<typename T, typename idxT>
@@ -122,9 +123,9 @@ void vamana_build_and_write(raft::device_resources const &dev_resources,
 	serialize(dev_resources, out_fname, index, false);
 }
 
-void kmeans_gpu(raft::resources &dev_resources, const float *h_chunk_data,
+void kmeans_gpu_device_data(const raft::resources &dev_resources, const float *d_chunk_data,
 		size_t num_train, size_t dim, size_t num_centers, int max_iter,
-		float *h_centroids_out, bool is_balanced/*=false*/) {
+		float *d_centroids_out, bool is_balanced/*=false*/) {
 	// KMeans parameters
 	cuvs::cluster::kmeans::params km_params;
 	int64_t n_iter;
@@ -133,34 +134,73 @@ void kmeans_gpu(raft::resources &dev_resources, const float *h_chunk_data,
 	km_params.n_init = 1;
 	km_params.n_clusters = num_centers;
 
+	auto d_data = raft::make_device_matrix_view<const float, int64_t>(d_chunk_data, num_train, dim);
+	auto d_centroids = raft::make_device_matrix_view<float, int64_t>(d_centroids_out, num_centers, dim);
+
+	// Run KMeans (fit uses RAFT-managed streams internally)
+	if(!is_balanced) {
+		cuvs::cluster::kmeans::fit(dev_resources, km_params,
+				d_data, std::nullopt,
+				d_centroids,
+				raft::make_host_scalar_view<float>(&inertia),
+				raft::make_host_scalar_view<int64_t>(&n_iter));
+	} else {
+		//use balance kmeans
+		cuvs::cluster::kmeans::balanced_params b_p;
+		b_p.n_iters=100;
+		cuvs::cluster::kmeans::fit(dev_resources, b_p, d_data, d_centroids);
+	}
+}
+
+void kmeans_gpu(const raft::resources &dev_resources, const float *h_chunk_data,
+		size_t num_train, size_t dim, size_t num_centers, int max_iter,
+		float *h_centroids_out, bool is_balanced/*=false*/) {
+
 	// Allocate device matrices
 	auto d_data = raft::make_device_matrix<float, int64_t>(dev_resources, num_train, dim);
 	auto d_centroids = raft::make_device_matrix<float, int64_t>(dev_resources, num_centers, dim);
 
-	// Copy input chunk to device asynchronously
+
 	raft::copy(d_data.data_handle(), h_chunk_data, num_train * dim, raft::resource::get_cuda_stream(dev_resources));
-	// Run KMeans (fit uses RAFT-managed streams internally)
-	if(!is_balanced) {
-		cuvs::cluster::kmeans::fit(dev_resources, km_params,
-				raft::make_const_mdspan(d_data.view()), std::nullopt,
-				d_centroids.view(),
-				raft::make_host_scalar_view<float>(&inertia),
-				raft::make_host_scalar_view<int64_t>(&n_iter));
-	}else {
-		//use balance kmeans
-		cuvs::cluster::kmeans::balanced_params b_p;
-		b_p.n_iters=100;
-		cuvs::cluster::kmeans::fit(dev_resources, b_p,
-				raft::make_const_mdspan(d_data.view()), d_centroids.view());
-	}
-	// Copy centroids back to host asynchronously
+	kmeans_gpu_device_data(dev_resources, d_data.data_handle(), num_train, dim, num_centers, max_iter, d_centroids.data_handle(), is_balanced);
 	raft::copy(h_centroids_out, d_centroids.data_handle(), num_centers * dim,
 			raft::resource::get_cuda_stream(dev_resources));
     raft::resource::sync_stream(dev_resources);
 }
 
+void kmeans_medoids_gpu(const raft::resources &dev_resources, const float *h_chunk_data,
+		size_t num_train, size_t dim, size_t num_centers, int max_iter,
+		float *h_centroids_out, bool is_balanced, uint32_t* h_medoids) {
 
-int predict_gpu(raft::resources& handle,
+	// Allocate device matrices
+	auto d_data = raft::make_device_matrix<float, int64_t>(dev_resources, num_train, dim);
+	auto d_centroids = raft::make_device_matrix<float, int64_t>(dev_resources, num_centers, dim);
+    auto d_medoids_i64    = raft::make_device_matrix<int64_t, int64_t>(dev_resources, num_centers, 1);
+	auto h_medoids_i64    = raft::make_host_vector<int64_t, int64_t>(num_centers);
+
+	// Copy input chunk to device asynchronously
+	raft::copy(d_data.data_handle(), h_chunk_data, num_train * dim, raft::resource::get_cuda_stream(dev_resources));
+	kmeans_gpu_device_data(dev_resources, d_data.data_handle(), num_train, dim, num_centers, max_iter, d_centroids.data_handle(), is_balanced);
+
+	// Compute medoids using brute force
+	using namespace cuvs::neighbors;
+	brute_force::index_params bf_index_params;
+	brute_force::search_params bf_search_params;
+	auto index = brute_force::build(dev_resources, bf_index_params, raft::make_const_mdspan(d_data.view()));
+    auto distances = raft::make_device_matrix<float, int64_t>(dev_resources, num_centers, 1);
+
+    brute_force::search(dev_resources, bf_search_params, index,
+		raft::make_const_mdspan(d_centroids.view()), d_medoids_i64.view(), distances.view());
+	raft::copy(h_centroids_out, d_centroids.data_handle(), num_centers * dim,
+			raft::resource::get_cuda_stream(dev_resources));
+	raft::copy(h_medoids_i64.data_handle(), d_medoids_i64.data_handle(), num_centers, raft::resource::get_cuda_stream(dev_resources));
+    raft::resource::sync_stream(dev_resources);
+	for (size_t i = 0; i < num_centers; ++i) {
+		h_medoids[i] = static_cast<uint32_t>(h_medoids_i64(i));
+	}
+}
+
+int predict_gpu(const raft::resources& handle,
                 const float* h_data,
                 size_t n_samples,
                 size_t dim,
@@ -214,7 +254,7 @@ bool is_gpu_available() {
 	return (cudaGetDeviceCount(&count) == cudaSuccess) && (count > 0);
 }
 
-void gpu_get_mem_info(raft::resources &dev_resources, size_t &gpu_free_mem,
+void gpu_get_mem_info(const raft::resources &dev_resources, size_t &gpu_free_mem,
 		size_t &gpu_total_mem) {
     int dev = raft::resource::get_device_id(dev_resources);
 
@@ -230,7 +270,7 @@ void gpu_get_mem_info(raft::resources &dev_resources, size_t &gpu_free_mem,
 }
 
 template<typename T>
-int brute_force_gpu(raft::resources &dev_resources, const T *h_data,
+int brute_force_gpu(const raft::resources &dev_resources, const T *h_data,
 		size_t n_samples, size_t dim, size_t k, const T *queries,
 		size_t n_queries, int64_t *h_labels) {
 	using namespace cuvs::neighbors;
@@ -281,7 +321,7 @@ template void vamana_build_and_write<uint8_t>(
 		std::string out_fname, int degree, int visited_size, float max_fraction,
 		int iters);
 
-template int brute_force_gpu<float>(raft::resources& dev_resources,
+template int brute_force_gpu<float>(const raft::resources &dev_resources,
 		const float* h_data,
         size_t n_samples,
         size_t dim,

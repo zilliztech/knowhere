@@ -208,19 +208,18 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
     return -1;
   }
 
-  std::unique_ptr<float[]> train_data =
-      std::make_unique<float[]>(num_train * dim);
-  std::memcpy(train_data.get(), passed_train_data,
-              num_train * dim * sizeof(float));
-
-  for (uint64_t i = 0; i < num_train; i++) {
-    for (uint64_t j = 0; j < dim; j++) {
-      if (passed_train_data[i * dim + j] != train_data[i * dim + j])
-        LOG(ERROR) << "error in copy, (" << i << ", " << j << ") "
-                   << train_data[i * dim + j] << " vs. "
-                   << passed_train_data[i * dim + j] << " (0x" << std::hex
-                   << *(int32_t*)(&train_data[i * dim + j]) << ")";
-    }
+  bool use_gpu = false;
+#ifdef KNOWHERE_WITH_CUVS
+  auto const& res = raft::device_resources_manager::get_device_resources();
+  if (is_gpu_available()) {
+    use_gpu = true;
+  }
+#endif
+  std::unique_ptr<float[]> train_data;
+  if (!use_gpu) {
+    train_data = std::make_unique<float[]>(num_train * dim);
+    std::memcpy(train_data.get(), passed_train_data,
+                num_train * dim * sizeof(float));
   }
 
   std::unique_ptr<float[]> full_pivot_data;
@@ -240,7 +239,7 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
   for (uint64_t d = 0; d < dim; d++) {
     centroid[d] = 0;
   }
-  if (make_zero_mean) {  // If we use L2 distance, there is an option to
+  if (make_zero_mean && !use_gpu) {  // If we use L2 distance, there is an option to
                          // translate all vectors to make them centered and then
                          // compute PQ. This needs to be set to false when using
                          // PQ for MIPS as such translations dont preserve inner
@@ -331,32 +330,32 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
     if (num_train < num_centers) {
       LOG_KNOWHERE_INFO_ << "num_centers(" << num_centers << ") > num_train(" << num_train << "), switching to CPU";
     } else {
-      raft::resources res;
       LOG_KNOWHERE_INFO_ << "Running pq with " << num_centers << " clusters, pq "<< num_pq_chunks<< " ...using GPU!";
+      // Allocate once memory with maximum chunk size
+      auto cur_pivot_data = raft::make_device_matrix<float, int64_t>(res, num_centers, high_val);
+      auto cur_data = raft::make_device_matrix<float, int64_t>(res, num_train, high_val);
+      auto d_centroid = raft::make_device_vector<float, int64_t>(res, dim);
+
       for (size_t i = 0; i < num_pq_chunks; i++) {
         size_t cur_chunk_size = chunk_offsets[i + 1] - chunk_offsets[i];
         if (cur_chunk_size == 0)
           continue;
-        std::unique_ptr<float[]> cur_pivot_data =
-          std::make_unique<float[]>(num_centers * cur_chunk_size);
-        std::unique_ptr<float[]> cur_data =
-          std::make_unique<float[]>(num_train * cur_chunk_size);
-        std::unique_ptr<uint32_t[]> closest_center =
-          std::make_unique<uint32_t[]>(num_train);
-        for (int64_t j = 0; j < (_s64) num_train; j++) {
-          std::memcpy(cur_data.get() + j * cur_chunk_size,
-                  train_data.get() + j * dim + chunk_offsets[i],
-                  cur_chunk_size * sizeof(float));
+        
+        raft::copy_matrix<float>(cur_data.data_handle(), cur_chunk_size, passed_train_data + chunk_offsets[i],
+                           dim, cur_chunk_size, num_train, raft::resource::get_cuda_stream(res));
+        
+        if (make_zero_mean) {
+          mean_center_gpu(res, cur_data.data_handle(), num_train, cur_chunk_size, d_centroid.data_handle());
+          raft::copy(centroid.get(), d_centroid.data_handle(), dim, raft::resource::get_cuda_stream(res));
         }
-        kmeans_gpu(res,cur_data.get(), num_train, cur_chunk_size,
-                num_centers, max_k_means_reps, cur_pivot_data.get());
-
-        for (uint64_t j = 0; j < num_centers; j++) {
-          std::memcpy(full_pivot_data.get() + j * dim + chunk_offsets[i],
-                  cur_pivot_data.get() + j * cur_chunk_size,
-                  cur_chunk_size * sizeof(float));
-        }
+        kmeans_gpu_device_data(res, cur_data.data_handle(), num_train, cur_chunk_size,
+                num_centers, max_k_means_reps, cur_pivot_data.data_handle());
+        
+        raft::copy_matrix<float>(full_pivot_data.get() + chunk_offsets[i], dim, cur_pivot_data.data_handle(),
+                          cur_chunk_size, cur_chunk_size, num_centers,
+                          raft::resource::get_cuda_stream(res));
       }
+      raft::resource::sync_stream(res);
       used_gpu = true;
     }
   }
@@ -617,7 +616,7 @@ int generate_pq_data_from_pivots(const std::string data_file,
         bool predicted_with_gpu=false;
 #if defined(KNOWHERE_WITH_CUVS)
         if (is_gpu_available()) {
-            raft::resources res;
+          auto const& res = raft::device_resources_manager::get_device_resources();
             predict_gpu(res, cur_data.get(), cur_blk_size, chunk_size,
                          cur_pivot_data.get(), num_centers,
                          reinterpret_cast<int*>(closest_center.get()));
@@ -711,14 +710,14 @@ int estimate_cluster_sizes(float *test_data_float, size_t num_test,
 #ifdef KNOWHERE_WITH_CUVS
 	    // GPU path
         if(is_gpu_available()) {
-		  raft::resources res;
-		  if(block %1000 == 0) {
-			  LOG_KNOWHERE_INFO_ << "Running brute force for " << cur_blk_size << " vectors...using GPU!";
-		  }
-		  brute_force_gpu(res, pivots, num_centers, test_dim, k_candidates,
-				  block_data_float, cur_blk_size, block_closest_centers.get());
+          auto const& res = raft::device_resources_manager::get_device_resources();
+          if(block %1000 == 0) {
+            LOG_KNOWHERE_INFO_ << "Running brute force for " << cur_blk_size << " vectors...using GPU!";
+          }
+          brute_force_gpu(res, pivots, num_centers, test_dim, k_candidates,
+              block_data_float, cur_blk_size, block_closest_centers.get());
 
-		  used_gpu = true;
+          used_gpu = true;
         }
 #endif
         if(!used_gpu) {
@@ -828,7 +827,7 @@ int shard_data_into_clusters(const std::string data_file, float *pivots,
 #ifdef KNOWHERE_WITH_CUVS
     // GPU path
     if(is_gpu_available()) {
-      raft::resources res;
+      auto const& res = raft::device_resources_manager::get_device_resources();
       if(block %1000 == 0) {
         LOG_KNOWHERE_INFO_ << "Running brute force for " << cur_blk_size << " vectors...using GPU!";
       }
@@ -941,7 +940,7 @@ int shard_data_into_clusters_only_ids(const std::string data_file,
 #ifdef KNOWHERE_WITH_CUVS
 		// GPU path
 		if(is_gpu_available()) {
-		  raft::resources res;
+      auto const& res = raft::device_resources_manager::get_device_resources();
 		  if(block %1000 == 0) {
 			  LOG_KNOWHERE_INFO_ << "Running brute force for " << cur_blk_size << " vectors...using GPU!";
 		  }
@@ -1108,7 +1107,7 @@ int partition(const std::string data_file, const float sampling_rate,
     if (num_train < num_parts) {
       LOG_KNOWHERE_INFO_ << "num_centers(" << num_parts << ") > num_train(" << num_train << "), switching to CPU";
     } else {
-      raft::resources res;
+      auto const& res = raft::device_resources_manager::get_device_resources();
       LOG_KNOWHERE_INFO_ << "Running k-means with " << num_parts << " clusters...using GPU!";
       kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
               num_parts, max_k_means_reps, pivot_data.get());
@@ -1183,7 +1182,7 @@ int partition_with_ram_budget(const std::string data_file,
       if (num_train < num_parts) {
         LOG_KNOWHERE_INFO_ << "num_centers(" << num_parts << ") > num_train(" << num_train << "), switching to CPU";
       } else {
-        raft::resources res;
+        auto const& res = raft::device_resources_manager::get_device_resources();
         LOG_KNOWHERE_INFO_ << "Running k-means with " << num_parts << " clusters " << num_train << " " << train_dim << " ...using GPU!";
         kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
                 num_parts, max_k_means_reps, pivot_data.get(), true);
@@ -1257,6 +1256,7 @@ int partition_calc_kmeans(const std::string &data_file, const std::string &outpu
 
     // Allocate centroids
     std::vector<float> centroids(k * train_dim);
+    std::vector<uint32_t> medoids(k);
     // Perform k-means clustering
     bool used_gpu = false;
 #ifdef KNOWHERE_WITH_CUVS
@@ -1266,10 +1266,10 @@ int partition_calc_kmeans(const std::string &data_file, const std::string &outpu
       if (num_train < k) {
         LOG_KNOWHERE_INFO_ << "num_centers(" << k << ") > num_train(" << num_train << "), switching to CPU";
       } else {
-        raft::resources res;
+        auto const& res = raft::device_resources_manager::get_device_resources();
         LOG_KNOWHERE_INFO_ << "Running k-means with " << k << " clusters...using GPU!";
-        kmeans_gpu(res,train_data_float.get(), num_train, train_dim,
-                k, kNumOfIterations, centroids.data());
+        kmeans_medoids_gpu(res,train_data_float.get(), num_train, train_dim,
+                k, kNumOfIterations, centroids.data(), false, medoids.data());
         used_gpu = true;
       }
     }
@@ -1279,23 +1279,21 @@ int partition_calc_kmeans(const std::string &data_file, const std::string &outpu
       kmeans::kmeanspp_selecting_pivots(train_data_float.get(), num_train, train_dim, centroids.data(), k);
       LOG_KNOWHERE_INFO_ << "Running LLoyds " << k << " clusters...";
       kmeans::run_lloyds(train_data_float.get(), num_train, train_dim, centroids.data(), k, kNumOfIterations, nullptr, nullptr);
-    }
-
-    std::vector<uint32_t> medoids(k);
-    // Parallel computation of medoids
-#pragma omp parallel for schedule(dynamic)
-    for (size_t i = 0; i < k; i++) {
-        float min_dist = std::numeric_limits<float>::max();
-        uint32_t best_idx = 0;
-        float *centroid = centroids.data() + i * train_dim;
-        for (uint32_t j = 0; j < num_train; j++) {
-            float dist = math_utils::calc_distance(train_data_float.get() + (j * train_dim), centroid, train_dim);
-            if (dist < min_dist) {
-                min_dist = dist;
-                best_idx = j;
-            }
-        }
-        medoids[i] = sampled_ids[best_idx];
+      // Parallel computation of medoids
+      #pragma omp parallel for schedule(dynamic)
+      for (size_t i = 0; i < k; i++) {
+          float min_dist = std::numeric_limits<float>::max();
+          uint32_t best_idx = 0;
+          float *centroid = centroids.data() + i * train_dim;
+          for (uint32_t j = 0; j < num_train; j++) {
+              float dist = math_utils::calc_distance(train_data_float.get() + (j * train_dim), centroid, train_dim);
+              if (dist < min_dist) {
+                  min_dist = dist;
+                  best_idx = j;
+              }
+          }
+          medoids[i] = sampled_ids[best_idx];
+      }
     }
     diskann::save_bin<uint32_t>(output_file.c_str(), medoids.data(), k, 1);
     float* temp_float = train_data_float.release();

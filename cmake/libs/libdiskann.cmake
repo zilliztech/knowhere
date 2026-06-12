@@ -33,6 +33,7 @@ set(DISKANN_LINKER_LIBS PUBLIC ${AIO_LIBRARIES} ${DISKANN_BOOST_PROGRAM_OPTIONS_
 if (WITH_CUVS)
     list(APPEND DISKANN_LINKER_LIBS PRIVATE cuvs::cuvs)
     list(APPEND DISKANN_SOURCES thirdparty/DiskANN/src/diskann_gpu.cpp)
+    list(APPEND DISKANN_SOURCES thirdparty/DiskANN/src/mean_center_gpu.cu)
 endif()
 
 add_library(diskann STATIC ${DISKANN_SOURCES})
