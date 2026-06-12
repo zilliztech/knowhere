@@ -3437,6 +3437,16 @@ KNOWHERE_REGISTER_GLOBAL(GPU_HNSW,
                              return Index<GpuHnswIndexNode>::Create(version, object);
                          },
                          fp32, true, feature::GPU_ANN_FLOAT_INDEX);
+
+// int8 input: convert to fp32 via mock wrapper, then delegate to GpuHnswIndexNode.
+// GpuHnswIndexNode is not a template, so we cannot use KNOWHERE_MOCK_REGISTER_GLOBAL
+// which requires index_node<fp32, ...> instantiation. Instead register manually.
+KNOWHERE_REGISTER_GLOBAL(GPU_HNSW,
+                         [](const int32_t& version, const Object& object) {
+                             return Index<IndexNodeDataMockWrapper<int8>>::Create(
+                                 std::make_unique<GpuHnswIndexNode>(version, object));
+                         },
+                         int8, true, (feature::INT8 | feature::GPU));
 #endif  // KNOWHERE_WITH_CUVS
 
 }  // namespace knowhere

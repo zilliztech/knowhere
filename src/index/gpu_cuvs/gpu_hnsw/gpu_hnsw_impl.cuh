@@ -9,6 +9,9 @@
 #include "gpu_hnsw_search_kernel.cuh"
 
 #include <cuda_runtime.h>
+#include <algorithm>
+#include <cstdio>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -68,6 +71,21 @@ inline void search(cudaStream_t stream,
             d_queries, idx.d_dataset, d_layer_ptrs, d_entry_points,
             idx.entry_point, num_queries, dim, num_upper_layers, idx.use_ip);
         GPU_HNSW_CUDA_CHECK(cudaGetLastError());
+        GPU_HNSW_CUDA_CHECK(cudaStreamSynchronize(stream));
+
+        // Diagnostic: check how many unique entry points were produced
+        {
+            std::vector<uint32_t> h_eps(num_queries);
+            GPU_HNSW_CUDA_CHECK(cudaMemcpy(h_eps.data(), d_entry_points,
+                                            num_queries * sizeof(uint32_t),
+                                            cudaMemcpyDeviceToHost));
+            std::set<uint32_t> unique_eps(h_eps.begin(), h_eps.end());
+            fprintf(stderr,
+                    "[gpu_hnsw_diag] search: %d queries, %zu unique entry points "
+                    "(global_ep=%u, first_ep=%u, last_ep=%u)\n",
+                    num_queries, unique_eps.size(), idx.entry_point,
+                    h_eps.front(), h_eps.back());
+        }
 
         GPU_HNSW_CUDA_CHECK(cudaFree(d_layer_ptrs));
     } else {

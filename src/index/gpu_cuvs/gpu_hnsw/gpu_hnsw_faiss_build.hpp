@@ -17,6 +17,7 @@
 
 #include <cuda_runtime.h>
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -60,6 +61,9 @@ inline void extract_faiss_hnsw_layers(const faiss::cppcontrib::knowhere::HNSW& h
     max_degree0 = maxM0;
     num_layers  = max_lv + 1;
 
+    fprintf(stderr, "[gpu_hnsw_diag] n_rows=%ld entry_point=%u max_level=%d maxM0=%d maxM=%d\n",
+            (long)n_rows, entry_point, max_lv, maxM0, maxM);
+
     // --- Layer 0: dense [n_rows x maxM0] ---
     h_layer0_flat.assign(n_rows * maxM0, UINT32_MAX);
     for (int64_t i = 0; i < n_rows; i++) {
@@ -101,6 +105,27 @@ inline void extract_faiss_hnsw_layers(const faiss::cppcontrib::knowhere::HNSW& h
                 if (nb >= 0)
                     h_neighbors[idx * maxM + j] = static_cast<uint32_t>(nb);
             }
+        }
+
+        // Diagnose neighbor occupancy: count UINT32_MAX slots in first 10 nodes
+        {
+            uint32_t check_nodes = std::min(ul.num_nodes, (uint32_t)10);
+            uint32_t total_slots = check_nodes * maxM;
+            uint32_t empty_slots = 0;
+            for (uint32_t idx2 = 0; idx2 < check_nodes; idx2++) {
+                for (int j = 0; j < maxM; j++) {
+                    if (h_neighbors[idx2 * maxM + j] == UINT32_MAX) empty_slots++;
+                }
+            }
+            bool ep_in_layer = false;
+            for (uint32_t idx2 = 0; idx2 < ul.num_nodes; idx2++) {
+                if (node_ids[idx2] == entry_point) { ep_in_layer = true; break; }
+            }
+            fprintf(stderr,
+                    "[gpu_hnsw_diag]   layer %d: %u nodes, ep_in_layer=%s, "
+                    "first-%u-nodes empty_neighbor_slots=%u/%u\n",
+                    layer, ul.num_nodes, ep_in_layer ? "YES" : "NO",
+                    check_nodes, empty_slots, total_slots);
         }
 
         // Upload to device
