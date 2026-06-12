@@ -181,26 +181,10 @@ normalize_vectors(std::vector<float>& h_vectors, int64_t n_rows, int64_t dim) {
     }
 }
 
-// Upload float32 vectors and HNSW graph to GPU, populating idx in-place.
-// h_vectors may be modified (e.g. for cosine normalization) before calling.
+// Upload HNSW graph structure, pre-build layer pointers, and create search stream.
+// Dataset vectors must be uploaded separately before calling this.
 inline void
-upload_to_gpu(gpu_hnsw_index& idx, std::vector<float>& h_vectors, const faiss::cppcontrib::knowhere::HNSW& hnsw,
-              int64_t n_rows, bool is_cosine) {
-    int64_t dim = idx.dim;
-
-    // For COSINE metric: pre-normalize stored vectors to unit length.
-    // Our GPU kernel computes plain inner product when use_ip=true, so
-    // IP(q/|q|, v/|v|) = cosine(q,v) after normalization.
-    if (is_cosine) {
-        normalize_vectors(h_vectors, n_rows, dim);
-    }
-
-    // Upload float32 vectors
-    size_t dataset_bytes = static_cast<size_t>(n_rows) * dim * sizeof(float);
-    GPU_HNSW_BUILD_CUDA_CHECK(cudaMalloc(&idx.d_dataset, dataset_bytes));
-    GPU_HNSW_BUILD_CUDA_CHECK(cudaMemcpy(idx.d_dataset, h_vectors.data(), dataset_bytes, cudaMemcpyHostToDevice));
-
-    // Extract and upload graph
+upload_graph_to_gpu(gpu_hnsw_index& idx, const faiss::cppcontrib::knowhere::HNSW& hnsw, int64_t n_rows) {
     std::vector<uint32_t> h_layer0_flat;
     extract_faiss_hnsw_layers(hnsw, n_rows, idx.upper_layers, h_layer0_flat, idx.entry_point, idx.M, idx.max_degree0,
                               idx.num_layers);
@@ -210,8 +194,6 @@ upload_to_gpu(gpu_hnsw_index& idx, std::vector<float>& h_vectors, const faiss::c
     GPU_HNSW_BUILD_CUDA_CHECK(
         cudaMemcpy(idx.d_layer0_graph, h_layer0_flat.data(), graph0_bytes, cudaMemcpyHostToDevice));
 
-    // Pre-build upper layer device pointer array (avoids per-search alloc + upload).
-    // Layout mirrors kernel::upper_layer_ptrs: {d_node_ids, d_neighbors, num_nodes, max_degree}.
     int num_upper = static_cast<int>(idx.upper_layers.size());
     idx.num_upper_layers_built = num_upper;
     if (num_upper > 0) {
@@ -227,15 +209,57 @@ upload_to_gpu(gpu_hnsw_index& idx, std::vector<float>& h_vectors, const faiss::c
             cudaMemcpy(idx.d_upper_layer_ptrs, h_ptrs.data(), ptrs_bytes, cudaMemcpyHostToDevice));
     }
 
-    // Create a dedicated CUDA stream for async search operations.
     GPU_HNSW_BUILD_CUDA_CHECK(cudaStreamCreateWithFlags(&idx.search_stream, cudaStreamNonBlocking));
+}
+
+// Upload float32 vectors to GPU (used for IndexFlat and non-direct SQ types).
+inline void
+upload_fp32_dataset(gpu_hnsw_index& idx, std::vector<float>& h_vectors, int64_t n_rows, bool is_cosine) {
+    int64_t dim = idx.dim;
+    if (is_cosine)
+        normalize_vectors(h_vectors, n_rows, dim);
+
+    size_t dataset_bytes = static_cast<size_t>(n_rows) * dim * sizeof(float);
+    GPU_HNSW_BUILD_CUDA_CHECK(cudaMalloc(&idx.d_dataset, dataset_bytes));
+    GPU_HNSW_BUILD_CUDA_CHECK(cudaMemcpy(idx.d_dataset, h_vectors.data(), dataset_bytes, cudaMemcpyHostToDevice));
+    idx.dataset_int8 = false;
+}
+
+// Upload raw INT8 codes directly to GPU (4x smaller than float32).
+// For COSINE metric: also computes and uploads reciprocal L2 norms of decoded vectors.
+inline void
+upload_int8_dataset(gpu_hnsw_index& idx, const uint8_t* codes, int64_t n_rows, bool is_cosine) {
+    int64_t dim = idx.dim;
+
+    // Upload raw INT8 codes (1 byte per element)
+    size_t dataset_bytes = static_cast<size_t>(n_rows) * dim;
+    GPU_HNSW_BUILD_CUDA_CHECK(cudaMalloc(&idx.d_dataset, dataset_bytes));
+    GPU_HNSW_BUILD_CUDA_CHECK(cudaMemcpy(idx.d_dataset, codes, dataset_bytes, cudaMemcpyHostToDevice));
+    idx.dataset_int8 = true;
+
+    // For COSINE: compute reciprocal norms so kernel can normalize on-the-fly.
+    // cosine_dist(q_norm, v) = -dot(q_norm, v) * inv_norm[v] = -dot(q_norm, v/|v|)
+    if (is_cosine) {
+        std::vector<float> h_inv_norms(n_rows);
+        for (int64_t i = 0; i < n_rows; i++) {
+            const auto* row = reinterpret_cast<const int8_t*>(codes + i * dim);
+            float sq_norm = 0.0f;
+            for (int64_t d = 0; d < dim; d++) {
+                float v = static_cast<float>(row[d]);
+                sq_norm += v * v;
+            }
+            h_inv_norms[i] = (sq_norm > 0.0f) ? (1.0f / std::sqrt(sq_norm)) : 0.0f;
+        }
+        size_t norms_bytes = static_cast<size_t>(n_rows) * sizeof(float);
+        GPU_HNSW_BUILD_CUDA_CHECK(cudaMalloc(&idx.d_inv_norms, norms_bytes));
+        GPU_HNSW_BUILD_CUDA_CHECK(cudaMemcpy(idx.d_inv_norms, h_inv_norms.data(), norms_bytes, cudaMemcpyHostToDevice));
+    }
 }
 
 // Build a gpu_hnsw_index from a faiss::IndexHNSW whose storage is
 // IndexScalarQuantizer (QT_8bit / QT_fp16 / QT_bf16 etc.).
-// The quantized codes are dequantized to float32 before uploading to the GPU.
-// @param use_ip       true for IP/COSINE metrics (GPU kernel uses inner product)
-// @param is_cosine    true for COSINE metric (stored vectors must be normalized)
+// For QT_8bit_direct_signed: uploads raw INT8 codes (4x smaller than float32).
+// For other types: dequantizes to float32 before uploading.
 inline std::unique_ptr<gpu_hnsw_index>
 from_faiss_hnsw_sq(const faiss::cppcontrib::knowhere::IndexHNSW& hnsw_index, bool use_ip, bool is_cosine = false) {
     const auto* sq_storage = dynamic_cast<const faiss::IndexScalarQuantizer*>(hnsw_index.storage);
@@ -245,23 +269,39 @@ from_faiss_hnsw_sq(const faiss::cppcontrib::knowhere::IndexHNSW& hnsw_index, boo
     int64_t n_rows = hnsw_index.ntotal;
     int64_t dim = hnsw_index.d;
 
-    // Dequantize all vectors: quantized codes → float32
-    std::vector<float> h_vectors(n_rows * dim);
-    sq_storage->sa_decode(n_rows, sq_storage->codes.data(), h_vectors.data());
-
     auto idx = std::make_unique<gpu_hnsw_index>();
     idx->n_rows = n_rows;
     idx->dim = dim;
     idx->use_ip = use_ip;
 
-    upload_to_gpu(*idx, h_vectors, hnsw_index.hnsw, n_rows, is_cosine);
+    bool is_direct_signed = (sq_storage->sq.qtype == faiss::ScalarQuantizer::QT_8bit_direct_signed);
+
+    if (is_direct_signed) {
+        // Fast path: upload raw INT8 codes directly (4x memory savings).
+        // QT_8bit_direct_signed decode is just (float)(int8_t)code — no scaling params.
+        upload_int8_dataset(*idx, sq_storage->codes.data(), n_rows, is_cosine);
+#ifdef GPU_HNSW_DIAGNOSTICS
+        size_t fp32_bytes = static_cast<size_t>(n_rows) * dim * sizeof(float);
+        size_t int8_bytes = static_cast<size_t>(n_rows) * dim;
+        fprintf(stderr,
+                "[gpu_hnsw_diag] INT8 direct upload: %ldM vectors, "
+                "VRAM %.1f MB (vs %.1f MB float32, %.1fx savings)\n",
+                (long)(n_rows / 1000000), int8_bytes / 1048576.0, fp32_bytes / 1048576.0,
+                (double)fp32_bytes / int8_bytes);
+#endif
+    } else {
+        // Fallback: dequantize to float32 (for QT_8bit, QT_fp16, QT_bf16, etc.)
+        std::vector<float> h_vectors(n_rows * dim);
+        sq_storage->sa_decode(n_rows, sq_storage->codes.data(), h_vectors.data());
+        upload_fp32_dataset(*idx, h_vectors, n_rows, is_cosine);
+    }
+
+    upload_graph_to_gpu(*idx, hnsw_index.hnsw, n_rows);
     return idx;
 }
 
 // Build a gpu_hnsw_index from a faiss::IndexHNSW whose storage is
 // IndexFlat (plain float32 — i.e. the standard HNSW / IndexHNSWFlat).
-// @param use_ip       true for IP/COSINE metrics (GPU kernel uses inner product)
-// @param is_cosine    true for COSINE metric (stored vectors must be normalized)
 inline std::unique_ptr<gpu_hnsw_index>
 from_faiss_hnsw_flat(const faiss::cppcontrib::knowhere::IndexHNSW& hnsw_index, bool use_ip, bool is_cosine = false) {
     const auto* flat_storage = dynamic_cast<const faiss::IndexFlat*>(hnsw_index.storage);
@@ -271,7 +311,6 @@ from_faiss_hnsw_flat(const faiss::cppcontrib::knowhere::IndexHNSW& hnsw_index, b
     int64_t n_rows = hnsw_index.ntotal;
     int64_t dim = hnsw_index.d;
 
-    // Copy raw float32 vectors from IndexFlat (stored as uint8 codes, accessed via get_xb())
     const float* xb = flat_storage->get_xb();
     std::vector<float> h_vectors(xb, xb + n_rows * dim);
 
@@ -280,7 +319,8 @@ from_faiss_hnsw_flat(const faiss::cppcontrib::knowhere::IndexHNSW& hnsw_index, b
     idx->dim = dim;
     idx->use_ip = use_ip;
 
-    upload_to_gpu(*idx, h_vectors, hnsw_index.hnsw, n_rows, is_cosine);
+    upload_fp32_dataset(*idx, h_vectors, n_rows, is_cosine);
+    upload_graph_to_gpu(*idx, hnsw_index.hnsw, n_rows);
     return idx;
 }
 

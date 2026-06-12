@@ -101,7 +101,9 @@ struct search_scratch {
 };
 
 struct gpu_hnsw_index {
-    float* d_dataset = nullptr;          // [n_rows x dim], row-major float32
+    void* d_dataset = nullptr;           // [n_rows x dim], row-major. int8 if dataset_int8, else fp32
+    bool dataset_int8 = false;           // true when stored as int8_t (1 byte/elem, direct SQ8)
+    float* d_inv_norms = nullptr;        // [n_rows] reciprocal L2 norms (COSINE + INT8 only)
     uint32_t* d_layer0_graph = nullptr;  // [n_rows x max_degree0]
     std::vector<device_upper_layer> upper_layers;
 
@@ -127,6 +129,8 @@ struct gpu_hnsw_index {
     ~gpu_hnsw_index() {
         if (d_dataset)
             cudaFree(d_dataset);
+        if (d_inv_norms)
+            cudaFree(d_inv_norms);
         if (d_layer0_graph)
             cudaFree(d_layer0_graph);
         for (auto& ul : upper_layers) {

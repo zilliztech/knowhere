@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
 #include <cfloat>
@@ -16,63 +17,40 @@
 namespace cuvs::neighbors::gpu_hnsw::detail {
 
 // ============================================================================
-// Distance computation helpers
+// Distance computation helpers (templated on dataset element type)
 // ============================================================================
 
-/**
- * Warp-cooperative L2 squared distance.
- * All 32 lanes compute partial sums over strided dimensions, then reduce via shuffle.
- * Only lane 0 holds the final result.
- */
 __device__ __forceinline__ float
-warp_l2_distance(const float* __restrict__ a, const float* __restrict__ b, int dim) {
-    float partial = 0.0f;
-    int lane = threadIdx.x % 32;
-    for (int d = lane; d < dim; d += 32) {
-        float diff = a[d] - b[d];
-        partial += diff * diff;
-    }
-    for (int offset = 16; offset > 0; offset >>= 1) {
-        partial += __shfl_down_sync(0xffffffff, partial, offset);
-    }
-    return partial;
+load_elem(const float* ptr, int idx) {
+    return ptr[idx];
+}
+__device__ __forceinline__ float
+load_elem(const half* ptr, int idx) {
+    return __half2float(ptr[idx]);
+}
+__device__ __forceinline__ float
+load_elem(const int8_t* ptr, int idx) {
+    return static_cast<float>(ptr[idx]);
 }
 
-/**
- * Warp-cooperative inner product distance (negated for min-heap compatibility).
- */
+// Single-thread distance: query is always float32, candidate vector is DataT.
+template <typename DataT>
 __device__ __forceinline__ float
-warp_ip_distance(const float* __restrict__ a, const float* __restrict__ b, int dim) {
-    float partial = 0.0f;
-    int lane = threadIdx.x % 32;
-    for (int d = lane; d < dim; d += 32) {
-        partial += a[d] * b[d];
-    }
-    for (int offset = 16; offset > 0; offset >>= 1) {
-        partial += __shfl_down_sync(0xffffffff, partial, offset);
-    }
-    return -partial;
-}
-
-/**
- * Single-thread distance computation (for use in block-parallel patterns
- * where each thread handles one candidate independently).
- */
-__device__ __forceinline__ float
-thread_l2_distance(const float* __restrict__ a, const float* __restrict__ b, int dim) {
+thread_l2_distance(const float* __restrict__ query, const DataT* __restrict__ vec, int dim) {
     float sum = 0.0f;
     for (int d = 0; d < dim; d++) {
-        float diff = a[d] - b[d];
+        float diff = query[d] - load_elem(vec, d);
         sum += diff * diff;
     }
     return sum;
 }
 
+template <typename DataT>
 __device__ __forceinline__ float
-thread_ip_distance(const float* __restrict__ a, const float* __restrict__ b, int dim) {
+thread_ip_distance(const float* __restrict__ query, const DataT* __restrict__ vec, int dim) {
     float sum = 0.0f;
     for (int d = 0; d < dim; d++) {
-        sum += a[d] * b[d];
+        sum += query[d] * load_elem(vec, d);
     }
     return -sum;
 }
@@ -112,8 +90,10 @@ binary_search_node(const uint32_t* d_node_ids, uint32_t n, uint32_t global_id) {
  * (no warp shuffle needed in the inner loop), then the warp reduces to find the
  * global best.
  */
+template <typename DataT>
 __global__ void
-upper_layer_search_kernel(const float* __restrict__ d_queries, const float* __restrict__ d_dataset,
+upper_layer_search_kernel(const float* __restrict__ d_queries, const DataT* __restrict__ d_dataset,
+                          const float* __restrict__ d_inv_norms,  // non-null for COSINE+INT8 (un-normalized vecs)
                           const upper_layer_ptrs* __restrict__ d_layer_ptrs, uint32_t* __restrict__ d_entry_points,
                           uint32_t global_entry_point, int num_queries, int dim, int num_upper_layers,
                           bool use_inner_product) {
@@ -129,13 +109,14 @@ upper_layer_search_kernel(const float* __restrict__ d_queries, const float* __re
     if (lane == 0) {
         if (use_inner_product) {
             best_dist = thread_ip_distance(query, d_dataset + static_cast<int64_t>(current) * dim, dim);
+            if (d_inv_norms)
+                best_dist *= d_inv_norms[current];
         } else {
             best_dist = thread_l2_distance(query, d_dataset + static_cast<int64_t>(current) * dim, dim);
         }
     }
     best_dist = __shfl_sync(0xffffffff, best_dist, 0);
 
-    // Traverse from top layer down to layer 1
     for (int li = num_upper_layers - 1; li >= 0; li--) {
         const upper_layer_ptrs& lp = d_layer_ptrs[li];
         bool improved = true;
@@ -145,11 +126,6 @@ upper_layer_search_kernel(const float* __restrict__ d_queries, const float* __re
             if (local_idx == UINT32_MAX)
                 break;
 
-            // Each lane independently checks a different neighbor.
-            // We use thread_*_distance per lane + warp reduction for the minimum.
-            // warp_*_distance cannot be used here because all 32 lanes must cooperate
-            // on the SAME vector pair, but the outer loop assigns different neighbors
-            // to different lanes.
             uint32_t best_nbr = UINT32_MAX;
             float best_nbr_dist = best_dist;
 
@@ -157,9 +133,11 @@ upper_layer_search_kernel(const float* __restrict__ d_queries, const float* __re
                 uint32_t nbr = lp.d_neighbors[static_cast<int64_t>(local_idx) * lp.max_degree + j];
                 float dist = FLT_MAX;
                 if (nbr != UINT32_MAX) {
-                    const float* nbr_vec = d_dataset + static_cast<int64_t>(nbr) * dim;
+                    const DataT* nbr_vec = d_dataset + static_cast<int64_t>(nbr) * dim;
                     if (use_inner_product) {
                         dist = thread_ip_distance(query, nbr_vec, dim);
+                        if (d_inv_norms)
+                            dist *= d_inv_norms[nbr];
                     } else {
                         dist = thread_l2_distance(query, nbr_vec, dim);
                     }
@@ -170,7 +148,6 @@ upper_layer_search_kernel(const float* __restrict__ d_queries, const float* __re
                 }
             }
 
-            // Warp-level reduction: find the best neighbor across all lanes
             for (int offset = 16; offset > 0; offset >>= 1) {
                 float other_dist = __shfl_down_sync(0xffffffff, best_nbr_dist, offset);
                 uint32_t other_id = __shfl_down_sync(0xffffffff, best_nbr, offset);
@@ -240,8 +217,10 @@ bitmap_visit(uint32_t* bitmap, uint32_t node_id) {
  *   together with (id, dist), keeping expansion state correct regardless of
  *   insertion position.
  */
+template <typename DataT>
 __global__ void
-layer0_beam_search_kernel(const float* __restrict__ d_queries, const float* __restrict__ d_dataset,
+layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __restrict__ d_dataset,
+                          const float* __restrict__ d_inv_norms,  // non-null for COSINE+INT8
                           const uint32_t* __restrict__ d_layer0_graph, const uint32_t* __restrict__ d_entry_points,
                           uint32_t* __restrict__ d_visited_bitmaps,  // [num_queries x bitmap_words], pre-zeroed
                           uint64_t* __restrict__ d_neighbors, float* __restrict__ d_distances, int num_queries, int N,
@@ -292,6 +271,8 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const float* __re
         float ep_dist;
         if (use_inner_product) {
             ep_dist = thread_ip_distance(query, d_dataset + static_cast<int64_t>(ep) * dim, dim);
+            if (d_inv_norms)
+                ep_dist *= d_inv_norms[ep];
         } else {
             ep_dist = thread_l2_distance(query, d_dataset + static_cast<int64_t>(ep) * dim, dim);
         }
@@ -324,6 +305,8 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const float* __re
         float dist;
         if (use_inner_product) {
             dist = thread_ip_distance(query, d_dataset + static_cast<int64_t>(nbr) * dim, dim);
+            if (d_inv_norms)
+                dist *= d_inv_norms[nbr];
         } else {
             dist = thread_l2_distance(query, d_dataset + static_cast<int64_t>(nbr) * dim, dim);
         }
@@ -426,6 +409,8 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const float* __re
             float dist;
             if (use_inner_product) {
                 dist = thread_ip_distance(query, d_dataset + static_cast<int64_t>(nbr) * dim, dim);
+                if (d_inv_norms)
+                    dist *= d_inv_norms[nbr];
             } else {
                 dist = thread_l2_distance(query, d_dataset + static_cast<int64_t>(nbr) * dim, dim);
             }
@@ -494,6 +479,8 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const float* __re
             float d;
             if (use_inner_product) {
                 d = thread_ip_distance(query, d_dataset + static_cast<int64_t>(si) * dim, dim);
+                if (d_inv_norms)
+                    d *= d_inv_norms[si];
             } else {
                 d = thread_l2_distance(query, d_dataset + static_cast<int64_t>(si) * dim, dim);
             }
