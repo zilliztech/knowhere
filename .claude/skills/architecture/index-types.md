@@ -92,9 +92,19 @@
 | Variant | Description | Data Types |
 |---------|-------------|------------|
 | GPU_CAGRA | Graph-based (CAGRA algorithm) | fp32, fp16, int8, binary |
+| GPU_HNSW | HNSW on GPU with OCQ (correct HNSW semantics) | fp32, fp16, int8 |
 | GPU_BRUTE_FORCE | Exact search | fp32, fp16 |
 | GPU_IVF_FLAT | IVF without quantization | fp32, fp16, int8 |
 | GPU_IVF_PQ | IVF with product quantization | fp32, fp16, int8 |
+
+### GPU HNSW
+- Location: `src/index/gpu_cuvs/gpu_hnsw/`
+- Full HNSW graph search on GPU with Overflow Candidate Queue (OCQ)
+- Matches CPU HNSW recall at same `ef` — correct implementation, not a heuristic
+- Key params: `ef` (search), `search_width` (4), `overflow_factor` (2)
+- Uses warp-cooperative distance computation for bandwidth efficiency at scale
+- Eager GPU upload on Deserialize (no cold-start on first search)
+- See `src/index/gpu_cuvs/gpu_hnsw/DESIGN.md` for full architecture docs
 
 ## Quantization Types
 
