@@ -281,6 +281,7 @@ class SparseInvertedIndexNode : public IndexNode {
         if (this->version_use_raw_data()) {
             RETURN_IF_ERROR(index_->convert_to_raw_data(writer));
         } else {
+            ConfigureSindiDimMapMphfWorkaround(index_.get());
             RETURN_IF_ERROR(index_->serialize(writer));
         }
         std::shared_ptr<uint8_t[]> data(writer.data());
@@ -565,6 +566,7 @@ class SparseInvertedIndexNode : public IndexNode {
                 } else {
                     index = std::make_unique<sparse::inverted::SindiInvertedIndexIP>(window_size);
                 }
+                ConfigureSindiDimMapMphfWorkaround(index.get());
                 index->set_build_algo(algo);
                 index->set_build_scorer(sparse::inverted::IndexScorerConfig{
                     .scorer_type = sparse::inverted::IndexScorerType::IP,
@@ -588,6 +590,7 @@ class SparseInvertedIndexNode : public IndexNode {
                 } else {
                     index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25>(window_size);
                 }
+                ConfigureSindiDimMapMphfWorkaround(index.get());
                 index->set_build_algo(algo);
                 index->set_build_scorer(sparse::inverted::IndexScorerConfig{
                     .scorer_type = sparse::inverted::IndexScorerType::BM25,
@@ -639,7 +642,34 @@ class SparseInvertedIndexNode : public IndexNode {
         }
     }
 
+    bool
+    version_sindi_uses_mphf_section() const {
+        return index_version_ >= kSindiMphfSectionMinVersion;
+    }
+
+    void
+    ConfigureSindiDimMapMphfWorkaround(sparse::inverted::InvertedIndex<value_type>* index) const {
+        if (index == nullptr) {
+            return;
+        }
+
+        const bool use_legacy_trailer = !version_sindi_uses_mphf_section();
+        // Legacy SINDI loaders reject section counts above 4, so v10 keeps
+        // MPHF bytes in DIM_MAP_REVERSE. v11 writes DIM_MAP_MPHF separately.
+        if (auto* sindi_ip = dynamic_cast<sparse::inverted::SindiInvertedIndexIP*>(index)) {
+            sindi_ip->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
+        } else if (auto* growable_sindi_ip = dynamic_cast<sparse::inverted::GrowableSindiInvertedIndexIP*>(index)) {
+            growable_sindi_ip->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
+        } else if (auto* sindi_bm25 = dynamic_cast<sparse::inverted::SindiInvertedIndexBM25*>(index)) {
+            sindi_bm25->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
+        } else if (auto* growable_sindi_bm25 = dynamic_cast<sparse::inverted::GrowableSindiInvertedIndexBM25*>(index)) {
+            growable_sindi_bm25->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
+        }
+    }
+
  private:
+    static constexpr int32_t kSindiMphfSectionMinVersion = 11;
+
     /**
      * @brief Prepare search parameters
      *

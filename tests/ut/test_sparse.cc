@@ -13,9 +13,12 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "index/sparse/inverted_index_format.h"
+#include "io/memory_io.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
@@ -34,6 +37,39 @@ WriteBinaryToFile(const std::string& filename, const knowhere::BinaryPtr binary)
     out.write((const char*)data, size);
     out.close();
 }
+
+namespace {
+
+struct SparseIndexSections {
+    uint32_t nr_inner_dims;
+    std::vector<knowhere::sparse::inverted::InvertedIndexSectionHeader> section_headers;
+};
+
+SparseIndexSections
+ReadSparseIndexSections(const knowhere::BinaryPtr& binary) {
+    REQUIRE(binary != nullptr);
+
+    knowhere::MemoryIOReader reader(binary->data.get(), binary->size);
+    uint32_t file_format_version = 0;
+    uint32_t nr_inner_dims = 0;
+    uint32_t nr_sections = 0;
+
+    reader.read(&file_format_version, sizeof(uint32_t));
+    REQUIRE(file_format_version == knowhere::sparse::inverted::kInvertedIndexFileFormatVersion);
+    reader.advance(sizeof(uint32_t) * 2);
+    reader.read(&nr_inner_dims, sizeof(uint32_t));
+    reader.advance(knowhere::sparse::inverted::kInvertedIndexHeaderReservedBytes);
+    reader.read(&nr_sections, sizeof(uint32_t));
+
+    return {nr_inner_dims, knowhere::sparse::inverted::read_section_headers(reader, nr_sections)};
+}
+
+const knowhere::sparse::inverted::InvertedIndexSectionHeader*
+FindSection(const SparseIndexSections& sections, knowhere::sparse::inverted::InvertedIndexSectionType type) {
+    return knowhere::sparse::inverted::find_section_header(sections.section_headers, type);
+}
+
+}  // namespace
 
 TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
     auto [nb, dim, doc_sparsity, query_sparsity] = GENERATE(table<int32_t, int32_t, float, float>({
@@ -1371,6 +1407,48 @@ TEST_CASE("Test SINDI Index Requires Version 10", "[sparse][sindi]") {
                    .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
                    .value();
     REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::invalid_args);
+}
+
+TEST_CASE("Test SINDI MPHF Section Uses Version 11 Layout", "[sparse][sindi]") {
+    const auto version = GENERATE(10, 11);
+    const auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
+    constexpr auto dim = 300;
+    auto train_ds = metric == knowhere::metric::BM25 ? GenSparseDataSetWithMaxVal(500, dim, 0.97, 256, true)
+                                                     : GenSparseDataSet(500, dim, 0.97);
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = metric;
+    build_json[knowhere::meta::BM25_K1] = 1.2;
+    build_json[knowhere::meta::BM25_B] = 0.75;
+    build_json[knowhere::meta::BM25_AVGDL] = 100;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "SINDI";
+
+    auto idx = knowhere::IndexFactory::Instance()
+                   .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                   .value();
+    CAPTURE(version, metric);
+    REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+    knowhere::BinarySet bs;
+    REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+
+    const auto sections = ReadSparseIndexSections(bs.GetByName(idx.Type()));
+    const auto* reverse_section =
+        FindSection(sections, knowhere::sparse::inverted::InvertedIndexSectionType::DIM_MAP_REVERSE);
+    const auto* mphf_section =
+        FindSection(sections, knowhere::sparse::inverted::InvertedIndexSectionType::DIM_MAP_MPHF);
+    REQUIRE(reverse_section != nullptr);
+
+    const auto reverse_bytes = static_cast<uint64_t>(sections.nr_inner_dims) * sizeof(uint32_t);
+    if (version == 10) {
+        REQUIRE(mphf_section == nullptr);
+        REQUIRE(reverse_section->size > reverse_bytes);
+    } else {
+        REQUIRE(mphf_section != nullptr);
+        REQUIRE(mphf_section->size > 0);
+        REQUIRE(reverse_section->size == reverse_bytes);
+    }
 }
 
 TEST_CASE("Test Sparse Index Rejects Unsupported Inverted Index Algo", "[sparse]") {
