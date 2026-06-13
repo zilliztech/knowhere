@@ -330,33 +330,52 @@ int generate_pq_pivots(const float *passed_train_data, size_t num_train,
     if (num_train < num_centers) {
       LOG_KNOWHERE_INFO_ << "num_centers(" << num_centers << ") > num_train(" << num_train << "), switching to CPU";
     } else {
-      LOG_KNOWHERE_INFO_ << "Running pq with " << num_centers << " clusters, pq "<< num_pq_chunks<< " ...using GPU!";
-      // Allocate once memory with maximum chunk size
-      auto cur_pivot_data = raft::make_device_matrix<float, int64_t>(res, num_centers, high_val);
-      auto cur_data = raft::make_device_matrix<float, int64_t>(res, num_train, high_val);
-      auto d_centroid = raft::make_device_vector<float, int64_t>(res, dim);
+      // In case of a perfect split of pq chunks, run cuvs::pq. Otherwise use cuvs::kmeans on the chunks
+      // cuvs pq when used with a vq_centers=1 will do the mean center
+      if (dim % num_pq_chunks == 0) {
+        LOG_KNOWHERE_INFO_ << "Running pq with " << num_centers << " clusters, pq "<< num_pq_chunks<< " ...using cuvs::pq!";
+        using kmeans_params_variant = cuvs::preprocessing::quantize::pq::kmeans_params_variant;
+        cuvs::cluster::kmeans::params km_params;
+        km_params.max_iter = max_k_means_reps;
+        km_params.n_init = 1;
+        km_params.n_clusters = num_centers;
 
-      for (size_t i = 0; i < num_pq_chunks; i++) {
-        size_t cur_chunk_size = chunk_offsets[i + 1] - chunk_offsets[i];
-        if (cur_chunk_size == 0)
-          continue;
-        
-        raft::copy_matrix<float>(cur_data.data_handle(), cur_chunk_size, passed_train_data + chunk_offsets[i],
-                           dim, cur_chunk_size, num_train, raft::resource::get_cuda_stream(res));
-        
-        if (make_zero_mean) {
-          mean_center_gpu(res, cur_data.data_handle(), num_train, cur_chunk_size, d_centroid.data_handle());
-          raft::copy(centroid.get(), d_centroid.data_handle(), dim, raft::resource::get_cuda_stream(res));
+        cuvs::preprocessing::quantize::pq::params params(8, num_pq_chunks, true, make_zero_mean, 1, kmeans_params_variant(km_params), 1000, num_train);
+        auto train_data_view = raft::make_host_matrix_view<const float, int64_t>(passed_train_data, num_train, dim);
+        auto pq_quantizer = cuvs::preprocessing::quantize::pq::build(res, params, train_data_view);
+        raft::copy(full_pivot_data.get(), pq_quantizer.vpq_codebooks.pq_code_book.data_handle(), num_centers * dim, raft::resource::get_cuda_stream(res));
+        raft::copy(centroid.get(), pq_quantizer.vpq_codebooks.vq_code_book.data_handle(), dim, raft::resource::get_cuda_stream(res));
+        raft::resource::sync_stream(res);
+        used_gpu = true;
+      } else {
+        LOG_KNOWHERE_INFO_ << "Running pq with " << num_centers << " clusters, pq "<< num_pq_chunks<< " ...using cuvs::kmeans!";
+        // Allocate once memory with maximum chunk size
+        auto cur_pivot_data = raft::make_device_matrix<float, int64_t>(res, num_centers, high_val);
+        auto cur_data = raft::make_device_matrix<float, int64_t>(res, num_train, high_val);
+        auto d_centroid = raft::make_device_vector<float, int64_t>(res, dim);
+
+        for (size_t i = 0; i < num_pq_chunks; i++) {
+          size_t cur_chunk_size = chunk_offsets[i + 1] - chunk_offsets[i];
+          if (cur_chunk_size == 0)
+            continue;
+          
+          raft::copy_matrix<float>(cur_data.data_handle(), cur_chunk_size, passed_train_data + chunk_offsets[i],
+                            dim, cur_chunk_size, num_train, raft::resource::get_cuda_stream(res));
+          
+          if (make_zero_mean) {
+            mean_center_gpu(res, cur_data.data_handle(), num_train, cur_chunk_size, d_centroid.data_handle() + chunk_offsets[i]);
+          }
+          kmeans_gpu_device_data(res, cur_data.data_handle(), num_train, cur_chunk_size,
+                  num_centers, max_k_means_reps, cur_pivot_data.data_handle());
+          
+          raft::copy_matrix<float>(full_pivot_data.get() + chunk_offsets[i], dim, cur_pivot_data.data_handle(),
+                            cur_chunk_size, cur_chunk_size, num_centers,
+                            raft::resource::get_cuda_stream(res));
         }
-        kmeans_gpu_device_data(res, cur_data.data_handle(), num_train, cur_chunk_size,
-                num_centers, max_k_means_reps, cur_pivot_data.data_handle());
-        
-        raft::copy_matrix<float>(full_pivot_data.get() + chunk_offsets[i], dim, cur_pivot_data.data_handle(),
-                          cur_chunk_size, cur_chunk_size, num_centers,
-                          raft::resource::get_cuda_stream(res));
+        raft::copy(centroid.get(), d_centroid.data_handle(), dim, raft::resource::get_cuda_stream(res));
+        raft::resource::sync_stream(res);
+        used_gpu = true;
       }
-      raft::resource::sync_stream(res);
-      used_gpu = true;
     }
   }
 #endif
