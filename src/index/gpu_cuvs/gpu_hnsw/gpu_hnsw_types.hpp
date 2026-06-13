@@ -18,7 +18,7 @@ struct search_params {
     int search_width = 4;
     int max_iterations = 0;     // 0 = auto
     int thread_block_size = 0;  // 0 = auto (128)
-    int overflow_factor = 3;    // overflow_ef = overflow_factor * ef (secondary candidate queue)
+    int overflow_factor = 2;    // overflow_ef = overflow_factor * ef (secondary candidate queue)
 };
 
 struct device_upper_layer {

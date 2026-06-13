@@ -22,15 +22,15 @@ namespace cuvs::neighbors::gpu_hnsw::detail {
 
 __device__ __forceinline__ float
 load_elem(const float* ptr, int idx) {
-    return ptr[idx];
+    return __ldg(&ptr[idx]);
 }
 __device__ __forceinline__ float
 load_elem(const half* ptr, int idx) {
-    return __half2float(ptr[idx]);
+    return __half2float(__ldg(&ptr[idx]));
 }
 __device__ __forceinline__ float
 load_elem(const int8_t* ptr, int idx) {
-    return static_cast<float>(ptr[idx]);
+    return static_cast<float>(__ldg(&ptr[idx]));
 }
 
 // Single-thread distance: query is always float32, candidate vector is DataT.
@@ -71,13 +71,13 @@ binary_search_node(const uint32_t* d_node_ids, uint32_t n, uint32_t global_id) {
     uint32_t lo = 0, hi = n;
     while (lo < hi) {
         uint32_t mid = (lo + hi) / 2;
-        if (d_node_ids[mid] < global_id) {
+        if (__ldg(&d_node_ids[mid]) < global_id) {
             lo = mid + 1;
         } else {
             hi = mid;
         }
     }
-    if (lo < n && d_node_ids[lo] == global_id)
+    if (lo < n && __ldg(&d_node_ids[lo]) == global_id)
         return lo;
     return UINT32_MAX;
 }
@@ -110,7 +110,7 @@ upper_layer_search_kernel(const float* __restrict__ d_queries, const DataT* __re
         if (use_inner_product) {
             best_dist = thread_ip_distance(query, d_dataset + static_cast<int64_t>(current) * dim, dim);
             if (d_inv_norms)
-                best_dist *= d_inv_norms[current];
+                best_dist *= __ldg(&d_inv_norms[current]);
         } else {
             best_dist = thread_l2_distance(query, d_dataset + static_cast<int64_t>(current) * dim, dim);
         }
@@ -130,14 +130,14 @@ upper_layer_search_kernel(const float* __restrict__ d_queries, const DataT* __re
             float best_nbr_dist = best_dist;
 
             for (uint32_t j = lane; j < lp.max_degree; j += 32) {
-                uint32_t nbr = lp.d_neighbors[static_cast<int64_t>(local_idx) * lp.max_degree + j];
+                uint32_t nbr = __ldg(&lp.d_neighbors[static_cast<int64_t>(local_idx) * lp.max_degree + j]);
                 float dist = FLT_MAX;
                 if (nbr != UINT32_MAX) {
                     const DataT* nbr_vec = d_dataset + static_cast<int64_t>(nbr) * dim;
                     if (use_inner_product) {
                         dist = thread_ip_distance(query, nbr_vec, dim);
                         if (d_inv_norms)
-                            dist *= d_inv_norms[nbr];
+                            dist *= __ldg(&d_inv_norms[nbr]);
                     } else {
                         dist = thread_l2_distance(query, nbr_vec, dim);
                     }
@@ -319,7 +319,7 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
         if (use_inner_product) {
             ep_dist = thread_ip_distance(query, d_dataset + static_cast<int64_t>(ep) * dim, dim);
             if (d_inv_norms)
-                ep_dist *= d_inv_norms[ep];
+                ep_dist *= __ldg(&d_inv_norms[ep]);
         } else {
             ep_dist = thread_l2_distance(query, d_dataset + static_cast<int64_t>(ep) * dim, dim);
         }
@@ -343,7 +343,7 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
     __syncthreads();
 
     for (int j = threadIdx.x; j < max_degree0; j += blockDim.x) {
-        uint32_t nbr = d_layer0_graph[static_cast<int64_t>(ep) * max_degree0 + j];
+        uint32_t nbr = __ldg(&d_layer0_graph[static_cast<int64_t>(ep) * max_degree0 + j]);
         if (nbr == UINT32_MAX || nbr >= static_cast<uint32_t>(N))
             continue;
         if (!bitmap_visit(visited_bmap, nbr))
@@ -353,7 +353,7 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
         if (use_inner_product) {
             dist = thread_ip_distance(query, d_dataset + static_cast<int64_t>(nbr) * dim, dim);
             if (d_inv_norms)
-                dist *= d_inv_norms[nbr];
+                dist *= __ldg(&d_inv_norms[nbr]);
         } else {
             dist = thread_l2_distance(query, d_dataset + static_cast<int64_t>(nbr) * dim, dim);
         }
@@ -469,7 +469,7 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
             int nbr_slot = wi % max_degree0;
 
             uint32_t parent = parent_ids[parent_idx];
-            uint32_t nbr = d_layer0_graph[static_cast<int64_t>(parent) * max_degree0 + nbr_slot];
+            uint32_t nbr = __ldg(&d_layer0_graph[static_cast<int64_t>(parent) * max_degree0 + nbr_slot]);
             if (nbr == UINT32_MAX || nbr >= static_cast<uint32_t>(N))
                 continue;
             if (!bitmap_visit(visited_bmap, nbr))
@@ -479,7 +479,7 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
             if (use_inner_product) {
                 dist = thread_ip_distance(query, d_dataset + static_cast<int64_t>(nbr) * dim, dim);
                 if (d_inv_norms)
-                    dist *= d_inv_norms[nbr];
+                    dist *= __ldg(&d_inv_norms[nbr]);
             } else {
                 dist = thread_l2_distance(query, d_dataset + static_cast<int64_t>(nbr) * dim, dim);
             }
@@ -564,7 +564,7 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
             if (use_inner_product) {
                 d = thread_ip_distance(query, d_dataset + static_cast<int64_t>(si) * dim, dim);
                 if (d_inv_norms)
-                    d *= d_inv_norms[si];
+                    d *= __ldg(&d_inv_norms[si]);
             } else {
                 d = thread_l2_distance(query, d_dataset + static_cast<int64_t>(si) * dim, dim);
             }
