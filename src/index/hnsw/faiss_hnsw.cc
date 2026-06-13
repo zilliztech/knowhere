@@ -3366,11 +3366,10 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWNode {
     }
 
     expected<DataSetPtr>
-    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg,
-           const BitsetView& bitset, milvus::OpContext* op_context) const override {
+    Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
+           milvus::OpContext* op_context) const override {
         if (!bitset.empty()) {
-            return expected<DataSetPtr>::Err(Status::invalid_args,
-                                             "GPU_HNSW does not support filtered search");
+            return expected<DataSetPtr>::Err(Status::invalid_args, "GPU_HNSW does not support filtered search");
         }
         {
             std::unique_lock lock(gpu_mutex_);
@@ -3381,20 +3380,19 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWNode {
                 }
                 const auto& hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
                 bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
-                bool use_ip    = IsMetricType(hnsw_cfg.metric_type.value(), metric::IP) || is_cosine;
+                bool use_ip = IsMetricType(hnsw_cfg.metric_type.value(), metric::IP) || is_cosine;
                 gpu_handle_ = gpu_hnsw::build_gpu_index(faiss_idx, use_ip, is_cosine);
                 if (!gpu_handle_) {
-                    return expected<DataSetPtr>::Err(Status::cuvs_inner_error,
-                                                     "failed to build GPU HNSW index");
+                    return expected<DataSetPtr>::Err(Status::cuvs_inner_error, "failed to build GPU HNSW index");
                 }
             }
         }
 
         const auto& hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
-        auto k   = hnsw_cfg.k.value();
-        auto nq  = dataset->GetRows();
+        auto k = hnsw_cfg.k.value();
+        auto nq = dataset->GetRows();
         auto dim = dataset->GetDim();
-        auto ef  = hnsw_cfg.ef.value_or(200);
+        auto ef = hnsw_cfg.ef.value_or(200);
         const auto* h_queries_raw = reinterpret_cast<const float*>(dataset->GetTensor());
 
         // For COSINE metric, normalize queries to unit length (stored vectors
@@ -3414,11 +3412,10 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWNode {
             h_queries = normalized_queries.get();
         }
 
-        auto h_ids  = std::make_unique<int64_t[]>(nq * k);
+        auto h_ids = std::make_unique<int64_t[]>(nq * k);
         auto h_dist = std::make_unique<float[]>(nq * k);
 
-        int rc = gpu_hnsw::search_gpu(gpu_handle_, h_queries, static_cast<int>(nq),
-                                      static_cast<int>(k), ef,
+        int rc = gpu_hnsw::search_gpu(gpu_handle_, h_queries, static_cast<int>(nq), static_cast<int>(k), ef,
                                       h_ids.get(), h_dist.get());
         if (rc != 0) {
             return expected<DataSetPtr>::Err(Status::cuvs_inner_error, "GPU HNSW search failed");
@@ -3437,13 +3434,15 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWNode {
     }
 
     ~GpuHnswIndexNode() override {
-        if (gpu_handle_) gpu_hnsw::destroy_gpu_index(gpu_handle_);
+        if (gpu_handle_)
+            gpu_hnsw::destroy_gpu_index(gpu_handle_);
     }
 
  private:
     const ::faiss::cppcontrib::knowhere::IndexHNSW*
     GetFaissHnswIndex() const {
-        if (indexes.empty() || !indexes[0]) return nullptr;
+        if (indexes.empty() || !indexes[0])
+            return nullptr;
         return dynamic_cast<const ::faiss::cppcontrib::knowhere::IndexHNSW*>(indexes[0].get());
     }
 
@@ -3451,21 +3450,27 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWNode {
     mutable void* gpu_handle_ = nullptr;
 };
 
-KNOWHERE_REGISTER_GLOBAL(GPU_HNSW,
-                         [](const int32_t& version, const Object& object) {
-                             return Index<GpuHnswIndexNode>::Create(version, object);
-                         },
-                         fp32, true, feature::GPU_ANN_FLOAT_INDEX);
+// Register GPU_HNSW in the static config map (for CreateConfig lookups at load time).
+// GpuHnswIndexNode is not templated, so we cannot use KNOWHERE_REGISTER_STATIC directly.
+const IndexStaticFaced<fp32>& index_static_ref_GPU_HNSWfp32 =
+    IndexStaticFaced<fp32>::Instance().RegisterStaticFunc<GpuHnswIndexNode>("GPU_HNSW");
+const IndexStaticFaced<int8>& index_static_ref_GPU_HNSWint8 =
+    IndexStaticFaced<int8>::Instance().RegisterStaticFunc<GpuHnswIndexNode>("GPU_HNSW");
+
+KNOWHERE_REGISTER_GLOBAL(
+    GPU_HNSW,
+    [](const int32_t& version, const Object& object) { return Index<GpuHnswIndexNode>::Create(version, object); }, fp32,
+    true, feature::GPU_ANN_FLOAT_INDEX);
 
 // int8 input: convert to fp32 via mock wrapper, then delegate to GpuHnswIndexNode.
 // GpuHnswIndexNode is not a template, so we cannot use KNOWHERE_MOCK_REGISTER_GLOBAL
 // which requires index_node<fp32, ...> instantiation. Instead register manually.
-KNOWHERE_REGISTER_GLOBAL(GPU_HNSW,
-                         [](const int32_t& version, const Object& object) {
-                             return Index<IndexNodeDataMockWrapper<int8>>::Create(
-                                 std::make_unique<GpuHnswIndexNode>(version, object));
-                         },
-                         int8, true, (feature::INT8 | feature::GPU));
+KNOWHERE_REGISTER_GLOBAL(
+    GPU_HNSW,
+    [](const int32_t& version, const Object& object) {
+        return Index<IndexNodeDataMockWrapper<int8>>::Create(std::make_unique<GpuHnswIndexNode>(version, object));
+    },
+    int8, true, (feature::INT8 | feature::GPU));
 #endif  // KNOWHERE_WITH_CUVS
 
 }  // namespace knowhere
