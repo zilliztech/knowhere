@@ -18,6 +18,7 @@ struct search_params {
     int search_width = 4;
     int max_iterations = 0;     // 0 = auto
     int thread_block_size = 0;  // 0 = auto (128)
+    int overflow_factor = 3;    // overflow_ef = overflow_factor * ef (secondary candidate queue)
 };
 
 struct device_upper_layer {
@@ -36,14 +37,22 @@ struct search_scratch {
     uint32_t* d_entry_points = nullptr;
     uint32_t* d_visited_bitmaps = nullptr;
 
+    // Overflow candidate queue (OCQ) — secondary expansion buffer in global memory.
+    // Holds candidates rejected from the result buffer that are still worth expanding.
+    uint32_t* d_overflow_ids = nullptr;       // [nq * overflow_ef]
+    float* d_overflow_dists = nullptr;         // [nq * overflow_ef]
+    uint32_t* d_overflow_expanded = nullptr;   // [nq * overflow_ef]
+    int* d_overflow_count = nullptr;           // [nq] current valid entries per query
+
     size_t queries_bytes = 0;    // nq * dim * sizeof(float)
     size_t neighbors_bytes = 0;  // nq * k * sizeof(uint64_t)
     size_t distances_bytes = 0;  // nq * k * sizeof(float)
     int entry_cap = 0;           // max nq for entry_points
     size_t bitmap_bytes = 0;     // nq * bitmap_words * sizeof(uint32_t)
+    size_t overflow_bytes = 0;   // total allocated for overflow buffers
 
     void
-    ensure(int nq, int k, int dim, int N) {
+    ensure(int nq, int k, int dim, int N, int overflow_ef) {
         size_t need_q = static_cast<size_t>(nq) * dim * sizeof(float);
         if (need_q > queries_bytes) {
             if (d_queries)
@@ -79,6 +88,25 @@ struct search_scratch {
             cudaMalloc(&d_visited_bitmaps, need_bm);
             bitmap_bytes = need_bm;
         }
+        // Overflow candidate queue buffers
+        size_t ovf_entries = static_cast<size_t>(nq) * overflow_ef;
+        size_t need_ovf = ovf_entries * (sizeof(uint32_t) + sizeof(float) + sizeof(uint32_t))
+                        + static_cast<size_t>(nq) * sizeof(int);
+        if (need_ovf > overflow_bytes) {
+            if (d_overflow_ids)
+                cudaFree(d_overflow_ids);
+            if (d_overflow_dists)
+                cudaFree(d_overflow_dists);
+            if (d_overflow_expanded)
+                cudaFree(d_overflow_expanded);
+            if (d_overflow_count)
+                cudaFree(d_overflow_count);
+            cudaMalloc(&d_overflow_ids, ovf_entries * sizeof(uint32_t));
+            cudaMalloc(&d_overflow_dists, ovf_entries * sizeof(float));
+            cudaMalloc(&d_overflow_expanded, ovf_entries * sizeof(uint32_t));
+            cudaMalloc(&d_overflow_count, static_cast<size_t>(nq) * sizeof(int));
+            overflow_bytes = need_ovf;
+        }
     }
 
     ~search_scratch() {
@@ -92,6 +120,14 @@ struct search_scratch {
             cudaFree(d_entry_points);
         if (d_visited_bitmaps)
             cudaFree(d_visited_bitmaps);
+        if (d_overflow_ids)
+            cudaFree(d_overflow_ids);
+        if (d_overflow_dists)
+            cudaFree(d_overflow_dists);
+        if (d_overflow_expanded)
+            cudaFree(d_overflow_expanded);
+        if (d_overflow_count)
+            cudaFree(d_overflow_count);
     }
 
     search_scratch() = default;

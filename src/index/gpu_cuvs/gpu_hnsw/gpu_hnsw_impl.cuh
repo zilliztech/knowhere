@@ -38,7 +38,8 @@ search(cudaStream_t stream, const search_params& params, const gpu_hnsw_index& i
 
     int ef = params.ef;
     int sw = params.search_width;
-    int max_iter = params.max_iterations > 0 ? params.max_iterations : 2 * ef / sw + 10;
+    int overflow_ef = params.overflow_factor * ef;
+    int max_iter = params.max_iterations > 0 ? params.max_iterations : (ef + overflow_ef) / sw + 20;
     int dim = static_cast<int>(idx.dim);
 
     int num_upper_layers = idx.num_upper_layers_built;
@@ -102,18 +103,22 @@ search(cudaStream_t stream, const search_params& params, const gpu_hnsw_index& i
                 search_diag_logged = true;
                 fprintf(stderr,
                         "[gpu_hnsw_diag] search params: ef=%d sw=%d max_iter=%d k=%d "
-                        "block_size=%d smem=%zu bitmap=%zu N=%d dim=%d use_ip=%d int8=%d\n",
-                        ef, sw, max_iter, k, block_size, smem_size, bitmap_bytes, N_int, dim, (int)idx.use_ip,
-                        (int)idx.dataset_int8);
+                        "block_size=%d smem=%zu bitmap=%zu overflow_ef=%d N=%d dim=%d use_ip=%d int8=%d\n",
+                        ef, sw, max_iter, k, block_size, smem_size, bitmap_bytes, overflow_ef, N_int, dim,
+                        (int)idx.use_ip, (int)idx.dataset_int8);
             }
         }
 #endif
 
         GPU_HNSW_CUDA_CHECK(cudaMemsetAsync(sc.d_visited_bitmaps, 0, bitmap_bytes, stream));
+        // Zero overflow count (entries are never read beyond count, so only count needs zeroing)
+        GPU_HNSW_CUDA_CHECK(
+            cudaMemsetAsync(sc.d_overflow_count, 0, static_cast<size_t>(num_queries) * sizeof(int), stream));
 
         kernel::layer0_beam_search_kernel<DataT><<<num_queries, block_size, smem_size, stream>>>(
             sc.d_queries, d_data, d_inv_norms, idx.d_layer0_graph, sc.d_entry_points, sc.d_visited_bitmaps,
-            sc.d_neighbors, sc.d_distances, num_queries, N_int, dim, idx.max_degree0, k, ef, sw, max_iter, idx.use_ip);
+            sc.d_neighbors, sc.d_distances, num_queries, N_int, dim, idx.max_degree0, k, ef, sw, max_iter, idx.use_ip,
+            overflow_ef, sc.d_overflow_ids, sc.d_overflow_dists, sc.d_overflow_expanded, sc.d_overflow_count);
         GPU_HNSW_CUDA_CHECK(cudaGetLastError());
     };
 

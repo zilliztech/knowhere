@@ -73,7 +73,10 @@ search_gpu(void* handle, const float* h_queries, int nq, int k, int ef, int64_t*
         auto& sc = idx->scratch;
 
         // Ensure scratch buffers have sufficient capacity (no-op in steady state).
-        sc.ensure(nq, k, dim, static_cast<int>(idx->n_rows));
+        search_params sp;
+        sp.ef = ef;
+        int overflow_ef = sp.overflow_factor * ef;
+        sc.ensure(nq, k, dim, static_cast<int>(idx->n_rows), overflow_ef);
 
 #ifdef GPU_HNSW_DIAGNOSTICS
         cudaEvent_t ev_start, ev_h2d, ev_kernel, ev_sync;
@@ -91,9 +94,6 @@ search_gpu(void* handle, const float* h_queries, int nq, int k, int ef, int64_t*
 #ifdef GPU_HNSW_DIAGNOSTICS
         cudaEventRecord(ev_h2d, stream);
 #endif
-
-        search_params sp;
-        sp.ef = ef;
 
         search(stream, sp, *idx, nq, k);
 

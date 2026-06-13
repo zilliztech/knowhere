@@ -179,11 +179,11 @@ upper_layer_search_kernel(const float* __restrict__ d_queries, const DataT* __re
 }
 
 // ============================================================================
-// Phase 2: Layer-0 beam search kernel
+// Phase 2: Layer-0 beam search kernel with Overflow Candidate Queue (OCQ)
 // ============================================================================
 
 /**
- * Visited-set using a bitmap in shared memory.
+ * Visited-set using a bitmap in global memory.
  * For node_id in [0, N), atomically sets bit node_id and returns true if it was
  * newly set (i.e., node not previously visited), false if already visited.
  *
@@ -198,7 +198,55 @@ bitmap_visit(uint32_t* bitmap, uint32_t node_id) {
 }
 
 /**
- * Phase 2: Layer-0 beam search with guided entry points.
+ * Insert a candidate into the sorted overflow queue (global memory).
+ * Called by thread 0 only. Uses binary search + shift (same pattern as result buffer).
+ * The overflow queue is sorted ascending by distance (smallest = best first).
+ */
+__device__ __forceinline__ void
+overflow_insert(uint32_t* ovf_ids, float* ovf_dists, uint32_t* ovf_exp,
+                int& ovf_rc, int overflow_ef,
+                uint32_t id, float dist, uint32_t expanded) {
+    if (ovf_rc >= overflow_ef && dist >= ovf_dists[ovf_rc - 1])
+        return;
+
+    int lo = 0, hi = ovf_rc;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (ovf_dists[mid] < dist)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+
+    int insert_end = ovf_rc < overflow_ef ? ovf_rc : overflow_ef - 1;
+    for (int i = insert_end; i > lo; i--) {
+        ovf_ids[i] = ovf_ids[i - 1];
+        ovf_dists[i] = ovf_dists[i - 1];
+        ovf_exp[i] = ovf_exp[i - 1];
+    }
+    ovf_ids[lo] = id;
+    ovf_dists[lo] = dist;
+    ovf_exp[lo] = expanded;
+    if (ovf_rc < overflow_ef)
+        ovf_rc++;
+}
+
+/**
+ * Layer-0 beam search with Overflow Candidate Queue (OCQ).
+ *
+ * Implements a correct HNSW search that matches CPU HNSW semantics by maintaining
+ * a secondary candidate pool (overflow queue) separate from the result buffer.
+ * This prevents premature pruning of "locally worse but globally better" candidates.
+ *
+ * Architecture:
+ *   - Result buffer (Tier 1, shared memory): sorted top-ef candidates, expanded first
+ *   - Overflow queue (Tier 2, global memory): candidates ranked ef+1..ef+overflow_ef
+ *     that are still worth expanding
+ *
+ * Unified loop: each iteration selects parents from the result buffer first. When
+ * the result buffer is fully expanded, falls through to the overflow queue. This
+ * naturally handles phase oscillation (overflow expansion can discover candidates
+ * that re-enter the result buffer).
  *
  * One thread block per query. Shared memory holds:
  *   - Result buffer: sorted (id, dist) pairs of the best `ef` candidates
@@ -206,16 +254,7 @@ bitmap_visit(uint32_t* bitmap, uint32_t node_id) {
  *   - Staging buffer: newly computed (id, dist) candidates from current iteration
  *   - Parent buffer + metadata
  *
- * The visited bitmap lives in global memory (one bitmap per query block) to
- * support large N (e.g. N=2M → 250KB bitmap, exceeds 48KB shared memory limit).
- * At runtime, L2 cache (48MB+ on modern GPUs) keeps the active bitmap hot,
- * so atomicOr on global memory is fast for typical access patterns.
- *
- * Correctness note on is_expanded[]:
- *   The result buffer is sorted ascending by distance. Insertions at position lo
- *   shift existing entries right. Per-slot is_expanded[] flags are shifted
- *   together with (id, dist), keeping expansion state correct regardless of
- *   insertion position.
+ * The visited bitmap and overflow queue live in global memory.
  */
 template <typename DataT>
 __global__ void
@@ -225,7 +264,11 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
                           uint32_t* __restrict__ d_visited_bitmaps,  // [num_queries x bitmap_words], pre-zeroed
                           uint64_t* __restrict__ d_neighbors, float* __restrict__ d_distances, int num_queries, int N,
                           int dim, int max_degree0, int k, int ef, int search_width, int max_iterations,
-                          bool use_inner_product) {
+                          bool use_inner_product, int overflow_ef,
+                          uint32_t* __restrict__ d_overflow_ids,       // [num_queries x overflow_ef]
+                          float* __restrict__ d_overflow_dists,        // [num_queries x overflow_ef]
+                          uint32_t* __restrict__ d_overflow_expanded,  // [num_queries x overflow_ef]
+                          int* __restrict__ d_overflow_count) {        // [num_queries]
     int query_idx = blockIdx.x;
     if (query_idx >= num_queries)
         return;
@@ -236,10 +279,8 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
     extern __shared__ char smem[];
 
     int max_staging = search_width * max_degree0;
-    int bitmap_words = (N + 31) / 32;  // ceil(N/32)
+    int bitmap_words = (N + 31) / 32;
 
-    // Shared memory partitioning (all 4-byte aligned):
-    // Visited bitmap lives in global memory (too large for smem at N=2M+).
     uint32_t* result_ids = reinterpret_cast<uint32_t*>(smem);
     float* result_dists = reinterpret_cast<float*>(result_ids + ef);
     uint32_t* is_expanded = reinterpret_cast<uint32_t*>(result_dists + ef);
@@ -252,6 +293,11 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
     // Per-query visited bitmap in global memory (pre-zeroed by host)
     uint32_t* visited_bmap = d_visited_bitmaps + static_cast<int64_t>(query_idx) * bitmap_words;
 
+    // Per-query overflow queue pointers (global memory)
+    uint32_t* ovf_ids = d_overflow_ids + static_cast<int64_t>(query_idx) * overflow_ef;
+    float* ovf_dists = d_overflow_dists + static_cast<int64_t>(query_idx) * overflow_ef;
+    uint32_t* ovf_exp = d_overflow_expanded + static_cast<int64_t>(query_idx) * overflow_ef;
+
     // Initialize result buffer and expansion flags
     for (int i = threadIdx.x; i < ef; i += blockDim.x) {
         result_ids[i] = UINT32_MAX;
@@ -262,6 +308,7 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
         meta[0] = 0;
         meta[1] = 0;
         meta[2] = 0;
+        d_overflow_count[query_idx] = 0;
     }
     __syncthreads();
 
@@ -283,8 +330,8 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
         bitmap_visit(visited_bmap, ep);
 #ifdef GPU_HNSW_DIAGNOSTICS
         if (query_idx == 0) {
-            printf("[beam_diag] q0 seed: ep=%u ep_dist=%.6f ef=%d sw=%d max_iter=%d N=%d\n", ep, ep_dist, ef,
-                   search_width, max_iterations, N);
+            printf("[beam_diag] q0 seed: ep=%u ep_dist=%.6f ef=%d sw=%d max_iter=%d ovf_ef=%d N=%d\n", ep, ep_dist, ef,
+                   search_width, max_iterations, overflow_ef, N);
         }
 #endif
     }
@@ -319,36 +366,43 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
     }
     __syncthreads();
 
-    // Thread 0 merges ep's neighbors into result buffer, then marks ep expanded
+    // Thread 0 merges ep's neighbors into result buffer + overflow, then marks ep expanded
     if (threadIdx.x == 0) {
         int staging_count = min(meta[1], max_staging);
         int rc = meta[0];
+        int ovf_rc = d_overflow_count[query_idx];
+
         for (int s = 0; s < staging_count; s++) {
             uint32_t sid = staging_ids[s];
             float sdist = staging_dists[s];
-            if (rc >= ef && sdist >= result_dists[rc - 1])
-                continue;
 
-            int lo = 0, hi = rc;
-            while (lo < hi) {
-                int mid = (lo + hi) / 2;
-                if (result_dists[mid] < sdist)
-                    lo = mid + 1;
-                else
-                    hi = mid;
+            if (rc < ef || sdist < result_dists[rc - 1]) {
+                if (rc >= ef) {
+                    overflow_insert(ovf_ids, ovf_dists, ovf_exp, ovf_rc, overflow_ef, result_ids[ef - 1],
+                                    result_dists[ef - 1], is_expanded[ef - 1]);
+                }
+                int lo = 0, hi = rc;
+                while (lo < hi) {
+                    int mid = (lo + hi) / 2;
+                    if (result_dists[mid] < sdist)
+                        lo = mid + 1;
+                    else
+                        hi = mid;
+                }
+                int insert_end = rc < ef ? rc : ef - 1;
+                for (int i = insert_end; i > lo; i--) {
+                    result_ids[i] = result_ids[i - 1];
+                    result_dists[i] = result_dists[i - 1];
+                    is_expanded[i] = is_expanded[i - 1];
+                }
+                result_ids[lo] = sid;
+                result_dists[lo] = sdist;
+                is_expanded[lo] = 0;
+                if (rc < ef)
+                    rc++;
+            } else {
+                overflow_insert(ovf_ids, ovf_dists, ovf_exp, ovf_rc, overflow_ef, sid, sdist, 0);
             }
-
-            int insert_end = rc < ef ? rc : ef - 1;
-            for (int i = insert_end; i > lo; i--) {
-                result_ids[i] = result_ids[i - 1];
-                result_dists[i] = result_dists[i - 1];
-                is_expanded[i] = is_expanded[i - 1];
-            }
-            result_ids[lo] = sid;
-            result_dists[lo] = sdist;
-            is_expanded[lo] = 0;
-            if (rc < ef)
-                rc++;
         }
 
         // Mark ep expanded (it may have shifted in the result buffer)
@@ -359,19 +413,33 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
             }
         }
         meta[0] = rc;
+        d_overflow_count[query_idx] = ovf_rc;
     }
     __syncthreads();
 
-    // --- Main beam search loop ---
+    // --- Unified main loop (result buffer priority, overflow fallthrough) ---
     for (int iter = 0; iter < max_iterations; iter++) {
-        // Step 1: Thread 0 selects next search_width unexpanded candidates as parents
+        // Step 1: Select parents — result buffer first, then overflow
         if (threadIdx.x == 0) {
             int num_parents = 0;
             int rc = meta[0];
+
+            // Priority 1: best unexpanded in result buffer
             for (int i = 0; i < rc && num_parents < search_width; i++) {
                 if (!is_expanded[i]) {
                     parent_ids[num_parents++] = result_ids[i];
                     is_expanded[i] = 1;
+                }
+            }
+
+            // Priority 2: best unexpanded in overflow queue (only if result buffer exhausted)
+            if (num_parents == 0) {
+                int ovf_rc = d_overflow_count[query_idx];
+                for (int i = 0; i < ovf_rc && num_parents < search_width; i++) {
+                    if (!ovf_exp[i]) {
+                        parent_ids[num_parents++] = ovf_ids[i];
+                        ovf_exp[i] = 1;
+                    }
                 }
             }
             meta[2] = num_parents;
@@ -382,8 +450,9 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
         if (num_parents == 0) {
 #ifdef GPU_HNSW_DIAGNOSTICS
             if (query_idx == 0 && threadIdx.x == 0) {
-                printf("[beam_diag] q0 converged at iter=%d rc=%d best=%.6f worst=%.6f\n", iter, meta[0],
-                       result_dists[0], meta[0] > 0 ? result_dists[meta[0] - 1] : 999.0f);
+                printf("[beam_diag] q0 converged at iter=%d rc=%d ovf_rc=%d best=%.6f worst=%.6f\n", iter, meta[0],
+                       d_overflow_count[query_idx], result_dists[0],
+                       meta[0] > 0 ? result_dists[meta[0] - 1] : 999.0f);
             }
 #endif
             break;
@@ -423,41 +492,55 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
         }
         __syncthreads();
 
-        // Step 3: Thread 0 merges staging buffer into result buffer
+        // Step 3: Thread 0 merges staging into result buffer + overflow
         if (threadIdx.x == 0) {
             int staging_count = min(meta[1], max_staging);
             int rc = meta[0];
+            int ovf_rc = d_overflow_count[query_idx];
+
             for (int s = 0; s < staging_count; s++) {
                 uint32_t sid = staging_ids[s];
                 float sdist = staging_dists[s];
-                if (rc >= ef && sdist >= result_dists[rc - 1])
-                    continue;
 
-                int lo = 0, hi = rc;
-                while (lo < hi) {
-                    int mid = (lo + hi) / 2;
-                    if (result_dists[mid] < sdist)
-                        lo = mid + 1;
-                    else
-                        hi = mid;
+                if (rc < ef || sdist < result_dists[rc - 1]) {
+                    // Candidate beats result buffer's worst — insert into result buffer.
+                    // If buffer is full, spill evicted entry to overflow queue.
+                    if (rc >= ef) {
+                        overflow_insert(ovf_ids, ovf_dists, ovf_exp, ovf_rc, overflow_ef, result_ids[ef - 1],
+                                        result_dists[ef - 1], is_expanded[ef - 1]);
+                    }
+
+                    int lo = 0, hi = rc;
+                    while (lo < hi) {
+                        int mid = (lo + hi) / 2;
+                        if (result_dists[mid] < sdist)
+                            lo = mid + 1;
+                        else
+                            hi = mid;
+                    }
+                    int insert_end = rc < ef ? rc : ef - 1;
+                    for (int i = insert_end; i > lo; i--) {
+                        result_ids[i] = result_ids[i - 1];
+                        result_dists[i] = result_dists[i - 1];
+                        is_expanded[i] = is_expanded[i - 1];
+                    }
+                    result_ids[lo] = sid;
+                    result_dists[lo] = sdist;
+                    is_expanded[lo] = 0;
+                    if (rc < ef)
+                        rc++;
+                } else {
+                    // Rejected from result buffer — try overflow queue
+                    overflow_insert(ovf_ids, ovf_dists, ovf_exp, ovf_rc, overflow_ef, sid, sdist, 0);
                 }
-                int insert_end = rc < ef ? rc : ef - 1;
-                for (int i = insert_end; i > lo; i--) {
-                    result_ids[i] = result_ids[i - 1];
-                    result_dists[i] = result_dists[i - 1];
-                    is_expanded[i] = is_expanded[i - 1];
-                }
-                result_ids[lo] = sid;
-                result_dists[lo] = sdist;
-                is_expanded[lo] = 0;
-                if (rc < ef)
-                    rc++;
             }
             meta[0] = rc;
+            d_overflow_count[query_idx] = ovf_rc;
 #ifdef GPU_HNSW_DIAGNOSTICS
             if (query_idx == 0 && (iter < 5 || iter % 20 == 0)) {
-                printf("[beam_diag] q0 iter=%d parents=%d staged=%d rc=%d best=%.6f worst=%.6f\n", iter, num_parents,
-                       staging_count, rc, result_dists[0], rc > 0 ? result_dists[rc - 1] : 999.0f);
+                printf("[beam_diag] q0 iter=%d parents=%d staged=%d rc=%d ovf_rc=%d best=%.6f worst=%.6f\n", iter,
+                       num_parents, staging_count, rc, ovf_rc, result_dists[0],
+                       rc > 0 ? result_dists[rc - 1] : 999.0f);
             }
 #endif
         }
@@ -467,7 +550,8 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
 #ifdef GPU_HNSW_DIAGNOSTICS
     if (query_idx == 0 && threadIdx.x == 0) {
         int final_rc = meta[0];
-        printf("[beam_diag] q0 FINAL: rc=%d\n", final_rc);
+        int final_ovf = d_overflow_count[query_idx];
+        printf("[beam_diag] q0 FINAL: rc=%d ovf_rc=%d\n", final_rc, final_ovf);
         for (int i = 0; i < min(10, final_rc); i++) {
             printf("[beam_diag] q0 result[%d]: id=%u dist=%.6f expanded=%u\n", i, result_ids[i], result_dists[i],
                    is_expanded[i]);
@@ -509,7 +593,7 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
 
 /**
  * Calculate shared memory size needed for layer0_beam_search_kernel.
- * The visited bitmap is in global memory (not counted here).
+ * The visited bitmap and overflow queue are in global memory (not counted here).
  */
 inline size_t
 calc_layer0_smem_size(int ef, int search_width, int max_degree0) {
