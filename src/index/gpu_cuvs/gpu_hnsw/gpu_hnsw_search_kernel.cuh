@@ -56,6 +56,65 @@ thread_ip_distance(const float* __restrict__ query, const DataT* __restrict__ ve
 }
 
 // ============================================================================
+// Warp-cooperative distance computation
+// ============================================================================
+
+// Select threads_per_dist based on dimension at runtime.
+// Higher dims benefit from more threads cooperating per distance.
+__device__ __forceinline__ int
+select_threads_per_dist(int dim) {
+    if (dim >= 256)
+        return 4;
+    if (dim >= 96)
+        return 2;
+    return 1;
+}
+
+// Cooperative L2 distance: each thread in the group handles a slice of dimensions.
+// Returns the full distance on lane 0 of the group; other lanes return partial (unused).
+template <typename DataT>
+__device__ __forceinline__ float
+coop_l2_distance(const float* __restrict__ query, const DataT* __restrict__ vec,
+                 int dim, int lane_in_group, int threads_per_dist, uint32_t group_mask) {
+    int chunk = dim / threads_per_dist;
+    int start = lane_in_group * chunk;
+    int end = (lane_in_group == threads_per_dist - 1) ? dim : start + chunk;
+
+    float partial = 0.0f;
+    for (int d = start; d < end; d++) {
+        float diff = query[d] - load_elem(vec, d);
+        partial += diff * diff;
+    }
+
+    // Reduce within the group via warp shuffle
+    for (int offset = threads_per_dist / 2; offset > 0; offset >>= 1) {
+        partial += __shfl_down_sync(group_mask, partial, offset);
+    }
+    return partial;  // Valid only on lane 0 of group
+}
+
+// Cooperative IP distance: returns negated dot product on lane 0.
+template <typename DataT>
+__device__ __forceinline__ float
+coop_ip_distance(const float* __restrict__ query, const DataT* __restrict__ vec,
+                 int dim, int lane_in_group, int threads_per_dist, uint32_t group_mask) {
+    int chunk = dim / threads_per_dist;
+    int start = lane_in_group * chunk;
+    int end = (lane_in_group == threads_per_dist - 1) ? dim : start + chunk;
+
+    float partial = 0.0f;
+    for (int d = start; d < end; d++) {
+        partial += query[d] * load_elem(vec, d);
+    }
+
+    // Reduce within the group via warp shuffle
+    for (int offset = threads_per_dist / 2; offset > 0; offset >>= 1) {
+        partial += __shfl_down_sync(group_mask, partial, offset);
+    }
+    return -partial;  // Valid only on lane 0 of group
+}
+
+// ============================================================================
 // Phase 1: Upper-layer greedy search
 // ============================================================================
 
@@ -337,31 +396,56 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
     }
     __syncthreads();
 
-    // --- Seed with entry point's neighbors ---
+    // --- Seed with entry point's neighbors (warp-cooperative distances) ---
     if (threadIdx.x == 0)
         meta[1] = 0;
     __syncthreads();
 
-    for (int j = threadIdx.x; j < max_degree0; j += blockDim.x) {
+    // Cooperative distance setup: threads_per_dist threads collaborate per distance.
+    // Each group operates with a sub-warp mask so groups can diverge independently.
+    int threads_per_dist = select_threads_per_dist(dim);
+    int num_groups = blockDim.x / threads_per_dist;
+    int group_id = threadIdx.x / threads_per_dist;
+    int lane_in_group = threadIdx.x % threads_per_dist;
+    int warp_lane = threadIdx.x % 32;
+    int group_in_warp = warp_lane / threads_per_dist;
+    uint32_t group_mask = ((1u << threads_per_dist) - 1) << (group_in_warp * threads_per_dist);
+    int group_leader_lane = group_in_warp * threads_per_dist;
+
+    for (int j = group_id; j < max_degree0; j += num_groups) {
+        // All threads in group load the same neighbor (coalesced on same cache line)
         uint32_t nbr = __ldg(&d_layer0_graph[static_cast<int64_t>(ep) * max_degree0 + j]);
+
         if (nbr == UINT32_MAX || nbr >= static_cast<uint32_t>(N))
             continue;
-        if (!bitmap_visit(visited_bmap, nbr))
+
+        // Only lane 0 does bitmap_visit (atomic); broadcast result within group
+        int is_new = 0;
+        if (lane_in_group == 0) {
+            is_new = bitmap_visit(visited_bmap, nbr) ? 1 : 0;
+        }
+        is_new = __shfl_sync(group_mask, is_new, group_leader_lane);
+        if (!is_new)
             continue;
 
+        // All lanes cooperatively compute distance
+        const DataT* nbr_vec = d_dataset + static_cast<int64_t>(nbr) * dim;
         float dist;
         if (use_inner_product) {
-            dist = thread_ip_distance(query, d_dataset + static_cast<int64_t>(nbr) * dim, dim);
-            if (d_inv_norms)
+            dist = coop_ip_distance(query, nbr_vec, dim, lane_in_group, threads_per_dist, group_mask);
+            if (lane_in_group == 0 && d_inv_norms)
                 dist *= __ldg(&d_inv_norms[nbr]);
         } else {
-            dist = thread_l2_distance(query, d_dataset + static_cast<int64_t>(nbr) * dim, dim);
+            dist = coop_l2_distance(query, nbr_vec, dim, lane_in_group, threads_per_dist, group_mask);
         }
 
-        int slot = atomicAdd(&meta[1], 1);
-        if (slot < max_staging) {
-            staging_ids[slot] = nbr;
-            staging_dists[slot] = dist;
+        // Only lane 0 writes to staging
+        if (lane_in_group == 0) {
+            int slot = atomicAdd(&meta[1], 1);
+            if (slot < max_staging) {
+                staging_ids[slot] = nbr;
+                staging_dists[slot] = dist;
+            }
         }
     }
     __syncthreads();
@@ -458,36 +542,49 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
             break;
         }
 
-        // Step 2: Expand parents' neighbors in parallel
+        // Step 2: Expand parents' neighbors (warp-cooperative distances)
         if (threadIdx.x == 0)
             meta[1] = 0;
         __syncthreads();
 
         int total_work = num_parents * max_degree0;
-        for (int wi = threadIdx.x; wi < total_work; wi += blockDim.x) {
+        for (int wi = group_id; wi < total_work; wi += num_groups) {
             int parent_idx = wi / max_degree0;
             int nbr_slot = wi % max_degree0;
 
             uint32_t parent = parent_ids[parent_idx];
             uint32_t nbr = __ldg(&d_layer0_graph[static_cast<int64_t>(parent) * max_degree0 + nbr_slot]);
+
             if (nbr == UINT32_MAX || nbr >= static_cast<uint32_t>(N))
                 continue;
-            if (!bitmap_visit(visited_bmap, nbr))
+
+            // Only lane 0 does bitmap_visit (atomic); broadcast result within group
+            int is_new = 0;
+            if (lane_in_group == 0) {
+                is_new = bitmap_visit(visited_bmap, nbr) ? 1 : 0;
+            }
+            is_new = __shfl_sync(group_mask, is_new, group_leader_lane);
+            if (!is_new)
                 continue;
 
+            // All lanes cooperatively compute distance
+            const DataT* nbr_vec = d_dataset + static_cast<int64_t>(nbr) * dim;
             float dist;
             if (use_inner_product) {
-                dist = thread_ip_distance(query, d_dataset + static_cast<int64_t>(nbr) * dim, dim);
-                if (d_inv_norms)
+                dist = coop_ip_distance(query, nbr_vec, dim, lane_in_group, threads_per_dist, group_mask);
+                if (lane_in_group == 0 && d_inv_norms)
                     dist *= __ldg(&d_inv_norms[nbr]);
             } else {
-                dist = thread_l2_distance(query, d_dataset + static_cast<int64_t>(nbr) * dim, dim);
+                dist = coop_l2_distance(query, nbr_vec, dim, lane_in_group, threads_per_dist, group_mask);
             }
 
-            int slot = atomicAdd(&meta[1], 1);
-            if (slot < max_staging) {
-                staging_ids[slot] = nbr;
-                staging_dists[slot] = dist;
+            // Only lane 0 writes to staging
+            if (lane_in_group == 0) {
+                int slot = atomicAdd(&meta[1], 1);
+                if (slot < max_staging) {
+                    staging_ids[slot] = nbr;
+                    staging_dists[slot] = dist;
+                }
             }
         }
         __syncthreads();
