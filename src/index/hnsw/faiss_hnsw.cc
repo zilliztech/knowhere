@@ -3333,6 +3333,7 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWNode {
         // Accept CPU-built HNSW (F32) or HNSW_SQ (quantized) binaries.
         // The base Deserialize looks up the binary by Type() == "GPU_HNSW",
         // so alias whichever CPU key is present.
+        Status status;
         if (!binset.Contains(IndexEnum::INDEX_GPU_HNSW)) {
             BinarySet aliased = binset;
             for (const char* key : {IndexEnum::INDEX_HNSW_SQ, IndexEnum::INDEX_HNSW}) {
@@ -3341,9 +3342,27 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWNode {
                     break;
                 }
             }
-            return BaseFaissRegularIndexHNSWNode::Deserialize(aliased, cfg);
+            status = BaseFaissRegularIndexHNSWNode::Deserialize(aliased, cfg);
+        } else {
+            status = BaseFaissRegularIndexHNSWNode::Deserialize(binset, cfg);
         }
-        return BaseFaissRegularIndexHNSWNode::Deserialize(binset, cfg);
+        if (status != Status::success) {
+            return status;
+        }
+
+        // Eager GPU upload: build GPU index immediately at load time rather than
+        // deferring to first search. Eliminates cold-start latency for new segments.
+        const auto* faiss_idx = GetFaissHnswIndex();
+        if (faiss_idx) {
+            const auto& hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
+            bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
+            bool use_ip = IsMetricType(hnsw_cfg.metric_type.value(), metric::IP) || is_cosine;
+            gpu_handle_ = gpu_hnsw::build_gpu_index(faiss_idx, use_ip, is_cosine);
+            if (!gpu_handle_) {
+                fprintf(stderr, "[gpu_hnsw] eager GPU upload failed during Deserialize\n");
+            }
+        }
+        return Status::success;
     }
 
     expected<DataSetPtr>
