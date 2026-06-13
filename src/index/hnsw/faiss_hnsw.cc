@@ -3368,7 +3368,7 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWNode {
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
            milvus::OpContext* op_context) const override {
-        if (!bitset.empty()) {
+        if (!bitset.empty() && bitset.count() > 0) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "GPU_HNSW does not support filtered search");
         }
         {
@@ -3450,12 +3450,12 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWNode {
     mutable void* gpu_handle_ = nullptr;
 };
 
-// Register GPU_HNSW in the static config map (for CreateConfig lookups at load time).
-// GpuHnswIndexNode is not templated, so we cannot use KNOWHERE_REGISTER_STATIC directly.
-const IndexStaticFaced<fp32>& index_static_ref_GPU_HNSWfp32 =
-    IndexStaticFaced<fp32>::Instance().RegisterStaticFunc<GpuHnswIndexNode>("GPU_HNSW");
-const IndexStaticFaced<int8>& index_static_ref_GPU_HNSWint8 =
-    IndexStaticFaced<int8>::Instance().RegisterStaticFunc<GpuHnswIndexNode>("GPU_HNSW");
+// Register GPU_HNSW in the static config map at process startup.
+// Using __attribute__((constructor)) avoids static initialization order issues
+// that occur with inline const global registrations across translation units.
+__attribute__((constructor)) static void register_gpu_hnsw_static_config() {
+    IndexStaticFaced<fp32>::Instance().RegisterStaticFunc<GpuHnswIndexNode>(IndexEnum::INDEX_GPU_HNSW);
+}
 
 KNOWHERE_REGISTER_GLOBAL(
     GPU_HNSW,
