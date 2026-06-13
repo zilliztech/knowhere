@@ -290,43 +290,6 @@ overflow_insert(uint32_t* ovf_ids, float* ovf_dists, uint32_t* ovf_exp, int& ovf
 }
 
 /**
- * Parallel bitonic sort of staging buffer (shared memory).
- * All threads in the block cooperate to sort staging_ids[] and staging_dists[]
- * by distance (ascending). n is the actual element count; elements at indices
- * [n, n_pad) must be initialized to FLT_MAX before calling.
- *
- * After sorting, staging_dists[0] is the best (smallest) distance. Thread-0's
- * merge loop can early-exit once staging entries stop beating the result buffer.
- */
-__device__ __forceinline__ void
-bitonic_sort_staging(uint32_t* staging_ids, float* staging_dists, int n, int block_size) {
-    // Pad to next power of 2 for bitonic network
-    int n_pad = 1;
-    while (n_pad < n) n_pad <<= 1;
-
-    for (int k = 2; k <= n_pad; k <<= 1) {
-        for (int j = k >> 1; j > 0; j >>= 1) {
-            for (int i = threadIdx.x; i < n_pad; i += block_size) {
-                int ixj = i ^ j;
-                if (ixj > i && ixj < n_pad) {
-                    bool ascending = ((i & k) == 0);
-                    float di = staging_dists[i];
-                    float dj = staging_dists[ixj];
-                    if ((ascending && di > dj) || (!ascending && di < dj)) {
-                        staging_dists[i] = dj;
-                        staging_dists[ixj] = di;
-                        uint32_t tmp = staging_ids[i];
-                        staging_ids[i] = staging_ids[ixj];
-                        staging_ids[ixj] = tmp;
-                    }
-                }
-            }
-            __syncthreads();
-        }
-    }
-}
-
-/**
  * Layer-0 beam search with Overflow Candidate Queue (OCQ).
  *
  * Implements a correct HNSW search that matches CPU HNSW semantics by maintaining
@@ -625,87 +588,63 @@ layer0_beam_search_kernel(const float* __restrict__ d_queries, const DataT* __re
         }
         __syncthreads();
 
-        // Step 3: Parallel sort staging, then thread-0 merges with early exit
-        {
+        // Step 3: Thread 0 merges staging into result buffer + overflow
+        if (threadIdx.x == 0) {
             int staging_count = min(meta[1], max_staging);
+            int rc = meta[0];
+            int ovf_rc = d_overflow_count[query_idx];
+            float prev_worst = (rc >= ef) ? result_dists[rc - 1] : FLT_MAX;
 
-            // Pad staging beyond actual count with FLT_MAX for bitonic sort
-            for (int i = staging_count + threadIdx.x; i < max_staging; i += blockDim.x) {
-                staging_dists[i] = FLT_MAX;
-                staging_ids[i] = UINT32_MAX;
-            }
-            __syncthreads();
+            for (int s = 0; s < staging_count; s++) {
+                uint32_t sid = staging_ids[s];
+                float sdist = staging_dists[s];
 
-            // Parallel bitonic sort: all threads sort staging by distance (ascending)
-            if (staging_count > 1) {
-                bitonic_sort_staging(staging_ids, staging_dists, staging_count, blockDim.x);
-            }
-            // After sort: staging_dists[0] is best, staging_dists[staging_count-1] is worst
-
-            // Thread 0 merges sorted staging into result buffer with early termination
-            if (threadIdx.x == 0) {
-                int rc = meta[0];
-                int ovf_rc = d_overflow_count[query_idx];
-                float prev_worst = (rc >= ef) ? result_dists[rc - 1] : FLT_MAX;
-
-                for (int s = 0; s < staging_count; s++) {
-                    uint32_t sid = staging_ids[s];
-                    float sdist = staging_dists[s];
-
-                    if (rc < ef || sdist < result_dists[rc - 1]) {
-                        if (rc >= ef) {
-                            overflow_insert(ovf_ids, ovf_dists, ovf_exp, ovf_rc, overflow_ef, result_ids[ef - 1],
-                                            result_dists[ef - 1], is_expanded[ef - 1]);
-                        }
-
-                        int lo = 0, hi = rc;
-                        while (lo < hi) {
-                            int mid = (lo + hi) / 2;
-                            if (result_dists[mid] < sdist)
-                                lo = mid + 1;
-                            else
-                                hi = mid;
-                        }
-                        int insert_end = rc < ef ? rc : ef - 1;
-                        for (int i = insert_end; i > lo; i--) {
-                            result_ids[i] = result_ids[i - 1];
-                            result_dists[i] = result_dists[i - 1];
-                            is_expanded[i] = is_expanded[i - 1];
-                        }
-                        result_ids[lo] = sid;
-                        result_dists[lo] = sdist;
-                        is_expanded[lo] = 0;
-                        if (rc < ef)
-                            rc++;
-                    } else {
-                        // Staging is sorted: all remaining entries are >= sdist, so none
-                        // can beat result buffer. Bulk-insert remainder to overflow.
-                        for (int t = s; t < staging_count; t++) {
-                            overflow_insert(ovf_ids, ovf_dists, ovf_exp, ovf_rc, overflow_ef, staging_ids[t],
-                                            staging_dists[t], 0);
-                        }
-                        break;
+                if (rc < ef || sdist < result_dists[rc - 1]) {
+                    if (rc >= ef) {
+                        overflow_insert(ovf_ids, ovf_dists, ovf_exp, ovf_rc, overflow_ef, result_ids[ef - 1],
+                                        result_dists[ef - 1], is_expanded[ef - 1]);
                     }
-                }
 
-                // Track whether result buffer improved for early convergence
-                float new_worst = (rc >= ef) ? result_dists[rc - 1] : FLT_MAX;
-                if (new_worst < prev_worst) {
-                    meta[3] = 0;  // reset stale counter
+                    int lo = 0, hi = rc;
+                    while (lo < hi) {
+                        int mid = (lo + hi) / 2;
+                        if (result_dists[mid] < sdist)
+                            lo = mid + 1;
+                        else
+                            hi = mid;
+                    }
+                    int insert_end = rc < ef ? rc : ef - 1;
+                    for (int i = insert_end; i > lo; i--) {
+                        result_ids[i] = result_ids[i - 1];
+                        result_dists[i] = result_dists[i - 1];
+                        is_expanded[i] = is_expanded[i - 1];
+                    }
+                    result_ids[lo] = sid;
+                    result_dists[lo] = sdist;
+                    is_expanded[lo] = 0;
+                    if (rc < ef)
+                        rc++;
                 } else {
-                    meta[3] = meta[3] + 1;  // increment stale counter
+                    overflow_insert(ovf_ids, ovf_dists, ovf_exp, ovf_rc, overflow_ef, sid, sdist, 0);
                 }
-
-                meta[0] = rc;
-                d_overflow_count[query_idx] = ovf_rc;
-#ifdef GPU_HNSW_DIAGNOSTICS
-                if (query_idx == 0 && (iter < 5 || iter % 20 == 0)) {
-                    printf("[beam_diag] q0 iter=%d parents=%d staged=%d rc=%d ovf_rc=%d best=%.6f worst=%.6f\n", iter,
-                           num_parents, staging_count, rc, ovf_rc, result_dists[0],
-                           rc > 0 ? result_dists[rc - 1] : 999.0f);
-                }
-#endif
             }
+
+            // Track whether result buffer improved for early convergence
+            float new_worst = (rc >= ef) ? result_dists[rc - 1] : FLT_MAX;
+            if (new_worst < prev_worst) {
+                meta[3] = 0;
+            } else {
+                meta[3] = meta[3] + 1;
+            }
+
+            meta[0] = rc;
+            d_overflow_count[query_idx] = ovf_rc;
+#ifdef GPU_HNSW_DIAGNOSTICS
+            if (query_idx == 0 && (iter < 5 || iter % 20 == 0)) {
+                printf("[beam_diag] q0 iter=%d parents=%d staged=%d rc=%d ovf_rc=%d best=%.6f worst=%.6f\n", iter,
+                       num_parents, staging_count, rc, ovf_rc, result_dists[0], rc > 0 ? result_dists[rc - 1] : 999.0f);
+            }
+#endif
         }
         __syncthreads();
 
