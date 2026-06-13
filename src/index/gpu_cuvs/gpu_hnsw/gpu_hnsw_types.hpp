@@ -15,7 +15,7 @@ namespace knowhere::detail::gpu_hnsw {
 
 struct search_params {
     int ef = 200;
-    int search_width = 4;
+    int search_width = 8;
     int max_iterations = 0;     // 0 = auto
     int thread_block_size = 0;  // 0 = auto (128)
     int overflow_factor = 2;    // overflow_ef = overflow_factor * ef (secondary candidate queue)
@@ -40,9 +40,9 @@ struct search_scratch {
     // Overflow candidate queue (OCQ) — secondary expansion buffer in global memory.
     // Holds candidates rejected from the result buffer that are still worth expanding.
     uint32_t* d_overflow_ids = nullptr;       // [nq * overflow_ef]
-    float* d_overflow_dists = nullptr;         // [nq * overflow_ef]
-    uint32_t* d_overflow_expanded = nullptr;   // [nq * overflow_ef]
-    int* d_overflow_count = nullptr;           // [nq] current valid entries per query
+    float* d_overflow_dists = nullptr;        // [nq * overflow_ef]
+    uint32_t* d_overflow_expanded = nullptr;  // [nq * overflow_ef]
+    int* d_overflow_count = nullptr;          // [nq] current valid entries per query
 
     size_t queries_bytes = 0;    // nq * dim * sizeof(float)
     size_t neighbors_bytes = 0;  // nq * k * sizeof(uint64_t)
@@ -90,8 +90,8 @@ struct search_scratch {
         }
         // Overflow candidate queue buffers
         size_t ovf_entries = static_cast<size_t>(nq) * overflow_ef;
-        size_t need_ovf = ovf_entries * (sizeof(uint32_t) + sizeof(float) + sizeof(uint32_t))
-                        + static_cast<size_t>(nq) * sizeof(int);
+        size_t need_ovf =
+            ovf_entries * (sizeof(uint32_t) + sizeof(float) + sizeof(uint32_t)) + static_cast<size_t>(nq) * sizeof(int);
         if (need_ovf > overflow_bytes) {
             if (d_overflow_ids)
                 cudaFree(d_overflow_ids);
