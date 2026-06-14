@@ -3306,6 +3306,11 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWNode {
         return std::make_unique<FaissHnswConfig>();
     }
 
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
+        return true;
+    }
+
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
         return StaticCreateConfig();
@@ -3453,8 +3458,10 @@ class GpuHnswIndexNode : public BaseFaissRegularIndexHNSWNode {
 // Register GPU_HNSW in the static config map at process startup.
 // Using __attribute__((constructor)) avoids static initialization order issues
 // that occur with inline const global registrations across translation units.
-__attribute__((constructor)) static void register_gpu_hnsw_static_config() {
+__attribute__((constructor)) static void
+register_gpu_hnsw_static_config() {
     IndexStaticFaced<fp32>::Instance().RegisterStaticFunc<GpuHnswIndexNode>(IndexEnum::INDEX_GPU_HNSW);
+    IndexStaticFaced<int8>::Instance().RegisterStaticFunc<GpuHnswIndexNode>(IndexEnum::INDEX_GPU_HNSW);
 }
 
 KNOWHERE_REGISTER_GLOBAL(
