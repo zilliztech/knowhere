@@ -92,11 +92,11 @@ class GrowableInvertedIndexCursor {
  * @tparam QType Type used for quantized values in the index (e.g. float)
  */
 template <typename DType, typename QType>
-class GrowableInvertedIndex : public CRTPInvertedIndex<GrowableInvertedIndex<DType, QType>, DType> {
+class GrowableInvertedIndex : public CRTPInvertedIndex<GrowableInvertedIndex<DType, QType>, DType, true> {
  public:
     using posting_list_iterator = GrowableInvertedIndexCursor<DType, QType>;
 
-    GrowableInvertedIndex() : CRTPInvertedIndex<GrowableInvertedIndex<DType, QType>, DType>("growableinverted") {
+    GrowableInvertedIndex() : CRTPInvertedIndex<GrowableInvertedIndex<DType, QType>, DType, true>("growableinverted") {
     }
 
     GrowableInvertedIndex(const GrowableInvertedIndex& rhs) = delete;
@@ -110,8 +110,7 @@ class GrowableInvertedIndex : public CRTPInvertedIndex<GrowableInvertedIndex<DTy
     size() const override {
         size_t res = sizeof(*this);
 
-        res += this->nr_inner_dims_ * (sizeof(typename decltype(this->dim_map_)::key_type) +
-                                       sizeof(typename decltype(this->dim_map_)::mapped_type));
+        res += this->dim_map_.byte_size();
 
         res += sizeof(typename decltype(posting_lists_ids_)::value_type) * posting_lists_ids_.size();
         for (const auto& ids : posting_lists_ids_) {
@@ -193,16 +192,17 @@ GrowableInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t ro
     }
 
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_MAX_SCORES_PER_DIM) {
-        this->meta_data_.max_score_per_dim_.resize(this->nr_inner_dims_, 0.0f);
+        this->meta_data_.resize_max_score_per_dim(this->nr_inner_dims_, 0.0f);
         for (size_t i = 0; i < rows; ++i) {
             for (size_t j = 0; j < data[i].size(); ++j) {
                 auto [dim_id, val] = data[i][j];
-                if (this->dim_map_.find(dim_id) == this->dim_map_.end()) {
+                auto inner_dim = this->dim_map_.lookup(dim_id);
+                if (!inner_dim.has_value()) {
                     continue;
                 }
                 float score = this->build_scorer_->vec_score(this->nr_rows_ + i, val);
-                this->meta_data_.max_score_per_dim_[this->dim_map_[dim_id]] =
-                    std::max(this->meta_data_.max_score_per_dim_[this->dim_map_[dim_id]], score);
+                this->meta_data_.max_score_per_dim_[inner_dim.value()] =
+                    std::max(this->meta_data_.max_score_per_dim_[inner_dim.value()], score);
             }
         }
     }
@@ -229,15 +229,16 @@ GrowableInvertedIndex<DType, QType>::add_row_to_index(const SparseRow<DType>& ro
             continue;
         }
 
-        auto dim_it = this->dim_map_.find(dim);
-        if (dim_it == this->dim_map_.cend()) {
-            dim_it = this->dim_map_.insert({dim, this->nr_inner_dims_++}).first;
+        auto inner_dim = this->dim_map_.lookup(dim);
+        if (!inner_dim.has_value()) {
+            inner_dim = this->dim_map_.append_legacy_entry(dim);
+            this->nr_inner_dims_ = this->dim_map_.size();
             posting_lists_ids_.emplace_back();
             posting_lists_vals_.emplace_back();
         }
 
-        posting_lists_ids_[dim_it->second].emplace_back(vec_id);
-        posting_lists_vals_[dim_it->second].emplace_back(get_quant_val<DType, QType>(val));
+        posting_lists_ids_[inner_dim.value()].emplace_back(vec_id);
+        posting_lists_vals_[inner_dim.value()].emplace_back(get_quant_val<DType, QType>(val));
     }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)

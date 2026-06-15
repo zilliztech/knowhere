@@ -1,10 +1,12 @@
 #pragma once
-#include <boost/core/make_span.hpp>
-#include <boost/core/span.hpp>
+#include <array>
 #include <iostream>
+#include <span>
+#include <unordered_set>
 #include <vector>
 
 #include "index/sparse/inverted_index.h"
+#include "index/sparse/inverted_index_format.h"
 #include "index/sparse/scorer.h"
 #include "knowhere/log.h"
 #include "knowhere/sparse_utils.h"
@@ -15,7 +17,7 @@ namespace knowhere::sparse::inverted {
 template <typename DType, typename QType>
 class FlattenInvertedIndexCursor {
  public:
-    FlattenInvertedIndexCursor(boost::span<uint32_t> plist_ids, boost::span<QType> plist_vals, size_t universe,
+    FlattenInvertedIndexCursor(std::span<uint32_t> plist_ids, std::span<QType> plist_vals, size_t universe,
                                BitsetView bitset)
         : plist_ids_(plist_ids),
           plist_vals_(plist_vals),
@@ -86,8 +88,8 @@ class FlattenInvertedIndexCursor {
         }
     }
 
-    boost::span<uint32_t> plist_ids_;
-    boost::span<QType> plist_vals_;
+    std::span<uint32_t> plist_ids_;
+    std::span<QType> plist_vals_;
     const size_t plist_size_;
     const size_t universe_;
     BitsetView bitset_;
@@ -110,8 +112,6 @@ class FlattenInvertedIndex : public CRTPInvertedIndex<FlattenInvertedIndex<DType
  public:
     using posting_list_iterator = FlattenInvertedIndexCursor<DType, QType>;
 
-    static constexpr uint64_t current_index_file_format_version_ = 1;
-
     FlattenInvertedIndex() : CRTPInvertedIndex<FlattenInvertedIndex<DType, QType>, DType>("flatteninverted") {
     }
 
@@ -126,8 +126,7 @@ class FlattenInvertedIndex : public CRTPInvertedIndex<FlattenInvertedIndex<DType
     size() const override {
         size_t res = sizeof(*this);
 
-        res += this->nr_inner_dims_ * (sizeof(typename decltype(this->dim_map_)::key_type) +
-                                       sizeof(typename decltype(this->dim_map_)::mapped_type));
+        res += this->dim_map_.byte_size();
 
         res += raw_index_offsets_.size() * sizeof(size_t);
         res += raw_index_ids_.size() * sizeof(uint32_t);
@@ -226,13 +225,13 @@ class FlattenInvertedIndex : public CRTPInvertedIndex<FlattenInvertedIndex<DType
     // Inverted lists start offsets
     // Each dimension's inverted list is stored contiguously in a flattened array
     // The start offset of each dimension's list is stored in raw_index_offsets_
-    boost::span<size_t> raw_index_offsets_;
+    std::span<size_t> raw_index_offsets_;
 
     // Inverted lists storing vector IDs
-    boost::span<uint32_t> raw_index_ids_;
+    std::span<uint32_t> raw_index_ids_;
 
     // Inverted lists storing corresponding values
-    boost::span<QType> raw_index_vals_;
+    std::span<QType> raw_index_vals_;
 };
 
 template <typename DType, typename QType>
@@ -242,7 +241,7 @@ FlattenInvertedIndex<DType, QType>::build_raw_index(MemoryIOReader& reader, bool
     const auto saved_reader_loc = reader.tellg();
     const auto nnz = (reader.remaining() - (this->nr_rows_ * sizeof(size_t))) / SparseRow<DType>::element_size();
 
-    std::unordered_map<uint32_t, size_t> plist_cnts;
+    std::unordered_set<uint32_t> external_dims;
     for (size_t i = 0; i < this->nr_rows_; ++i) {
         size_t count;
         readBinaryPOD(reader, count);
@@ -252,10 +251,32 @@ FlattenInvertedIndex<DType, QType>::build_raw_index(MemoryIOReader& reader, bool
         for (size_t j = 0; j < count; ++j) {
             uint32_t dim;
             readBinaryPOD(reader, dim);
-            if (this->dim_map_.find(dim) == this->dim_map_.end()) {
-                this->dim_map_[dim] = this->nr_inner_dims_++;
+            external_dims.insert(dim);
+            reader.advance(sizeof(DType));
+        }
+    }
+
+    this->dim_map_.build_from_external_dims(external_dims);
+    this->nr_inner_dims_ = this->dim_map_.size();
+
+    // reset reader to the saved beginning
+    reader.seekg(saved_reader_loc);
+
+    std::vector<size_t> plist_cnts(this->nr_inner_dims_, 0);
+    for (size_t i = 0; i < this->nr_rows_; ++i) {
+        size_t count;
+        readBinaryPOD(reader, count);
+        if (count == 0) {
+            continue;
+        }
+        for (size_t j = 0; j < count; ++j) {
+            uint32_t dim;
+            readBinaryPOD(reader, dim);
+            auto inner_dim = this->dim_map_.lookup(dim);
+            if (!inner_dim.has_value()) {
+                throw std::runtime_error("unexpected vector dimension in FlattenInvertedIndex raw data");
             }
-            plist_cnts[this->dim_map_[dim]]++;
+            plist_cnts[inner_dim.value()]++;
             reader.advance(sizeof(DType));
         }
     }
@@ -279,10 +300,10 @@ FlattenInvertedIndex<DType, QType>::build_raw_index(MemoryIOReader& reader, bool
     index_container_->seal();
 
     auto* data = index_container_->data();
-    raw_index_offsets_ = boost::span<size_t>(reinterpret_cast<size_t*>(data), this->nr_inner_dims_ + 1);
-    raw_index_ids_ = boost::span<uint32_t>(reinterpret_cast<uint32_t*>(data + raw_index_offsets_byte_sz), nnz);
+    raw_index_offsets_ = std::span<size_t>(reinterpret_cast<size_t*>(data), this->nr_inner_dims_ + 1);
+    raw_index_ids_ = std::span<uint32_t>(reinterpret_cast<uint32_t*>(data + raw_index_offsets_byte_sz), nnz);
     raw_index_vals_ =
-        boost::span<QType>(reinterpret_cast<QType*>(data + raw_index_ids_byte_sz + raw_index_offsets_byte_sz), nnz);
+        std::span<QType>(reinterpret_cast<QType*>(data + raw_index_ids_byte_sz + raw_index_offsets_byte_sz), nnz);
 
     std::size_t offset = 0;
     for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
@@ -312,7 +333,7 @@ FlattenInvertedIndex<DType, QType>::build_raw_index(MemoryIOReader& reader, bool
     }
 
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_MAX_SCORES_PER_DIM) {
-        this->meta_data_.max_score_per_dim_.resize(this->nr_inner_dims_, 0.0f);
+        this->meta_data_.resize_max_score_per_dim(this->nr_inner_dims_, 0.0f);
 
         for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
             auto offset = this->raw_index_offsets_[i];
@@ -353,14 +374,14 @@ FlattenInvertedIndex<DType, QType>::build_block_max_data(bool enable_mmap, const
     auto block_max_data_container_data_ = this->meta_data_.block_max_data_.container_->data();
 
     size_t container_offset = 0;
-    this->meta_data_.block_max_data_.block_offsets_ = boost::span<size_t>(
+    this->meta_data_.block_max_data_.block_offsets_ = std::span<size_t>(
         reinterpret_cast<size_t*>(block_max_data_container_data_ + container_offset), this->nr_inner_dims_);
     container_offset += this->nr_inner_dims_ * sizeof(size_t);
-    this->meta_data_.block_max_data_.block_max_ids_ = boost::span<uint32_t>(
+    this->meta_data_.block_max_data_.block_max_ids_ = std::span<uint32_t>(
         reinterpret_cast<uint32_t*>(block_max_data_container_data_ + container_offset), total_blocks);
     container_offset += total_blocks * sizeof(uint32_t);
     this->meta_data_.block_max_data_.block_max_scores_ =
-        boost::span<float>(reinterpret_cast<float*>(block_max_data_container_data_ + container_offset), total_blocks);
+        std::span<float>(reinterpret_cast<float*>(block_max_data_container_data_ + container_offset), total_blocks);
     container_offset += total_blocks * sizeof(float);
     assert(container_offset == this->meta_data_.block_max_data_.container_->size());
 
@@ -436,12 +457,12 @@ FlattenInvertedIndex<DType, QType>::add_row_to_index(const SparseRow<DType>& row
 
         row_sum += val;
 
-        auto dim_it = this->dim_map_.find(dim);
-        if (dim_it == this->dim_map_.cend()) {
+        auto inner_dim = this->dim_map_.lookup(dim);
+        if (!inner_dim.has_value()) {
             throw std::runtime_error("unexpected vector dimension in FlattenInvertedIndex");
         }
 
-        auto offset = curr_offsets[dim_it->second]++;
+        auto offset = curr_offsets[inner_dim.value()]++;
         raw_index_ids_[offset] = vec_id;
         raw_index_vals_[offset] = get_quant_val<DType, QType>(val);
     }
@@ -454,7 +475,7 @@ FlattenInvertedIndex<DType, QType>::add_row_to_index(const SparseRow<DType>& row
 template <typename DType, typename QType>
 Status
 FlattenInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t rows, int64_t dim) {
-    std::unordered_map<uint32_t, size_t> plist_cnts;
+    std::unordered_set<uint32_t> external_dims;
     size_t total_nnz = 0;
 
     if (this->nr_rows_ != 0) {
@@ -476,15 +497,30 @@ FlattenInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t row
             if (std::abs(val) < std::numeric_limits<DType>::epsilon()) {
                 continue;
             }
-            if (this->dim_map_.find(dim) == this->dim_map_.end()) {
-                this->dim_map_[dim] = this->nr_inner_dims_++;
-            }
-            plist_cnts[this->dim_map_[dim]]++;
+            external_dims.insert(dim);
             ++total_nnz;
         }
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         this->build_stats_.dataset_nnz_stats_[i] = data[i].size();
 #endif
+    }
+
+    this->dim_map_.build_from_external_dims(external_dims);
+    this->nr_inner_dims_ = this->dim_map_.size();
+
+    std::vector<size_t> plist_cnts(this->nr_inner_dims_, 0);
+    for (uint32_t i = 0; i < rows; ++i) {
+        for (size_t j = 0; j < data[i].size(); ++j) {
+            auto [dim, val] = data[i][j];
+            if (std::abs(val) < std::numeric_limits<DType>::epsilon()) {
+                continue;
+            }
+            auto inner_dim = this->dim_map_.lookup(dim);
+            if (!inner_dim.has_value()) {
+                return Status::sparse_inner_error;
+            }
+            plist_cnts[inner_dim.value()]++;
+        }
     }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
@@ -506,11 +542,11 @@ FlattenInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t row
     this->index_container_->seal();
 
     auto* buffer = this->index_container_->data();
-    this->raw_index_offsets_ = boost::span<size_t>(reinterpret_cast<size_t*>(buffer), this->nr_inner_dims_ + 1);
+    this->raw_index_offsets_ = std::span<size_t>(reinterpret_cast<size_t*>(buffer), this->nr_inner_dims_ + 1);
     buffer += raw_index_offsets_byte_sz;
-    this->raw_index_ids_ = boost::span<uint32_t>(reinterpret_cast<uint32_t*>(buffer), total_nnz);
+    this->raw_index_ids_ = std::span<uint32_t>(reinterpret_cast<uint32_t*>(buffer), total_nnz);
     buffer += raw_index_ids_byte_sz;
-    this->raw_index_vals_ = boost::span<QType>(reinterpret_cast<QType*>(buffer), total_nnz);
+    this->raw_index_vals_ = std::span<QType>(reinterpret_cast<QType*>(buffer), total_nnz);
 
     std::size_t offset = 0;
     for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
@@ -529,7 +565,7 @@ FlattenInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t row
     }
 
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_MAX_SCORES_PER_DIM) {
-        this->meta_data_.max_score_per_dim_.resize(this->nr_inner_dims_, 0.0f);
+        this->meta_data_.resize_max_score_per_dim(this->nr_inner_dims_, 0.0f);
 
         for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
             auto offset = this->raw_index_offsets_[i];
@@ -553,150 +589,121 @@ FlattenInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t row
 template <typename DType, typename QType>
 Status
 FlattenInvertedIndex<DType, QType>::serialize(MemoryIOWriter& writer) const {
-    // Serialized format:
-    // 1. Index Header (36 bytes):
-    //    - index_format_version (uint32_t): Version of the index format, currently 1
-    //    - nr_rows (uint32_t): Number of rows in the index
-    //    - max_dim (uint32_t): Number of columns, or maximum dimension ID
-    //    - nr_inner_dims (uint32_t): Number of inner dimensions
-    //    - reserved (16 bytes): Reserved for future use
-    //
-    // 2. Section Headers Table:
-    //    - nr_sections (uint32_t): Number of sections
-    //    - section_headers[nr_sections]: Array of section headers, each containing:
-    //      - type (InvertedIndexSectionType): Type of the section
-    //      - padding (uint32_t): Padding to align the section header to 8 bytes
-    //      - offset (uint64_t): Offset of the section from the beginning of the file
-    //      - size (uint64_t): Size of the section in bytes
-    //
-    // 3. Posting Lists Section:
-    //    - index_encoding_type (uint32_t): Type of encoding used, only flat is supported for FlattenInvertedIndex
-    //    - encoded_index_data: Flattened posting lists
-    //
-    // 4. Dimension Map Section:
-    //    - dim_map_reverse[nr_inner_dims]: Array mapping internal dimension IDs to original dimensions
-    //
-    // 5. Optional Row Sums Section (if FLAG_HAS_ROW_SUMS is set):
-    //    - row_sums[nr_rows]: Array of row sums (float)
-    //
-    // 6. Optional Max Scores Per Dimension Section (if FLAG_HAS_MAX_SCORES_PER_DIM is set):
-    //    - max_score_per_dim[nr_inner_dims]: Array of maximum scores per dimension (float)
-    //
-    // 7. Optional Block Max Scores Section (if FLAG_HAS_BLOCK_MAX_SCORES is set):
-    //    - total_blocks (size_t): Total number of blocks
-    //    - block_size (uint32_t): Size of each block
-    //    - block_max_data: Serialized block max data
+    const uint32_t index_format_version = kInvertedIndexFileFormatVersion;
 
-    // write index header data
-    const uint32_t index_format_version = current_index_file_format_version_;
-
-    // Index File Header
-    writer.write(&index_format_version, sizeof(uint32_t));  // index format version
-    writer.write(&this->nr_rows_, sizeof(uint32_t));        // number of rows
-    writer.write(&this->max_dim_, sizeof(uint32_t));        // number of cols, or maximum dimension id
-    writer.write(&this->nr_inner_dims_, sizeof(uint32_t));  // number of inner dimensions
-    auto reserved = std::array<uint8_t, 16>();              // reserved for future use
+    writer.write(&index_format_version, sizeof(uint32_t));
+    writer.write(&this->nr_rows_, sizeof(uint32_t));
+    writer.write(&this->max_dim_, sizeof(uint32_t));
+    writer.write(&this->nr_inner_dims_, sizeof(uint32_t));
+    auto reserved = std::array<uint8_t, kInvertedIndexHeaderReservedBytes>();
     writer.write(reserved.data(), reserved.size());
 
-    // Section Headers Table
-    uint32_t nr_sections = 2;  // base sections: inverted index and dim map
-    // Count additional sections based on flags in a single operation
+    uint32_t nr_sections = 2;  // base sections: posting lists and dim map reverse
+    constexpr auto dim_map_storage = DimMapMphfStorage::SeparateSection;
     nr_sections += ((this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_ROW_SUMS) != 0) +
                    ((this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_MAX_SCORES_PER_DIM) != 0) +
-                   ((this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_BLOCK_MAX_SCORES) != 0);
+                   ((this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_BLOCK_MAX_SCORES) != 0) +
+                   this->dim_map_.has_mphf_section(dim_map_storage);
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    // use a section to store some build stats for prometheus
     nr_sections += 1;
 #endif
     writer.write(&nr_sections, sizeof(uint32_t));
 
-    // since writer doesn't support seekp() for now, calculate all sizes of each sections first
     std::vector<InvertedIndexSectionHeader> section_headers(nr_sections);
 
-    uint64_t used_offset = sizeof(InvertedIndexSectionHeader) * nr_sections + 36;
+    uint64_t used_offset = first_section_offset(nr_sections);
     section_headers[0].type = InvertedIndexSectionType::POSTING_LISTS;
-    section_headers[0].offset = used_offset;
     section_headers[0].size = sizeof(uint32_t) + index_container_->size();
-    used_offset += section_headers[0].size;
+    assign_section_offset(section_headers[0], used_offset);
 
-    section_headers[1].type = InvertedIndexSectionType::DIM_MAP;
-    section_headers[1].offset = used_offset;
-    section_headers[1].size = sizeof(uint32_t) * this->nr_inner_dims_;
-    used_offset += section_headers[1].size;
+    section_headers[1].type = InvertedIndexSectionType::DIM_MAP_REVERSE;
+    section_headers[1].size = this->dim_map_.reverse_section_size(dim_map_storage);
+    assign_section_offset(section_headers[1], used_offset);
 
     auto curr_section_idx = 2;
+    if (this->dim_map_.has_mphf_section(dim_map_storage)) {
+        section_headers[curr_section_idx].type = InvertedIndexSectionType::DIM_MAP_MPHF;
+        section_headers[curr_section_idx].size = this->dim_map_.mphf_section_size(dim_map_storage);
+        assign_section_offset(section_headers[curr_section_idx], used_offset);
+        curr_section_idx++;
+    }
+
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_ROW_SUMS) {
         section_headers[curr_section_idx].type = InvertedIndexSectionType::ROW_SUMS;
-        section_headers[curr_section_idx].offset = used_offset;
         section_headers[curr_section_idx].size = sizeof(float) * this->nr_rows_;
-        used_offset += section_headers[curr_section_idx].size;
+        assign_section_offset(section_headers[curr_section_idx], used_offset);
         curr_section_idx++;
     }
 
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_MAX_SCORES_PER_DIM) {
         section_headers[curr_section_idx].type = InvertedIndexSectionType::MAX_SCORES_PER_DIM;
-        section_headers[curr_section_idx].offset = used_offset;
         section_headers[curr_section_idx].size = sizeof(float) * this->nr_inner_dims_;
-        used_offset += section_headers[curr_section_idx].size;
+        assign_section_offset(section_headers[curr_section_idx], used_offset);
         curr_section_idx++;
     }
 
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_BLOCK_MAX_SCORES) {
         section_headers[curr_section_idx].type = InvertedIndexSectionType::BLOCK_MAX_SCORES;
-        section_headers[curr_section_idx].offset = used_offset;
         section_headers[curr_section_idx].size =
             sizeof(size_t) + sizeof(uint32_t) + this->meta_data_.block_max_data_.container_->size();
-        used_offset += section_headers[curr_section_idx].size;
+        assign_section_offset(section_headers[curr_section_idx], used_offset);
         curr_section_idx++;
     }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     section_headers[curr_section_idx].type = InvertedIndexSectionType::PROMETHEUS_BUILD_STATS;
-    section_headers[curr_section_idx].offset = used_offset;
     section_headers[curr_section_idx].size =
         sizeof(uint32_t) * this->nr_rows_ + sizeof(uint32_t) * this->nr_inner_dims_;
-    used_offset += section_headers[curr_section_idx].size;
+    assign_section_offset(section_headers[curr_section_idx], used_offset);
     curr_section_idx++;
 #endif
 
     assert(curr_section_idx == nr_sections);
 
-    // write section headers table
     writer.write(section_headers.data(), sizeof(InvertedIndexSectionHeader), nr_sections);
 
-    // write index encoding type and encoded index
     uint32_t index_encoding_type = static_cast<uint32_t>(InvertedIndexEncoding::FLAT);
+    write_padding_until(writer, section_headers[0].offset);
     writer.write(&index_encoding_type, sizeof(uint32_t));
     writer.write(index_container_->data(), index_container_->size());
 
-    // write dim map
-    auto dim_map_reverse = std::vector<uint32_t>(this->nr_inner_dims_);
-    for (const auto& [dim, dim_id] : this->dim_map_) {
-        dim_map_reverse[dim_id] = dim;
-    }
-    writer.write(dim_map_reverse.data(), sizeof(uint32_t), this->nr_inner_dims_);
+    write_padding_until(writer, section_headers[1].offset);
+    this->dim_map_.write_reverse_section(writer, dim_map_storage);
 
-    // write index meta data
+    curr_section_idx = 2;
+    if (this->dim_map_.has_mphf_section(dim_map_storage)) {
+        write_padding_until(writer, section_headers[curr_section_idx].offset);
+        this->dim_map_.write_mphf_section(writer, dim_map_storage);
+        curr_section_idx++;
+    }
+
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_ROW_SUMS) {
+        write_padding_until(writer, section_headers[curr_section_idx].offset);
         writer.write(this->meta_data_.row_sums_.data(), sizeof(float), this->nr_rows_);
+        curr_section_idx++;
     }
 
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_MAX_SCORES_PER_DIM) {
+        write_padding_until(writer, section_headers[curr_section_idx].offset);
         writer.write(this->meta_data_.max_score_per_dim_.data(), sizeof(float), this->nr_inner_dims_);
+        curr_section_idx++;
     }
 
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_BLOCK_MAX_SCORES) {
+        write_padding_until(writer, section_headers[curr_section_idx].offset);
         size_t total_blocks = this->meta_data_.block_max_data_.block_max_ids_.size();
         writer.write(&total_blocks, sizeof(size_t));
         writer.write(&this->meta_data_.block_max_data_.block_size_, sizeof(uint32_t));
         writer.write(this->meta_data_.block_max_data_.container_->data(),
                      this->meta_data_.block_max_data_.container_->size());
+        curr_section_idx++;
     }
 
-    // write prometheus build stats
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+    write_padding_until(writer, section_headers[curr_section_idx].offset);
     writer.write(this->build_stats_.dataset_nnz_stats_.data(), sizeof(uint32_t), this->nr_rows_);
     writer.write(this->build_stats_.posting_list_length_stats_.data(), sizeof(uint32_t), this->nr_inner_dims_);
+    curr_section_idx++;
 #endif
 
     return Status::success;
@@ -709,7 +716,7 @@ FlattenInvertedIndex<DType, QType>::deserialize(MemoryIOReader& reader) {
         uint32_t index_format_version = 0;
         reader.read(&index_format_version, sizeof(uint32_t));
         // for now we only support version 1
-        if (index_format_version != current_index_file_format_version_) {
+        if (index_format_version != kInvertedIndexFileFormatVersion) {
             return Status::invalid_serialized_index_type;
         }
 
@@ -717,7 +724,7 @@ FlattenInvertedIndex<DType, QType>::deserialize(MemoryIOReader& reader) {
         reader.read(&this->max_dim_, sizeof(uint32_t));
         reader.read(&this->nr_inner_dims_, sizeof(uint32_t));
         // skip reserved bytes
-        reader.advance(16);
+        reader.advance(kInvertedIndexHeaderReservedBytes);
 
         return Status::success;
     };
@@ -725,14 +732,14 @@ FlattenInvertedIndex<DType, QType>::deserialize(MemoryIOReader& reader) {
     auto sections_handler = [&]() {
         uint32_t nr_sections = 0;
         reader.read(&nr_sections, sizeof(uint32_t));
-        size_t sec_table_offset = reader.tellg();
+        const auto section_headers = read_section_headers(reader, nr_sections);
+        if (auto status = this->dim_map_.load_sections(reader, section_headers, this->nr_inner_dims_,
+                                                       DimMapMphfStorage::SeparateSection);
+            status != Status::success) {
+            return status;
+        }
 
-        for (uint32_t i = 0; i < nr_sections; ++i) {
-            InvertedIndexSectionHeader section_header;
-            reader.seekg(sec_table_offset);
-            reader.read(&section_header, sizeof(InvertedIndexSectionHeader));
-            sec_table_offset += sizeof(InvertedIndexSectionHeader);
-
+        for (const auto& section_header : section_headers) {
             switch (section_header.type) {
                 case InvertedIndexSectionType::POSTING_LISTS: {
                     reader.seekg(section_header.offset);
@@ -742,28 +749,23 @@ FlattenInvertedIndex<DType, QType>::deserialize(MemoryIOReader& reader) {
                     if (index_encoding_type != static_cast<uint32_t>(InvertedIndexEncoding::FLAT)) {
                         return Status::invalid_serialized_index_type;
                     }
-                    this->raw_index_offsets_ = boost::span<size_t>(
+                    this->raw_index_offsets_ = std::span<size_t>(
                         reinterpret_cast<size_t*>(reader.data() + reader.tellg()), this->nr_inner_dims_ + 1);
                     reader.advance(sizeof(size_t) * (this->nr_inner_dims_ + 1));
                     auto nnz = this->raw_index_offsets_[this->nr_inner_dims_];
                     this->raw_index_ids_ =
-                        boost::span<uint32_t>(reinterpret_cast<uint32_t*>(reader.data() + reader.tellg()), nnz);
+                        std::span<uint32_t>(reinterpret_cast<uint32_t*>(reader.data() + reader.tellg()), nnz);
                     reader.advance(nnz * sizeof(uint32_t));
                     this->raw_index_vals_ =
-                        boost::span<QType>(reinterpret_cast<QType*>(reader.data() + reader.tellg()), nnz);
+                        std::span<QType>(reinterpret_cast<QType*>(reader.data() + reader.tellg()), nnz);
                     reader.advance(nnz * sizeof(QType));
                     // deserialize will use the memory from reader, so containers are not needed
                     // explicitly assign nullptr to them
                     this->index_container_ = nullptr;
                     break;
                 }
-                case InvertedIndexSectionType::DIM_MAP: {
-                    reader.seekg(section_header.offset);
-                    for (uint32_t i = 0; i < this->nr_inner_dims_; ++i) {
-                        uint32_t dim = 0;
-                        reader.read(&dim, sizeof(uint32_t));
-                        this->dim_map_[dim] = i;
-                    }
+                case InvertedIndexSectionType::DIM_MAP_REVERSE:
+                case InvertedIndexSectionType::DIM_MAP_MPHF: {
                     break;
                 }
                 case InvertedIndexSectionType::ROW_SUMS: {
@@ -774,8 +776,16 @@ FlattenInvertedIndex<DType, QType>::deserialize(MemoryIOReader& reader) {
                 }
                 case InvertedIndexSectionType::MAX_SCORES_PER_DIM: {
                     reader.seekg(section_header.offset);
-                    this->meta_data_.max_score_per_dim_.resize(this->nr_inner_dims_);
-                    reader.read(this->meta_data_.max_score_per_dim_.data(), sizeof(float), this->nr_inner_dims_);
+                    const auto max_score_bytes = static_cast<uint64_t>(this->nr_inner_dims_) * sizeof(float);
+                    if (section_header.size < max_score_bytes) {
+                        LOG_KNOWHERE_ERROR_ << "Sparse inverted index MAX_SCORES_PER_DIM section is truncated, "
+                                               "section_size="
+                                            << section_header.size << ", expected_bytes=" << max_score_bytes;
+                        return Status::invalid_serialized_index_type;
+                    }
+                    this->meta_data_.set_max_score_per_dim_view(
+                        reinterpret_cast<float*>(reader.data() + reader.tellg()), this->nr_inner_dims_);
+                    reader.advance(static_cast<size_t>(max_score_bytes));
                     break;
                 }
                 case InvertedIndexSectionType::BLOCK_MAX_SCORES: {
@@ -783,14 +793,14 @@ FlattenInvertedIndex<DType, QType>::deserialize(MemoryIOReader& reader) {
                     size_t total_blocks = 0;
                     reader.read(&total_blocks, sizeof(size_t));
                     reader.read(&this->meta_data_.block_max_data_.block_size_, sizeof(uint32_t));
-                    this->meta_data_.block_max_data_.block_offsets_ = boost::span<size_t>(
+                    this->meta_data_.block_max_data_.block_offsets_ = std::span<size_t>(
                         reinterpret_cast<size_t*>(reader.data() + reader.tellg()), this->nr_inner_dims_);
                     reader.advance(this->nr_inner_dims_ * sizeof(size_t));
-                    this->meta_data_.block_max_data_.block_max_ids_ = boost::span<uint32_t>(
-                        reinterpret_cast<uint32_t*>(reader.data() + reader.tellg()), total_blocks);
+                    this->meta_data_.block_max_data_.block_max_ids_ =
+                        std::span<uint32_t>(reinterpret_cast<uint32_t*>(reader.data() + reader.tellg()), total_blocks);
                     reader.advance(total_blocks * sizeof(uint32_t));
                     this->meta_data_.block_max_data_.block_max_scores_ =
-                        boost::span<float>(reinterpret_cast<float*>(reader.data() + reader.tellg()), total_blocks);
+                        std::span<float>(reinterpret_cast<float*>(reader.data() + reader.tellg()), total_blocks);
                     this->meta_data_.block_max_data_.container_ = nullptr;
                     reader.advance(total_blocks * sizeof(float));
                     break;
@@ -808,6 +818,8 @@ FlattenInvertedIndex<DType, QType>::deserialize(MemoryIOReader& reader) {
                     for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
                         this->index_posting_list_len_histogram_->Observe(posting_list_length_stats[i]);
                     }
+                    log_uint32_stats("FlattenInvertedIndex", "dataset_nnz", dataset_nnz_stats);
+                    log_uint32_stats("FlattenInvertedIndex", "posting_list_length", posting_list_length_stats);
 #endif
                     break;
                 }

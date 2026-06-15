@@ -4,12 +4,12 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include <boost/core/span.hpp>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <new>
+#include <span>
 #include <vector>
 
 #include "index/sparse/aligned_allocator.h"
@@ -208,7 +208,7 @@ class MemBinaryContainer : public BinaryContainer {
 
 class BlockMaxDataCursor {
  public:
-    BlockMaxDataCursor(boost::span<uint32_t> block_max_ids, boost::span<float> block_max_scores)
+    BlockMaxDataCursor(std::span<uint32_t> block_max_ids, std::span<float> block_max_scores)
         : block_max_ids_(block_max_ids), block_max_scores_(block_max_scores) {
         cur_vec_id_ = block_max_ids_[0];
     }
@@ -234,15 +234,15 @@ class BlockMaxDataCursor {
  private:
     uint32_t cur_vec_id_{0};
     uint32_t cur_pos_{0};
-    boost::span<uint32_t> block_max_ids_;
-    boost::span<float> block_max_scores_;
+    std::span<uint32_t> block_max_ids_;
+    std::span<float> block_max_scores_;
 };
 
 struct BlockMaxData {
     std::unique_ptr<BinaryContainer> container_;
-    boost::span<uint32_t> block_max_ids_;
-    boost::span<float> block_max_scores_;
-    boost::span<size_t> block_offsets_;
+    std::span<uint32_t> block_max_ids_;
+    std::span<float> block_max_scores_;
+    std::span<size_t> block_offsets_;
     size_t block_size_;
 };
 

@@ -45,32 +45,33 @@ namespace knowhere {
 // Returns nullopt if the data is too small or the first section is not POSTING_LISTS.
 //
 // Binary layout:
-//   [0..32)  File header: version(4), nr_rows(4), max_dim(4), nr_inner_dims(4), reserved(16)
-//   [32..36) nr_sections (uint32_t)
-//   [36..)   Section headers: each is InvertedIndexSectionType(4) + padding(4) + offset(8) + size(8) = 24 bytes
+//   [0..kInvertedIndexFileHeaderSize) File header
+//   [kInvertedIndexFileHeaderSize..)  nr_sections (uint32_t)
+//   Then section headers.
 //   At section[0].offset: encoding_type (uint32_t)
 static std::optional<sparse::inverted::InvertedIndexEncoding>
 peek_encoding_type_from_index_data(const uint8_t* data, size_t size) {
     using sparse::inverted::InvertedIndexEncoding;
     using sparse::inverted::InvertedIndexSectionHeader;
     using sparse::inverted::InvertedIndexSectionType;
+    using sparse::inverted::kInvertedIndexFileHeaderSize;
+    using sparse::inverted::kInvertedIndexSectionCountSize;
 
-    // Need at least: 32 (header) + 4 (nr_sections) + 24 (one section header) = 60 bytes
-    constexpr size_t kMinHeaderSize = 32 + 4 + sizeof(InvertedIndexSectionHeader);
+    constexpr size_t kMinHeaderSize =
+        kInvertedIndexFileHeaderSize + kInvertedIndexSectionCountSize + sizeof(InvertedIndexSectionHeader);
     if (size < kMinHeaderSize) {
         return std::nullopt;
     }
 
-    // Read nr_sections at offset 32
     uint32_t nr_sections = 0;
-    memcpy(&nr_sections, data + 32, sizeof(uint32_t));
+    memcpy(&nr_sections, data + kInvertedIndexFileHeaderSize, sizeof(uint32_t));
     if (nr_sections == 0) {
         return std::nullopt;
     }
 
-    // Read first section header at offset 36
     InvertedIndexSectionHeader first_section{};
-    memcpy(&first_section, data + 36, sizeof(InvertedIndexSectionHeader));
+    memcpy(&first_section, data + kInvertedIndexFileHeaderSize + kInvertedIndexSectionCountSize,
+           sizeof(InvertedIndexSectionHeader));
 
     if (first_section.type != InvertedIndexSectionType::POSTING_LISTS) {
         return std::nullopt;
@@ -280,6 +281,7 @@ class SparseInvertedIndexNode : public IndexNode {
         if (this->version_use_raw_data()) {
             RETURN_IF_ERROR(index_->convert_to_raw_data(writer));
         } else {
+            ConfigureSindiDimMapMphfWorkaround(index_.get());
             RETURN_IF_ERROR(index_->serialize(writer));
         }
         std::shared_ptr<uint8_t[]> data(writer.data());
@@ -556,8 +558,15 @@ class SparseInvertedIndexNode : public IndexNode {
                 algo == "SINDI" && (!encoding.has_value() ||
                                     encoding.value() == sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS);
             if (use_sindi) {
-                auto index = std::make_unique<sparse::inverted::SindiInvertedIndexIP>(
-                    cfg.sindi_window_size.value_or(sparse::inverted::SindiInvertedIndexIP::max_window_size));
+                auto window_size =
+                    cfg.sindi_window_size.value_or(sparse::inverted::SindiInvertedIndexIP::max_window_size);
+                IndexPtr index;
+                if (is_growable) {
+                    index = std::make_unique<sparse::inverted::GrowableSindiInvertedIndexIP>(window_size);
+                } else {
+                    index = std::make_unique<sparse::inverted::SindiInvertedIndexIP>(window_size);
+                }
+                ConfigureSindiDimMapMphfWorkaround(index.get());
                 index->set_build_algo(algo);
                 index->set_build_scorer(sparse::inverted::IndexScorerConfig{
                     .scorer_type = sparse::inverted::IndexScorerType::IP,
@@ -573,8 +582,15 @@ class SparseInvertedIndexNode : public IndexNode {
                 algo == "SINDI" && (!encoding.has_value() ||
                                     encoding.value() == sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS);
             if (use_sindi) {
-                auto index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25>(
-                    cfg.sindi_window_size.value_or(sparse::inverted::SindiInvertedIndexBM25::max_window_size));
+                auto window_size =
+                    cfg.sindi_window_size.value_or(sparse::inverted::SindiInvertedIndexBM25::max_window_size);
+                IndexPtr index;
+                if (is_growable) {
+                    index = std::make_unique<sparse::inverted::GrowableSindiInvertedIndexBM25>(window_size);
+                } else {
+                    index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25>(window_size);
+                }
+                ConfigureSindiDimMapMphfWorkaround(index.get());
                 index->set_build_algo(algo);
                 index->set_build_scorer(sparse::inverted::IndexScorerConfig{
                     .scorer_type = sparse::inverted::IndexScorerType::BM25,
@@ -626,7 +642,34 @@ class SparseInvertedIndexNode : public IndexNode {
         }
     }
 
+    bool
+    version_sindi_uses_mphf_section() const {
+        return index_version_ >= kSindiMphfSectionMinVersion;
+    }
+
+    void
+    ConfigureSindiDimMapMphfWorkaround(sparse::inverted::InvertedIndex<value_type>* index) const {
+        if (index == nullptr) {
+            return;
+        }
+
+        const bool use_legacy_trailer = !version_sindi_uses_mphf_section();
+        // Legacy SINDI loaders reject section counts above 4, so v10 keeps
+        // MPHF bytes in DIM_MAP_REVERSE. v11 writes DIM_MAP_MPHF separately.
+        if (auto* sindi_ip = dynamic_cast<sparse::inverted::SindiInvertedIndexIP*>(index)) {
+            sindi_ip->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
+        } else if (auto* growable_sindi_ip = dynamic_cast<sparse::inverted::GrowableSindiInvertedIndexIP*>(index)) {
+            growable_sindi_ip->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
+        } else if (auto* sindi_bm25 = dynamic_cast<sparse::inverted::SindiInvertedIndexBM25*>(index)) {
+            sindi_bm25->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
+        } else if (auto* growable_sindi_bm25 = dynamic_cast<sparse::inverted::GrowableSindiInvertedIndexBM25*>(index)) {
+            growable_sindi_bm25->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
+        }
+    }
+
  private:
+    static constexpr int32_t kSindiMphfSectionMinVersion = 11;
+
     /**
      * @brief Prepare search parameters
      *
