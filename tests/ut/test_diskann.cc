@@ -838,7 +838,8 @@ TEST_CASE("Test_AiSAQ_dynamic_cache", "[diskann]") {
              read_page_cache_size += 4096) {
             knn_json["pq_read_page_cache_size"] = read_page_cache_size;
             auto start = std::chrono::high_resolution_clock::now();
-            diskann.Search(query_ds, knn_json, nullptr);
+            auto loop_results = diskann.Search(query_ds, knn_json, nullptr);
+            REQUIRE(loop_results.has_value());
             auto end = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
             std::cout << "*********************** Run time: " << duration.count() << " ms"

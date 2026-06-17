@@ -28,7 +28,7 @@ class IndexFactory {
  public:
     template <typename DataType>
     expected<Index<IndexNode>>
-    Create(const std::string& name, const int32_t& version, const Object& object = nullptr);
+    Create(const std::string& name, const int32_t& version, const Object& object = nullptr) noexcept;
 
     template <typename DataType>
     const IndexFactory&
@@ -36,18 +36,18 @@ class IndexFactory {
              const uint64_t features);
 
     static IndexFactory&
-    Instance();
+    Instance() noexcept;
     typedef std::tuple<std::set<std::pair<std::string, VecType>>, std::set<std::string>, std::set<std::string>>
         GlobalIndexTable;
 
     bool
-    FeatureCheck(const std::string& name, uint64_t feature) const;
+    FeatureCheck(const std::string& name, uint64_t feature) const noexcept;
 
     static const std::map<std::string, uint64_t>&
-    GetIndexFeatures();
+    GetIndexFeatures() noexcept;
 
     static GlobalIndexTable&
-    StaticIndexTableInstance();
+    StaticIndexTableInstance() noexcept;
 
  private:
     struct FunMapValueBase {

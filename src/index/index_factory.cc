@@ -47,38 +47,41 @@ checkGpuAvailable(const std::string& name) {
 
 template <typename DataType>
 expected<Index<IndexNode>>
-IndexFactory::Create(const std::string& name, const int32_t& version, const Object& object) {
-    static_assert(KnowhereDataTypeCheck<DataType>::value == true);
-    auto& func_mapping_ = MapInstance();
-    auto key = GetKey<DataType>(name);
-    if (func_mapping_.find(key) == func_mapping_.end()) {
-        LOG_KNOWHERE_ERROR_ << "failed to find index " << key << " in factory";
-        return expected<Index<IndexNode>>::Err(Status::invalid_index_error, "index not supported");
-    }
-    LOG_KNOWHERE_INFO_ << "use key " << key << " to create knowhere index " << name << " with version " << version;
-    auto fun_map_v = static_cast<FunMapValue<Index<IndexNode>>*>(func_mapping_[key].get());
+IndexFactory::Create(const std::string& name, const int32_t& version, const Object& object) noexcept {
+    return GuardedCall([&]() -> expected<Index<IndexNode>> {
+        static_assert(KnowhereDataTypeCheck<DataType>::value == true);
+        auto& func_mapping_ = MapInstance();
+        auto key = GetKey<DataType>(name);
+        if (func_mapping_.find(key) == func_mapping_.end()) {
+            LOG_KNOWHERE_ERROR_ << "failed to find index " << key << " in factory";
+            return expected<Index<IndexNode>>::Err(Status::invalid_index_error, "index not supported");
+        }
+        LOG_KNOWHERE_INFO_ << "use key " << key << " to create knowhere index " << name << " with version " << version;
+        auto fun_map_v = static_cast<FunMapValue<Index<IndexNode>>*>(func_mapping_[key].get());
 
 #ifdef KNOWHERE_WITH_CUVS
-    if (!checkGpuAvailable(name)) {
-        return expected<Index<IndexNode>>::Err(Status::cuda_runtime_error, "gpu not available");
-    }
+        if (!checkGpuAvailable(name)) {
+            return expected<Index<IndexNode>>::Err(Status::cuda_runtime_error, "gpu not available");
+        }
 #endif
-    if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::cppcontrib::knowhere::support_pq_fast_scan) {
-        LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model";
-        return expected<Index<IndexNode>>::Err(Status::invalid_index_error,
-                                               "SCANN index is not supported on the current CPU model");
-    }
+        if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+            LOG_KNOWHERE_ERROR_ << "SCANN index is not supported on the current CPU model";
+            return expected<Index<IndexNode>>::Err(Status::invalid_index_error,
+                                                   "SCANN index is not supported on the current CPU model");
+        }
 
 #ifdef KNOWHERE_WITH_SVS
-    if ((name == knowhere::IndexEnum::INDEX_SVS_VAMANA_LVQ || name == knowhere::IndexEnum::INDEX_SVS_VAMANA_LEANVEC) &&
-        !faiss::IndexSVSVamana::is_lvq_leanvec_enabled()) {
-        LOG_KNOWHERE_ERROR_ << "SVS LVQ/LeanVec indices are only supported on Intel CPUs";
-        return expected<Index<IndexNode>>::Err(Status::invalid_index_error,
-                                               "SVS LVQ/LeanVec indices are only supported on Intel CPUs");
-    }
+        if ((name == knowhere::IndexEnum::INDEX_SVS_VAMANA_LVQ ||
+             name == knowhere::IndexEnum::INDEX_SVS_VAMANA_LEANVEC) &&
+            !faiss::IndexSVSVamana::is_lvq_leanvec_enabled()) {
+            LOG_KNOWHERE_ERROR_ << "SVS LVQ/LeanVec indices are only supported on Intel CPUs";
+            return expected<Index<IndexNode>>::Err(Status::invalid_index_error,
+                                                   "SVS LVQ/LeanVec indices are only supported on Intel CPUs");
+        }
 #endif
 
-    return fun_map_v->fun_value(version, object);
+        return fun_map_v->fun_value(version, object);
+    });
 }
 
 template <typename DataType>
@@ -102,7 +105,7 @@ IndexFactory::Register(const std::string& name, std::function<Index<IndexNode>(c
 }
 
 IndexFactory&
-IndexFactory::Instance() {
+IndexFactory::Instance() noexcept {
     static IndexFactory factory;
     return factory;
 }
@@ -122,20 +125,22 @@ IndexFactory::FeatureMapInstance() {
 }
 
 IndexFactory::GlobalIndexTable&
-IndexFactory::StaticIndexTableInstance() {
+IndexFactory::StaticIndexTableInstance() noexcept {
     static GlobalIndexTable static_index_table;
     return static_index_table;
 }
 
 bool
-IndexFactory::FeatureCheck(const std::string& name, uint64_t feature) const {
-    auto& feature_mapping_ = IndexFactory::FeatureMapInstance();
-    assert(feature_mapping_.find(name) != feature_mapping_.end());
-    return (feature_mapping_[name] & feature) == feature;
+IndexFactory::FeatureCheck(const std::string& name, uint64_t feature) const noexcept {
+    return GuardedCall([&]() {
+        auto& feature_mapping_ = IndexFactory::FeatureMapInstance();
+        assert(feature_mapping_.find(name) != feature_mapping_.end());
+        return (feature_mapping_[name] & feature) == feature;
+    });
 }
 
 const std::map<std::string, uint64_t>&
-IndexFactory::GetIndexFeatures() {
+IndexFactory::GetIndexFeatures() noexcept {
     return FeatureMapInstance();
 }
 

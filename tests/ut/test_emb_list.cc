@@ -2679,7 +2679,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
 
         const size_t* lims = default_ds_ptr->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
         knowhere::EmbListOffset doc_offset(std::vector<size_t>(lims, lims + NB / EACH_EL_LEN + 1));
-        strategy->PrepareDataForBuild(default_ds_ptr, doc_offset, cfg);
+        auto prep_result = strategy->PrepareDataForBuild(default_ds_ptr, doc_offset, cfg);
+        REQUIRE(prep_result.has_value());
 
         std::shared_ptr<uint8_t[]> data;
         int64_t size = 0;
@@ -2702,7 +2703,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
 
         const size_t* lims = default_ds_ptr->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
         knowhere::EmbListOffset doc_offset(std::vector<size_t>(lims, lims + NB / EACH_EL_LEN + 1));
-        strategy_or.value()->PrepareDataForBuild(default_ds_ptr, doc_offset, cfg);
+        auto prep_result = strategy_or.value()->PrepareDataForBuild(default_ds_ptr, doc_offset, cfg);
+        REQUIRE(prep_result.has_value());
 
         std::shared_ptr<uint8_t[]> data;
         int64_t size = 0;
@@ -2763,7 +2765,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
 
         const size_t* lims = default_ds_ptr->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
         knowhere::EmbListOffset doc_offset(std::vector<size_t>(lims, lims + NB / EACH_EL_LEN + 1));
-        strategy_or.value()->PrepareDataForBuild(default_ds_ptr, doc_offset, cfg);
+        auto prep_result = strategy_or.value()->PrepareDataForBuild(default_ds_ptr, doc_offset, cfg);
+        REQUIRE(prep_result.has_value());
 
         std::shared_ptr<uint8_t[]> data;
         int64_t size = 0;
@@ -2789,7 +2792,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
 
         const size_t* lims = default_ds_ptr->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
         knowhere::EmbListOffset doc_offset(std::vector<size_t>(lims, lims + NB / EACH_EL_LEN + 1));
-        strategy_or.value()->PrepareDataForBuild(default_ds_ptr, doc_offset, cfg);
+        auto prep_result = strategy_or.value()->PrepareDataForBuild(default_ds_ptr, doc_offset, cfg);
+        REQUIRE(prep_result.has_value());
 
         std::shared_ptr<uint8_t[]> data;
         int64_t size = 0;
