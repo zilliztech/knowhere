@@ -167,7 +167,7 @@ void hnsw_add_vertices(
 
 #pragma omp parallel if (i1 > i0 + 100)
             {
-                VisitedTable vt(ntotal);
+                std::unique_ptr<VisitedTable> vt = VisitedTable::create(ntotal);
 
                 std::unique_ptr<DistanceComputer> dis(
                         storage_distance_computer(index_hnsw.storage));
@@ -193,7 +193,7 @@ void hnsw_add_vertices(
                             pt_level,
                             pt_id,
                             locks,
-                            vt,
+                            *vt,
                             index_hnsw.keep_max_size_level0 && (pt_level == 0));
 
                     if (prev_display >= 0 && i - i0 > prev_display + 10000) {
@@ -288,7 +288,7 @@ void hnsw_search(
 
 #pragma omp parallel if (i1 - i0 > 1)
         {
-            VisitedTable vt(index->ntotal);
+            std::unique_ptr<VisitedTable> vt = VisitedTable::create(index->ntotal);
             typename BlockResultHandler::SingleResultHandler res(bres);
 
             std::unique_ptr<DistanceComputer> dis(
@@ -299,7 +299,7 @@ void hnsw_search(
                 res.begin(i);
                 dis->set_query(x + i * index->d);
 
-                HNSWStats stats = hnsw.search(*dis, res, vt, params);
+                HNSWStats stats = hnsw.search(*dis, res, *vt, params);
                 n1 += stats.n1;
                 n2 += stats.n2;
                 ndis += stats.ndis;
@@ -445,7 +445,7 @@ void IndexHNSW::search_level_0(
         std::unique_ptr<DistanceComputer> qdis(
                 storage_distance_computer(storage));
         HNSWStats search_stats;
-        VisitedTable vt(ntotal);
+        std::unique_ptr<VisitedTable> vt = VisitedTable::create(ntotal);
         RH::SingleResultHandler res(bres);
 
 #pragma omp for
@@ -461,10 +461,10 @@ void IndexHNSW::search_level_0(
                     nearest_d + i * nprobe,
                     search_type,
                     search_stats,
-                    vt,
+                    *vt,
                     params);
             res.end();
-            vt.advance();
+            vt->advance();
         }
 #pragma omp critical
         { hnsw_stats.combine(search_stats); }
@@ -527,7 +527,7 @@ void IndexHNSW::init_level_0_from_entry_points(
 
 #pragma omp parallel
     {
-        VisitedTable vt(ntotal);
+        std::unique_ptr<VisitedTable> vt = VisitedTable::create(ntotal);
 
         std::unique_ptr<DistanceComputer> dis(
                 storage_distance_computer(storage));
@@ -541,7 +541,7 @@ void IndexHNSW::init_level_0_from_entry_points(
             dis->set_query(vec.data());
 
             hnsw.add_links_starting_from(
-                    *dis, pt_id, nearest, (*dis)(nearest), 0, locks.data(), vt);
+                    *dis, pt_id, nearest, (*dis)(nearest), 0, locks.data(), *vt);
 
             if (verbose && i % 10000 == 0) {
                 printf("  %d / %d\r", i, n);
@@ -782,5 +782,4 @@ void IndexHNSWCagra::search(
 }
 
 }
-
 

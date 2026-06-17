@@ -658,14 +658,16 @@ namespace {
 using MinimaxHeap = HNSW::MinimaxHeap;
 using Node = HNSW::Node;
 using C = HNSW::C;
-/** Do a BFS on the candidates list */
-
-int search_from_candidates(
+/** Do a BFS on the candidates list. Templated on the concrete VisitedTable
+ * type so get/set/prefetch stay inline in the hot loop.
+ */
+template <typename VTType>
+int search_from_candidates_fixVT(
         const HNSW& hnsw,
         DistanceComputer& qdis,
         ResultHandler<C>& res,
         MinimaxHeap& candidates,
-        VisitedTable& vt,
+        VTType& vt,
         HNSWStats& stats,
         int level,
         int nres_in = 0,
@@ -742,7 +744,7 @@ int search_from_candidates(
             if (v1 < 0)
                 break;
 
-            prefetch_L2(vt.visited.data() + v1);
+            vt.prefetch(v1);
             jmax += 1;
         }
 
@@ -819,12 +821,32 @@ int search_from_candidates(
     return nres;
 }
 
-std::priority_queue<HNSW::Node> search_from_candidate_unbounded(
+int search_from_candidates(
+        const HNSW& hnsw,
+        DistanceComputer& qdis,
+        ResultHandler<C>& res,
+        MinimaxHeap& candidates,
+        VisitedTable& vt,
+        HNSWStats& stats,
+        int level,
+        int nres_in = 0,
+        const SearchParametersHNSW* params = nullptr) {
+    if (VisitedTableVector* vtv = dynamic_cast<VisitedTableVector*>(&vt)) {
+        return search_from_candidates_fixVT(
+                hnsw, qdis, res, candidates, *vtv, stats, level, nres_in, params);
+    }
+    VisitedTableSet& vts = dynamic_cast<VisitedTableSet&>(vt);
+    return search_from_candidates_fixVT(
+            hnsw, qdis, res, candidates, vts, stats, level, nres_in, params);
+}
+
+template <typename VTType>
+std::priority_queue<HNSW::Node> search_from_candidate_unbounded_fixVT(
         const HNSW& hnsw,
         const Node& node,
         DistanceComputer& qdis,
         int ef,
-        VisitedTable* vt,
+        VTType& vt,
         HNSWStats& stats) {
     int ndis = 0;
     std::priority_queue<Node> top_candidates;
@@ -833,7 +855,7 @@ std::priority_queue<HNSW::Node> search_from_candidate_unbounded(
     top_candidates.push(node);
     candidates.push(node);
 
-    vt->set(node.second);
+    vt.set(node.second);
 
     while (!candidates.empty()) {
         float d0;
@@ -883,7 +905,7 @@ std::priority_queue<HNSW::Node> search_from_candidate_unbounded(
             if (v1 < 0)
                 break;
 
-            prefetch_L2(vt->visited.data() + v1);
+            vt.prefetch(v1);
             jmax += 1;
         }
 
@@ -907,8 +929,8 @@ std::priority_queue<HNSW::Node> search_from_candidate_unbounded(
         for (size_t j = begin; j < jmax; j++) {
             int v1 = hnsw.neighbors[j];
 
-            bool vget = vt->get(v1);
-            vt->set(v1);
+            bool vget = vt.get(v1);
+            vt.set(v1);
             saved_j[counter] = v1;
             counter += vget ? 0 : 1;
 
@@ -947,6 +969,21 @@ std::priority_queue<HNSW::Node> search_from_candidate_unbounded(
     stats.ndis += ndis;
 
     return top_candidates;
+}
+
+std::priority_queue<HNSW::Node> search_from_candidate_unbounded(
+        const HNSW& hnsw,
+        const Node& node,
+        DistanceComputer& qdis,
+        int ef,
+        VisitedTable* vt,
+        HNSWStats& stats) {
+    if (VisitedTableVector* vtv = dynamic_cast<VisitedTableVector*>(vt)) {
+        return search_from_candidate_unbounded_fixVT(
+                hnsw, node, qdis, ef, *vtv, stats);
+    }
+    VisitedTableSet& vts = dynamic_cast<VisitedTableSet&>(*vt);
+    return search_from_candidate_unbounded_fixVT(hnsw, node, qdis, ef, vts, stats);
 }
 
 // just used as a lower bound for the minmaxheap, but it is set for heap search
@@ -1414,5 +1451,3 @@ int HNSW::MinimaxHeap::count_below(float thresh) {
 }
 
 }
-
-
