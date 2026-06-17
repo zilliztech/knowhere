@@ -12,7 +12,9 @@
 #include "knowhere/index/index_node.h"
 
 #include <cmath>
+#include <cstring>
 #include <queue>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "knowhere/context.h"
@@ -26,6 +28,191 @@
 #endif
 
 namespace knowhere {
+
+namespace {
+
+// Chunk-level streaming iterator for emb_list (ArrayOfVector) indexes.
+//
+// An emb_list index groups consecutive paragraph vectors into chunks (emb_lists); a
+// query is itself a group of `m` vectors. This iterator is a grouping layer over the
+// `m` per-query-vector iterators that the underlying index's AnnIterator already
+// returns for one query group: it consumes paragraph-level hits, resolves each to its
+// chunk, computes the exact MAX_SIM score of the whole chunk on first sighting, and
+// emits chunk-level (chunk_id, score) pairs in approximately-descending order.
+//
+// Scoring is always exact -- a chunk's paragraphs are contiguous and few, so the full
+// chunk is brute-force scored the moment any one paragraph is touched. The `ub` bound
+// governs emission ordering only, and is soft because best-first ANN traversal can
+// move "uphill" (see SPEC 6.1).
+class EmbListIterator : public IndexNode::iterator {
+ public:
+    // Computes the exact MAX_SIM score of a chunk from its paragraph vector ids;
+    // std::nullopt signals a scoring failure for that chunk.
+    using ChunkScorer = std::function<std::optional<float>(const std::vector<int64_t>&)>;
+
+    EmbListIterator(std::vector<IndexNode::IteratorPtr>&& sub_iters, const EmbListOffset* el_offset,
+                    ChunkScorer score_chunk, bool larger_is_closer)
+        : sub_iters_(std::move(sub_iters)),
+          el_offset_(el_offset),
+          score_chunk_(std::move(score_chunk)),
+          larger_is_closer_(larger_is_closer) {
+    }
+
+    std::pair<int64_t, float>
+    Next() override {
+        prepare();
+        if (!has_next_) {
+            throw std::runtime_error("No more elements");
+        }
+        prepared_ = false;
+        return next_chunk_;
+    }
+
+    [[nodiscard]] bool
+    HasNext() override {
+        prepare();
+        return has_next_;
+    }
+
+ private:
+    struct ScoredChunk {
+        int64_t id;
+        float score;
+        // sign-normalised score so that pending_ is always a max-heap on the best chunk
+        float key;
+
+        bool
+        operator<(const ScoredChunk& other) const {
+            return key < other.key;
+        }
+    };
+
+    // Sign-normalise so that "more promising" is always "larger": a similarity for
+    // IP/COSINE, a negated distance for L2.
+    float
+    to_key(float val) const {
+        return larger_is_closer_ ? val : -val;
+    }
+
+    // Pull the next paragraph hit from sub-iterator `i` into head_[i], or clear it.
+    void
+    refill_head(size_t i) {
+        if (sub_iters_[i] != nullptr && sub_iters_[i]->HasNext()) {
+            head_[i] = sub_iters_[i]->Next();
+        } else {
+            head_[i] = std::nullopt;
+        }
+    }
+
+    // ub_key_ = sum of the per-sub-iterator head keys: a soft bound that no
+    // not-yet-scored chunk is expected to outrank.
+    void
+    recompute_ub() {
+        float ub = 0.0f;
+        for (const auto& h : head_) {
+            if (h.has_value()) {
+                ub += to_key(h->second);
+            }
+        }
+        ub_key_ = ub;
+    }
+
+    // Advance the underlying traversals until pending_'s best chunk is safe to emit,
+    // or the iterator is exhausted. Caches the outcome in has_next_ / next_chunk_.
+    void
+    prepare() {
+        if (prepared_) {
+            return;
+        }
+        if (!started_) {
+            head_.resize(sub_iters_.size());
+            for (size_t i = 0; i < sub_iters_.size(); i++) {
+                refill_head(i);
+            }
+            recompute_ub();
+            started_ = true;
+        }
+
+        while (true) {
+            // pick the most promising sub-traversal to advance next
+            bool any_head = false;
+            size_t best_i = 0;
+            float best_key = 0.0f;
+            for (size_t i = 0; i < head_.size(); i++) {
+                if (head_[i].has_value()) {
+                    const float k = to_key(head_[i]->second);
+                    if (!any_head || k > best_key) {
+                        any_head = true;
+                        best_key = k;
+                        best_i = i;
+                    }
+                }
+            }
+
+            if (!pending_.empty()) {
+                // Once no sub-iterator can advance, ub no longer constrains anything,
+                // so drain pending_ in exact-score order.
+                if (!any_head || pending_.top().key >= ub_key_) {
+                    const auto& top = pending_.top();
+                    next_chunk_ = {top.id, top.score};
+                    pending_.pop();
+                    has_next_ = true;
+                    prepared_ = true;
+                    return;
+                }
+            } else if (!any_head) {
+                has_next_ = false;
+                prepared_ = true;
+                return;
+            }
+
+            // advance the chosen sub-traversal by one paragraph
+            const int64_t para_id = head_[best_i]->first;
+            refill_head(best_i);
+            recompute_ub();
+
+            if (para_id < 0) {
+                continue;
+            }
+            const size_t chunk_id = el_offset_->get_el_id(static_cast<size_t>(para_id));
+            if (chunk_id >= el_offset_->num_el()) {
+                continue;
+            }
+            const int64_t cid = static_cast<int64_t>(chunk_id);
+            if (scored_.count(cid) != 0) {
+                continue;
+            }
+            const auto vids = el_offset_->get_vids(chunk_id);
+            const auto score_or = score_chunk_(vids);
+            if (!score_or.has_value()) {
+                // Defensive: mark the chunk scored so it is not retried, but skip
+                // emitting it rather than aborting the whole iterator.
+                scored_.emplace(cid, 0.0f);
+                continue;
+            }
+            const float score = score_or.value();
+            scored_.emplace(cid, score);
+            pending_.push(ScoredChunk{cid, score, to_key(score)});
+        }
+    }
+
+    std::vector<IndexNode::IteratorPtr> sub_iters_;
+    const EmbListOffset* el_offset_;
+    ChunkScorer score_chunk_;
+    const bool larger_is_closer_;
+
+    bool started_ = false;
+    bool prepared_ = false;
+    bool has_next_ = false;
+    std::pair<int64_t, float> next_chunk_;
+
+    std::vector<std::optional<std::pair<int64_t, float>>> head_;
+    float ub_key_ = 0.0f;
+    std::unordered_map<int64_t, float> scored_;
+    std::priority_queue<ScoredChunk> pending_;
+};
+
+}  // namespace
 
 // NOLINTBEGIN(google-default-arguments)
 expected<DataSetPtr>
@@ -419,15 +606,103 @@ IndexNode::RangeSearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Co
 expected<std::vector<IndexNode::IteratorPtr>>
 IndexNode::AnnIteratorEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                                     bool use_knowhere_search_pool, milvus::OpContext* op_context) const {
-    auto config = static_cast<const knowhere::BaseConfig&>(*cfg);
-    auto el_metric_type_or = get_el_metric_type(config.metric_type.value());
-    auto metric_is_emb_list = el_metric_type_or.has_value();
-    if (metric_is_emb_list) {
-        LOG_KNOWHERE_WARNING_ << "Ann iterator is not supported for emb_list";
-        return expected<std::vector<IteratorPtr>>::Err(Status::emb_list_inner_error,
-                                                       "ann iterator is not supported for emb_list");
+    auto& config = static_cast<BaseConfig&>(*cfg);
+    auto metric_type = config.metric_type.value();
+    if (!get_el_metric_type(metric_type).has_value()) {
+        // not an emb_list metric: regular per-vector iterator
+        return AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
     }
-    return AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
+    if (emb_list_offset_ == nullptr) {
+        LOG_KNOWHERE_WARNING_ << "emb_list metric type, but index has no emb_list offset";
+        return expected<std::vector<IteratorPtr>>::Err(Status::emb_list_inner_error, "index is not an emb_list index");
+    }
+
+    // the query dataset is itself grouped into emb_lists
+    const size_t* lims = dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+    if (lims == nullptr) {
+        LOG_KNOWHERE_WARNING_ << "emb_list metric type, but query dataset has no emb_list offset";
+        return expected<std::vector<IteratorPtr>>::Err(Status::emb_list_inner_error,
+                                                       "missing emb_list offset in query dataset");
+    }
+    auto num_q_vecs = static_cast<size_t>(dataset->GetRows());
+    if (num_q_vecs == 0) {
+        return expected<std::vector<IteratorPtr>>::Err(Status::emb_list_inner_error, "empty query dataset");
+    }
+    EmbListOffset query_el_offset(lims, num_q_vecs);
+    auto num_q_el = query_el_offset.num_el();
+
+    auto sub_metric_type_or = get_sub_metric_type(metric_type);
+    if (!sub_metric_type_or.has_value()) {
+        LOG_KNOWHERE_WARNING_ << "Invalid emb_list metric type: " << metric_type;
+        return expected<std::vector<IteratorPtr>>::Err(Status::emb_list_inner_error, "invalid emb_list metric type");
+    }
+    auto sub_metric_type = sub_metric_type_or.value();
+    bool larger_is_closer = true;
+    if (sub_metric_type == metric::L2 || sub_metric_type == metric::HAMMING || sub_metric_type == metric::JACCARD) {
+        larger_is_closer = false;
+    }
+    bool is_cosine = sub_metric_type == metric::COSINE ? true : false;
+
+    auto query_code_size_or = GetQueryCodeSize(dataset);
+    if (!query_code_size_or.has_value()) {
+        LOG_KNOWHERE_ERROR_ << "could not get query code size for emb_list iterator";
+        return expected<std::vector<IteratorPtr>>::Err(Status::emb_list_inner_error, "could not get query code size");
+    }
+    auto query_code_size = query_code_size_or.value();
+    auto dim = dataset->GetDim();
+    const char* query_tensor = static_cast<const char*>(dataset->GetTensor());
+
+    // The underlying per-vector iterator dispatches on the sub-metric (IP / COSINE /
+    // L2); rewrite the config so it does not see the emb_list MAX_SIM_* metric.
+    config.metric_type = sub_metric_type;
+    auto sub_iters_or = AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
+    if (!sub_iters_or.has_value()) {
+        return sub_iters_or;
+    }
+    auto sub_iters = sub_iters_or.value();
+    if (sub_iters.size() != num_q_vecs) {
+        LOG_KNOWHERE_ERROR_ << "unexpected sub-iterator count: " << sub_iters.size() << " vs " << num_q_vecs;
+        return expected<std::vector<IteratorPtr>>::Err(Status::emb_list_inner_error, "unexpected sub-iterator count");
+    }
+
+    std::vector<IteratorPtr> result(num_q_el);
+    try {
+        for (size_t i = 0; i < num_q_el; i++) {
+            auto start = query_el_offset.offset[i];
+            auto end = query_el_offset.offset[i + 1];
+            auto nq = end - start;
+
+            std::vector<IteratorPtr> group_iters(sub_iters.begin() + start, sub_iters.begin() + end);
+
+            // own a private copy of this query emb_list's vectors so the scorer stays
+            // valid for the whole (lazy) lifetime of the iterator
+            auto group_buf = std::make_unique<char[]>(nq * query_code_size);
+            std::memcpy(group_buf.get(), query_tensor + start * query_code_size, nq * query_code_size);
+            auto group_query = GenDataSet(static_cast<int64_t>(nq), dim, group_buf.release());
+            group_query->SetIsOwner(true);
+
+            EmbListIterator::ChunkScorer scorer = [this, bitset, group_query, nq, is_cosine, larger_is_closer](
+                                                      const std::vector<int64_t>& vids) -> std::optional<float> {
+                if (vids.empty()) {
+                    return std::nullopt;
+                }
+                // exact MAX_SIM: brute-force this query emb_list's vectors against
+                // every paragraph of the candidate chunk, then aggregate
+                auto dist_or = CalcDistByIDs(group_query, bitset, vids.data(), vids.size(), is_cosine);
+                if (!dist_or.has_value()) {
+                    return std::nullopt;
+                }
+                return get_sum_max_sim(dist_or.value()->GetDistance(), nq, vids.size(), larger_is_closer);
+            };
+
+            result[i] = std::make_shared<EmbListIterator>(std::move(group_iters), emb_list_offset_.get(),
+                                                          std::move(scorer), larger_is_closer);
+        }
+    } catch (const std::exception& e) {
+        LOG_KNOWHERE_WARNING_ << "emb_list iterator error: " << e.what();
+        return expected<std::vector<IteratorPtr>>::Err(Status::emb_list_inner_error, e.what());
+    }
+    return result;
 }
 // NOLINTEND(google-default-arguments)
 
