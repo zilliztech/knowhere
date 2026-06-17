@@ -368,9 +368,6 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             section_headers[0].type = InvertedIndexSectionType::POSTING_LISTS;
             section_headers[0].size = [&, this]() -> uint64_t {
                 size_t res = sizeof(uint32_t) * 3;
-                if (nr_dims == 0 || nr_windows_ == 0) {
-                    return res;
-                }
 
                 const size_t mask_sz = (nr_dims + 7) / 8;
                 res += mask_sz * sizeof(uint8_t);
@@ -382,6 +379,10 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 }
 
                 res += sizeof(uint32_t) * (nr_dims + 1);
+
+                if (nr_windows_ == 0) {
+                    return res;
+                }
 
                 auto total_postings = plists_dim_offsets_span_[nr_dims];
                 res += total_postings * sizeof(uint16_t);
