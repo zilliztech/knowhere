@@ -90,13 +90,13 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
             return GpuCuvsCagraIndexNode<DataType>::Serialize(binset);
         auto result = Status::success;
         std::stringbuf buf;
-        if (!this->index_.is_trained()) {
+        if (!this->index_ || !this->index_->is_trained()) {
             result = Status::empty_index;
         } else {
             std::ostream os(&buf);
             try {
-                this->index_.serialize_to_hnswlib(os);
-                this->index_.synchronize(true);
+                this->index_->serialize_to_hnswlib(os);
+                this->index_->synchronize(true);
             } catch (const std::exception& e) {
                 LOG_KNOWHERE_ERROR_ << e.what();
                 result = Status::cuvs_inner_error;
@@ -170,55 +170,34 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
     std::unique_ptr<hnswlib::HierarchicalNSW<DataType, float, hnswlib::None>> hnsw_index_ = nullptr;
 };
 
+size_t
+GetCagraThreadPoolSize() {
+    int count = 0;
+    auto status = cudaGetDeviceCount(&count);
+    if (status != cudaSuccess || count < 1) {
+        return 1;
+    }
+
+    return count * cuda_concurrent_size_per_device;
+}
+
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraHybridIndexNode, fp32,
-                                          knowhere::feature::GPU_ANN_FLOAT_INDEX, []() {
-                                              int count;
-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
-                                              return count * cuda_concurrent_size_per_device;
-                                          }());
+                                          knowhere::feature::GPU_ANN_FLOAT_INDEX, GetCagraThreadPoolSize());
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode, fp32,
-                                          knowhere::feature::GPU_ANN_FLOAT_INDEX, []() {
-                                              int count;
-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
-                                              return count * cuda_concurrent_size_per_device;
-                                          }());
+                                          knowhere::feature::GPU_ANN_FLOAT_INDEX, GetCagraThreadPoolSize());
 
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraHybridIndexNode, fp16,
-                                          knowhere::feature::GPU | knowhere::feature::FP16, []() {
-                                              int count;
-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
-                                              return count * cuda_concurrent_size_per_device;
-                                          }());
+                                          knowhere::feature::GPU | knowhere::feature::FP16, GetCagraThreadPoolSize());
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode, fp16,
-                                          knowhere::feature::GPU | knowhere::feature::FP16, []() {
-                                              int count;
-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
-                                              return count * cuda_concurrent_size_per_device;
-                                          }());
+                                          knowhere::feature::GPU | knowhere::feature::FP16, GetCagraThreadPoolSize());
 // TODO: Add HNSW support for INT8. Not using the hybrid CAGRA+HNSW for INT8
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraIndexNode, int8,
-                                          knowhere::feature::GPU | knowhere::feature::INT8, []() {
-                                              int count;
-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
-                                              return count * cuda_concurrent_size_per_device;
-                                          }());
+                                          knowhere::feature::GPU | knowhere::feature::INT8, GetCagraThreadPoolSize());
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraIndexNode, int8,
-                                          knowhere::feature::GPU | knowhere::feature::INT8, []() {
-                                              int count;
-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
-                                              return count * cuda_concurrent_size_per_device;
-                                          }());
+                                          knowhere::feature::GPU | knowhere::feature::INT8, GetCagraThreadPoolSize());
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CUVS_CAGRA, GpuCuvsCagraHybridIndexNode, bin1,
-                                          knowhere::feature::GPU | knowhere::feature::BINARY, []() {
-                                              int count;
-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
-                                              return count * cuda_concurrent_size_per_device;
-                                          }());
+                                          knowhere::feature::GPU | knowhere::feature::BINARY, GetCagraThreadPoolSize());
 KNOWHERE_REGISTER_GLOBAL_WITH_THREAD_POOL(GPU_CAGRA, GpuCuvsCagraHybridIndexNode, bin1,
-                                          knowhere::feature::GPU | knowhere::feature::BINARY, []() {
-                                              int count;
-                                              RAFT_CUDA_TRY(cudaGetDeviceCount(&count));
-                                              return count * cuda_concurrent_size_per_device;
-                                          }());
+                                          knowhere::feature::GPU | knowhere::feature::BINARY, GetCagraThreadPoolSize());
 
 }  // namespace knowhere
