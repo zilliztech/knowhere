@@ -35,7 +35,7 @@
 #include "simd/hook.h"
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-#include "knowhere/tracer.h"
+#include "common/Trace.h"
 #endif
 
 namespace knowhere {
@@ -509,19 +509,15 @@ BruteForceSearchWithBufImpl(const DataSetPtr base_dataset, const DataSetPtr quer
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
-    std::shared_ptr<tracer::trace::Span> span = nullptr;
-    if (cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
-        auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
-                                        .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
-                                        .traceFlags = static_cast<uint8_t>(cfg.trace_flags.value())};
-        span = tracer::StartSpan("knowhere bf search with buf", &ctx);
-        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
-        span->SetAttribute(meta::TOPK, cfg.k.value());
-        span->SetAttribute(meta::ROWS, nb);
-        span->SetAttribute(meta::DIM, dim);
-        span->SetAttribute(meta::NQ, nq);
+    auto span = milvus::tracer::StartScopedSpan("knowhere bf search with buf",
+                                                milvus::tracer::GetTraceSpan(op_context));
+    const auto& span_ptr = span.Get();
+    if (span_ptr != nullptr) {
+        span_ptr->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
+        span_ptr->SetAttribute(meta::TOPK, cfg.k.value());
+        span_ptr->SetAttribute(meta::ROWS, nb);
+        span_ptr->SetAttribute(meta::DIM, dim);
+        span_ptr->SetAttribute(meta::NQ, nq);
     }
     // LCOV_EXCL_STOP
 #endif
@@ -617,14 +613,6 @@ BruteForceSearchWithBufImpl(const DataSetPtr base_dataset, const DataSetPtr quer
         }
     }
 
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    // LCOV_EXCL_START
-    if (cfg.trace_id.has_value()) {
-        span->End();
-    }
-    // LCOV_EXCL_STOP
-#endif
-
     return Status::success;
 }
 
@@ -673,19 +661,15 @@ BruteForceSearchOnChunkWithBufImpl(const DataSetPtr base_dataset, const DataSetP
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
-    std::shared_ptr<tracer::trace::Span> span = nullptr;
-    if (cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
-        auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
-                                        .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
-                                        .traceFlags = static_cast<uint8_t>(cfg.trace_flags.value())};
-        span = tracer::StartSpan("knowhere bf search [on chunk] with buf", &ctx);
-        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
-        span->SetAttribute(meta::TOPK, cfg.k.value());
-        span->SetAttribute(meta::ROWS, num_total_vectors);
-        span->SetAttribute(meta::DIM, dim);
-        span->SetAttribute(meta::NQ, nq);
+    auto span = milvus::tracer::StartScopedSpan("knowhere bf search [on chunk] with buf",
+                                                milvus::tracer::GetTraceSpan(op_context));
+    const auto& span_ptr = span.Get();
+    if (span_ptr != nullptr) {
+        span_ptr->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
+        span_ptr->SetAttribute(meta::TOPK, cfg.k.value());
+        span_ptr->SetAttribute(meta::ROWS, num_total_vectors);
+        span_ptr->SetAttribute(meta::DIM, dim);
+        span_ptr->SetAttribute(meta::NQ, nq);
     }
     // LCOV_EXCL_STOP
 #endif
@@ -951,22 +935,18 @@ BruteForceRangeSearchImpl(const DataSetPtr base_dataset, const DataSetPtr query_
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
-    std::shared_ptr<tracer::trace::Span> span = nullptr;
-    if (cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
-        auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
-                                        .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
-                                        .traceFlags = static_cast<uint8_t>(cfg.trace_flags.value())};
-        span = tracer::StartSpan("knowhere bf range search", &ctx);
-        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
-        span->SetAttribute(meta::RADIUS, cfg.radius.value());
+    auto span = milvus::tracer::StartScopedSpan("knowhere bf range search",
+                                                milvus::tracer::GetTraceSpan(op_context));
+    const auto& span_ptr = span.Get();
+    if (span_ptr != nullptr) {
+        span_ptr->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
+        span_ptr->SetAttribute(meta::RADIUS, cfg.radius.value());
         if (cfg.range_filter.value() != defaultRangeFilter) {
-            span->SetAttribute(meta::RANGE_FILTER, cfg.range_filter.value());
+            span_ptr->SetAttribute(meta::RANGE_FILTER, cfg.range_filter.value());
         }
-        span->SetAttribute(meta::ROWS, nb);
-        span->SetAttribute(meta::DIM, dim);
-        span->SetAttribute(meta::NQ, nq);
+        span_ptr->SetAttribute(meta::ROWS, nb);
+        span_ptr->SetAttribute(meta::DIM, dim);
+        span_ptr->SetAttribute(meta::NQ, nq);
     }
     // LCOV_EXCL_STOP
 #endif
@@ -1138,14 +1118,6 @@ BruteForceRangeSearchImpl(const DataSetPtr base_dataset, const DataSetPtr query_
         GetRangeSearchResult(result_dist_array, result_id_array, the_larger_the_closer, nq, radius, range_filter);
     auto res = GenResultDataSet(nq, std::move(range_search_result));
 
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    // LCOV_EXCL_START
-    if (cfg.trace_id.has_value()) {
-        span->End();
-    }
-    // LCOV_EXCL_STOP
-#endif
-
     return res;
 }
 
@@ -1171,19 +1143,15 @@ BruteForceSearchSparseWithBufImpl(const DataSetPtr base_dataset, const DataSetPt
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
     auto dim = base_dataset->GetDim();
-    std::shared_ptr<tracer::trace::Span> span = nullptr;
-    if (cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
-        auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
-                                        .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
-                                        .traceFlags = static_cast<uint8_t>(cfg.trace_flags.value())};
-        span = tracer::StartSpan("knowhere bf search sparse with buf", &ctx);
-        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
-        span->SetAttribute(meta::TOPK, cfg.k.value());
-        span->SetAttribute(meta::ROWS, rows);
-        span->SetAttribute(meta::DIM, dim);
-        span->SetAttribute(meta::NQ, nq);
+    auto span = milvus::tracer::StartScopedSpan("knowhere bf search sparse with buf",
+                                                milvus::tracer::GetTraceSpan(op_context));
+    const auto& span_ptr = span.Get();
+    if (span_ptr != nullptr) {
+        span_ptr->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
+        span_ptr->SetAttribute(meta::TOPK, cfg.k.value());
+        span_ptr->SetAttribute(meta::ROWS, rows);
+        span_ptr->SetAttribute(meta::DIM, dim);
+        span_ptr->SetAttribute(meta::NQ, nq);
     }
     // LCOV_EXCL_STOP
 #endif
@@ -1240,14 +1208,6 @@ BruteForceSearchSparseWithBufImpl(const DataSetPtr base_dataset, const DataSetPt
         }));
     }
     WaitAllSuccess(futs);
-
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    // LCOV_EXCL_START
-    if (cfg.trace_id.has_value()) {
-        span->End();
-    }
-    // LCOV_EXCL_STOP
-#endif
 
     return Status::success;
 }
@@ -1307,18 +1267,14 @@ BruteForceAnnIteratorImpl(const DataSetPtr base_dataset, const DataSetPtr query_
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
-    std::shared_ptr<tracer::trace::Span> span = nullptr;
-    if (cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
-        auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
-                                        .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
-                                        .traceFlags = static_cast<uint8_t>(cfg.trace_flags.value())};
-        span = tracer::StartSpan("knowhere bf ann iterator initialization", &ctx);
-        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
-        span->SetAttribute(meta::ROWS, nb);
-        span->SetAttribute(meta::DIM, dim);
-        span->SetAttribute(meta::NQ, nq);
+    auto span = milvus::tracer::StartScopedSpan("knowhere bf ann iterator initialization",
+                                                milvus::tracer::GetTraceSpan(op_context));
+    const auto& span_ptr = span.Get();
+    if (span_ptr != nullptr) {
+        span_ptr->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
+        span_ptr->SetAttribute(meta::ROWS, nb);
+        span_ptr->SetAttribute(meta::DIM, dim);
+        span_ptr->SetAttribute(meta::NQ, nq);
     }
     // LCOV_EXCL_STOP
 #endif
@@ -1460,13 +1416,6 @@ BruteForceAnnIteratorImpl(const DataSetPtr base_dataset, const DataSetPtr query_
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::brute_force_inner_error, e.what());
     }
 
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    // LCOV_EXCL_START
-    if (cfg.trace_id.has_value()) {
-        span->End();
-    }
-    // LCOV_EXCL_STOP
-#endif
     return vec;
 }
 
@@ -1540,18 +1489,14 @@ BruteForceAnnIteratorOnChunkImpl(const DataSetPtr base_dataset, const DataSetPtr
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
-    std::shared_ptr<tracer::trace::Span> span = nullptr;
-    if (cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
-        auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
-                                        .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
-                                        .traceFlags = static_cast<uint8_t>(cfg.trace_flags.value())};
-        span = tracer::StartSpan("knowhere bf ann iterator initialization", &ctx);
-        span->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
-        span->SetAttribute(meta::ROWS, num_total_vectors);
-        span->SetAttribute(meta::DIM, dim);
-        span->SetAttribute(meta::NQ, nq);
+    auto span = milvus::tracer::StartScopedSpan("knowhere bf ann iterator initialization",
+                                                milvus::tracer::GetTraceSpan(op_context));
+    const auto& span_ptr = span.Get();
+    if (span_ptr != nullptr) {
+        span_ptr->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
+        span_ptr->SetAttribute(meta::ROWS, num_total_vectors);
+        span_ptr->SetAttribute(meta::DIM, dim);
+        span_ptr->SetAttribute(meta::NQ, nq);
     }
     // LCOV_EXCL_STOP
 #endif
@@ -1749,18 +1694,14 @@ BruteForceAnnIteratorImpl<knowhere::sparse::SparseRow<float>>(const DataSetPtr b
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
     auto dim = base_dataset->GetDim();
-    std::shared_ptr<tracer::trace::Span> span = nullptr;
-    if (cfg.trace_id.has_value()) {
-        auto trace_id_str = tracer::GetIDFromHexStr(cfg.trace_id.value());
-        auto span_id_str = tracer::GetIDFromHexStr(cfg.span_id.value());
-        auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
-                                        .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
-                                        .traceFlags = static_cast<uint8_t>(cfg.trace_flags.value())};
-        span = tracer::StartSpan("knowhere bf iterator sparse", &ctx);
-        span->SetAttribute(meta::METRIC_TYPE, metric_str);
-        span->SetAttribute(meta::ROWS, rows);
-        span->SetAttribute(meta::DIM, dim);
-        span->SetAttribute(meta::NQ, nq);
+    auto span = milvus::tracer::StartScopedSpan("knowhere bf iterator sparse",
+                                                milvus::tracer::GetTraceSpan(op_context));
+    const auto& span_ptr = span.Get();
+    if (span_ptr != nullptr) {
+        span_ptr->SetAttribute(meta::METRIC_TYPE, metric_str);
+        span_ptr->SetAttribute(meta::ROWS, rows);
+        span_ptr->SetAttribute(meta::DIM, dim);
+        span_ptr->SetAttribute(meta::NQ, nq);
     }
     // LCOV_EXCL_STOP
 #endif
@@ -1809,14 +1750,6 @@ BruteForceAnnIteratorImpl<knowhere::sparse::SparseRow<float>>(const DataSetPtr b
     } catch (const std::exception& e) {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::brute_force_inner_error, e.what());
     }
-
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-    // LCOV_EXCL_START
-    if (cfg.trace_id.has_value()) {
-        span->End();
-    }
-    // LCOV_EXCL_STOP
-#endif
 
     return vec;
 }
