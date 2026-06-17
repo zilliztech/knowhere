@@ -67,6 +67,8 @@ constexpr const char* INDEX_SVS_FLAT = "SVS_FLAT";
 constexpr const char* INDEX_SVS_VAMANA = "SVS_VAMANA";
 constexpr const char* INDEX_SVS_VAMANA_LVQ = "SVS_VAMANA_LVQ";
 constexpr const char* INDEX_SVS_VAMANA_LEANVEC = "SVS_VAMANA_LEANVEC";
+constexpr const char* INDEX_SVS_IVF = "SVS_IVF";
+constexpr const char* INDEX_SVS_IVF_LEANVEC = "SVS_IVF_LEANVEC";
 
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
@@ -129,6 +131,10 @@ constexpr const char* EMB_LIST_RAW_INDEX = "EMB_LIST_RAW_INDEX";
 constexpr const char* EMB_LIST_STRATEGY_TOKENANN = "tokenann";
 constexpr const char* EMB_LIST_STRATEGY_MUVERA = "muvera";
 constexpr const char* EMB_LIST_STRATEGY_LEMUR = "lemur";
+
+// Out-of-distribution query-training vectors, attached to the SVS LeanVec train DataSet.
+constexpr const char* SVS_LEANVEC_QUERY_TENSOR = "svs_leanvec_query_tensor";
+constexpr const char* SVS_LEANVEC_QUERY_ROWS = "svs_leanvec_query_rows";
 };  // namespace meta
 
 namespace indexparam {
@@ -215,6 +221,10 @@ constexpr const char* SVS_SEARCH_BUFFER_CAPACITY = "svs_search_buffer_capacity";
 constexpr const char* SVS_ALPHA = "svs_alpha";
 constexpr const char* SVS_STORAGE_KIND = "svs_storage_kind";
 constexpr const char* SVS_LEANVEC_DIM = "svs_leanvec_dim";
+constexpr const char* SVS_LEANVEC_OOD = "svs_leanvec_ood";
+constexpr const char* SVS_IVF_NLIST = "svs_ivf_nlist";
+constexpr const char* SVS_IVF_NPROBE = "svs_ivf_nprobe";
+constexpr const char* SVS_IVF_K_REORDER = "svs_ivf_k_reorder";
 
 // FAISS additional Params
 constexpr const char* HNSW_REFINE = "refine";

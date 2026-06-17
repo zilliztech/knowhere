@@ -490,7 +490,29 @@ class SvsVamanaLeanVecIndexNode : public SvsVamanaIndexNode<DataType> {
             idx->search_buffer_capacity = lv_cfg.svs_search_buffer_capacity.value();
 
             // LeanVec requires training before adding vectors
-            idx->train(dataset->GetRows(), (const float*)dataset->GetTensor());
+            const auto n = dataset->GetRows();
+            const auto dim = dataset->GetDim();
+            const auto* data = (const float*)dataset->GetTensor();
+            if (lv_cfg.svs_leanvec_ood.value_or(false)) {
+                // OOD: learn the projection from a representative query sample if one is attached
+                // to the train dataset, otherwise fall back to the database vectors themselves.
+                const auto* queries = dataset->Get<const float*>(meta::SVS_LEANVEC_QUERY_TENSOR);
+                const int64_t n_queries = dataset->Get<int64_t>(meta::SVS_LEANVEC_QUERY_ROWS);
+                std::unique_ptr<float[]> normalized_queries;
+                if (queries != nullptr && n_queries > 0) {
+                    if (is_cosine) {
+                        normalized_queries = CopyAndNormalizeVecs(queries, n_queries, dim);
+                        queries = normalized_queries.get();
+                    }
+                    idx->train_with_queries(n, data, n_queries, queries);
+                } else {
+                    LOG_KNOWHERE_WARNING_ << "svs_leanvec_ood set without query vectors; "
+                                          << "falling back to in-distribution training on database vectors";
+                    idx->train_with_queries(n, data, n, data);
+                }
+            } else {
+                idx->train(n, data);
+            }
 
             this->index_ = std::move(idx);
         } catch (const std::exception& e) {

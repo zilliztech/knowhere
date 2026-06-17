@@ -146,6 +146,16 @@ TEST_CASE("Test index and data type check", "[IndexCheckTest]") {
         CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SVS_VAMANA_LEANVEC, VecType::VECTOR_BFLOAT16));
         CHECK_FALSE(
             KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SVS_VAMANA_LEANVEC, VecType::VECTOR_BINARY));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SVS_IVF, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SVS_IVF, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SVS_IVF, VecType::VECTOR_BFLOAT16));
+        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SVS_IVF, VecType::VECTOR_BINARY));
+
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC, VecType::VECTOR_FLOAT));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC, VecType::VECTOR_FLOAT16));
+        CHECK(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC, VecType::VECTOR_BFLOAT16));
+        CHECK_FALSE(KnowhereCheck::IndexTypeAndDataTypeCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC, VecType::VECTOR_BINARY));
 #endif
 
         // sparse index
@@ -254,6 +264,8 @@ TEST_CASE("Test index has raw data", "[IndexHasRawData]") {
         CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_SVS_VAMANA, ver, {}));
         CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_SVS_VAMANA_LVQ, ver, {}));
         CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_SVS_VAMANA_LEANVEC, ver, {}));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_SVS_IVF, ver, {}));
+        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_SVS_IVF_LEANVEC, ver, {}));
 #endif
 
         // gpu index
@@ -333,6 +345,8 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_VAMANA_LVQ, knowhere::feature::MMAP));
         REQUIRE_FALSE(
             IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_VAMANA_LEANVEC, knowhere::feature::MMAP));
+        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF, knowhere::feature::MMAP));
+        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC, knowhere::feature::MMAP));
 #endif
 #ifdef KNOWHERE_WITH_CUVS
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_CUVS_BRUTEFORCE, knowhere::feature::MMAP));
@@ -375,6 +389,8 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_VAMANA_LVQ, knowhere::feature::GPU));
         REQUIRE_FALSE(
             IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_VAMANA_LEANVEC, knowhere::feature::GPU));
+        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF, knowhere::feature::GPU));
+        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC, knowhere::feature::GPU));
 #endif
     }
 
@@ -553,6 +569,21 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
         REQUIRE_FALSE(
             IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_VAMANA_LEANVEC, knowhere::feature::BINARY));
         REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_VAMANA_LEANVEC,
+                                                            knowhere::feature::SPARSE_U32_F32));
+
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF, knowhere::feature::FLOAT32));
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF, knowhere::feature::FP16));
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF, knowhere::feature::BF16));
+        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF, knowhere::feature::BINARY));
+        REQUIRE_FALSE(
+            IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF, knowhere::feature::SPARSE_U32_F32));
+
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC, knowhere::feature::FLOAT32));
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC, knowhere::feature::FP16));
+        REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC, knowhere::feature::BF16));
+        REQUIRE_FALSE(
+            IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC, knowhere::feature::BINARY));
+        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC,
                                                             knowhere::feature::SPARSE_U32_F32));
 #endif
     }
