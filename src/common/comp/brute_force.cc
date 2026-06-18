@@ -509,8 +509,8 @@ BruteForceSearchWithBufImpl(const DataSetPtr base_dataset, const DataSetPtr quer
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
-    auto span = milvus::tracer::StartScopedSpan("knowhere bf search with buf",
-                                                milvus::tracer::GetTraceSpan(op_context));
+    auto span = milvus::tracer::ScopedSpan("knowhere bf search with buf",
+                                                milvus::OpContext::GetTraceSpan(op_context));
     const auto& span_ptr = span.Get();
     if (span_ptr != nullptr) {
         span_ptr->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
@@ -661,8 +661,8 @@ BruteForceSearchOnChunkWithBufImpl(const DataSetPtr base_dataset, const DataSetP
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
-    auto span = milvus::tracer::StartScopedSpan("knowhere bf search [on chunk] with buf",
-                                                milvus::tracer::GetTraceSpan(op_context));
+    auto span = milvus::tracer::ScopedSpan("knowhere bf search [on chunk] with buf",
+                                                milvus::OpContext::GetTraceSpan(op_context));
     const auto& span_ptr = span.Get();
     if (span_ptr != nullptr) {
         span_ptr->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
@@ -935,8 +935,8 @@ BruteForceRangeSearchImpl(const DataSetPtr base_dataset, const DataSetPtr query_
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
-    auto span = milvus::tracer::StartScopedSpan("knowhere bf range search",
-                                                milvus::tracer::GetTraceSpan(op_context));
+    auto span = milvus::tracer::ScopedSpan("knowhere bf range search",
+                                                milvus::OpContext::GetTraceSpan(op_context));
     const auto& span_ptr = span.Get();
     if (span_ptr != nullptr) {
         span_ptr->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
@@ -1143,8 +1143,8 @@ BruteForceSearchSparseWithBufImpl(const DataSetPtr base_dataset, const DataSetPt
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
     auto dim = base_dataset->GetDim();
-    auto span = milvus::tracer::StartScopedSpan("knowhere bf search sparse with buf",
-                                                milvus::tracer::GetTraceSpan(op_context));
+    auto span = milvus::tracer::ScopedSpan("knowhere bf search sparse with buf",
+                                                milvus::OpContext::GetTraceSpan(op_context));
     const auto& span_ptr = span.Get();
     if (span_ptr != nullptr) {
         span_ptr->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
@@ -1267,8 +1267,8 @@ BruteForceAnnIteratorImpl(const DataSetPtr base_dataset, const DataSetPtr query_
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
-    auto span = milvus::tracer::StartScopedSpan("knowhere bf ann iterator initialization",
-                                                milvus::tracer::GetTraceSpan(op_context));
+    auto span = milvus::tracer::ScopedSpan("knowhere bf ann iterator initialization",
+                                                milvus::OpContext::GetTraceSpan(op_context));
     const auto& span_ptr = span.Get();
     if (span_ptr != nullptr) {
         span_ptr->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
@@ -1489,8 +1489,8 @@ BruteForceAnnIteratorOnChunkImpl(const DataSetPtr base_dataset, const DataSetPtr
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
-    auto span = milvus::tracer::StartScopedSpan("knowhere bf ann iterator initialization",
-                                                milvus::tracer::GetTraceSpan(op_context));
+    auto span = milvus::tracer::ScopedSpan("knowhere bf ann iterator initialization",
+                                                milvus::OpContext::GetTraceSpan(op_context));
     const auto& span_ptr = span.Get();
     if (span_ptr != nullptr) {
         span_ptr->SetAttribute(meta::METRIC_TYPE, cfg.metric_type.value());
@@ -1694,8 +1694,8 @@ BruteForceAnnIteratorImpl<knowhere::sparse::SparseRow<float>>(const DataSetPtr b
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
     auto dim = base_dataset->GetDim();
-    auto span = milvus::tracer::StartScopedSpan("knowhere bf iterator sparse",
-                                                milvus::tracer::GetTraceSpan(op_context));
+    auto span = milvus::tracer::ScopedSpan("knowhere bf iterator sparse",
+                                                milvus::OpContext::GetTraceSpan(op_context));
     const auto& span_ptr = span.Get();
     if (span_ptr != nullptr) {
         span_ptr->SetAttribute(meta::METRIC_TYPE, metric_str);

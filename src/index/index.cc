@@ -162,7 +162,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         BaseConfig& b_cfg = static_cast<BaseConfig&>(*cfg);
         // LCOV_EXCL_START
-        auto span = milvus::tracer::StartScopedSpan("knowhere search", milvus::tracer::GetTraceSpan(op_context));
+        auto span = milvus::tracer::ScopedSpan("knowhere search", milvus::OpContext::GetTraceSpan(op_context));
         const auto& span_ptr = span.Get();
         if (span_ptr != nullptr) {
             span_ptr->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
@@ -171,7 +171,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
             span_ptr->SetAttribute(meta::DIM, Dim());
             span_ptr->SetAttribute(meta::NQ, dataset->GetRows());
         }
-        auto op_context_trace_span_guard = milvus::tracer::SetTemporaryOpContextTraceSpan(op_context, span_ptr);
+        auto op_context_trace_span_guard = milvus::tracer::NestedSpanGuard(op_context, span_ptr);
         // LCOV_EXCL_STOP
 
         TimeRecorder rc("Search");
@@ -255,7 +255,7 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         BaseConfig& b_cfg = static_cast<BaseConfig&>(*cfg);
         // LCOV_EXCL_START
-        auto span = milvus::tracer::StartScopedSpan("knowhere range search", milvus::tracer::GetTraceSpan(op_context));
+        auto span = milvus::tracer::ScopedSpan("knowhere range search", milvus::OpContext::GetTraceSpan(op_context));
         const auto& span_ptr = span.Get();
         if (span_ptr != nullptr) {
             span_ptr->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
@@ -267,7 +267,7 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
             span_ptr->SetAttribute(meta::DIM, Dim());
             span_ptr->SetAttribute(meta::NQ, dataset->GetRows());
         }
-        auto op_context_trace_span_guard = milvus::tracer::SetTemporaryOpContextTraceSpan(op_context, span_ptr);
+        auto op_context_trace_span_guard = milvus::tracer::NestedSpanGuard(op_context, span_ptr);
         // LCOV_EXCL_STOP
 
         TimeRecorder rc("Range Search");
