@@ -171,7 +171,8 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
             span_ptr->SetAttribute(meta::DIM, Dim());
             span_ptr->SetAttribute(meta::NQ, dataset->GetRows());
         }
-        auto op_context_trace_span_guard = milvus::tracer::NestedSpanGuard(op_context ? &op_context->trace_span : nullptr, span_ptr);
+        auto op_context_trace_span_guard =
+            milvus::tracer::NestedSpanGuard(op_context ? &op_context->trace_span : nullptr, span_ptr);
         // LCOV_EXCL_STOP
 
         TimeRecorder rc("Search");
@@ -267,7 +268,8 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
             span_ptr->SetAttribute(meta::DIM, Dim());
             span_ptr->SetAttribute(meta::NQ, dataset->GetRows());
         }
-        auto op_context_trace_span_guard = milvus::tracer::NestedSpanGuard(op_context ? &op_context->trace_span : nullptr, span_ptr);
+        auto op_context_trace_span_guard =
+            milvus::tracer::NestedSpanGuard(op_context ? &op_context->trace_span : nullptr, span_ptr);
         // LCOV_EXCL_STOP
 
         TimeRecorder rc("Range Search");
