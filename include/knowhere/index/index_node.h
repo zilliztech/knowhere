@@ -12,9 +12,17 @@
 #ifndef INDEX_NODE_H
 #define INDEX_NODE_H
 
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
 #include <functional>
+#include <memory>
 #include <mutex>
+#include <numeric>
+#include <optional>
 #include <queue>
+#include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -24,6 +32,7 @@
 #include "knowhere/dataset.h"
 #include "knowhere/emb_list_utils.h"
 #include "knowhere/expected.h"
+#include "knowhere/external_id_map.h"
 #include "knowhere/index/emb_list_strategy.h"
 #include "knowhere/object.h"
 #include "knowhere/operands.h"
@@ -233,6 +242,107 @@ class IndexNode : public Object {
     HasRawData(const std::string& metric_type) const = 0;
 
     virtual bool
+    NeedBitsetExactCount() const {
+        return false;
+    }
+
+ protected:
+    struct BitsetIdArrayView {
+        const void* data = nullptr;
+        size_t size = 0;
+
+        bool
+        empty() const {
+            return data == nullptr || size == 0;
+        }
+    };
+
+    virtual BitsetIdArrayView
+    GetInternalToExternalIdsForBitset() const {
+        auto ids = external_id_map_.GetInternalToExternalIds(false);
+        return {ids.data, ids.size};
+    }
+
+    virtual BitsetIdArrayView
+    GetInternalToEmbListIdsForBitset() const {
+        auto ids = external_id_map_.GetInternalToEmbListIds(false);
+        return {ids.data, ids.size};
+    }
+
+ public:
+    virtual BitsetView
+    PrepareBitset(BitsetView bitset) const {
+        if (bitset.empty() || bitset.data() == nullptr) {
+            return bitset;
+        }
+
+        auto map_internal_id = [](const BitsetIdArrayView& ids, size_t internal_id) -> int64_t {
+            if (ids.empty() || internal_id >= ids.size) {
+                return -1;
+            }
+            uint32_t external_id = 0;
+            std::memcpy(&external_id, static_cast<const uint8_t*>(ids.data) + internal_id * sizeof(external_id),
+                        sizeof(external_id));
+            return external_id;
+        };
+
+        const auto need_exact_count = NeedBitsetExactCount();
+        if (emb_list_offset_ != nullptr) {
+            const auto internal_emb_list_count = emb_list_offset_->num_el();
+            auto external_bitset = bitset;
+            auto internal_to_external_emb_list_ids = GetInternalToEmbListIdsForBitset();
+            auto internal_to_external_ids = GetInternalToExternalIdsForBitset();
+            if (!internal_to_external_emb_list_ids.empty()) {
+                bitset.set_id_offset(0);
+                bitset.set_out_ids(internal_to_external_emb_list_ids.data, internal_to_external_emb_list_ids.size);
+            } else if (!internal_to_external_ids.empty()) {
+                bitset.set_id_offset(0);
+                bitset.set_out_ids(internal_to_external_ids.data, internal_to_external_ids.size);
+            }
+            if (need_exact_count) {
+                if (!internal_to_external_ids.empty()) {
+                    size_t count = 0;
+                    const auto count_vectors = !internal_to_external_emb_list_ids.empty();
+                    for (size_t internal_emb_list_id = 0; internal_emb_list_id < internal_emb_list_count;
+                         ++internal_emb_list_id) {
+                        const auto external_emb_list_id =
+                            map_internal_id(internal_to_external_ids, internal_emb_list_id);
+                        if (!external_bitset.test(external_emb_list_id)) {
+                            continue;
+                        }
+                        count += count_vectors ? emb_list_offset_->get_el_len(internal_emb_list_id) : 1;
+                    }
+                    bitset.set_filter_count(count);
+                } else if (!internal_to_external_emb_list_ids.empty()) {
+                    size_t count = 0;
+                    for (size_t internal_id = 0; internal_id < internal_to_external_emb_list_ids.size; ++internal_id) {
+                        if (external_bitset.test(map_internal_id(internal_to_external_emb_list_ids, internal_id))) {
+                            ++count;
+                        }
+                    }
+                    bitset.set_filter_count(count);
+                } else {
+                    bitset.count_filtered_bits(0, internal_emb_list_count);
+                }
+            }
+            return bitset;
+        }
+
+        auto internal_to_external_ids = GetInternalToExternalIdsForBitset();
+        if (!internal_to_external_ids.empty()) {
+            bitset.set_id_offset(0);
+            bitset.set_out_ids(internal_to_external_ids.data, internal_to_external_ids.size);
+            if (need_exact_count) {
+                auto valid_bitmap = external_id_map_.GetValidBitmap();
+                bitset.count_filtered_bits(0, bitset.num_bits(), valid_bitmap.data);
+            }
+        } else if (need_exact_count) {
+            bitset.count_filtered_bits(0, static_cast<size_t>(Count()));
+        }
+        return bitset;
+    }
+
+    virtual bool
     IsAdditionalScalarSupported(bool is_mv_only) const {
         return false;
     }
@@ -318,6 +428,60 @@ class IndexNode : public Object {
     virtual int64_t
     Count() const = 0;
 
+    virtual int64_t
+    ExternalCount() const {
+        if (auto external_count = external_id_map_.GetExternalCount(); external_count != 0) {
+            return external_count;
+        }
+        if (emb_list_offset_ != nullptr) {
+            return static_cast<int64_t>(emb_list_offset_->num_el());
+        }
+        return Count();
+    }
+
+    virtual ExternalIdMap&
+    GetExternalIdMap() {
+        return external_id_map_;
+    }
+
+    virtual const ExternalIdMap&
+    GetExternalIdMap() const {
+        return external_id_map_;
+    }
+
+    virtual int64_t
+    MapEmbListSearchResultToInternalId(int64_t id) const {
+        return external_id_map_.MapExternalIdToInternalId(id);
+    }
+
+    virtual int64_t
+    MapInternalEmbListIdToExternalId(int64_t internal_id) const {
+        return external_id_map_.MapInternalIdToExternalId(external_id_map_.GetInternalToExternalIds(false),
+                                                          internal_id);
+    }
+
+    virtual bool
+    HasRelayoutIdMap() const {
+        return false;
+    }
+
+    virtual Status
+    FinalizeExternalIdMap() {
+        if (HasRelayoutIdMap()) {
+            external_id_map_.ClearIds();
+            return Status::success;
+        }
+        if (external_id_map_.GetInternalToExternalIds(false).size == 0) {
+            external_id_map_.BuildIdsFromValidBitmap();
+        }
+        if (emb_list_offset_ != nullptr && emb_list_strategy_ != nullptr &&
+            emb_list_strategy_->NeedsBaseIndexIDMap()) {
+            external_id_map_.BuildEmbListIds(emb_list_offset_->offset.data(),
+                                             static_cast<int64_t>(emb_list_offset_->num_el()));
+        }
+        return Status::success;
+    }
+
     virtual std::string
     Type() const = 0;
 
@@ -354,32 +518,6 @@ class IndexNode : public Object {
         return GetLatencyMetric(prometheus_metrics_.range_search, range_search_latency_family);
     }
 #endif
-
-    /**
-     * @brief Gets the mapping from internal IDs to external IDs.
-     *
-     * @return A reference to the mapping vector.
-     * @note If not implemented, the default implementation is to return a mapping, from 0 to Count()-1.
-     */
-    virtual std::shared_ptr<std::vector<uint32_t>>
-    GetInternalIdToExternalIdMap() const {
-        auto n_rows = Count();
-        auto internal_id_to_external_id_map = std::make_shared<std::vector<uint32_t>>(n_rows);
-        std::iota(internal_id_to_external_id_map->begin(), internal_id_to_external_id_map->end(), 0);
-        return internal_id_to_external_id_map;
-    }
-
-    /**
-     * @brief Sets the mapping from internal IDs to "most external" IDs for 1-hop bitset check!
-     * Only used for hierarchical indexnode, such as emb_list + hnsw, each index node has its own relayout mapping.
-     *
-     * @param map The mapping vector to set.
-     * @return Status indicating success or failure of the mapping.
-     */
-    virtual Status
-    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) {
-        return Status::not_implemented;
-    }
 
     virtual Status
     BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
@@ -550,28 +688,6 @@ class IndexNode : public Object {
         int64_t strategy_blob_size;
     };
 
-    /**
-     * @brief Establishes the mapping from internal base-index IDs to emb_list IDs.
-     *
-     * This mapping is essential for base indexes to correctly apply bitset filtering using only a 1-hop mapping during
-     * search. In some cases, such as with mv-only *relayout*, a base-index may have its own
-     * (base)internal-to-external ID mapping.
-     * However, the emb_list search bitset operates on emb_list IDs, which we refer to as the "most external" IDs.
-     * Therefore, we need to create a mapping from the base_internal_id (used by the base-index) to the most external
-     * emb_list_id, ensuring that bitset checks and search results are consistent at the emb_list level.
-     */
-    Status
-    SetBaseIndexIDMap() {
-        auto internal_id_to_external_id_map = GetInternalIdToExternalIdMap();
-        size_t id_map_size = internal_id_to_external_id_map->size();
-        assert(id_map_size == static_cast<size_t>(Count()));
-        std::vector<uint32_t> internal_id_to_most_external_id_map(id_map_size);
-        for (size_t i = 0; i < id_map_size; i++) {
-            internal_id_to_most_external_id_map[i] = emb_list_offset_->get_el_id(internal_id_to_external_id_map->at(i));
-        }
-        return SetInternalIdToMostExternalIdMap(std::move(internal_id_to_most_external_id_map));
-    }
-
     virtual Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
                  bool use_knowhere_build_pool);
@@ -634,6 +750,7 @@ class IndexNode : public Object {
 
     Version version_;
     std::shared_ptr<EmbListOffset> emb_list_offset_;  // emb_list group offset structure (shared with strategy)
+    ExternalIdMap external_id_map_;
     std::string el_metric_type_;
     EmbListStrategyPtr emb_list_strategy_;  // emb_list encoding strategy (tokenann/muvera)
     // Raw vector storage for EmbList strategies (MUVERA/LEMUR) that encode documents
@@ -667,12 +784,13 @@ class IndexNode : public Object {
 //   If False, will Not involve thread scheduling internally, so please take caution.
 class IndexIterator : public IndexNode::iterator {
  public:
-    IndexIterator(bool larger_is_closer, bool use_knowhere_search_pool = true, float refine_ratio = 0.0f,
-                  bool retain_iterator_order = false)
+    IndexIterator(bool larger_is_closer, const ExternalIdMap& external_id_map = EmptyExternalIdMap(),
+                  bool use_knowhere_search_pool = true, float refine_ratio = 0.0f, bool retain_iterator_order = false)
         : refine_ratio_(refine_ratio),
           refine_(refine_ratio != 0.0f),
           retain_iterator_order_(retain_iterator_order),
           sign_(larger_is_closer ? -1 : 1),
+          external_id_map_(external_id_map),
           use_knowhere_search_pool_(use_knowhere_search_pool) {
     }
 
@@ -720,7 +838,9 @@ class IndexIterator : public IndexNode::iterator {
             update_next_func();
         }
 
-        return std::make_pair(ret.id, ret.val * sign_);
+        return std::make_pair(
+            external_id_map_.MapInternalIdToExternalId(external_id_map_.GetInternalToOutputIds(), ret.id),
+            ret.val * sign_);
     }
 
     [[nodiscard]] bool
@@ -771,6 +891,8 @@ class IndexIterator : public IndexNode::iterator {
     std::priority_queue<DistId, std::vector<DistId>, std::greater<DistId>> refined_res_;
 
  private:
+    const ExternalIdMap& external_id_map_;
+
     void
     UpdateNext() {
         auto batch_handler = [this](const std::vector<DistId>& batch) {
@@ -799,9 +921,11 @@ class IndexIterator : public IndexNode::iterator {
 class PrecomputedDistanceIterator : public IndexNode::iterator {
  public:
     PrecomputedDistanceIterator(std::function<std::vector<DistId>()> compute_dist_func, bool larger_is_closer,
+                                const ExternalIdMap& external_id_map = EmptyExternalIdMap(),
                                 bool use_knowhere_search_pool = true)
         : compute_dist_func_(compute_dist_func),
           larger_is_closer_(larger_is_closer),
+          external_id_map_(external_id_map),
           use_knowhere_search_pool_(use_knowhere_search_pool) {
     }
 
@@ -825,7 +949,9 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
             sort_next();
         }
         auto& result = results_[next_++];
-        return std::make_pair(result.id, result.val);
+        return std::make_pair(
+            external_id_map_.MapInternalIdToExternalId(external_id_map_.GetInternalToOutputIds(), result.id),
+            result.val);
     }
 
     [[nodiscard]] bool
@@ -886,6 +1012,7 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
 
     std::function<std::vector<DistId>()> compute_dist_func_;
     const bool larger_is_closer_;
+    const ExternalIdMap& external_id_map_;
     bool use_knowhere_search_pool_ = true;
     bool initialized_ = false;
     std::vector<DistId> results_;

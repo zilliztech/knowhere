@@ -46,7 +46,7 @@ WhetherPerformBruteForceSearch(const faiss::Index* index, const BaseConfig& cfg,
         return true;
     }
 
-    if (!bitset.empty()) {
+    if (bitset.need_filter()) {
         const size_t filtered_out_num = bitset.count();
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         double ratio = (static_cast<double>(filtered_out_num)) / bitset.size();
@@ -79,7 +79,7 @@ WhetherPerformBruteForceRangeSearch(const faiss::Index* index, const FaissHnswCo
         return true;
     }
 
-    if (!bitset.empty()) {
+    if (bitset.need_filter()) {
         const size_t filtered_out_num = bitset.count();
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         double ratio = (static_cast<double>(filtered_out_num)) / bitset.size();

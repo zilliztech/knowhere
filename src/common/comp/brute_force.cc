@@ -46,10 +46,8 @@ namespace knowhere {
 
 class BruteForceConfig : public BaseConfig {};
 
-namespace {
-
 template <typename T>
-expected<sparse::DocValueComputer<T>>
+static expected<sparse::DocValueComputer<T>>
 GetDocValueComputer(const BruteForceConfig& cfg) {
     if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
         return sparse::GetDocValueOriginalComputer<T>();
@@ -71,7 +69,7 @@ GetDocValueComputer(const BruteForceConfig& cfg) {
 
 // Compute inverse L2 norms (1/||x||) for each vector in the dataset.
 template <typename DataType>
-std::unique_ptr<float[]>
+static std::unique_ptr<float[]>
 GetInverseVecNorms(const DataSetPtr& base) {
     using NormComputer = float (*)(const DataType*, size_t);
     NormComputer norm_computer;
@@ -140,12 +138,39 @@ GetInverseVecNorms(const DataSetPtr& base) {
         return inv_norms;
     }
 }
-}  // namespace
+
+static void
+PrepareBitsetForInternalRange(BitsetView& bitset, const ExternalIdMap& external_id_map, size_t num_internal_ids,
+                              size_t internal_id_offset) {
+    if (bitset.empty() || bitset.data() == nullptr) {
+        return;
+    }
+
+    bitset.set_id_offset(0);
+    auto out_ids = external_id_map.GetInternalToExternalIds(false);
+    if (out_ids.size != 0) {
+        bitset.set_id_offset(static_cast<int64_t>(internal_id_offset));
+        bitset.set_out_ids(out_ids.data, num_internal_ids);
+        auto valid_bitmap = external_id_map.GetValidBitmap();
+        bitset.count_filtered_bits(0, bitset.num_bits(), valid_bitmap.data);
+        return;
+    }
+
+    const auto external_id_begin = static_cast<int64_t>(internal_id_offset);
+    bitset.set_id_offset(external_id_begin);
+    bitset.count_filtered_bits(static_cast<size_t>(external_id_begin), num_internal_ids);
+}
+
+struct PreparedBitsetState {
+    BitsetView bitset;
+    std::vector<BitsetView> chunk_bitsets;
+};
 
 template <typename DataType>
 expected<DataSetPtr>
 BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                   const BitsetView& bitset_, milvus::OpContext* op_context) {
+                   const BitsetView& bitset_, const ExternalIdMap* external_id_map,
+                   milvus::OpContext* op_context) {
     BruteForceConfig cfg;
     std::string msg;
     auto status = Config::Load(cfg, config, knowhere::SEARCH, &msg);
@@ -173,10 +198,10 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
     bool base_is_chunk = base_dataset->GetIsChunk();
     if (base_is_chunk) {
         search_status = SearchOnChunkWithBuf<DataType>(base_dataset, query_dataset, labels.get(), distances.get(),
-                                                       config, bitset_, op_context);
+                                                       config, bitset_, external_id_map, op_context);
     } else {
         search_status = SearchWithBuf<DataType>(base_dataset, query_dataset, labels.get(), distances.get(), config,
-                                                bitset_, op_context);
+                                                bitset_, external_id_map, op_context);
     }
     if (search_status != Status::success) {
         return expected<DataSetPtr>::Err(search_status, "search failed");
@@ -192,7 +217,7 @@ brute_force_dense_impl(const void* xq, size_t query_idx, const void* xb, const f
                        float* cur_distances, size_t dim, size_t nb, size_t topk, faiss::MetricType faiss_metric_type,
                        const BitsetView& bitset, bool is_cosine) {
     BitsetViewIDSelector bw_idselector(bitset);
-    faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+    faiss::IDSelector* id_selector = bitset.need_filter() ? &bw_idselector : nullptr;
     switch (faiss_metric_type) {
         case faiss::METRIC_L2: {
             auto cur_query = static_cast<const DataType*>(xq) + dim * query_idx;
@@ -308,10 +333,11 @@ brute_force_minhash_impl(const void* xq, const void* xb, int64_t* labels, float*
 
 template <typename DataType>
 Status
-brute_force_emb_list_impl(const void* xq, size_t query_el_idx, const void* xb, int64_t* ids, float* dis, size_t topk,
-                          size_t dim, const EmbListOffset& base_el_offset, const EmbListOffset& query_el_offset,
-                          const std::string& el_metric_type, const std::string& el_sub_metric_type,
-                          const BitsetView& bitset, const BaseConfig& cfg, size_t xb_id_offset) {
+brute_force_emb_list_impl(const void* xq, size_t query_el_idx, size_t result_el_idx, const void* xb, int64_t* ids,
+                          float* dis, size_t topk, size_t dim, const EmbListOffset& base_el_offset,
+                          const EmbListOffset& query_el_offset, const std::string& el_metric_type,
+                          const std::string& el_sub_metric_type, const BitsetView& bitset, const BaseConfig& cfg,
+                          size_t xb_id_offset) {
     auto num_base_el = base_el_offset.num_el();
 
     auto el_agg_func_or = get_emb_list_agg_func(el_metric_type);
@@ -330,7 +356,7 @@ brute_force_emb_list_impl(const void* xq, size_t query_el_idx, const void* xb, i
     std::priority_queue<DistId, std::vector<DistId>, std::greater<>> minheap;
     std::priority_queue<DistId, std::vector<DistId>, std::less<>> maxheap;
     for (size_t base_el_idx = 0; base_el_idx < num_base_el; base_el_idx++) {
-        if (bitset.empty() || !bitset.test(base_el_idx)) {
+        if (!bitset.need_filter() || !bitset.test(base_el_idx)) {
             auto num_base_vectors = base_el_offset.get_el_len(base_el_idx);
             if (num_base_vectors == 0) {
                 continue;
@@ -438,29 +464,30 @@ brute_force_emb_list_impl(const void* xq, size_t query_el_idx, const void* xb, i
         }
     }
     size_t real_el_k = 0;
+    const auto result_offset = result_el_idx * topk;
     if (larger_is_closer) {
         real_el_k = minheap.size();
         for (size_t j = 0; j < real_el_k; j++) {
             auto& a = minheap.top();
-            ids[query_el_idx * topk + real_el_k - j - 1] = a.id;
-            dis[query_el_idx * topk + real_el_k - j - 1] = a.val;
+            ids[result_offset + real_el_k - j - 1] = a.id;
+            dis[result_offset + real_el_k - j - 1] = a.val;
             minheap.pop();
         }
         for (size_t j = real_el_k; j < topk; j++) {
-            ids[query_el_idx * topk + j] = -1;
-            dis[query_el_idx * topk + j] = std::numeric_limits<float>::min();
+            ids[result_offset + j] = -1;
+            dis[result_offset + j] = std::numeric_limits<float>::min();
         }
     } else {
         real_el_k = maxheap.size();
         for (size_t j = 0; j < real_el_k; j++) {
             auto& a = maxheap.top();
-            ids[query_el_idx * topk + real_el_k - j - 1] = a.id;
-            dis[query_el_idx * topk + real_el_k - j - 1] = a.val;
+            ids[result_offset + real_el_k - j - 1] = a.id;
+            dis[result_offset + real_el_k - j - 1] = a.val;
             maxheap.pop();
         }
         for (size_t j = real_el_k; j < topk; j++) {
-            ids[query_el_idx * topk + j] = -1;
-            dis[query_el_idx * topk + j] = std::numeric_limits<float>::max();
+            ids[result_offset + j] = -1;
+            dis[result_offset + j] = std::numeric_limits<float>::max();
         }
     }
     return Status::success;
@@ -469,18 +496,21 @@ brute_force_emb_list_impl(const void* xq, size_t query_el_idx, const void* xb, i
 template <typename DataType>
 Status
 BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
-                          const Json& config, const BitsetView& bitset_, milvus::OpContext* op_context) {
+                          const Json& config, const BitsetView& bitset_, const ExternalIdMap* external_id_map,
+                          milvus::OpContext* op_context) {
     auto base_is_chunk = base_dataset->GetIsChunk();
     if (base_is_chunk) {
-        return SearchOnChunkWithBuf<DataType>(base_dataset, query_dataset, ids, dis, config, bitset_, op_context);
+        return SearchOnChunkWithBuf<DataType>(base_dataset, query_dataset, ids, dis, config, bitset_, external_id_map,
+                                              op_context);
     }
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
     bool base_data_is_emb_list = base_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
-    auto xb_id_offset = base_dataset->GetTensorBeginId();
+    const ExternalIdMap& resolved_external_id_map =
+        external_id_map != nullptr ? *external_id_map : EmptyExternalIdMap();
     BitsetView bitset = bitset_;
-    bitset.set_id_offset(xb_id_offset);
+    PrepareBitsetForInternalRange(bitset, resolved_external_id_map, nb, 0);
 
     auto xq = query_dataset->GetTensor();
     auto nq = query_dataset->GetRows();
@@ -542,23 +572,20 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
             }
             futs.emplace_back(pool->push([&, query_el_idx = query_el_i] {
                 ThreadPool::ScopedSearchOmpSetter setter(1);
-                RETURN_IF_ERROR(brute_force_emb_list_impl<DataType>(xq, query_el_idx, xb, ids, dis, topk, dim,
-                                                                    base_el_offset, query_el_offset, el_metric_type,
-                                                                    el_sub_metric_type, bitset, cfg, xb_id_offset));
+                RETURN_IF_ERROR(brute_force_emb_list_impl<DataType>(
+                    xq, query_el_idx, query_el_idx, xb, ids, dis, topk, dim, base_el_offset, query_el_offset,
+                    el_metric_type, el_sub_metric_type, bitset, cfg, 0));
                 return Status::success;
             }));
         }
 
         RETURN_IF_ERROR(WaitAllSuccess(futs));
+        resolved_external_id_map.MapInternalIdsToExternalIds(ids, num_query_el * topk);
     } else if (IsMetricType(metric_str, metric::MHJACCARD)) {
         auto labels = ids;
         auto distances = dis;
         RETURN_IF_ERROR(brute_force_minhash_impl<DataType>(xq, xb, labels, distances, dim, nb, nq, topk, bitset, cfg));
-        if (xb_id_offset != 0) {
-            for (auto i = 0; i < nq * topk; i++) {
-                labels[i] = labels[i] == -1 ? -1 : labels[i] + xb_id_offset;
-            }
-        }
+        resolved_external_id_map.MapInternalIdsToExternalIds(labels, nq * topk);
     } else {
         if (query_is_emb_list) {
             LOG_KNOWHERE_ERROR_ << "query dataset is emb_list, but metric is not for emb_list";
@@ -591,12 +618,7 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
             }));
         }
         RETURN_IF_ERROR(WaitAllSuccess(futs));
-
-        if (xb_id_offset != 0) {
-            for (auto i = 0; i < nq * topk; i++) {
-                labels[i] = labels[i] == -1 ? -1 : labels[i] + xb_id_offset;
-            }
-        }
+        resolved_external_id_map.MapInternalIdsToExternalIds(labels, nq * topk);
     }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
@@ -614,7 +636,7 @@ template <typename DataType>
 Status
 BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids,
                                  float* dis, const Json& config, const BitsetView& bitset_,
-                                 milvus::OpContext* op_context) {
+                                 const ExternalIdMap* external_id_map, milvus::OpContext* op_context) {
     auto base_is_chunk = base_dataset->GetIsChunk();
     if (!base_is_chunk) {
         LOG_KNOWHERE_ERROR_ << "Base dataset is not chunk, should NOT use it.";
@@ -628,9 +650,9 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
         return Status::invalid_args;
     }
 
-    auto xb_id_offset = base_dataset->GetTensorBeginId();
+    const ExternalIdMap& resolved_external_id_map =
+        external_id_map != nullptr ? *external_id_map : EmptyExternalIdMap();
     BitsetView bitset = bitset_;
-    bitset.set_id_offset(xb_id_offset);
 
     BruteForceConfig cfg;
     RETURN_IF_ERROR(Config::Load(cfg, config, knowhere::SEARCH));
@@ -691,6 +713,14 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
             larger_is_closer = false;
         }
 
+        std::vector<BitsetView> chunk_bitsets(num_chunk);
+        for (int chunk_idx = 0; chunk_idx < num_chunk; ++chunk_idx) {
+            auto num_base_vectors = chunk_lims[chunk_idx + 1] - chunk_lims[chunk_idx];
+            chunk_bitsets[chunk_idx] = bitset;
+            PrepareBitsetForInternalRange(chunk_bitsets[chunk_idx], resolved_external_id_map, num_base_vectors,
+                                          chunk_lims[chunk_idx]);
+        }
+
         auto pool = ThreadPool::GetGlobalSearchThreadPool();
         std::vector<folly::Future<Status>> futs;
         futs.reserve(nq);
@@ -710,9 +740,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                     std::fill(tmp_distances.begin(), tmp_distances.end(),
                               larger_is_closer ? std::numeric_limits<float>::min() : std::numeric_limits<float>::max());
 
-                    // adjust bitset offset for this chunk so selector indices map to global ids
-                    BitsetView chunk_bitset = bitset;
-                    chunk_bitset.set_id_offset(xb_id_offset + chunk_lims[chunk_idx]);
+                    const auto& chunk_bitset = chunk_bitsets[chunk_idx];
                     auto chunk_inv_norms = inv_norms == nullptr ? nullptr : inv_norms.get() + chunk_lims[chunk_idx];
 
                     RETURN_IF_ERROR(brute_force_dense_impl<DataType>(
@@ -778,12 +806,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
             }));
         }
         RETURN_IF_ERROR(WaitAllSuccess(futs));
-
-        if (xb_id_offset != 0) {
-            for (auto i = 0; i < nq * k; i++) {
-                ids[i] = ids[i] == -1 ? -1 : ids[i] + xb_id_offset;
-            }
-        }
+        resolved_external_id_map.MapInternalIdsToExternalIds(ids, nq * k);
 
     } else {
         if (!base_is_emb_list || !query_is_emb_list) {
@@ -811,6 +834,11 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
         auto pool = ThreadPool::GetGlobalSearchThreadPool();
         std::vector<folly::Future<Status>> futs;
         futs.reserve(num_query_el);
+        std::vector<BitsetView> chunk_bitsets(num_chunk);
+        for (int chunk_idx = 0; chunk_idx < num_chunk; ++chunk_idx) {
+            chunk_bitsets[chunk_idx] = bitset;
+            PrepareBitsetForInternalRange(chunk_bitsets[chunk_idx], resolved_external_id_map, 1, chunk_idx);
+        }
         for (auto query_el_i = 0; std::cmp_less(query_el_i, num_query_el); query_el_i++) {
             auto num_query_vectors = query_el_offset.get_el_len(query_el_i);
             if (num_query_vectors == 0) {
@@ -832,8 +860,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                     std::fill(tmp_distances.begin(), tmp_distances.end(),
                               larger_is_closer ? std::numeric_limits<float>::min() : std::numeric_limits<float>::max());
 
-                    BitsetView chunk_bitset = bitset;
-                    chunk_bitset.set_id_offset(xb_id_offset + chunk_idx);
+                    const auto& chunk_bitset = chunk_bitsets[chunk_idx];
 
                     std::vector<size_t> tmp_base_lims = {0, num_base_vectors};
                     auto tmp_base_el_offset = EmbListOffset(tmp_base_lims);
@@ -841,9 +868,9 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                     auto cur_base = (static_cast<const DataType* const*>(base_tensor))[chunk_idx];
 
                     RETURN_IF_ERROR(brute_force_emb_list_impl<DataType>(
-                        xq, query_el_idx, cur_base, tmp_labels.data(), tmp_distances.data(), k, dim, tmp_base_el_offset,
-                        query_el_offset, el_metric_type, el_sub_metric_type, chunk_bitset, cfg,
-                        xb_id_offset + chunk_idx));
+                        xq, query_el_idx, 0, cur_base, tmp_labels.data(), tmp_distances.data(), k, dim,
+                        tmp_base_el_offset, query_el_offset, el_metric_type, el_sub_metric_type, chunk_bitset, cfg,
+                        chunk_idx));
 
                     // merge chunk-topk results to heap
                     for (int j = 0; j < k; j++) {
@@ -904,6 +931,7 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
             }));
         }
         RETURN_IF_ERROR(WaitAllSuccess(futs));
+        resolved_external_id_map.MapInternalIdsToExternalIds(ids, num_query_el * k);
     }
     return Status::success;
 }
@@ -913,14 +941,16 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
 template <typename DataType>
 expected<DataSetPtr>
 BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                        const BitsetView& bitset_, milvus::OpContext* op_context) {
+                        const BitsetView& bitset_, const ExternalIdMap* external_id_map,
+                        milvus::OpContext* op_context) {
     DataSetPtr query(query_dataset);
     auto xb = base_dataset->GetTensor();
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
-    auto xb_id_offset = base_dataset->GetTensorBeginId();
+    const ExternalIdMap& resolved_external_id_map =
+        external_id_map != nullptr ? *external_id_map : EmptyExternalIdMap();
     BitsetView bitset = bitset_;
-    bitset.set_id_offset(xb_id_offset);
+    PrepareBitsetForInternalRange(bitset, resolved_external_id_map, nb, 0);
     auto xq = query_dataset->GetTensor();
     auto nq = query_dataset->GetRows();
 
@@ -999,9 +1029,8 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                 auto xb_sparse = static_cast<const sparse::SparseRow<float>*>(xb);
                 std::set<std::pair<float, int64_t>, std::greater<>> result;
                 for (int j = 0; j < nb; ++j) {
-                    auto xid = xb_id_offset + j;
                     // bitset has already set the id_offset, so we need to use j instead of xid
-                    if (!bitset.empty() && bitset.test(j)) {
+                    if (bitset.need_filter() && bitset.test(j)) {
                         continue;
                     }
                     float row_sum = 0;
@@ -1013,7 +1042,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                     }
                     auto dist = cur_query->dot(xb_sparse[j], sparse_computer, row_sum);
                     if (dist > radius && dist <= range_filter) {
-                        result.insert({dist, xid});
+                        result.insert({dist, j});
                     }
                 }
                 result_id_array[index].reserve(result.size());
@@ -1029,7 +1058,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                 faiss::RangeSearchResult res(1);
 
                 BitsetViewIDSelector bw_idselector(bitset);
-                faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+                faiss::IDSelector* id_selector = bitset.need_filter() ? &bw_idselector : nullptr;
                 switch (faiss_metric_type) {
                     case faiss::METRIC_L2: {
                         [[maybe_unused]] auto cur_query = static_cast<const DataType*>(xq) + dim * index;
@@ -1100,7 +1129,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
                 result_id_array[index].resize(elem_cnt);
                 for (size_t j = 0; j < elem_cnt; j++) {
                     result_dist_array[index][j] = res.distances[j];
-                    result_id_array[index][j] = res.labels[j] + xb_id_offset;
+                    result_id_array[index][j] = res.labels[j];
                 }
                 if (cfg.range_filter.value() != defaultRangeFilter) {
                     FilterRangeSearchResultForOneNq(result_dist_array[index], result_id_array[index],
@@ -1116,6 +1145,7 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
         return expected<DataSetPtr>::Err(ret, "failed to brute force search");
     }
 
+    resolved_external_id_map.MapInternalIdsToExternalIds(result_id_array);
     auto range_search_result =
         GetRangeSearchResult(result_dist_array, result_id_array, the_larger_the_closer, nq, radius, range_filter);
     auto res = GenResultDataSet(nq, std::move(range_search_result));
@@ -1134,10 +1164,13 @@ BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_da
 Status
 BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, sparse::label_t* labels,
                                 float* distances, const Json& config, const BitsetView& bitset,
-                                milvus::OpContext* op_context) {
+                                const ExternalIdMap* external_id_map, milvus::OpContext* op_context) {
     auto base = static_cast<const sparse::SparseRow<float>*>(base_dataset->GetTensor());
     auto rows = base_dataset->GetRows();
-    auto xb_id_offset = base_dataset->GetTensorBeginId();
+    const ExternalIdMap& resolved_external_id_map =
+        external_id_map != nullptr ? *external_id_map : EmptyExternalIdMap();
+    BitsetView prepared_bitset = bitset;
+    PrepareBitsetForInternalRange(prepared_bitset, resolved_external_id_map, rows, 0);
 
     auto xq = static_cast<const sparse::SparseRow<float>*>(query_dataset->GetTensor());
     auto nq = query_dataset->GetRows();
@@ -1197,8 +1230,7 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
             }
             ResultMinHeap<float, int64_t> heap(topk);
             for (int64_t j = 0; j < rows; ++j) {
-                auto x_id = j + xb_id_offset;
-                if (!bitset.empty() && bitset.test(x_id)) {
+                if (prepared_bitset.need_filter() && prepared_bitset.test(j)) {
                     continue;
                 }
                 float row_sum = 0;
@@ -1210,7 +1242,7 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
                 }
                 float dist = row.dot(base[j], computer, row_sum);
                 if (dist > 0) {
-                    heap.Push(dist, x_id);
+                    heap.Push(dist, j);
                 }
             }
             heap.Finalize();
@@ -1222,6 +1254,7 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
         }));
     }
     WaitAllSuccess(futs);
+    resolved_external_id_map.MapInternalIdsToExternalIds(labels, nq * topk);
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
@@ -1236,7 +1269,8 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
 
 expected<DataSetPtr>
 BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                         const BitsetView& bitset, milvus::OpContext* op_context) {
+                         const BitsetView& bitset, const ExternalIdMap* external_id_map,
+                         milvus::OpContext* op_context) {
     auto nq = query_dataset->GetRows();
     BruteForceConfig cfg;
     std::string msg;
@@ -1249,18 +1283,20 @@ BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_d
     auto labels = std::make_unique<sparse::label_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
 
-    SearchSparseWithBuf(base_dataset, query_dataset, labels.get(), distances.get(), config, bitset, op_context);
+    SearchSparseWithBuf(base_dataset, query_dataset, labels.get(), distances.get(), config, bitset, external_id_map,
+                        op_context);
     return GenResultDataSet(nq, topk, std::move(labels), std::move(distances));
 }
 
 template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
 BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                        const BitsetView& bitset_, bool use_knowhere_search_pool, milvus::OpContext* op_context) {
+                        const BitsetView& bitset_, bool use_knowhere_search_pool,
+                        const ExternalIdMap* external_id_map, milvus::OpContext* op_context) {
     auto base_is_chunk = base_dataset->GetIsChunk();
     if (base_is_chunk) {
         return AnnIteratorOnChunk<DataType>(base_dataset, query_dataset, config, bitset_, use_knowhere_search_pool,
-                                            op_context);
+                                            external_id_map, op_context);
     }
     auto nb = base_dataset->GetRows();
     auto dim = base_dataset->GetDim();
@@ -1309,6 +1345,11 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
     }
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
     std::shared_ptr<float[]> inv_norms = GetInverseVecNorms<DataType>(base_dataset);
+    auto bitset_state = std::make_shared<PreparedBitsetState>();
+    const ExternalIdMap& resolved_external_id_map =
+        external_id_map != nullptr ? *external_id_map : EmptyExternalIdMap();
+    bitset_state->bitset = bitset_;
+    PrepareBitsetForInternalRange(bitset_state->bitset, resolved_external_id_map, nb, 0);
 
     try {
         for (int i = 0; i < nq; ++i) {
@@ -1316,11 +1357,9 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
             auto compute_dist_func = [=]() -> std::vector<DistId> {
                 auto xb = base_dataset->GetTensor();
                 auto xq = query_dataset->GetTensor();
-                auto xb_id_offset = base_dataset->GetTensorBeginId();
-                BitsetView bitset = bitset_;
-                bitset.set_id_offset(xb_id_offset);
-                BitsetViewIDSelector bw_idselector(bitset);
-                [[maybe_unused]] faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+                BitsetViewIDSelector bw_idselector(bitset_state->bitset);
+                [[maybe_unused]] faiss::IDSelector* id_selector =
+                    bitset_state->bitset.need_filter() ? &bw_idselector : nullptr;
                 auto max_dis =
                     larger_is_closer ? std::numeric_limits<float>::lowest() : std::numeric_limits<float>::max();
                 std::vector<DistId> distances_ids(nb, {-1, max_dis});
@@ -1424,15 +1463,10 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                         KNOWHERE_THROW_MSG(err_msg);
                     }
                 }
-                if (xb_id_offset != 0) {
-                    for (auto& distances_id : distances_ids) {
-                        distances_id.id = distances_id.id == -1 ? -1 : distances_id.id + xb_id_offset;
-                    }
-                }
                 return distances_ids;
             };
-            vec[i] = std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, larger_is_closer,
-                                                                   use_knowhere_search_pool);
+            vec[i] = std::make_shared<PrecomputedDistanceIterator>(
+                compute_dist_func, larger_is_closer, resolved_external_id_map, use_knowhere_search_pool);
         }
     } catch (const std::exception& e) {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::brute_force_inner_error, e.what());
@@ -1452,7 +1486,7 @@ template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
 BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                                const BitsetView& bitset_, bool use_knowhere_search_pool,
-                               milvus::OpContext* op_context) {
+                               const ExternalIdMap* external_id_map, milvus::OpContext* op_context) {
     auto base_is_chunk = base_dataset->GetIsChunk();
     if (!base_is_chunk) {
         LOG_KNOWHERE_ERROR_ << "Base dataset is not chunk, should NOT use it.";
@@ -1515,6 +1549,16 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
     bool is_cosine = IsMetricType(metric_str, metric::COSINE);
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
     std::shared_ptr<float[]> inv_norms = GetInverseVecNorms<DataType>(base_dataset);
+    auto bitset_state = std::make_shared<PreparedBitsetState>();
+    const ExternalIdMap& resolved_external_id_map =
+        external_id_map != nullptr ? *external_id_map : EmptyExternalIdMap();
+    bitset_state->chunk_bitsets.resize(num_chunk);
+    for (int chunk_idx = 0; chunk_idx < num_chunk; ++chunk_idx) {
+        const size_t num_base_vectors = chunk_lims[chunk_idx + 1] - chunk_lims[chunk_idx];
+        bitset_state->chunk_bitsets[chunk_idx] = bitset_;
+        PrepareBitsetForInternalRange(bitset_state->chunk_bitsets[chunk_idx], resolved_external_id_map,
+                                      num_base_vectors, chunk_lims[chunk_idx]);
+    }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // LCOV_EXCL_START
@@ -1540,7 +1584,6 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
             auto compute_dist_func = [=]() -> std::vector<DistId> {
                 auto chunk_tensor = static_cast<const DataType* const*>(base_dataset->GetTensor());
                 auto xq = query_dataset->GetTensor();
-                auto xb_id_offset = base_dataset->GetTensorBeginId();
 
                 auto max_dis =
                     larger_is_closer ? std::numeric_limits<float>::lowest() : std::numeric_limits<float>::max();
@@ -1555,10 +1598,10 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                     const size_t num_base_vectors = chunk_lims[chunk_idx + 1] - chunk_lims[chunk_idx];
                     auto xb = chunk_tensor[chunk_idx];
 
-                    BitsetView bitset = bitset_;
-                    bitset.set_id_offset(xb_id_offset + chunk_lims[chunk_idx]);
-                    BitsetViewIDSelector bw_idselector(bitset);
-                    [[maybe_unused]] faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+                    const auto& chunk_bitset = bitset_state->chunk_bitsets[chunk_idx];
+                    BitsetViewIDSelector bw_idselector(chunk_bitset);
+                    [[maybe_unused]] faiss::IDSelector* id_selector =
+                        chunk_bitset.need_filter() ? &bw_idselector : nullptr;
                     std::vector<DistId> chunk_distances_ids(num_base_vectors, {-1, max_dis});
 
                     switch (faiss_metric_type) {
@@ -1578,10 +1621,13 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                             }
                             // copy chunk_distances_ids to distances_ids
                             for (size_t j = 0; j < num_base_vectors; ++j) {
-                                distances_ids[chunk_lims[chunk_idx] + j].id =
-                                    chunk_distances_ids[j].id == -1
-                                        ? -1
-                                        : chunk_distances_ids[j].id + xb_id_offset + chunk_lims[chunk_idx];
+                                if (chunk_distances_ids[j].id == -1) {
+                                    distances_ids[chunk_lims[chunk_idx] + j].id = -1;
+                                } else {
+                                    auto global_id =
+                                        chunk_distances_ids[j].id + static_cast<int64_t>(chunk_lims[chunk_idx]);
+                                    distances_ids[chunk_lims[chunk_idx] + j].id = global_id;
+                                }
                                 distances_ids[chunk_lims[chunk_idx] + j].val = chunk_distances_ids[j].val;
                             }
                             break;
@@ -1607,10 +1653,13 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                 }
                                 // copy chunk_distances_ids to distances_ids
                                 for (size_t j = 0; j < num_base_vectors; ++j) {
-                                    distances_ids[chunk_lims[chunk_idx] + j].id =
-                                        chunk_distances_ids[j].id == -1
-                                            ? -1
-                                            : chunk_distances_ids[j].id + xb_id_offset + chunk_lims[chunk_idx];
+                                    if (chunk_distances_ids[j].id == -1) {
+                                        distances_ids[chunk_lims[chunk_idx] + j].id = -1;
+                                    } else {
+                                        auto global_id =
+                                            chunk_distances_ids[j].id + static_cast<int64_t>(chunk_lims[chunk_idx]);
+                                        distances_ids[chunk_lims[chunk_idx] + j].id = global_id;
+                                    }
                                     distances_ids[chunk_lims[chunk_idx] + j].val = chunk_distances_ids[j].val;
                                 }
                             } else {
@@ -1629,10 +1678,13 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                 }
                                 // copy chunk_distances_ids to distances_ids
                                 for (size_t j = 0; j < num_base_vectors; ++j) {
-                                    distances_ids[chunk_lims[chunk_idx] + j].id =
-                                        chunk_distances_ids[j].id == -1
-                                            ? -1
-                                            : chunk_distances_ids[j].id + xb_id_offset + chunk_lims[chunk_idx];
+                                    if (chunk_distances_ids[j].id == -1) {
+                                        distances_ids[chunk_lims[chunk_idx] + j].id = -1;
+                                    } else {
+                                        auto global_id =
+                                            chunk_distances_ids[j].id + static_cast<int64_t>(chunk_lims[chunk_idx]);
+                                        distances_ids[chunk_lims[chunk_idx] + j].id = global_id;
+                                    }
                                     distances_ids[chunk_lims[chunk_idx] + j].val = chunk_distances_ids[j].val;
                                 }
                             }
@@ -1649,8 +1701,8 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                         distances_ids[chunk_lims[chunk_idx] + j].id = -1;
                                         distances_ids[chunk_lims[chunk_idx] + j].val = max_dis;
                                     } else {
-                                        distances_ids[chunk_lims[chunk_idx] + j].id =
-                                            xb_id_offset + chunk_lims[chunk_idx] + j;
+                                        auto global_id = static_cast<int64_t>(chunk_lims[chunk_idx] + j);
+                                        distances_ids[chunk_lims[chunk_idx] + j].id = global_id;
                                         distances_ids[chunk_lims[chunk_idx] + j].val = static_cast<float>(distances[j]);
                                     }
                                 }
@@ -1672,8 +1724,8 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                         distances_ids[chunk_lims[chunk_idx] + j].id = -1;
                                         distances_ids[chunk_lims[chunk_idx] + j].val = max_dis;
                                     } else {
-                                        distances_ids[chunk_lims[chunk_idx] + j].id =
-                                            xb_id_offset + chunk_lims[chunk_idx] + j;
+                                        auto global_id = static_cast<int64_t>(chunk_lims[chunk_idx] + j);
+                                        distances_ids[chunk_lims[chunk_idx] + j].id = global_id;
                                         distances_ids[chunk_lims[chunk_idx] + j].val = distances[j];
                                     }
                                 }
@@ -1693,8 +1745,8 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                 }
                 return distances_ids;
             };
-            vec[i] = std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, larger_is_closer,
-                                                                   use_knowhere_search_pool);
+            vec[i] = std::make_shared<PrecomputedDistanceIterator>(
+                compute_dist_func, larger_is_closer, resolved_external_id_map, use_knowhere_search_pool);
         }
     } catch (const std::exception& e) {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::brute_force_inner_error, e.what());
@@ -1708,9 +1760,9 @@ expected<std::vector<IndexNode::IteratorPtr>>
 BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr base_dataset,
                                                             const DataSetPtr query_dataset, const Json& config,
                                                             const BitsetView& bitset, bool use_knowhere_search_pool,
+                                                            const ExternalIdMap* external_id_map,
                                                             milvus::OpContext* op_context) {
     auto rows = base_dataset->GetRows();
-    auto xb_id_offset = base_dataset->GetTensorBeginId();
     auto nq = query_dataset->GetRows();
 
     BruteForceConfig cfg;
@@ -1752,6 +1804,11 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
     auto computer = computer_or.value();
 
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
+    auto bitset_state = std::make_shared<PreparedBitsetState>();
+    const ExternalIdMap& resolved_external_id_map =
+        external_id_map != nullptr ? *external_id_map : EmptyExternalIdMap();
+    bitset_state->bitset = bitset;
+    PrepareBitsetForInternalRange(bitset_state->bitset, resolved_external_id_map, rows, 0);
     try {
         for (int64_t i = 0; i < nq; ++i) {
             // Heavy computations with `compute_dist_func` will be deferred until the first call to 'Iterator->Next()'.
@@ -1762,8 +1819,7 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
                 std::vector<DistId> distances_ids;
                 if (row.size() > 0) {
                     for (int64_t j = 0; j < rows; ++j) {
-                        auto xb_id = j + xb_id_offset;
-                        if (!bitset.empty() && bitset.test(xb_id)) {
+                        if (bitset_state->bitset.need_filter() && bitset_state->bitset.test(j)) {
                             continue;
                         }
                         float row_sum = 0;
@@ -1775,14 +1831,15 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
                         }
                         auto dist = row.dot(base[j], computer, row_sum);
                         if (dist > 0) {
-                            distances_ids.emplace_back(xb_id, dist);
+                            distances_ids.emplace_back(j, dist);
                         }
                     }
                 }
                 return distances_ids;
             };
 
-            vec[i] = std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, true, use_knowhere_search_pool);
+            vec[i] = std::make_shared<PrecomputedDistanceIterator>(
+                compute_dist_func, true, resolved_external_id_map, use_knowhere_search_pool);
         }
     } catch (const std::exception& e) {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::brute_force_inner_error, e.what());
@@ -1802,106 +1859,132 @@ BruteForce::AnnIterator<knowhere::sparse::SparseRow<float>>(const DataSetPtr bas
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
-                                             const knowhere::BitsetView& bitset, milvus::OpContext* op_context);
+                                             const knowhere::BitsetView& bitset, const knowhere::ExternalIdMap* external_id_map,
+                                             milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
-                                             const knowhere::BitsetView& bitset, milvus::OpContext* op_context);
+                                             const knowhere::BitsetView& bitset, const knowhere::ExternalIdMap* external_id_map,
+                                             milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
-                                             const knowhere::BitsetView& bitset, milvus::OpContext* op_context);
+                                             const knowhere::BitsetView& bitset, const knowhere::ExternalIdMap* external_id_map,
+                                             milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::int8>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
-                                             const knowhere::BitsetView& bitset, milvus::OpContext* op_context);
+                                             const knowhere::BitsetView& bitset, const knowhere::ExternalIdMap* external_id_map,
+                                             milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
-                                             const knowhere::BitsetView& bitset, milvus::OpContext* op_context);
+                                             const knowhere::BitsetView& bitset, const knowhere::ExternalIdMap* external_id_map,
+                                             milvus::OpContext* op_context);
 
 template knowhere::Status
 knowhere::BruteForce::SearchWithBuf<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
                                                     const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                    const knowhere::ExternalIdMap* external_id_map,
                                                     milvus::OpContext* op_context);
 template knowhere::Status
 knowhere::BruteForce::SearchWithBuf<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
                                                     const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                    const knowhere::ExternalIdMap* external_id_map,
                                                     milvus::OpContext* op_context);
 template knowhere::Status
 knowhere::BruteForce::SearchWithBuf<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
                                                     const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                    const knowhere::ExternalIdMap* external_id_map,
                                                     milvus::OpContext* op_context);
 template knowhere::Status
 knowhere::BruteForce::SearchWithBuf<knowhere::int8>(const knowhere::DataSetPtr base_dataset,
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
                                                     const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                    const knowhere::ExternalIdMap* external_id_map,
                                                     milvus::OpContext* op_context);
 template knowhere::Status
 knowhere::BruteForce::SearchWithBuf<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
                                                     const knowhere::DataSetPtr query_dataset, int64_t* ids, float* dis,
                                                     const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                    const knowhere::ExternalIdMap* external_id_map,
                                                     milvus::OpContext* op_context);
 
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  const knowhere::ExternalIdMap* external_id_map,
                                                   milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  const knowhere::ExternalIdMap* external_id_map,
                                                   milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  const knowhere::ExternalIdMap* external_id_map,
                                                   milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::int8>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  const knowhere::ExternalIdMap* external_id_map,
                                                   milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
+                                                  const knowhere::ExternalIdMap* external_id_map,
                                                   milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::RangeSearch<knowhere::sparse::SparseRow<float>>(const knowhere::DataSetPtr base_dataset,
                                                                       const knowhere::DataSetPtr query_dataset,
                                                                       const knowhere::Json& config,
                                                                       const knowhere::BitsetView& bitset,
+                                                                      const knowhere::ExternalIdMap* external_id_map,
                                                                       milvus::OpContext* op_context);
 
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
-                                                  bool use_knowhere_search_pool, milvus::OpContext* op_context);
+                                                  bool use_knowhere_search_pool,
+                                                  const knowhere::ExternalIdMap* external_id_map,
+                                                  milvus::OpContext* op_context);
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
-                                                  bool use_knowhere_search_pool, milvus::OpContext* op_context);
+                                                  bool use_knowhere_search_pool,
+                                                  const knowhere::ExternalIdMap* external_id_map,
+                                                  milvus::OpContext* op_context);
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::bf16>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
-                                                  bool use_knowhere_search_pool, milvus::OpContext* op_context);
+                                                  bool use_knowhere_search_pool,
+                                                  const knowhere::ExternalIdMap* external_id_map,
+                                                  milvus::OpContext* op_context);
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::int8>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
-                                                  bool use_knowhere_search_pool, milvus::OpContext* op_context);
+                                                  bool use_knowhere_search_pool,
+                                                  const knowhere::ExternalIdMap* external_id_map,
+                                                  milvus::OpContext* op_context);
 template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
 knowhere::BruteForce::AnnIterator<knowhere::bin1>(const knowhere::DataSetPtr base_dataset,
                                                   const knowhere::DataSetPtr query_dataset,
                                                   const knowhere::Json& config, const knowhere::BitsetView& bitset,
-                                                  bool use_knowhere_search_pool, milvus::OpContext* op_context);
+                                                  bool use_knowhere_search_pool,
+                                                  const knowhere::ExternalIdMap* external_id_map,
+                                                  milvus::OpContext* op_context);
 
 }  // namespace knowhere

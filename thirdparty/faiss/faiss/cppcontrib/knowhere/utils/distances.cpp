@@ -182,12 +182,12 @@ void exhaustive_inner_product_seq(
     // add different specialized cases here via introducing
     //   helpers which are converted into templates.
 
-    // bitset.empty() translates into sel=nullptr
+    // Bitsets with no effective filter translate into sel=nullptr.
 
     if (const auto* bitsetview_sel = dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(res.sel)) {
         // A specialized case for Knowhere
         auto bitset = bitsetview_sel->bitset_view;
-        if (!bitset.empty()) {
+        if (bitset.need_filter()) {
             BitsetViewSelectorHelper bitset_helper{bitset};
             exhaustive_inner_product_seq_impl<BlockResultHandler, BitsetViewSelectorHelper>(
                 x, y, d, nx, ny, res, bitset_helper);
@@ -295,12 +295,12 @@ void exhaustive_L2sqr_seq(
     // add different specialized cases here via introducing
     //   helpers which are converted into templates.
 
-    // bitset.empty() translates into sel=nullptr
+    // Bitsets with no effective filter translate into sel=nullptr.
 
     if (const auto* bitsetview_sel = dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(res.sel)) {
         // A specialized case for Knowhere
         auto bitset = bitsetview_sel->bitset_view;
-        if (!bitset.empty()) {
+        if (bitset.need_filter()) {
             BitsetViewSelectorHelper bitset_helper{bitset};
             exhaustive_L2sqr_seq_impl<BlockResultHandler, BitsetViewSelectorHelper>(
                 x, y, d, nx, ny, res, bitset_helper);
@@ -420,12 +420,12 @@ void exhaustive_cosine_seq(
     // add different specialized cases here via introducing
     //   helpers which are converted into templates.
 
-    // bitset.empty() translates into sel=nullptr
+    // Bitsets with no effective filter translate into sel=nullptr.
 
     if (const auto* bitsetview_sel = dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(res.sel)) {
         // A specialized case for Knowhere
         auto bitset = bitsetview_sel->bitset_view;
-        if (!bitset.empty()) {
+        if (bitset.need_filter()) {
             BitsetViewSelectorHelper bitset_helper{bitset};
             exhaustive_cosine_seq_impl<BlockResultHandler, BitsetViewSelectorHelper>(
                 x, y, y_inv_norms, d, nx, ny, res, bitset_helper);
@@ -1598,5 +1598,4 @@ void knn_cosine_by_idx(
 }
 
 }
-
 

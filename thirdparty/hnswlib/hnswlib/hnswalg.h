@@ -593,7 +593,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 int candidate_id = *(data + j);
                 if (!visited[candidate_id]) {
                     visited[candidate_id] = true;
-                    if (bitset.empty() || !bitset.test((int64_t)candidate_id)) {
+                    if (!bitset.need_filter() || !bitset.test((int64_t)candidate_id)) {
                         dist_t dist = calcDistance(data_point, candidate_id);
                         if (dist < radius) {
                             radius_queue.push({dist, candidate_id});
@@ -1435,7 +1435,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     searchKnnBF(const void* query_data, size_t k, const knowhere::BitsetView bitset) const {
         knowhere::ResultMaxHeap<dist_t, labeltype> max_heap(k);
         for (labeltype id = 0; id < cur_element_count; ++id) {
-            if (bitset.empty() || !bitset.test(id)) {
+            if (!bitset.need_filter() || !bitset.test(id)) {
                 dist_t dist = calcDistance(query_data, id);
                 max_heap.Push(dist, id);
             }
@@ -1547,7 +1547,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
         // do bruteforce search when delete rate high
-        if (!bitset.empty()) {
+        if (bitset.need_filter()) {
             const size_t filtered_out_num = bitset.count();
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
             double ratio = ((double)filtered_out_num) / bitset.size();
@@ -1563,7 +1563,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         NeighborSetDoublePopList retset;
         size_t ef = param ? param->ef_ : this->ef_;
         auto visited = visited_list_pool_->getFreeVisitedList();
-        if (!bitset.empty()) {
+        if (bitset.need_filter()) {
             retset = searchBaseLayerST<true, true>(currObj, query_data, std::max(ef, k), visited, bitset, feder_result);
         } else {
             retset =
@@ -1626,7 +1626,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         // TODO: add bruteforce
         auto query_data = workspace->query_data;
-        const bool has_deletions = !workspace->bitset.empty();
+        const bool has_deletions = workspace->bitset.need_filter();
         if (!workspace->initial_search_done) {
             tableint currObj = searchTopLayers(query_data, workspace->param.get()).first;
             NeighborSetDoublePopList retset;
@@ -1676,7 +1676,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     searchRangeBF(const void* query_data, float radius, const knowhere::BitsetView bitset) const {
         std::vector<std::pair<dist_t, labeltype>> result;
         for (labeltype id = 0; id < cur_element_count; ++id) {
-            if (bitset.empty() || !bitset.test(id)) {
+            if (!bitset.need_filter() || !bitset.test(id)) {
                 dist_t dist = calcDistance(query_data, id);
                 if (dist < radius) {
                     result.emplace_back(dist, id);
@@ -1718,7 +1718,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
 
         // do bruteforce range search when delete rate high
-        if (!bitset.empty()) {
+        if (bitset.need_filter()) {
             const size_t filtered_out_num = bitset.count();
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
             double ratio = ((double)filtered_out_num) / bitset.size();
@@ -1733,7 +1733,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         auto [currObj, vec_hash] = searchTopLayers(query_data, param, feder_result);
         NeighborSetDoublePopList retset;
         auto visited = visited_list_pool_->getFreeVisitedList();
-        if (!bitset.empty()) {
+        if (bitset.need_filter()) {
             retset = searchBaseLayerST<true, true>(currObj, query_data, ef, visited, bitset, feder_result);
         } else {
             retset = searchBaseLayerST<false, true>(currObj, query_data, ef, visited, bitset, feder_result);

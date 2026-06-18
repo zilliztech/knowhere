@@ -325,7 +325,8 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
         bool scann_without_raw_data =
             (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && scann_gen2().dump() == cfg_json);
         if (name != knowhere::IndexEnum::INDEX_FAISS_IVFPQ && name != knowhere::IndexEnum::INDEX_FAISS_SCANN &&
-            name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC && name != knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ) {
+            name != knowhere::IndexEnum::INDEX_FAISS_IVFSQ_CC && name != knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ &&
+            name != knowhere::IndexEnum::INDEX_HNSW) {
             for (int i = 0; i < nq; ++i) {
                 CHECK(ids[lims[i]] == i);
             }

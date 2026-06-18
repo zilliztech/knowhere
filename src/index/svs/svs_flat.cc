@@ -76,7 +76,7 @@ class SvsFlatIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
-        if (!bitset.empty() && bitset.count() > 0) {
+        if (bitset.need_filter()) {
             return expected<DataSetPtr>::Err(Status::not_implemented, "SVS Flat does not support bitset filtering");
         }
 
@@ -116,6 +116,7 @@ class SvsFlatIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
+        external_id_map_.MapInternalIdsToExternalIds(ids.get(), k * nq);
         return GenResultDataSet(nq, k, std::move(ids), std::move(distances));
     }
 

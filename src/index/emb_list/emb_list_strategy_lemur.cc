@@ -385,7 +385,8 @@ class LemurEmbListStrategy : public EmbListStrategy {
             for (size_t q = 0; q < num_query_docs; ++q) {
                 for (int32_t i = 0; i < k; ++i) {
                     if (i < ann_k) {
-                        ids[q * k + i] = ann_ids[q * ann_k + i];
+                        ids[q * k + i] = index->MapInternalEmbListIdToExternalId(
+                            index->MapEmbListSearchResultToInternalId(ann_ids[q * ann_k + i]));
                         dists[q * k + i] = ann_dists[q * ann_k + i];
                     } else {
                         ids[q * k + i] = -1;
@@ -423,7 +424,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
             // Collect candidate doc IDs (no dedup needed — ANN returns doc-level IDs)
             candidate_docs.clear();
             for (int32_t i = 0; i < ann_k; ++i) {
-                int64_t doc_id = ann_ids[q * ann_k + i];
+                int64_t doc_id = index->MapEmbListSearchResultToInternalId(ann_ids[q * ann_k + i]);
                 if (doc_id >= 0 && doc_id < num_docs_) {
                     candidate_docs.push_back(doc_id);
                 }

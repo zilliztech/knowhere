@@ -133,7 +133,11 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
                 if (stage1_ids[j] < 0) {
                     continue;
                 }
-                el_ids_set.emplace(emb_list_offset_->get_el_id(static_cast<size_t>(stage1_ids[j])));
+                auto internal_el_id = index->MapEmbListSearchResultToInternalId(stage1_ids[j]);
+                if (internal_el_id < 0) {
+                    continue;
+                }
+                el_ids_set.emplace(static_cast<size_t>(internal_el_id));
             }
 
             // Convert to vector for RerankByCalcDistByIDs

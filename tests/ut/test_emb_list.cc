@@ -39,6 +39,13 @@
 
 namespace {
 
+knowhere::BitsetView
+MakeBitsetView(const uint8_t* data, size_t num_bits, size_t filtered_count) {
+    knowhere::BitsetView bitset(data, num_bits);
+    bitset.set_filter_count(filtered_count);
+    return bitset;
+}
+
 uint64_t
 get_params_hash(const std::vector<int32_t>& params) {
     std::hash<int32_t> h;
@@ -114,6 +121,13 @@ check_same_iterator(const knowhere::IndexNode::IteratorPtr& iter1, const knowher
     }
     REQUIRE(!iter2->HasNext());
     return true;
+}
+
+knowhere::BitsetView
+MakeBitsetView(const uint8_t* data, size_t num_bits) {
+    knowhere::BitsetView bitset(data, num_bits);
+    bitset.count_filtered_bits(0, num_bits);
+    return bitset;
 }
 
 struct FileIOWriter {
@@ -442,7 +456,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                                bitset_view = MakeBitsetView(bitset_data.data(), num_el);
                             }
 
                             // get a golden result
@@ -557,7 +571,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
 
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                                bitset_view = MakeBitsetView(bitset_data.data(), num_el);
                             }
 
                             auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(
@@ -625,7 +639,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
 
                         knowhere::BitsetView bitset_view = nullptr;
                         if (bitset_rate != 0.0f) {
-                            bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                            bitset_view = MakeBitsetView(bitset_data.data(), num_el);
                         }
 
                         auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
@@ -686,7 +700,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
 
                         knowhere::BitsetView bitset_view = nullptr;
                         if (bitset_rate != 0.0f) {
-                            bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                            bitset_view = MakeBitsetView(bitset_data.data(), num_el);
                         }
 
                         auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
@@ -744,7 +758,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
 
                         knowhere::BitsetView bitset_view = nullptr;
                         if (bitset_rate != 0.0f) {
-                            bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                            bitset_view = MakeBitsetView(bitset_data.data(), num_el);
                         }
 
                         auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
@@ -803,7 +817,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
 
                         knowhere::BitsetView bitset_view = nullptr;
                         if (bitset_rate != 0.0f) {
-                            bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                            bitset_view = MakeBitsetView(bitset_data.data(), num_el);
                         }
 
                         auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
@@ -882,7 +896,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                                bitset_view = MakeBitsetView(bitset_data.data(), num_el);
                             }
 
                             // get a golden result
@@ -1007,7 +1021,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                                bitset_view = MakeBitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
                             }
 
                             // get a golden result
@@ -1236,7 +1250,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                                bitset_view = MakeBitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
                             }
 
                             // get a golden result
@@ -1457,7 +1471,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                                bitset_view = MakeBitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
                             }
 
                             // get a golden result
@@ -1665,7 +1679,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                             GenerateBitsetByPartition(num_el, 1.0f - bitset_rate, 1);
                         knowhere::BitsetView bitset_view = nullptr;
                         if (bitset_rate != 0.0f) {
-                            bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                            bitset_view = MakeBitsetView(bitset_data.data(), num_el);
                         }
                         auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
                                                                                           conf, bitset_view);
@@ -1758,7 +1772,7 @@ TEST_CASE("Search for EMBList Indices (Binary)", "Benchmark and validation on bi
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                                bitset_view = MakeBitsetView(bitset_data.data(), num_el);
                             }
 
                             // get a golden result
@@ -1831,7 +1845,7 @@ TEST_CASE("Search for EMBList Indices (Binary)", "Benchmark and validation on bi
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                                bitset_view = MakeBitsetView(bitset_data.data(), num_el);
                             }
 
                             // get a golden result
@@ -1910,7 +1924,7 @@ TEST_CASE("Test with some empty emb list", "[empty_emb_list]") {
                             GenerateBitsetByPartition(num_el, 1.0f - bitset_rate, 1);
                         knowhere::BitsetView bitset_view = nullptr;
                         if (bitset_rate != 0.0f) {
-                            bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                            bitset_view = MakeBitsetView(bitset_data.data(), num_el);
                         }
 
                         auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
@@ -1959,7 +1973,7 @@ TEST_CASE("Test with some empty emb list", "[empty_emb_list]") {
                             GenerateBitsetByPartition(num_el, 1.0f - bitset_rate, 1);
                         knowhere::BitsetView bitset_view = nullptr;
                         if (bitset_rate != 0.0f) {
-                            bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                            bitset_view = MakeBitsetView(bitset_data.data(), num_el);
                         }
 
                         auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
@@ -2005,7 +2019,7 @@ EmbListAddTest(const knowhere::DataSetPtr train_ds_in, const knowhere::DataSetPt
     const auto bitset_percentages = {0.0f, 0.5f, 0.9f, 0.98f};
     for (const float percentage : bitset_percentages) {
         auto bitset_data = GenerateBitsetByPartition(num_el, 1 - percentage, 1);
-        knowhere::BitsetView bitset(bitset_data.data(), num_el);
+        auto bitset = MakeBitsetView(bitset_data.data(), num_el);
         auto knn_gt = knowhere::BruteForce::Search<DataType>(train_ds, query, conf, bitset);
         auto res = index.Search(query, conf, bitset);
         REQUIRE(res.has_value());
@@ -2093,8 +2107,7 @@ TEST_CASE("Test brute force search on chunk", "[on_chunk]") {
                     for (const float bitset_rate : BITSET_RATES) {
                         const int32_t filter_out_bits = nb * bitset_rate;
                         const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, filter_out_bits);
-                        knowhere::BitsetView bitset_view =
-                            knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
+                        knowhere::BitsetView bitset_view = MakeBitsetView(bitset_data.data(), nb, filter_out_bits);
 
                         auto golden_result =
                             knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, bitset_view);
@@ -2188,8 +2201,7 @@ TEST_CASE("Test brute force search on chunk", "[on_chunk]") {
                     for (const float bitset_rate : BITSET_RATES) {
                         const int32_t filter_out_bits = nb * bitset_rate;
                         const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, filter_out_bits);
-                        knowhere::BitsetView bitset_view =
-                            knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
+                        knowhere::BitsetView bitset_view = MakeBitsetView(bitset_data.data(), nb, filter_out_bits);
 
                         auto golden_result =
                             knowhere::BruteForce::Search<knowhere::bin1>(train_ds, query_ds, conf, bitset_view);
@@ -2237,8 +2249,7 @@ TEST_CASE("Test brute force search on chunk", "[on_chunk]") {
                         const int32_t filter_out_bits = num_el * bitset_rate;
                         const std::vector<uint8_t> bitset_data =
                             GenerateBitsetByPartition(num_el, 1.0f - bitset_rate, 1);
-                        knowhere::BitsetView bitset_view =
-                            knowhere::BitsetView(bitset_data.data(), num_el, filter_out_bits);
+                        knowhere::BitsetView bitset_view = MakeBitsetView(bitset_data.data(), num_el, filter_out_bits);
 
                         auto golden_result =
                             knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, bitset_view);
@@ -2335,8 +2346,7 @@ TEST_CASE("Test brute force search on chunk", "[on_chunk]") {
                         const int32_t filter_out_bits = num_el * bitset_rate;
                         const std::vector<uint8_t> bitset_data =
                             GenerateBitsetByPartition(num_el, 1.0f - bitset_rate, 1);
-                        knowhere::BitsetView bitset_view =
-                            knowhere::BitsetView(bitset_data.data(), num_el, filter_out_bits);
+                        knowhere::BitsetView bitset_view = MakeBitsetView(bitset_data.data(), num_el, filter_out_bits);
 
                         auto golden_result =
                             knowhere::BruteForce::Search<knowhere::bin1>(train_ds, query_ds, conf, bitset_view);
@@ -2399,8 +2409,7 @@ TEST_CASE("Test brute force anniterator on chunk", "[on_chunk]") {
                     for (const float bitset_rate : BITSET_RATES) {
                         const int32_t filter_out_bits = nb * bitset_rate;
                         const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, filter_out_bits);
-                        knowhere::BitsetView bitset_view =
-                            knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
+                        knowhere::BitsetView bitset_view = MakeBitsetView(bitset_data.data(), nb, filter_out_bits);
 
                         auto golden_result_iter_or =
                             knowhere::BruteForce::AnnIterator<knowhere::fp32>(train_ds, query_ds, conf, bitset_view);
@@ -2518,8 +2527,7 @@ TEST_CASE("Test brute force anniterator on chunk", "[on_chunk]") {
                     for (const float bitset_rate : BITSET_RATES) {
                         const int32_t filter_out_bits = nb * bitset_rate;
                         const std::vector<uint8_t> bitset_data = GenerateBitsetWithRandomTbitsSet(nb, filter_out_bits);
-                        knowhere::BitsetView bitset_view =
-                            knowhere::BitsetView(bitset_data.data(), nb, filter_out_bits);
+                        knowhere::BitsetView bitset_view = MakeBitsetView(bitset_data.data(), nb, filter_out_bits);
 
                         auto golden_result_iter_or =
                             knowhere::BruteForce::AnnIterator<knowhere::bin1>(train_ds, query_ds, conf, nullptr);
@@ -3655,7 +3663,8 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
         // Verify via a full BinarySet roundtrip with tokenann (which should use new format now).
 
         // Build a legacy-format blob manually: [size_t count][size_t[count] offsets]
-        std::vector<size_t> offsets = {0, 10, 20, 30};
+        const size_t* lims = default_ds_ptr->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+        std::vector<size_t> offsets(lims, lims + NB / EACH_EL_LEN + 1);
         size_t num_offsets = offsets.size();
         size_t blob_size = sizeof(size_t) + num_offsets * sizeof(size_t);
         auto blob_data = std::shared_ptr<uint8_t[]>(new uint8_t[blob_size]);

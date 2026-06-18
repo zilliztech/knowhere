@@ -51,6 +51,11 @@ class IndexNodeThreadPoolWrapper : public IndexNode {
         return index_node_->HasRawData(metric_type);
     }
 
+    bool
+    NeedBitsetExactCount() const override {
+        return index_node_->NeedBitsetExactCount();
+    }
+
     expected<DataSetPtr>
     GetIndexMeta(std::unique_ptr<Config> cfg) const override {
         return index_node_->GetIndexMeta(std::move(cfg));
@@ -89,6 +94,46 @@ class IndexNodeThreadPoolWrapper : public IndexNode {
     int64_t
     Count() const override {
         return index_node_->Count();
+    }
+
+    int64_t
+    ExternalCount() const override {
+        return index_node_->ExternalCount();
+    }
+
+    ExternalIdMap&
+    GetExternalIdMap() override {
+        return index_node_->GetExternalIdMap();
+    }
+
+    const ExternalIdMap&
+    GetExternalIdMap() const override {
+        return index_node_->GetExternalIdMap();
+    }
+
+    int64_t
+    MapEmbListSearchResultToInternalId(int64_t id) const override {
+        return index_node_->MapEmbListSearchResultToInternalId(id);
+    }
+
+    int64_t
+    MapInternalEmbListIdToExternalId(int64_t internal_id) const override {
+        return index_node_->MapInternalEmbListIdToExternalId(internal_id);
+    }
+
+    BitsetView
+    PrepareBitset(BitsetView bitset) const override {
+        return index_node_->PrepareBitset(bitset);
+    }
+
+    bool
+    HasRelayoutIdMap() const override {
+        return index_node_->HasRelayoutIdMap();
+    }
+
+    Status
+    FinalizeExternalIdMap() override {
+        return index_node_->FinalizeExternalIdMap();
     }
 
     std::string

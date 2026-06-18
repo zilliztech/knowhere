@@ -193,6 +193,7 @@ class SparseInvertedIndexNode : public IndexNode {
         }
         WaitAllSuccess(futs);
 
+        external_id_map_.MapInternalIdsToExternalIds(p_id.get(), nq * k);
         return GenResultDataSet(nq, k, p_id.release(), p_dist.release());
     }
 
@@ -238,8 +239,8 @@ class SparseInvertedIndexNode : public IndexNode {
                     return distances_ids;
                 };
 
-                auto it =
-                    std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, true, use_knowhere_search_pool);
+                auto it = std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, true, external_id_map_,
+                                                                        use_knowhere_search_pool);
                 vec[i] = it;
             }
         } catch (const std::exception& e) {
@@ -911,7 +912,9 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
 
         try {
             for (int64_t i = 0; i < rows; ++i) {
-                data[i] = raw_data_[ids[i]];
+                auto id = this->emb_list_strategy_ == nullptr ? external_id_map_.MapExternalIdToInternalId(ids[i])
+                                                              : ids[i];
+                data[i] = raw_data_[id];
                 dim = std::max(dim, data[i].dim());
             }
         } catch (std::exception& e) {

@@ -80,6 +80,7 @@ class GpuFlatIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
+        external_id_map_.MapInternalIdsToExternalIds(ids, len);
         return GenResultDataSet(nq, f_cfg.k, ids, dis);
     }
 
@@ -98,7 +99,8 @@ class GpuFlatIndexNode : public IndexNode {
         try {
             float* xq = new (std::nothrow) float[nq * dim];
             for (int64_t i = 0; i < nq; i++) {
-                int64_t id = in_ids[i];
+                int64_t id =
+                    emb_list_strategy_ == nullptr ? external_id_map_.MapExternalIdToInternalId(in_ids[i]) : in_ids[i];
                 index_->reconstruct(id, xq + i * dim);
             }
             return GenResultDataSet(xq);

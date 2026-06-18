@@ -139,6 +139,18 @@ class Index {
         return Index(dynamic_cast<T2>(node));
     }
 
+    ExternalIdMap&
+    GetExternalIdMap() {
+        assert(node != nullptr);
+        return this->node->GetExternalIdMap();
+    }
+
+    const ExternalIdMap&
+    GetExternalIdMap() const {
+        assert(node != nullptr);
+        return this->node->GetExternalIdMap();
+    }
+
     Status
     Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true);
 

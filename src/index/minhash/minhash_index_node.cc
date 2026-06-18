@@ -68,6 +68,10 @@ class MinHashLSHNode : public IndexNode {
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
         if (minhash_lsh_->HasRawData()) {
+            std::vector<int64_t> internal_ids;
+            if (emb_list_strategy_ == nullptr) {
+                ids = external_id_map_.MapExternalIdsToInternalIds(ids, rows, internal_ids);
+            }
             auto data = std::make_unique<char[]>(rows * ((this->Dim() + 7) / 8));
             minhash_lsh_->GetDataByIds(ids, rows, data.get());
             return GenResultDataSet(rows, dim, std::move(data));
@@ -306,7 +310,7 @@ MinHashLSHNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
     search_params.search_with_jaccard = search_conf.mh_search_with_jaccard.value();
     search_params.refine_k = search_conf.refine_k.value_or(topk);
     BitsetViewIDSelector bw_idselector(bitset);
-    search_params.id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+    search_params.id_selector = bitset.need_filter() ? &bw_idselector : nullptr;
     try {
         if (search_conf.mh_lsh_batch_search.value() == true) {
             minhash_lsh_->BatchSearch(xq, nq, p_dist.get(), p_id.get(), search_pool_, &search_params);
@@ -331,6 +335,7 @@ MinHashLSHNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
         LOG_KNOWHERE_WARNING_ << "minhash lsh inner error: " << e.what();
         return expected<DataSetPtr>::Err(Status::internal_error, e.what());
     }
+    external_id_map_.MapInternalIdsToExternalIds(p_id.get(), nq * topk);
     auto res = GenResultDataSet(nq, topk, std::move(p_id), std::move(p_dist));
     return res;
 }

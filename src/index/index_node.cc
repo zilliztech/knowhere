@@ -12,6 +12,7 @@
 #include "knowhere/index/index_node.h"
 
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <queue>
 #include <unordered_set>
@@ -310,12 +311,14 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
     out_offsets[0] = 0;
     for (int64_t i = 0; i < num_el_ids; i++) {
         auto el_id = el_ids[i];
-        if (el_id < 0 || static_cast<size_t>(el_id) >= emb_list_offset_->num_el()) {
-            return expected<DataSetPtr>::Err(Status::invalid_args,
-                                             "GetEmbListByIds: el_id " + std::to_string(el_id) + " out of range [0, " +
-                                                 std::to_string(emb_list_offset_->num_el()) + ")");
+        auto internal_el_id = external_id_map_.MapExternalIdToInternalId(el_id);
+        if (internal_el_id < 0 || static_cast<size_t>(internal_el_id) >= emb_list_offset_->num_el()) {
+            return expected<DataSetPtr>::Err(
+                Status::invalid_args,
+                "GetEmbListByIds: el_id " + std::to_string(el_id) + " out of range [0, " +
+                    std::to_string(ExternalCount()) + ")");
         }
-        out_offsets[i + 1] = out_offsets[i] + emb_list_offset_->get_el_len(el_id);
+        out_offsets[i + 1] = out_offsets[i] + emb_list_offset_->get_el_len(internal_el_id);
     }
 
     auto total_vecs = out_offsets[num_el_ids];
@@ -336,7 +339,8 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
         auto data = std::make_unique<float[]>(total_vecs * dim);
         float* ptr = data.get();
         for (int64_t i = 0; i < num_el_ids; i++) {
-            auto start = static_cast<int64_t>(emb_list_offset_->offset[el_ids[i]]);
+            auto internal_el_id = external_id_map_.MapExternalIdToInternalId(el_ids[i]);
+            auto start = static_cast<int64_t>(emb_list_offset_->offset[internal_el_id]);
             auto len = static_cast<int64_t>(out_offsets[i + 1] - out_offsets[i]);
             if (len > 0) {
                 emb_list_raw_index_->reconstruct_n(start, len, ptr);
@@ -357,7 +361,8 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
         std::vector<int64_t> vec_ids;
         vec_ids.reserve(total_vecs);
         for (int64_t i = 0; i < num_el_ids; i++) {
-            size_t start = emb_list_offset_->offset[el_ids[i]];
+            auto internal_el_id = external_id_map_.MapExternalIdToInternalId(el_ids[i]);
+            size_t start = emb_list_offset_->offset[internal_el_id];
             size_t len = out_offsets[i + 1] - out_offsets[i];
             for (size_t j = 0; j < len; j++) {
                 vec_ids.push_back(static_cast<int64_t>(start + j));
@@ -447,12 +452,7 @@ IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, c
     // 7. Strategy post-build hook
     RETURN_IF_ERROR(emb_list_strategy_->OnBuildComplete(dataset, doc_offset, config));
 
-    // 8. Set ID mapping if strategy requires it (Direct needs vector->doc mapping)
     emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
-    if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
-        return SetBaseIndexIDMap();
-    }
-
     return Status::success;
 }
 
@@ -567,11 +567,8 @@ IndexNode::DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_
             return Status::emb_list_inner_error;
         }
 
-        // 6. Set ID mapping if needed
         emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
-        if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
-            return SetBaseIndexIDMap();
-        }
+        return Status::success;
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "deserialize emb_list error: " << e.what();
         return Status::emb_list_inner_error;
@@ -666,11 +663,8 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
                                << " vectors, mmap=" << cfg.enable_mmap.value();
         }
 
-        // 6. Set ID mapping if needed
         emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
-        if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
-            return SetBaseIndexIDMap();
-        }
+        return Status::success;
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "deserialize emb_list from file error: " << e.what();
         return Status::emb_list_inner_error;

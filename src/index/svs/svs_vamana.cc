@@ -173,7 +173,7 @@ class SvsVamanaIndexNode : public IndexNode {
                     sp.search_window_size = v_cfg.svs_search_window_size.value();
                     sp.search_buffer_capacity = v_cfg.svs_search_buffer_capacity.value();
                     std::unique_ptr<BitsetViewIDSelector> bw_idselector;
-                    if (!bitset.empty()) {
+                    if (bitset.need_filter()) {
                         bw_idselector = std::make_unique<BitsetViewIDSelector>(bitset);
                         sp.sel = bw_idselector.get();
                     }
@@ -187,6 +187,7 @@ class SvsVamanaIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
+        external_id_map_.MapInternalIdsToExternalIds(ids.get(), k * nq);
         return GenResultDataSet(nq, k, std::move(ids), std::move(distances));
     }
 
@@ -229,7 +230,7 @@ class SvsVamanaIndexNode : public IndexNode {
                     sp.search_window_size = v_cfg.svs_search_window_size.value();
                     sp.search_buffer_capacity = v_cfg.svs_search_buffer_capacity.value();
                     std::unique_ptr<BitsetViewIDSelector> bw_idselector;
-                    if (!bitset.empty()) {
+                    if (bitset.need_filter()) {
                         bw_idselector = std::make_unique<BitsetViewIDSelector>(bitset);
                         sp.sel = bw_idselector.get();
                     }
@@ -251,6 +252,7 @@ class SvsVamanaIndexNode : public IndexNode {
                 }));
             }
             WaitAllSuccess(futs);
+            external_id_map_.MapInternalIdsToExternalIds(result_id_array);
             auto range_search_result =
                 GetRangeSearchResult(result_dist_array, result_id_array, is_similarity, nq, radius, range_filter);
             return GenResultDataSet(nq, std::move(range_search_result));

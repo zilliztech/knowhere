@@ -338,7 +338,7 @@ MinHashLSHHitByNy(const char* x, const char* y, size_t size_in_bytes, size_t ele
     size_t truncated_size = mh_lsh_band * mh_lsh_r * element_size_in_bytes;
     MinHashLSHResultHandler res(ids, vals, topk);
     for (size_t i = 0; i < ny; i++) {
-        if (bitset.empty() || !bitset.test(i)) {
+        if (!bitset.need_filter() || !bitset.test(i)) {
             res.push(
                 i, faiss::cppcontrib::knowhere::minhash_lsh_hit(x, y + size_in_bytes * i, truncated_size, mh_lsh_band));
             if (res.full()) {
@@ -358,7 +358,7 @@ MinHashJaccardKNNSearchByNy(const char* x, const char* y, size_t length, size_t 
     }
     auto computer = std::make_shared<MinHashJaccardComputer>(y, length, element_size);
     computer->set_query(reinterpret_cast<const float*>(x));
-    auto filter = [&](const size_t j) { return (bitset.empty() || !bitset.test(j)); };
+    auto filter = [&](const size_t j) { return (!bitset.need_filter() || !bitset.test(j)); };
 
     // the lambda that applies a valid element.
     auto apply = [&](const float dis_in, const size_t j) {

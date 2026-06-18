@@ -76,7 +76,7 @@ IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss:
             // try knowhere-specific filter
             if (const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
                     dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
-                bw_idselector && !bw_idselector->bitset_view.empty()) {
+                bw_idselector && bw_idselector->bitset_view.need_filter()) {
                 BitsetViewIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view);
 
                 faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
@@ -93,7 +93,7 @@ IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss:
             // try knowhere-specific filter
             if (const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
                     dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
-                bw_idselector && !bw_idselector->bitset_view.empty()) {
+                bw_idselector && bw_idselector->bitset_view.need_filter()) {
                 BitsetViewIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view);
 
                 faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
@@ -133,7 +133,7 @@ IndexBruteForceWrapper::range_search(faiss::idx_t n, const float* x, float radiu
         // IndexBruteForceWrapper::search above.
         const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
             dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
-        const bool sel_accepts_all = (sel == nullptr) || (bw_idselector && bw_idselector->bitset_view.empty());
+        const bool sel_accepts_all = (sel == nullptr) || (bw_idselector && !bw_idselector->bitset_view.need_filter());
 
         if (faiss::cppcontrib::knowhere::is_similarity_metric(index->metric_type)) {
             typename RH_max::SingleResultHandler res_max(bres_max);

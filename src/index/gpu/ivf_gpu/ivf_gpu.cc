@@ -156,6 +156,7 @@ class GpuIvfIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
+        external_id_map_.MapInternalIdsToExternalIds(ids, rows * k);
         return GenResultDataSet(rows, ivf_gpu_cfg.k, ids, dis);
     }
 

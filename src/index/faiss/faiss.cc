@@ -147,7 +147,7 @@ class FaissIndexNode : public IndexNode {
         const auto dim = dataset->GetDim();
 
         BitsetViewIDSelector bw_sel(bitset);
-        ::faiss::IDSelector* sel = bitset.empty() ? nullptr : &bw_sel;
+        ::faiss::IDSelector* sel = bitset.need_filter() ? &bw_sel : nullptr;
 
         std::unique_ptr<::faiss::SearchParameters> search_params;
         std::string err_msg;
@@ -215,6 +215,7 @@ class FaissIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "faiss search failed: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
+        external_id_map_.MapInternalIdsToExternalIds(ids.get(), nq * k);
         return GenResultDataSet(nq, k, std::move(ids), std::move(distances));
     }
 
@@ -236,7 +237,7 @@ class FaissIndexNode : public IndexNode {
             const auto dim = dataset->GetDim();
 
             BitsetViewIDSelector bw_sel(bitset);
-            ::faiss::IDSelector* sel = bitset.empty() ? nullptr : &bw_sel;
+            ::faiss::IDSelector* sel = bitset.need_filter() ? &bw_sel : nullptr;
 
             std::unique_ptr<::faiss::SearchParameters> search_params;
             std::string err_msg;
@@ -281,6 +282,7 @@ class FaissIndexNode : public IndexNode {
             }
 
             const bool is_ip = is_cosine_ || IsMetricType(fc->metric_type.value(), knowhere::metric::IP);
+            external_id_map_.MapInternalIdsToExternalIds(result_labels);
             auto rr = GetRangeSearchResult(result_distances, result_labels, is_ip, nq, radius, range_filter);
             return GenResultDataSet(nq, std::move(rr));
         }

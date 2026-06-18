@@ -130,7 +130,7 @@ batch_insert_avx2(const float* scores, size_t docid_start, size_t count,
             unsigned bit = __builtin_ctz(static_cast<unsigned>(mm));
             mm &= (mm - 1);
             size_t idx = i + bit;
-            if (!bitset.empty() && bitset.test(static_cast<int64_t>(docid_start + idx))) {
+            if (bitset.need_filter() && bitset.test(static_cast<int64_t>(docid_start + idx))) {
                 continue;
             }
             float s = scores[idx];
@@ -147,7 +147,7 @@ batch_insert_avx2(const float* scores, size_t docid_start, size_t count,
         if (s <= threshold) {
             continue;
         }
-        if (!bitset.empty() && bitset.test(static_cast<int64_t>(docid_start + i))) {
+        if (bitset.need_filter() && bitset.test(static_cast<int64_t>(docid_start + i))) {
             continue;
         }
         if (topk_q.Push(s, static_cast<uint32_t>(docid_start + i))) {

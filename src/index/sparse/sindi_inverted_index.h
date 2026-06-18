@@ -988,7 +988,7 @@ class SindiInvertedIndex : public InvertedIndex<DataType> {
         }
 
         // Apply bitset filter: zero out scores for filtered documents
-        if (!bitset.empty()) {
+        if (bitset.need_filter()) {
             for (size_t i = 0; i < distances.size(); ++i) {
                 if (bitset.test(static_cast<int64_t>(i))) {
                     distances[i] = 0.0f;

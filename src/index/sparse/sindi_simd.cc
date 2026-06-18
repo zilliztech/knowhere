@@ -45,7 +45,7 @@ batch_insert_scalar(const float* scores, size_t docid_start, size_t count,
         if (s <= threshold) {
             continue;
         }
-        if (!bitset.empty() && bitset.test(static_cast<int64_t>(docid_start + i))) {
+        if (bitset.need_filter() && bitset.test(static_cast<int64_t>(docid_start + i))) {
             continue;
         }
         if (topk_q.Push(s, static_cast<uint32_t>(docid_start + i))) {

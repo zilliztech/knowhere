@@ -158,7 +158,7 @@ class BlockInvertedIndexCursor {
 
     void
     skip_filtered_ids() {
-        while (!bitset_.empty() && cur_vec_id_ < universe_ && bitset_.test(cur_vec_id_)) {
+        while (bitset_.need_filter() && cur_vec_id_ < universe_ && bitset_.test(cur_vec_id_)) {
             next_raw();
         }
     }

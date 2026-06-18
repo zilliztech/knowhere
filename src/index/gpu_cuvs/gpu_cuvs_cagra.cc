@@ -80,6 +80,7 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
             }
         }
 
+        external_id_map_.MapInternalIdsToExternalIds(p_id.get(), k * nq);
         auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
 
         return res;

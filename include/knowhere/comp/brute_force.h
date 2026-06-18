@@ -28,43 +28,48 @@ class BruteForce {
     template <typename DataType>
     static expected<DataSetPtr>
     Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config, const BitsetView& bitset,
-           milvus::OpContext* op_context = nullptr);
+           const ExternalIdMap* external_id_map = nullptr, milvus::OpContext* op_context = nullptr);
 
     template <typename DataType>
     static Status
     SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
-                  const Json& config, const BitsetView& bitset, milvus::OpContext* op_context = nullptr);
+                  const Json& config, const BitsetView& bitset,
+                  const ExternalIdMap* external_id_map = nullptr, milvus::OpContext* op_context = nullptr);
 
     template <typename DataType>
     static Status
     SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
-                         const Json& config, const BitsetView& bitset, milvus::OpContext* op_context = nullptr);
+                         const Json& config, const BitsetView& bitset,
+                         const ExternalIdMap* external_id_map = nullptr, milvus::OpContext* op_context = nullptr);
 
     template <typename DataType>
     static expected<DataSetPtr>
     RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                const BitsetView& bitset, milvus::OpContext* op_context = nullptr);
+                const BitsetView& bitset, const ExternalIdMap* external_id_map = nullptr,
+                milvus::OpContext* op_context = nullptr);
 
     // Perform row oriented sparse vector brute force search.
     static expected<DataSetPtr>
     SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
-                 const BitsetView& bitset, milvus::OpContext* op_context = nullptr);
+                 const BitsetView& bitset, const ExternalIdMap* external_id_map = nullptr,
+                 milvus::OpContext* op_context = nullptr);
 
     static Status
     SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, sparse::label_t* ids, float* dis,
-                        const Json& config, const BitsetView& bitset, milvus::OpContext* op_context = nullptr);
+                        const Json& config, const BitsetView& bitset,
+                        const ExternalIdMap* external_id_map = nullptr, milvus::OpContext* op_context = nullptr);
 
     template <typename DataType>
     static expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                 const BitsetView& bitset, bool use_knowhere_search_pool = true,
-                milvus::OpContext* op_context = nullptr);
+                const ExternalIdMap* external_id_map = nullptr, milvus::OpContext* op_context = nullptr);
 
     template <typename DataType>
     static expected<std::vector<IndexNode::IteratorPtr>>
     AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                        const BitsetView& bitset, bool use_knowhere_search_pool = true,
-                       milvus::OpContext* op_context = nullptr);
+                       const ExternalIdMap* external_id_map = nullptr, milvus::OpContext* op_context = nullptr);
 };
 
 }  // namespace knowhere

@@ -42,6 +42,11 @@ class HnswIndexNode : public IndexNode {
         search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
 
+    bool
+    NeedBitsetExactCount() const override {
+        return true;
+    }
+
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         auto rows = dataset->GetRows();
@@ -254,6 +259,7 @@ class HnswIndexNode : public IndexNode {
         }
         WaitAllSuccess(futs);
 
+        external_id_map_.MapInternalIdsToExternalIds(p_id.get(), k * nq);
         auto res = GenResultDataSet(nq, k, std::move(p_id), std::move(p_dist));
 
         // set visit_info json string into result dataset
@@ -272,8 +278,9 @@ class HnswIndexNode : public IndexNode {
      public:
         iterator(const hnswlib::HierarchicalNSW<DataType, DistType, quant_type>* index, const char* query,
                  const bool transform, const BitsetView& bitset, const size_t ef = kIteratorSeedEf,
-                 const float refine_ratio = 0.5f, bool use_knowhere_search_pool = true)
-            : IndexIterator(transform, use_knowhere_search_pool,
+                 const float refine_ratio = 0.5f, const ExternalIdMap& external_id_map = EmptyExternalIdMap(),
+                 bool use_knowhere_search_pool = true)
+            : IndexIterator(transform, external_id_map, use_knowhere_search_pool,
                             (hnswlib::HierarchicalNSW<DataType, DistType, quant_type>::sq_enabled &&
                              hnswlib::HierarchicalNSW<DataType, DistType, quant_type>::has_raw_data)
                                 ? refine_ratio
@@ -331,7 +338,8 @@ class HnswIndexNode : public IndexNode {
             for (int i = 0; i < nq; ++i) {
                 auto single_query = (const char*)xq + i * index_->data_size_;
                 auto it = std::make_shared<iterator>(this->index_, single_query, transform, bitset, ef,
-                                                     hnsw_cfg.iterator_refine_ratio.value(), use_knowhere_search_pool);
+                                                     hnsw_cfg.iterator_refine_ratio.value(), external_id_map_,
+                                                     use_knowhere_search_pool);
                 vec[i] = it;
             }
         } catch (const std::exception& e) {
@@ -396,6 +404,7 @@ class HnswIndexNode : public IndexNode {
         WaitAllSuccess(futs);
 
         // filter range search result
+        external_id_map_.MapInternalIdsToExternalIds(result_id_array);
         auto range_search_result =
             GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius_for_filter, range_filter);
 
@@ -425,8 +434,9 @@ class HnswIndexNode : public IndexNode {
         try {
             auto data = std::make_unique<uint8_t[]>(index_->data_size_ * rows);
             for (int64_t i = 0; i < rows; i++) {
-                int64_t id = ids[i];
-                assert(id >= 0 && id < (int64_t)index_->cur_element_count);
+                int64_t id = emb_list_strategy_ == nullptr ? external_id_map_.MapExternalIdToInternalId(ids[i])
+                                                           : ids[i];
+                assert(id >= 0 && id < static_cast<int64_t>(index_->cur_element_count));
                 std::copy_n(index_->getDataByInternalId(id), index_->data_size_, data.get() + i * index_->data_size_);
             }
             return GenResultDataSet(rows, dim, std::move(data));

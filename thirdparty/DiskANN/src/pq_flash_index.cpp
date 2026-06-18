@@ -969,7 +969,7 @@ namespace diskann {
 
     for (_u64 id = 0; id < num_points; ++id) {
       _u64 origin_id = pq_data_getter->get_origin_id(id);
-      if (bitset_view.empty() || !bitset_view.test(origin_id)) {
+      if (!bitset_view.need_filter() || !bitset_view.test(origin_id)) {
     	  pq_batch_ids.push_back(id);
       }
 
@@ -1109,7 +1109,7 @@ namespace diskann {
 
     size_t bv_cnt = 0;
 
-    if (!bitset_view.empty()) {
+    if (bitset_view.need_filter()) {
       const auto filter_threshold =
           filter_ratio_in < 0 ? kFilterThreshold : filter_ratio_in;
       bv_cnt = bitset_view.count();
@@ -1237,7 +1237,7 @@ namespace diskann {
           continue;
         }
         visited.insert(id);
-        if (!bitset_view.empty() && bitset_view.test(id)) {
+        if (bitset_view.need_filter() && bitset_view.test(id)) {
           accumulative_alpha += kAlpha;
           if (accumulative_alpha < 1.0f) {
             continue;
@@ -1286,7 +1286,7 @@ namespace diskann {
               this->node_visit_counter[retset[marker].id].second->fetch_add(1);
             }
           }
-          if (!bitset_view.empty() && bitset_view.test(retset[marker].id)) {
+          if (bitset_view.need_filter() && bitset_view.test(retset[marker].id)) {
             std::memmove(&retset[marker], &retset[marker + 1],
                          (cur_list_size - marker - 1) * sizeof(Neighbor));
             cur_list_size--;
@@ -1327,7 +1327,7 @@ namespace diskann {
 
       auto process_node = [&](T *node_fp_coords_copy, auto node_id, auto n_nbr,
                               auto *nbrs) {
-        if (bitset_view.empty() || !bitset_view.test(node_id)) {
+        if (!bitset_view.need_filter() || !bitset_view.test(node_id)) {
           float cur_expanded_dist;
           if (!use_disk_index_pq) {
             cur_expanded_dist = dist_cmp_wrap(query, node_fp_coords_copy,
@@ -1849,7 +1849,7 @@ namespace diskann {
       }
       compute_dists(&best_medoid, 1, dist_scratch);
       bool valid =
-          workspace->bitset.empty() || !workspace->bitset.test(best_medoid);
+          !workspace->bitset.need_filter() || !workspace->bitset.test(best_medoid);
       workspace->insert_to_pq(best_medoid, dist_scratch[0], valid);
       workspace->visited->insert(best_medoid);
 
@@ -1868,7 +1868,7 @@ namespace diskann {
         }
         workspace->visited->insert(id);
 
-        bool valid = workspace->bitset.empty() || !workspace->bitset.test(id);
+        bool valid = !workspace->bitset.need_filter() || !workspace->bitset.test(id);
         filtered_nbrs_valid[m] = valid;
         if (!valid) {
           workspace->acc_alpha += workspace->alpha;
@@ -1889,7 +1889,7 @@ namespace diskann {
      */
     auto process_node = [&](T *node_fp_coords_copy, auto node_id, auto n_nbr,
                             auto *nbrs) {
-      if (workspace->bitset.empty() || !workspace->bitset.test(node_id)) {
+      if (!workspace->bitset.need_filter() || !workspace->bitset.test(node_id)) {
         float cur_expanded_dist;
         if (!use_disk_index_pq) {
           cur_expanded_dist =

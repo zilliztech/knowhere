@@ -482,7 +482,8 @@ TEST_CASE("Test IVFFLAT_CC ensure topk with restrictive bitset", "[ivfflat_cc]")
         bitset[id >> 3] &= ~(0x1 << (id & 0x7));
     }
 
-    knowhere::BitsetView bitset_view(bitset.data(), nb, nb - topk);
+    knowhere::BitsetView bitset_view(bitset.data(), nb);
+    bitset_view.count_filtered_bits(0, nb);
     knowhere::BitsetViewIDSelector selector(bitset_view);
 
     faiss::IVFSearchParameters params;

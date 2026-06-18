@@ -133,10 +133,30 @@ struct GpuCuvsIndexNode : public IndexNode {
                     LOG_KNOWHERE_ERROR_ << "Empty index.";
                     return expected<DataSetPtr>::Err(Status::empty_index, "empty index");
                 }
-                auto search_result =
-                    index_->search(cuvs_cfg, data, rows, dim, bitset.data(), bitset.byte_size(), bitset.size());
+                std::vector<uint8_t> internal_bitset;
+                BitsetView internal_bitset_view;
+                const BitsetView* search_bitset = nullptr;
+                if (bitset.need_filter() && bitset.has_out_ids()) {
+                    const auto internal_bit_count = bitset.size();
+                    internal_bitset.assign((internal_bit_count + 7) / 8, 0);
+                    for (size_t i = 0; i < internal_bit_count; ++i) {
+                        if (bitset.test(i)) {
+                            internal_bitset[i >> 3] |= static_cast<uint8_t>(1U << (i & 7));
+                        }
+                    }
+                    internal_bitset_view = BitsetView(internal_bitset.data(), internal_bit_count);
+                    internal_bitset_view.set_filter_count(bitset.count());
+                    search_bitset = &internal_bitset_view;
+                } else if (bitset.need_filter()) {
+                    search_bitset = &bitset;
+                }
+                auto search_result = search_bitset == nullptr
+                                         ? index_->search(cuvs_cfg, data, rows, dim)
+                                         : index_->search(cuvs_cfg, data, rows, dim, search_bitset->data(),
+                                                          search_bitset->byte_size(), search_bitset->size());
                 std::this_thread::yield();
                 index_->synchronize();
+                external_id_map_.MapInternalIdsToExternalIds(std::get<0>(search_result), rows * cuvs_cfg.k);
                 return GenResultDataSet(rows, cuvs_cfg.k, std::get<0>(search_result), std::get<1>(search_result));
             } catch (const std::exception& e) {
                 err_msg = std::string{e.what()};

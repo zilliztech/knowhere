@@ -50,11 +50,17 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chro
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         TimeRecorder rc("BuildAsync index ", 2);
         auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt.get());
+        if (res == Status::success) {
+            res = this->node->FinalizeExternalIdMap();
+        }
         auto time = rc.ElapseFromBegin("done");
         time *= 0.000001;  // convert to s
         this->node->GetBuildLatencyMetric().Observe(time);
 #else
-        auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), Interrupt.get());
+        auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt.get());
+        if (res == Status::success) {
+            res = this->node->FinalizeExternalIdMap();
+        }
 #endif
         return res;
     }));
@@ -80,11 +86,17 @@ Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_bu
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Build index", 2);
     auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+    if (res == Status::success) {
+        res = this->node->FinalizeExternalIdMap();
+    }
     auto time = rc.ElapseFromBegin("done");
     time *= 0.000001;  // convert to s
     this->node->GetBuildLatencyMetric().Observe(time);
 #else
     auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+    if (res == Status::success) {
+        res = this->node->FinalizeExternalIdMap();
+    }
 #endif
     return res;
 }
@@ -127,22 +139,13 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
     // when index is mutable, it could happen that data count larger than bitset size, see
     // https://github.com/zilliztech/knowhere/issues/70
     // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > static_cast<size_t>(this->Count())) {
-        msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
-                          bitset_.size(), this->Count());
+    if (bitset_.num_bits() > static_cast<size_t>(this->node->ExternalCount())) {
+        msg = fmt::format("bitset size should be <= external data count, but we get bitset size: {}, data count: {}",
+                          bitset_.num_bits(), this->node->ExternalCount());
         LOG_KNOWHERE_ERROR_ << msg;
         return expected<DataSetPtr>::Err(Status::invalid_args, msg);
     }
-
-    BitsetView bitset;
-    if (bitset_.count() == 0) {
-        // traverse bitset to get the filtered out num
-        auto filtered_out_num = bitset_.get_filtered_out_num_();
-        bitset = BitsetView(bitset_.data(), bitset_.size(), filtered_out_num);
-    } else {
-        // if bitset has filtered out num, use it
-        bitset = bitset_;
-    }
+    auto bitset = this->node->PrepareBitset(bitset_);
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
@@ -197,14 +200,13 @@ Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetVi
     // when index is mutable, it could happen that data count larger than bitset size, see
     // https://github.com/zilliztech/knowhere/issues/70
     // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > static_cast<size_t>(this->Count())) {
-        msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
-                          bitset_.size(), this->Count());
+    if (bitset_.num_bits() > static_cast<size_t>(this->node->ExternalCount())) {
+        msg = fmt::format("bitset size should be <= external data count, but we get bitset size: {}, data count: {}",
+                          bitset_.num_bits(), this->node->ExternalCount());
         LOG_KNOWHERE_ERROR_ << msg;
         return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::invalid_args, msg);
     }
-
-    const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
+    auto bitset = this->node->PrepareBitset(bitset_);
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     // note that this time includes only the initial search phase of iterator.
@@ -235,14 +237,13 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
     // when index is mutable, it could happen that data count larger than bitset size, see
     // https://github.com/zilliztech/knowhere/issues/70
     // so something must be wrong at caller side when passed bitset size larger than data count
-    if (bitset_.size() > static_cast<size_t>(this->Count())) {
-        msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
-                          bitset_.size(), this->Count());
+    if (bitset_.num_bits() > static_cast<size_t>(this->node->ExternalCount())) {
+        msg = fmt::format("bitset size should be <= external data count, but we get bitset size: {}, data count: {}",
+                          bitset_.num_bits(), this->node->ExternalCount());
         LOG_KNOWHERE_ERROR_ << msg;
         return expected<DataSetPtr>::Err(Status::invalid_args, msg);
     }
-
-    const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
+    auto bitset = this->node->PrepareBitset(bitset_);
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
@@ -360,11 +361,17 @@ Index<T>::Deserialize(const BinarySet& binset, const Json& json) {
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Load index", 2);
     res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
+    if (res == Status::success) {
+        res = this->node->FinalizeExternalIdMap();
+    }
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     this->node->GetLoadLatencyMetric().Observe(time);
 #else
     res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
+    if (res == Status::success) {
+        res = this->node->FinalizeExternalIdMap();
+    }
 #endif
     return res;
 }
@@ -389,11 +396,17 @@ Index<T>::DeserializeFromFile(const std::string& filename, const Json& json) {
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     TimeRecorder rc("Load index from file", 2);
     res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
+    if (res == Status::success) {
+        res = this->node->FinalizeExternalIdMap();
+    }
     auto time = rc.ElapseFromBegin("done");
     time *= 0.001;  // convert to ms
     this->node->GetLoadLatencyMetric().Observe(time);
 #else
     res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
+    if (res == Status::success) {
+        res = this->node->FinalizeExternalIdMap();
+    }
 #endif
     return res;
 }

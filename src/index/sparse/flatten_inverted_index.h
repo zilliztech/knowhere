@@ -69,7 +69,7 @@ class FlattenInvertedIndexCursor {
  private:
     void
     skip_filtered_ids() {
-        while (pos_ < plist_size_ && !bitset_.empty() && bitset_.test(plist_ids_[pos_])) {
+        while (pos_ < plist_size_ && bitset_.need_filter() && bitset_.test(plist_ids_[pos_])) {
             ++pos_;
         }
     }

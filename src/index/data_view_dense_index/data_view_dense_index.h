@@ -31,6 +31,7 @@
 #include "knowhere/comp/task.h"
 #include "knowhere/config.h"
 #include "knowhere/context.h"
+#include "knowhere/external_id_map.h"
 #include "knowhere/operands.h"
 #include "knowhere/range_util.h"
 
@@ -348,13 +349,14 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
                           const bool use_quant) const {
     // todo: need more test to check
     const auto& search_pool = ThreadPool::GetGlobalSearchThreadPool();
+    const auto ntotal = Count();
     std::vector<folly::Future<folly::Unit>> futs;
     futs.reserve(n);
     if (k < faiss::distance_compute_min_k_reservoir) {
         if (metric_type_ == metric::L2) {
             faiss::cppcontrib::knowhere::HeapBlockResultHandler<CMAX> res(n, distances, labels, k);
             for (auto i = 0; i < n; i++) {
-                futs.emplace_back(search_pool->push([&] {
+                futs.emplace_back(search_pool->push([&, i = i] {
                     knowhere::checkCancellation(op_context);
                     ThreadPool::ScopedSearchOmpSetter setter(1);
                     faiss::cppcontrib::knowhere::HeapBlockResultHandler<CMAX>::SingleResultHandler resi(res);
@@ -362,10 +364,10 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
                                                            use_quant ? quant_data_ : nullptr);
                     computer->set_query((const float*)((const char*)x + code_size_ * i));
                     resi.begin(i);
-                    if (bitset.empty()) {
-                        exhaustive_search_in_one_query_impl(computer, n, resi, faiss::IDSelectorAll());
+                    if (!bitset.need_filter()) {
+                        exhaustive_search_in_one_query_impl(computer, ntotal, resi, faiss::IDSelectorAll());
                     } else {
-                        exhaustive_search_in_one_query_impl(computer, n, resi, BitsetViewIDSelector(bitset));
+                        exhaustive_search_in_one_query_impl(computer, ntotal, resi, BitsetViewIDSelector(bitset));
                     }
                     resi.end();
                 }));
@@ -374,7 +376,7 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
         } else {
             faiss::cppcontrib::knowhere::HeapBlockResultHandler<CMIN> res(n, distances, labels, k);
             for (auto i = 0; i < n; i++) {
-                futs.emplace_back(search_pool->push([&] {
+                futs.emplace_back(search_pool->push([&, i = i] {
                     knowhere::checkCancellation(op_context);
                     ThreadPool::ScopedSearchOmpSetter setter(1);
                     faiss::cppcontrib::knowhere::HeapBlockResultHandler<CMIN>::SingleResultHandler resi(res);
@@ -382,10 +384,10 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
                                                            use_quant ? quant_data_ : nullptr);
                     computer->set_query((const float*)((const char*)x + code_size_ * i));
                     resi.begin(i);
-                    if (bitset.empty()) {
-                        exhaustive_search_in_one_query_impl(computer, n, resi, faiss::IDSelectorAll());
+                    if (!bitset.need_filter()) {
+                        exhaustive_search_in_one_query_impl(computer, ntotal, resi, faiss::IDSelectorAll());
                     } else {
-                        exhaustive_search_in_one_query_impl(computer, n, resi, BitsetViewIDSelector(bitset));
+                        exhaustive_search_in_one_query_impl(computer, ntotal, resi, BitsetViewIDSelector(bitset));
                     }
                     resi.end();
                 }));
@@ -397,17 +399,17 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
             faiss::cppcontrib::knowhere::ReservoirBlockResultHandler<CMAX> res(n, distances, labels, k);
 
             for (auto i = 0; i < n; i++) {
-                futs.emplace_back(search_pool->push([&] {
+                futs.emplace_back(search_pool->push([&, i = i] {
                     ThreadPool::ScopedSearchOmpSetter setter(1);
                     faiss::cppcontrib::knowhere::ReservoirBlockResultHandler<CMAX>::SingleResultHandler resi(res);
                     auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
                                                            use_quant ? quant_data_ : nullptr);
                     computer->set_query((const float*)((const char*)x + code_size_ * i));
                     resi.begin(i);
-                    if (bitset.empty()) {
-                        exhaustive_search_in_one_query_impl(computer, n, resi, faiss::IDSelectorAll());
+                    if (!bitset.need_filter()) {
+                        exhaustive_search_in_one_query_impl(computer, ntotal, resi, faiss::IDSelectorAll());
                     } else {
-                        exhaustive_search_in_one_query_impl(computer, n, resi, BitsetViewIDSelector(bitset));
+                        exhaustive_search_in_one_query_impl(computer, ntotal, resi, BitsetViewIDSelector(bitset));
                     }
                     resi.end();
                 }));
@@ -416,17 +418,17 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
         } else {
             faiss::cppcontrib::knowhere::ReservoirBlockResultHandler<CMIN> res(n, distances, labels, k);
             for (auto i = 0; i < n; i++) {
-                futs.emplace_back(search_pool->push([&] {
+                futs.emplace_back(search_pool->push([&, i = i] {
                     ThreadPool::ScopedSearchOmpSetter setter(1);
                     faiss::cppcontrib::knowhere::ReservoirBlockResultHandler<CMIN>::SingleResultHandler resi(res);
                     auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
                                                            use_quant ? quant_data_ : nullptr);
                     computer->set_query((const float*)((const char*)x + code_size_ * i));
                     resi.begin(i);
-                    if (bitset.empty()) {
-                        exhaustive_search_in_one_query_impl(computer, n, resi, faiss::IDSelectorAll());
+                    if (!bitset.need_filter()) {
+                        exhaustive_search_in_one_query_impl(computer, ntotal, resi, faiss::IDSelectorAll());
                     } else {
-                        exhaustive_search_in_one_query_impl(computer, n, resi, BitsetViewIDSelector(bitset));
+                        exhaustive_search_in_one_query_impl(computer, ntotal, resi, BitsetViewIDSelector(bitset));
                     }
                     resi.end();
                 }));
@@ -508,6 +510,7 @@ DataViewIndexFlat::RangeSearch(const idx_t n, const void* __restrict x, const fl
     // todo: need more test to check
     std::vector<std::vector<float>> result_dist_array(n);
     std::vector<std::vector<idx_t>> result_id_array(n);
+    const auto ntotal = Count();
 
     std::shared_ptr<float[]> base_norms = nullptr;
     if (is_cosine_) {
@@ -527,17 +530,19 @@ DataViewIndexFlat::RangeSearch(const idx_t n, const void* __restrict x, const fl
                 ThreadPool::ScopedSearchOmpSetter setter(1);
                 auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
                                                        use_quant ? quant_data_ : nullptr);
+                computer->set_query((const float*)((const char*)x + code_size_ * i));
                 faiss::RangeSearchResult res(1);
-                faiss::cppcontrib::knowhere::RangeSearchBlockResultHandler<CMAX> resh(&res, radius);
-                faiss::cppcontrib::knowhere::RangeSearchBlockResultHandler<CMAX>::SingleResultHandler reshi(resh);
-                computer->set_query(((const float*)x + code_size_ * i));
-                reshi.begin(i);
-                if (bitset.empty()) {
-                    exhaustive_search_in_one_query_impl(computer, n, reshi, faiss::IDSelectorAll());
-                } else {
-                    exhaustive_search_in_one_query_impl(computer, n, reshi, BitsetViewIDSelector(bitset));
+                {
+                    faiss::cppcontrib::knowhere::RangeSearchBlockResultHandler<CMAX> resh(&res, radius);
+                    faiss::cppcontrib::knowhere::RangeSearchBlockResultHandler<CMAX>::SingleResultHandler reshi(resh);
+                    reshi.begin(0);
+                    if (!bitset.need_filter()) {
+                        exhaustive_search_in_one_query_impl(computer, ntotal, reshi, faiss::IDSelectorAll());
+                    } else {
+                        exhaustive_search_in_one_query_impl(computer, ntotal, reshi, BitsetViewIDSelector(bitset));
+                    }
+                    reshi.end();
                 }
-                reshi.end();
                 auto elem_cnt = res.lims[1];
                 result_dist_array[i].resize(elem_cnt);
                 result_id_array[i].resize(elem_cnt);
@@ -558,17 +563,19 @@ DataViewIndexFlat::RangeSearch(const idx_t n, const void* __restrict x, const fl
                 ThreadPool::ScopedSearchOmpSetter setter(1);
                 auto computer = SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_,
                                                        use_quant ? quant_data_ : nullptr);
+                computer->set_query((const float*)((const char*)x + code_size_ * i));
                 faiss::RangeSearchResult res(1);
-                faiss::cppcontrib::knowhere::RangeSearchBlockResultHandler<CMIN> resh(&res, radius);
-                faiss::cppcontrib::knowhere::RangeSearchBlockResultHandler<CMIN>::SingleResultHandler reshi(resh);
-                computer->set_query(((const float*)x + code_size_ * i));
-                reshi.begin(i);
-                if (bitset.empty()) {
-                    exhaustive_search_in_one_query_impl(computer, n, reshi, faiss::IDSelectorAll());
-                } else {
-                    exhaustive_search_in_one_query_impl(computer, n, reshi, BitsetViewIDSelector(bitset));
+                {
+                    faiss::cppcontrib::knowhere::RangeSearchBlockResultHandler<CMIN> resh(&res, radius);
+                    faiss::cppcontrib::knowhere::RangeSearchBlockResultHandler<CMIN>::SingleResultHandler reshi(resh);
+                    reshi.begin(0);
+                    if (!bitset.need_filter()) {
+                        exhaustive_search_in_one_query_impl(computer, ntotal, reshi, faiss::IDSelectorAll());
+                    } else {
+                        exhaustive_search_in_one_query_impl(computer, ntotal, reshi, BitsetViewIDSelector(bitset));
+                    }
+                    reshi.end();
                 }
-                reshi.end();
                 auto elem_cnt = res.lims[1];
                 result_dist_array[i].resize(elem_cnt);
                 result_id_array[i].resize(elem_cnt);

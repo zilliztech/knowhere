@@ -54,6 +54,11 @@ class AisaqIndexNode : public IndexNode {
         return Status::not_implemented;
     }
 
+    bool
+    NeedBitsetExactCount() const override {
+        return true;
+    }
+
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
            milvus::OpContext* op_context) const override;
@@ -714,6 +719,7 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
         return expected<DataSetPtr>::Err(Status::aisaq_error, "some search failed");
     }
 
+    external_id_map_.MapInternalIdsToExternalIds(p_id.get(), k * nq);
     auto res = GenResultDataSet(nq, k, std::move(p_id), std::move(p_dist));
 
     // set visit_info json string into result dataset
@@ -742,6 +748,10 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
     auto dim = Dim();
     auto rows = dataset->GetRows();
     auto ids = dataset->GetIds();
+    std::vector<int64_t> internal_ids;
+    if (emb_list_strategy_ == nullptr) {
+        ids = external_id_map_.MapExternalIdsToInternalIds(ids, rows, internal_ids);
+    }
     auto* data = new DataType[dim * rows];
     if (data == nullptr) {
         LOG_KNOWHERE_ERROR_ << "Failed to allocate memory for data.";

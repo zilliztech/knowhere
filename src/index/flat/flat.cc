@@ -106,7 +106,7 @@ class FlatIndexNode : public IndexNode {
                     auto cur_dis = distances + k * index;
 
                     BitsetViewIDSelector bw_idselector(bitset);
-                    faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+                    faiss::IDSelector* id_selector = bitset.need_filter() ? &bw_idselector : nullptr;
 
                     if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexFlat>) {
                         auto cur_query = static_cast<const DataType*>(x) + dim * index;
@@ -146,6 +146,7 @@ class FlatIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
+        external_id_map_.MapInternalIdsToExternalIds(ids, len);
         return GenResultDataSet(nq, k, ids, distances);
     }
 
@@ -182,7 +183,7 @@ class FlatIndexNode : public IndexNode {
                     faiss::RangeSearchResult res(1);
 
                     BitsetViewIDSelector bw_idselector(bitset);
-                    faiss::IDSelector* id_selector = (bitset.empty()) ? nullptr : &bw_idselector;
+                    faiss::IDSelector* id_selector = bitset.need_filter() ? &bw_idselector : nullptr;
 
                     if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexFlat>) {
                         auto cur_query = static_cast<const DataType*>(xq) + dim * index;
@@ -219,6 +220,7 @@ class FlatIndexNode : public IndexNode {
             }
             // wait for the completion
             WaitAllSuccess(futs);
+            external_id_map_.MapInternalIdsToExternalIds(result_id_array);
             range_search_result =
                 GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter);
         } catch (const std::exception& e) {
@@ -239,7 +241,9 @@ class FlatIndexNode : public IndexNode {
             try {
                 data = new DataType[rows * dim];
                 for (int64_t i = 0; i < rows; i++) {
-                    index_->reconstruct(ids[i], data + i * dim);
+                    auto id = emb_list_strategy_ == nullptr ? external_id_map_.MapExternalIdToInternalId(ids[i])
+                                                            : ids[i];
+                    index_->reconstruct(id, data + i * dim);
                 }
                 return GenResultDataSet(rows, dim, data);
             } catch (const std::exception& e) {
@@ -253,7 +257,9 @@ class FlatIndexNode : public IndexNode {
             try {
                 data = new uint8_t[rows * ((dim + 7) / 8)];
                 for (int64_t i = 0; i < rows; i++) {
-                    index_->reconstruct(ids[i], data + i * ((dim + 7) / 8));
+                    auto id = emb_list_strategy_ == nullptr ? external_id_map_.MapExternalIdToInternalId(ids[i])
+                                                            : ids[i];
+                    index_->reconstruct(id, data + i * ((dim + 7) / 8));
                 }
                 return GenResultDataSet(rows, dim, data);
             } catch (const std::exception& e) {

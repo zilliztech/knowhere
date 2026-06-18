@@ -1332,7 +1332,7 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
     size_t bv_cnt = 0;
     uint64_t local_l_search = l_search;
     float alpha = 0.15;
-    if (!bitset.empty()) {
+    if (bitset.need_filter()) {
         const auto filter_threshold =
             filter_ratio_in < 0 ? kFilterThreshold : filter_ratio_in;
         bv_cnt = bitset.count();
@@ -1966,7 +1966,7 @@ int PQFlashAisaqIndex<T>::aisaq_load_rearrange_data(const char *index_prefix) {
 template <typename T>
 bool PQFlashAisaqIndex<T>::should_ignore_point(
     uint32_t id, float alpha, float& accumulative_alpha, const knowhere::BitsetView &bitset) {
-    if (bitset.empty()) {
+    if (!bitset.need_filter()) {
         return false;
     }
     uint32_t __idn = _aisaq_rearranged_index

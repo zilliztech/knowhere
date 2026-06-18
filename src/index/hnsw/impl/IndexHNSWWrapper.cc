@@ -140,7 +140,7 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
         // try knowhere-specific filter
         if (const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
                 dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
-            bw_idselector && !bw_idselector->bitset_view.empty()) {
+            bw_idselector && bw_idselector->bitset_view.need_filter()) {
             // with filter, no mapping
 
             // feder templating is important, bcz it removes an unneeded 'CALL' instruction.
@@ -307,7 +307,7 @@ IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_
         // try knowhere-specific filter
         if (const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
                 dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
-            bw_idselector && !bw_idselector->bitset_view.empty()) {
+            bw_idselector && bw_idselector->bitset_view.need_filter()) {
             // with filter, no mapping
 
             // feder templating is important, bcz it removes an unneeded 'CALL' instruction.
