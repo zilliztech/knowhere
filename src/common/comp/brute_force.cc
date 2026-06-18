@@ -35,7 +35,7 @@
 #include "simd/hook.h"
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-#include "common/Trace.h"
+#include "common/Tracer.h"
 #endif
 
 namespace knowhere {

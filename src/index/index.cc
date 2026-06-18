@@ -20,7 +20,7 @@
 #include "knowhere/thread_pool.h"
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-#include "common/Trace.h"
+#include "common/Tracer.h"
 #include "knowhere/prometheus_client.h"
 #endif
 
@@ -171,7 +171,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
             span_ptr->SetAttribute(meta::DIM, Dim());
             span_ptr->SetAttribute(meta::NQ, dataset->GetRows());
         }
-        auto op_context_trace_span_guard = milvus::tracer::NestedSpanGuard(op_context, span_ptr);
+        auto op_context_trace_span_guard = milvus::tracer::NestedSpanGuard(op_context ? &op_context->trace_span : nullptr, span_ptr);
         // LCOV_EXCL_STOP
 
         TimeRecorder rc("Search");
@@ -267,7 +267,7 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
             span_ptr->SetAttribute(meta::DIM, Dim());
             span_ptr->SetAttribute(meta::NQ, dataset->GetRows());
         }
-        auto op_context_trace_span_guard = milvus::tracer::NestedSpanGuard(op_context, span_ptr);
+        auto op_context_trace_span_guard = milvus::tracer::NestedSpanGuard(op_context ? &op_context->trace_span : nullptr, span_ptr);
         // LCOV_EXCL_STOP
 
         TimeRecorder rc("Range Search");
