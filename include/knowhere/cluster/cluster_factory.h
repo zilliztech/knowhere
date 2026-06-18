@@ -24,12 +24,12 @@ class ClusterFactory {
  public:
     template <typename DataType>
     expected<Cluster<ClusterNode>>
-    Create(const std::string& name, const Object& object = nullptr);
+    Create(const std::string& name, const Object& object = nullptr) noexcept;
     template <typename DataType>
     const ClusterFactory&
     Register(const std::string& name, std::function<Cluster<ClusterNode>(const Object&)> func);
     static ClusterFactory&
-    Instance();
+    Instance() noexcept;
 
  private:
     struct FunMapValueBase {
