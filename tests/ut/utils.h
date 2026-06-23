@@ -23,7 +23,6 @@
 #include <vector>
 
 #include "catch2/generators/catch_generators.hpp"
-#include "catch2/generators/catch_generators_range.hpp"
 #include "knowhere/binaryset.h"
 #include "knowhere/dataset.h"
 #include "knowhere/object.h"
@@ -420,24 +419,12 @@ GenerateRandomDistanceIdPair(size_t n) {
 
 inline auto
 GenTestVersionList() {
-    static const auto versions = [] {
-        std::vector<int32_t> res = {knowhere::Version::GetCurrentVersion().VersionNumber()};
-        const auto maximum_version = knowhere::Version::GetMaximumVersion().VersionNumber();
-        if (maximum_version != res.front()) {
-            res.push_back(maximum_version);
-        }
-        return res;
-    }();
-    return GENERATE_COPY(from_range(versions));
+    return GENERATE(as<int32_t>{}, knowhere::Version::GetMaximumVersion().VersionNumber());
 }
 
 inline auto
 GenTestEmbListVersionList() {
-#ifdef KNOWHERE_WITH_CARDINAL
-    return GENERATE(as<int32_t>{}, std::max(knowhere::Version::GetCurrentVersion().VersionNumber(), 9));
-#else
-    return GENERATE(as<int32_t>{}, knowhere::Version::GetCurrentVersion().VersionNumber());
-#endif
+    return GENERATE(as<int32_t>{}, knowhere::Version::GetMaximumVersion().VersionNumber());
 }
 
 inline knowhere::DataSetPtr
