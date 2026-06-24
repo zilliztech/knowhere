@@ -215,7 +215,9 @@ class FaissIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "faiss search failed: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
-        return GenResultDataSet(nq, k, std::move(ids), std::move(distances));
+        auto res = GenResultDataSet(nq, k, std::move(ids), std::move(distances));
+        MapSearchResultIdsToOutIds(res);
+        return res;
     }
 
     expected<DataSetPtr>
@@ -282,7 +284,9 @@ class FaissIndexNode : public IndexNode {
 
             const bool is_ip = is_cosine_ || IsMetricType(fc->metric_type.value(), knowhere::metric::IP);
             auto rr = GetRangeSearchResult(result_distances, result_labels, is_ip, nq, radius, range_filter);
-            return GenResultDataSet(nq, std::move(rr));
+            auto res = GenResultDataSet(nq, std::move(rr));
+            MapSearchResultIdsToOutIds(res);
+            return res;
         }
     }
 

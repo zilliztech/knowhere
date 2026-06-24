@@ -209,6 +209,12 @@ class MuveraEmbListStrategy : public EmbListStrategy {
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "ANN search failed");
         }
         const auto* ann_ids = ann_result.value()->GetIds();
+        auto to_in_list_id = [&](int64_t out_id) -> int64_t {
+            if (out_id < 0) {
+                return -1;
+            }
+            return index->MapOutToIn(out_id);
+        };
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         auto time = rc.ElapseFromBegin("done");
@@ -228,7 +234,7 @@ class MuveraEmbListStrategy : public EmbListStrategy {
             for (size_t q = 0; q < num_query_docs; ++q) {
                 for (int32_t i = 0; i < k; ++i) {
                     if (i < ann_k) {
-                        ids[q * k + i] = ann_ids[q * ann_k + i];
+                        ids[q * k + i] = to_in_list_id(ann_ids[q * ann_k + i]);
                         dists[q * k + i] = ann_dists[q * ann_k + i];
                     } else {
                         ids[q * k + i] = -1;
@@ -262,11 +268,11 @@ class MuveraEmbListStrategy : public EmbListStrategy {
             size_t nq = q_vec_end - q_vec_start;
             total_query_vecs += nq;
 
-            // Collect candidate doc IDs (no dedup needed — ANN returns doc-level IDs)
+            // Convert stage1 list/doc out ids to list/doc in ids for rerank.
             candidate_docs.clear();
             for (int32_t i = 0; i < ann_k; ++i) {
-                int64_t doc_id = ann_ids[q * ann_k + i];
-                if (doc_id >= 0 && doc_id < num_docs_) {
+                int64_t doc_id = to_in_list_id(ann_ids[q * ann_k + i]);
+                if (doc_id >= 0) {
                     candidate_docs.push_back(doc_id);
                 }
             }

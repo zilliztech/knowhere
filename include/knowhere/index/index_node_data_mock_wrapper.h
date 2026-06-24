@@ -57,11 +57,6 @@ class IndexNodeDataMockWrapper : public IndexNode {
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
                   const bool is_cosine, milvus::OpContext* op_context) const override;
-    Status
-    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
-        return index_node_->SetInternalIdToMostExternalIdMap(std::move(map));
-    }
-
     std::optional<size_t>
     GetQueryCodeSize(const DataSetPtr dataset) const override {
         auto dim = dataset->GetDim();
@@ -119,6 +114,46 @@ class IndexNodeDataMockWrapper : public IndexNode {
     int64_t
     Count() const override {
         return index_node_->Count();
+    }
+
+    bool
+    NeedBitsetExactCount() const override {
+        return index_node_->NeedBitsetExactCount();
+    }
+
+    IdMap&
+    GetIdMap() override {
+        return index_node_->GetIdMap();
+    }
+
+    const IdMap&
+    GetIdMap() const override {
+        return index_node_->GetIdMap();
+    }
+
+    IdMapSnapshot
+    GetIdMapSnapshot() const override {
+        return index_node_->GetIdMapSnapshot();
+    }
+
+    int64_t
+    MapOutToIn(int64_t out_id) const override {
+        return index_node_->MapOutToIn(out_id);
+    }
+
+    const int64_t*
+    MapOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& in_ids) const override {
+        return index_node_->MapOutToIn(out_ids, count, in_ids);
+    }
+
+    expected<PreparedBitset>
+    PrepareBitset(BitsetView bitset) const override {
+        return index_node_->PrepareBitset(bitset);
+    }
+
+    Status
+    FinalizeIdMap() override {
+        return index_node_->FinalizeIdMap();
     }
 
     std::string

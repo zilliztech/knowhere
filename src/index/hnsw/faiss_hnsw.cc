@@ -83,6 +83,11 @@ class BaseFaissIndexNode : public IndexNode {
         return false;
     }
 
+    bool
+    NeedBitsetExactCount() const override {
+        return true;
+    }
+
     //
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
@@ -345,36 +350,68 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
         return writer.total_size;
     }
 
-    std::shared_ptr<std::vector<uint32_t>>
-    GetInternalIdToExternalIdMap() const override {
-        auto internal_offset_to_label = std::make_shared<std::vector<uint32_t>>();
-        assert(indexes.size() > 0);
-        if (indexes.size() == 1) {
-            // without mv-only labels, the id mapping is the same as the internal offset.
-            internal_offset_to_label->resize(Count());
-            std::iota(internal_offset_to_label->begin(), internal_offset_to_label->end(), 0);
-        } else {
-            // faiss_hnsw has stored mv-only labels (id mapping for each mv-index) *separately*, not a contiguous
-            // memory block. Note that the mv-only labels have a fixed serialization format; changing the design of
-            // labels would affect index version compatibility.
-            // so a temporary vector must be created to memcpy all id mappings.
-            auto total_size = index_rows_sum[index_rows_sum.size() - 1];
-            assert(total_size == Count());
-            internal_offset_to_label->resize(total_size);
-            for (auto par_idx = 0; par_idx < index_rows_sum.size() - 1; ++par_idx) {
-                auto par_size = index_rows_sum[par_idx + 1] - index_rows_sum[par_idx];
-                assert(par_size == labels[par_idx]->size());
-                std::memcpy(internal_offset_to_label->data() + index_rows_sum[par_idx], labels[par_idx]->data(),
-                            par_size * sizeof(uint32_t));
-            }
+    Status
+    FinalizeIdMap() override {
+        auto status = IndexNode::FinalizeIdMap();
+        if (status != Status::success) {
+            return status;
         }
-        return internal_offset_to_label;
+        BuildBitsetOutIds();
+        return Status::success;
     }
 
-    Status
-    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
-        internal_offset_to_most_external_id = std::move(map);
-        return Status::success;
+ protected:
+    int64_t
+    MapLocalIdToSearchResultId(size_t index_id, int64_t local_id) const {
+        if (local_id < 0) {
+            return local_id;
+        }
+        if (!labels.empty()) {
+            return labels[index_id]->operator[](local_id);
+        }
+        return local_id;
+    }
+
+    void
+    BuildBitsetOutIds() {
+        bitset_out_ids_.clear();
+        if (labels.size() <= 1) {
+            return;
+        }
+        const auto use_ebl_map =
+            emb_list_offset_ != nullptr && emb_list_strategy_ != nullptr && emb_list_strategy_->NeedsBaseIndexIDMap();
+        const auto id_map = GetIdMapSnapshot();
+        const auto in_to_out_ebl_ids = use_ebl_map ? id_map.GetInToOutEblIds() : IdArraySnapshot{};
+        const auto in_to_out_ids = use_ebl_map ? IdArraySnapshot{} : id_map.GetInToOutIds();
+
+        bitset_out_ids_.resize(labels.size());
+        for (size_t index_id = 0; index_id < labels.size(); ++index_id) {
+            const auto& local_labels = *labels[index_id];
+            auto& out_ids = bitset_out_ids_[index_id];
+            out_ids.resize(local_labels.size());
+            for (size_t local_id = 0; local_id < local_labels.size(); ++local_id) {
+                const auto in_id = local_labels[local_id];
+                int64_t out_id = in_id;
+                if (!in_to_out_ebl_ids.empty()) {
+                    out_id = in_to_out_ebl_ids[in_id];
+                } else if (!in_to_out_ids.empty()) {
+                    out_id = in_to_out_ids[in_id];
+                }
+                out_ids[local_id] = static_cast<int32_t>(out_id);
+            }
+        }
+    }
+
+    void
+    PrepareBitsetForSubIndex(BitsetView& bitset, size_t index_id) const {
+        const auto& out_ids = bitset_out_ids_[index_id];
+        const auto valid_count = bitset.size() - static_cast<size_t>(bitset.count());
+        const auto filtered_count = out_ids.size() - valid_count;
+
+        bitset.set_id_offset(0);
+        bitset.set_out_ids(out_ids.data(), out_ids.size());
+        bitset.set_vector_count(out_ids.size());
+        bitset.set_filter_count(filtered_count);
     }
 
  protected:
@@ -383,13 +420,13 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
     std::vector<std::shared_ptr<faiss::Index>> indexes;
     // each index's out ids(label), can be shared with FaissHnswIterator
     std::vector<std::shared_ptr<std::vector<uint32_t>>> labels;
+    // local FAISS id to public out id, only for bitset selector in multi-index
+    std::vector<std::vector<int32_t>> bitset_out_ids_;
 
     // index rows, help to locate index id by offset
     std::vector<uint32_t> index_rows_sum;
     // label to locate internal offset
     std::vector<uint32_t> label_to_internal_offset;
-    // internal offset to most external id, only for 1-hop bitset check
-    std::vector<uint32_t> internal_offset_to_most_external_id;
 
     int
     getIndexToSearchByScalarInfo(const BitsetView& bitset) const {
@@ -400,19 +437,15 @@ class BaseFaissRegularIndexNode : public BaseFaissIndexNode {
             LOG_KNOWHERE_WARNING_ << "partition key value not correctly set";
             return -1;
         }
-        // all data is filtered, just pick the first one
-        // this will not happen combined with milvus, which will not call knowhere and just return
-        if (bitset.count() == bitset.size()) {
+        size_t first_valid_index = bitset.get_first_valid_index();
+        if (first_valid_index >= label_to_internal_offset.size()) {
             return 0;
         }
-        size_t first_valid_index = bitset.get_first_valid_index();
-        if (!bitset.has_out_ids()) {
-            first_valid_index = label_to_internal_offset[first_valid_index];
-        }
+        first_valid_index = label_to_internal_offset[first_valid_index];
         auto it = std::upper_bound(index_rows_sum.begin(), index_rows_sum.end(), first_valid_index);
 
         if (it == index_rows_sum.end()) {
-            LOG_KNOWHERE_WARNING_ << "can not find vector of offset " << label_to_internal_offset[first_valid_index];
+            LOG_KNOWHERE_WARNING_ << "can not find vector of offset " << first_valid_index;
             return -1;
         }
         return std::distance(index_rows_sum.begin(), it) - 1;
@@ -1132,6 +1165,17 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
+        auto rows = dataset->GetRows();
+        auto ids = dataset->GetIds();
+        std::vector<int64_t> in_ids;
+        ids = this->MapOutToIn(ids, rows, in_ids);
+        auto storage_ds = GenIdsDataSet(rows, ids);
+        return GetVectorByStorageIds(storage_ds, op_context);
+    }
+
+ protected:
+    expected<DataSetPtr>
+    GetVectorByStorageIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         if (indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
@@ -1163,19 +1207,25 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
 
-        auto get_vector = [&](int64_t id, float* result) -> bool {
+        auto get_internal_offset = [&](int64_t id) -> int64_t {
             if (indexes.size() == 1) {
-                indexes_to_reconstruct_from[0]->reconstruct(id, result);
-            } else {
-                auto it =
-                    std::lower_bound(index_rows_sum.begin(), index_rows_sum.end(), label_to_internal_offset[id] + 1);
-                if (it == index_rows_sum.end()) {
-                    return false;
-                }
-                auto index_id = std::distance(index_rows_sum.begin(), it) - 1;
-                indexes_to_reconstruct_from[index_id]->reconstruct(
-                    label_to_internal_offset[id] - index_rows_sum[index_id], result);
+                return id;
             }
+            return label_to_internal_offset[static_cast<size_t>(id)];
+        };
+
+        auto get_vector = [&](int64_t id, float* result) -> bool {
+            auto offset = get_internal_offset(id);
+            if (indexes.size() == 1) {
+                indexes_to_reconstruct_from[0]->reconstruct(offset, result);
+                return true;
+            }
+            auto it = std::lower_bound(index_rows_sum.begin(), index_rows_sum.end(), offset + 1);
+            if (it == index_rows_sum.end()) {
+                return false;
+            }
+            auto index_id = std::distance(index_rows_sum.begin(), it) - 1;
+            indexes_to_reconstruct_from[index_id]->reconstruct(offset - index_rows_sum[index_id], result);
             return true;
         };
 
@@ -1188,7 +1238,6 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 auto data = std::make_unique<float[]>(dim * rows);
                 for (int64_t i = 0; i < rows; i++) {
                     const int64_t id = ids[i];
-                    assert(id >= 0 && id < Count());
                     if (!get_vector(id, data.get() + i * dim)) {
                         return expected<DataSetPtr>::Err(Status::invalid_index_error,
                                                          "index inner error, cannot proceed with GetVectorByIds");
@@ -1202,7 +1251,6 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 auto tmp = std::make_unique<float[]>(dim);
                 for (int64_t i = 0; i < rows; i++) {
                     const int64_t id = ids[i];
-                    assert(id >= 0 && id < Count());
                     if (!get_vector(id, tmp.get())) {
                         return expected<DataSetPtr>::Err(Status::invalid_index_error,
                                                          "index inner error, cannot proceed with GetVectorByIds");
@@ -1219,7 +1267,6 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 auto tmp = std::make_unique<float[]>(dim);
                 for (int64_t i = 0; i < rows; i++) {
                     const int64_t id = ids[i];
-                    assert(id >= 0 && id < Count());
                     if (!get_vector(id, tmp.get())) {
                         return expected<DataSetPtr>::Err(Status::invalid_index_error,
                                                          "index inner error, cannot proceed with GetVectorByIds");
@@ -1236,7 +1283,6 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 auto tmp = std::make_unique<float[]>(dim);
                 for (int64_t i = 0; i < rows; i++) {
                     const int64_t id = ids[i];
-                    assert(id >= 0 && id < Count());
                     if (!get_vector(id, tmp.get())) {
                         return expected<DataSetPtr>::Err(Status::invalid_index_error,
                                                          "index inner error, cannot proceed with GetVectorByIds");
@@ -1254,7 +1300,6 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 auto tmp = std::make_unique<float[]>(uint8_dim);
                 for (int64_t i = 0; i < rows; i++) {
                     const int64_t id = ids[i];
-                    assert(id >= 0 && id < Count());
                     if (!get_vector(id, tmp.get())) {
                         return expected<DataSetPtr>::Err(Status::invalid_index_error,
                                                          "index inner error, cannot proceed with GetVectorByIds");
@@ -1273,6 +1318,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         }
     }
 
+ public:
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset_,
            milvus::OpContext* op_context) const override {
@@ -1296,36 +1342,12 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const auto k = hnsw_cfg.k.value();
 
         BitsetView bitset(bitset_);
-        if (!internal_offset_to_most_external_id.empty()) {
-            if (emb_list_offset_ != nullptr) {
-                // if emb list, manually calculate the number of filtered out ids
-                size_t num_filtered_out_ids = 0;
-                for (size_t i = 0; i < bitset.size(); i++) {
-                    if (bitset.test(i)) {
-                        num_filtered_out_ids += emb_list_offset_->offset[i + 1] - emb_list_offset_->offset[i];
-                    }
-                }
-                bitset.set_out_ids(internal_offset_to_most_external_id.data(),
-                                   internal_offset_to_most_external_id.size(), num_filtered_out_ids);
-            } else {
-                bitset.set_out_ids(internal_offset_to_most_external_id.data(),
-                                   internal_offset_to_most_external_id.size());
-            }
-        }
         auto index_id = getIndexToSearchByScalarInfo(bitset);
         if (index_id < 0) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "partition key value not correctly set");
         }
         if (indexes.size() > 1) {
-            // calculate more accurate filter statistics for the single mv-index.
-            size_t num_mv_ids = labels[index_id].get()->size();
-            size_t num_mv_filtered_out_ids = num_mv_ids - (bitset.size() - bitset.count());
-            if (!bitset.has_out_ids()) {
-                bitset.set_out_ids(labels[index_id].get()->data(), num_mv_ids, num_mv_filtered_out_ids);
-            } else {
-                bitset.set_out_ids(internal_offset_to_most_external_id.data(), num_mv_ids, num_mv_filtered_out_ids);
-                bitset.set_id_offset(index_rows_sum[index_id]);
-            }
+            PrepareBitsetForSubIndex(bitset, index_id);
         }
 
         feder::hnsw::FederResultUniq feder_result;
@@ -1383,7 +1405,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         // set up a selector
         BitsetViewIDSelector bw_idselector(bitset);
-        faiss::IDSelector* id_selector = &bw_idselector;
+        faiss::IDSelector* id_selector = !bitset.empty() ? &bw_idselector : nullptr;
         hnsw_search_params.sel = id_selector;
 
         // run
@@ -1456,10 +1478,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                         }
                     }
 
-                    if (!labels.empty()) {
-                        for (int j = 0; j < k; ++j) {
-                            local_ids[j] = local_ids[j] < 0 ? local_ids[j] : labels[index_id]->operator[](local_ids[j]);
-                        }
+                    for (int j = 0; j < k; ++j) {
+                        local_ids[j] = MapLocalIdToSearchResultId(index_id, local_ids[j]);
                     }
                 }));
             }
@@ -1472,6 +1492,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         }
 
         auto res = GenResultDataSet(rows, k, std::move(ids), std::move(distances));
+        MapSearchResultIdsToOutIds(res);
 
         // set visit_info json string into result dataset
         if (feder_result != nullptr) {
@@ -1527,15 +1548,12 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const auto rows = dataset->GetRows();
         const float* data = static_cast<const float*>(dataset->GetTensor());
         auto distances = std::make_unique<float[]>(rows * labels_len);
+        const bool is_emb_list_rerank = this->emb_list_offset_ != nullptr && this->emb_list_strategy_ != nullptr &&
+                                        this->emb_list_strategy_->NeedsBaseIndexIDMap();
+        std::vector<int64_t> in_labels;
+        const auto* labels_to_calc = is_emb_list_rerank ? labels : this->MapOutToIn(labels, labels_len, in_labels);
 
         BitsetView bitset(bitset_);
-        if (!internal_offset_to_most_external_id.empty()) {
-            // Note: We do not need to calculate the actual number of filtered ids here;
-            // we only need the bitset to determine the index_id.
-            int32_t num_filtered_out_ids = 0;
-            bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size(),
-                               num_filtered_out_ids);
-        }
         auto index_id = getIndexToSearchByScalarInfo(bitset);
         if (index_id < 0) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "partition key value not correctly set");
@@ -1569,9 +1587,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
                     dist_computer->set_query(cur_query);
                     for (size_t j = 0; j < labels_len; j++) {
-                        auto id = labels[j];
+                        auto id = labels_to_calc[j];
                         if (indexes.size() > 1) {
-                            id = label_to_internal_offset[labels[j]] - index_rows_sum[index_id];
+                            id = label_to_internal_offset[labels_to_calc[j]] - index_rows_sum[index_id];
                         }
                         distances[idx * labels_len + j] = (*dist_computer)(id);
                     }
@@ -1600,13 +1618,12 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             BitsetView bitset_check(bitset_);
             auto whether_bf = WhetherPerformBruteForceRangeSearch(indexes[0].get(), hnsw_cfg_check, bitset_check);
             if (!whether_bf.has_value() || !whether_bf.value()) {
-                // Not brute-force worthy: use iterator path
                 return IndexNode::RangeSearch(dataset, std::move(cfg), bitset_, op_context);
             }
-            // Fall through to brute-force range search path below
         } else if (is_ann_iterator_supported()) {
             return IndexNode::RangeSearch(dataset, std::move(cfg), bitset_, op_context);
         }
+
         if (this->indexes.empty()) {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
@@ -1625,22 +1642,12 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         const auto hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
         BitsetView bitset(bitset_);
-        if (!internal_offset_to_most_external_id.empty()) {
-            bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
-        }
         auto index_id = getIndexToSearchByScalarInfo(bitset);
         if (index_id < 0) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "partition key value not correctly set");
         }
         if (indexes.size() > 1) {
-            size_t num_mv_ids = labels[index_id].get()->size();
-            size_t num_mv_filtered_out_ids = num_mv_ids - (bitset.size() - bitset.count());
-            if (!bitset.has_out_ids()) {
-                bitset.set_out_ids(labels[index_id].get()->data(), num_mv_ids, num_mv_filtered_out_ids);
-            } else {
-                bitset.set_out_ids(internal_offset_to_most_external_id.data(), num_mv_ids, num_mv_filtered_out_ids);
-                bitset.set_id_offset(index_rows_sum[index_id]);
-            }
+            PrepareBitsetForSubIndex(bitset, index_id);
         }
 
         const bool is_similarity_metric =
@@ -1693,7 +1700,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         // set up a selector
         BitsetViewIDSelector bw_idselector(bitset);
-        faiss::IDSelector* id_selector = &bw_idselector;
+        faiss::IDSelector* id_selector = !bitset.empty() ? &bw_idselector : nullptr;
         hnsw_search_params.sel = id_selector;
 
         ////////////////////////////////////////////////////////////////
@@ -1748,17 +1755,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                         result_dist_array[idx].resize(elem_cnt);
                         result_id_array[idx].resize(elem_cnt);
 
-                        if (labels.empty()) {
-                            for (size_t j = 0; j < elem_cnt; j++) {
-                                result_dist_array[idx][j] = res.distances[j];
-                                result_id_array[idx][j] = res.labels[j];
-                            }
-                        } else {
-                            for (size_t j = 0; j < elem_cnt; j++) {
-                                result_dist_array[idx][j] = res.distances[j];
-                                result_id_array[idx][j] =
-                                    res.labels[j] < 0 ? res.labels[j] : labels[index_id]->operator[](res.labels[j]);
-                            }
+                        for (size_t j = 0; j < elem_cnt; j++) {
+                            result_dist_array[idx][j] = res.distances[j];
+                            result_id_array[idx][j] = MapLocalIdToSearchResultId(index_id, res.labels[j]);
                         }
 
                         if (hnsw_cfg.range_filter.value() != defaultRangeFilter) {
@@ -1779,7 +1778,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         RangeSearchResult range_search_result =
             GetRangeSearchResult(result_dist_array, result_id_array, is_similarity_metric, rows, radius, range_filter);
 
-        return GenResultDataSet(rows, std::move(range_search_result));
+        auto res = GenResultDataSet(rows, std::move(range_search_result));
+        MapSearchResultIdsToOutIds(res);
+        return res;
     }
 
  protected:
@@ -1960,28 +1961,20 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
         const FaissHnswConfig& hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
         BitsetView bitset(bitset_);
-        if (!internal_offset_to_most_external_id.empty()) {
-            bitset.set_out_ids(internal_offset_to_most_external_id.data(), internal_offset_to_most_external_id.size());
-        }
         int index_id = getIndexToSearchByScalarInfo(bitset);
         if (index_id < 0) {
             return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::invalid_args,
                                                                       "partition key value not correctly set");
         }
         if (indexes.size() > 1) {
-            size_t num_mv_ids = labels[index_id].get()->size();
-            size_t num_mv_filtered_out_ids = num_mv_ids - (bitset.size() - bitset.count());
-            if (!bitset.has_out_ids()) {
-                bitset.set_out_ids(labels[index_id].get()->data(), num_mv_ids, num_mv_filtered_out_ids);
-            } else {
-                bitset.set_out_ids(internal_offset_to_most_external_id.data(), num_mv_ids, num_mv_filtered_out_ids);
-                bitset.set_id_offset(index_rows_sum[index_id]);
-            }
+            PrepareBitsetForSubIndex(bitset, index_id);
         }
         const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::COSINE);
         const bool larger_is_closer = (IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::IP) || is_cosine);
 
         const auto ef = hnsw_cfg.ef.value_or(kIteratorSeedEf);
+        const auto id_map = GetIdMapSnapshot();
+        const auto result_out_ids = SearchResultIdMap(id_map);
 
         try {
             for (int64_t i = 0; i < n_queries; i++) {
@@ -2019,6 +2012,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     indexes[index_id], labels.empty() ? nullptr : labels[index_id], std::move(cur_query), bitset, ef,
                     larger_is_closer, iterator_refine_ratio, label_to_internal_offset, mv_base_offset,
                     use_knowhere_search_pool);
+                it->SetResultIdMap(result_out_ids);
                 // store
                 vec[i] = it;
             }
@@ -2205,6 +2199,24 @@ class HNSWIndexNodeWithFallback : public IndexNode {
         }
     }
 
+    bool
+    NeedBitsetExactCount() const override {
+        if (use_base_index) {
+            return base_index->NeedBitsetExactCount();
+        } else {
+            return fallback_search_index->NeedBitsetExactCount();
+        }
+    }
+
+    Status
+    FinalizeIdMap() override {
+        if (use_base_index) {
+            return base_index->FinalizeIdMap();
+        } else {
+            return fallback_search_index->FinalizeIdMap();
+        }
+    }
+
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         if (use_base_index) {
@@ -2277,6 +2289,60 @@ class HNSWIndexNodeWithFallback : public IndexNode {
         }
     }
 
+    IdMap&
+    GetIdMap() override {
+        if (use_base_index) {
+            return base_index->GetIdMap();
+        } else {
+            return fallback_search_index->GetIdMap();
+        }
+    }
+
+    const IdMap&
+    GetIdMap() const override {
+        if (use_base_index) {
+            return base_index->GetIdMap();
+        } else {
+            return fallback_search_index->GetIdMap();
+        }
+    }
+
+    IdMapSnapshot
+    GetIdMapSnapshot() const override {
+        if (use_base_index) {
+            return base_index->GetIdMapSnapshot();
+        } else {
+            return fallback_search_index->GetIdMapSnapshot();
+        }
+    }
+
+    int64_t
+    MapOutToIn(int64_t out_id) const override {
+        if (use_base_index) {
+            return base_index->MapOutToIn(out_id);
+        } else {
+            return fallback_search_index->MapOutToIn(out_id);
+        }
+    }
+
+    const int64_t*
+    MapOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& in_ids) const override {
+        if (use_base_index) {
+            return base_index->MapOutToIn(out_ids, count, in_ids);
+        } else {
+            return fallback_search_index->MapOutToIn(out_ids, count, in_ids);
+        }
+    }
+
+    expected<PreparedBitset>
+    PrepareBitset(BitsetView bitset) const override {
+        if (use_base_index) {
+            return base_index->PrepareBitset(bitset);
+        } else {
+            return fallback_search_index->PrepareBitset(bitset);
+        }
+    }
+
     int64_t
     Size() const override {
         if (use_base_index) {
@@ -2341,24 +2407,6 @@ class HNSWIndexNodeWithFallback : public IndexNode {
         } else {
             return fallback_search_index->AnnIterator(dataset, std::move(cfg), bitset, use_knowhere_search_pool,
                                                       op_context);
-        }
-    }
-
-    std::shared_ptr<std::vector<uint32_t>>
-    GetInternalIdToExternalIdMap() const override {
-        if (use_base_index) {
-            return base_index->GetInternalIdToExternalIdMap();
-        } else {
-            return fallback_search_index->GetInternalIdToExternalIdMap();
-        }
-    }
-
-    Status
-    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
-        if (use_base_index) {
-            return base_index->SetInternalIdToMostExternalIdMap(std::move(map));
-        } else {
-            return fallback_search_index->SetInternalIdToMostExternalIdMap(std::move(map));
         }
     }
 

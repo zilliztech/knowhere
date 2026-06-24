@@ -53,7 +53,7 @@ class BruteForce {
 
     static Status
     SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, sparse::label_t* ids, float* dis,
-                        const Json& config, const BitsetView& bitset, milvus::OpContext* op_context = nullptr) noexcept;
+                        const Json& config, BitsetView bitset, milvus::OpContext* op_context = nullptr) noexcept;
 
     template <typename DataType>
     static expected<std::vector<IndexNode::IteratorPtr>>

@@ -84,6 +84,12 @@ class IvfIndexNode : public IndexNode {
         build_pool_ = ThreadPool::GetGlobalBuildThreadPool();
         base_index_lock_ = std::make_unique<FairRWLock>();
     }
+
+    bool
+    NeedBitsetExactCount() const override {
+        return true;
+    }
+
     Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
                  bool use_knowhere_build_pool) override {
@@ -133,12 +139,6 @@ class IvfIndexNode : public IndexNode {
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
                   const bool is_cosine, milvus::OpContext* op_context) const override;
-    Status
-    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
-        internal_offset_to_most_external_id_ = std::move(map);
-        return Status::success;
-    };
-
     static Status
     StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
         auto ivf_cfg = static_cast<const IvfConfig&>(cfg);
@@ -370,6 +370,10 @@ class IvfIndexNode : public IndexNode {
         }
     };
 
+ protected:
+    expected<DataSetPtr>
+    GetVectorByStorageIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override;
+
  private:
     expected<DataSetPtr>
     GetIndexMetaImpl(std::unique_ptr<Config> cfg, IVFBaseTag) const {
@@ -464,7 +468,6 @@ class IvfIndexNode : public IndexNode {
     // spawded during index training/building can inherit the low nice value of
     // threads in build_pool_.
     std::shared_ptr<ThreadPool> build_pool_;
-    std::vector<uint32_t> internal_offset_to_most_external_id_;
     std::unique_ptr<FairRWLock> base_index_lock_;
 };
 
@@ -872,39 +875,10 @@ IvfIndexNode<DataType, IndexType>::AddEmbList(const DataSetPtr dataset, std::sha
     config.metric_type = sub_metric_type;
 
     // 2. update emb_list_offset and id map
+    const auto old_row_count = static_cast<size_t>(Count());
     {
         FairWriteLockGuard guard(*this->base_index_lock_);
-        auto old_num_rows = Count();
-        auto old_num_el = emb_list_offset_->num_el();
-        auto dataset_rows = dataset->GetRows();
-        auto new_num_rows = old_num_rows + dataset_rows;
-        if (lims[0] != old_num_rows) {
-            LOG_KNOWHERE_WARNING_ << "lims[0] is not equal to the total_cnt of the old index";
-            return Status::emb_list_inner_error;
-        }
-        size_t idx = 1;
-        internal_offset_to_most_external_id_.resize(new_num_rows);
-        while (lims[idx] < new_num_rows) {
-            if (lims[idx] < lims[idx - 1]) {
-                LOG_KNOWHERE_WARNING_ << "lims is not increasing, lims[" << idx << "] = " << lims[idx] << " < lims["
-                                      << idx - 1 << "] = " << lims[idx - 1];
-                return Status::emb_list_inner_error;
-            }
-            emb_list_offset_->offset.push_back(lims[idx]);
-            auto cur_el_id = old_num_el + idx - 1;
-            std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], lims[idx] - lims[idx - 1],
-                        cur_el_id);
-            idx++;
-        }
-        if (lims[idx] != new_num_rows) {
-            LOG_KNOWHERE_WARNING_ << "lims should end with the total_cnt of the new index, lims[" << idx
-                                  << "] = " << lims[idx] << " != " << new_num_rows;
-            return Status::emb_list_inner_error;
-        }
-        emb_list_offset_->offset.push_back(new_num_rows);
-        auto cur_el_id = old_num_el + idx - 1;
-        std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], new_num_rows - lims[idx - 1],
-                    cur_el_id);
+        RETURN_IF_ERROR(this->AppendEmbListOffsetAndIdMap(lims, old_row_count, num_rows));
     }
 
     // 3. add to index
@@ -934,23 +908,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
     auto k = ivf_cfg.k.value();
     auto nprobe = ivf_cfg.nprobe.value();
 
-    BitsetView bitset(bitset_);
-    if (!internal_offset_to_most_external_id_.empty()) {
-        if (emb_list_offset_ != nullptr) {
-            // if emb list, manually calculate the number of filtered out ids
-            size_t num_filtered_out_ids = 0;
-            for (size_t i = 0; i < bitset.size(); i++) {
-                if (bitset.test(i)) {
-                    num_filtered_out_ids += emb_list_offset_->offset[i + 1] - emb_list_offset_->offset[i];
-                }
-            }
-            bitset.set_out_ids(internal_offset_to_most_external_id_.data(), internal_offset_to_most_external_id_.size(),
-                               num_filtered_out_ids);
-        } else {
-            bitset.set_out_ids(internal_offset_to_most_external_id_.data(),
-                               internal_offset_to_most_external_id_.size());
-        }
-    }
+    const auto& bitset = bitset_;
 
     auto ids = std::make_unique<int64_t[]>(rows * k);
     auto distances = std::make_unique<float[]>(rows * k);
@@ -1206,6 +1164,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
     }
 
     auto res = GenResultDataSet(rows, k, std::move(ids), std::move(distances));
+    MapSearchResultIdsToOutIds(res);
     return res;
 }
 
@@ -1234,6 +1193,10 @@ IvfIndexNode<DataType, IndexType>::CalcDistByIDs(const DataSetPtr dataset, const
         auto query_data = dataset->GetTensor();
         auto dim = dataset->GetDim();
         auto distances = std::make_unique<float[]>(num_queries * labels_len);
+        const bool is_emb_list_rerank = this->emb_list_offset_ != nullptr && this->emb_list_strategy_ != nullptr &&
+                                        this->emb_list_strategy_->NeedsBaseIndexIDMap();
+        std::vector<int64_t> in_labels;
+        const auto* labels_to_calc = is_emb_list_rerank ? labels : this->MapOutToIn(labels, labels_len, in_labels);
 
         try {
             std::vector<folly::Future<folly::Unit>> futs;
@@ -1248,7 +1211,7 @@ IvfIndexNode<DataType, IndexType>::CalcDistByIDs(const DataSetPtr dataset, const
                         query = copied_query.get();
                     }
                     auto cur_distances = distances.get() + index * labels_len;
-                    index_->calc_dist_by_ids(1, query, labels_len, labels, cur_distances);
+                    index_->calc_dist_by_ids(1, query, labels_len, labels_to_calc, cur_distances);
                 }));
             }
             WaitAllSuccess(futs);
@@ -1532,7 +1495,9 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
     }
 
-    return GenResultDataSet(nq, std::move(range_search_result));
+    auto res = GenResultDataSet(nq, std::move(range_search_result));
+    MapSearchResultIdsToOutIds(res);
+    return res;
 }
 
 template <typename DataType, typename IndexType>
@@ -1595,6 +1560,8 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
                 // iterator only own the copied_query.
                 auto it = std::make_shared<iterator>(index_.get(), std::move(copied_query), bitset, nprobe,
                                                      larger_is_closer, iterator_refine_ratio, use_knowhere_search_pool);
+                const auto id_map = GetIdMapSnapshot();
+                it->SetResultIdMap(SearchResultIdMap(id_map));
                 vec[i] = it;
             }
 
@@ -1609,6 +1576,18 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
 template <typename DataType, typename IndexType>
 expected<DataSetPtr>
 IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
+    auto rows = dataset->GetRows();
+    auto ids = dataset->GetIds();
+    std::vector<int64_t> in_ids;
+    ids = this->MapOutToIn(ids, rows, in_ids);
+    auto storage_ds = GenIdsDataSet(rows, ids);
+    return GetVectorByStorageIds(storage_ds, op_context);
+}
+
+template <typename DataType, typename IndexType>
+expected<DataSetPtr>
+IvfIndexNode<DataType, IndexType>::GetVectorByStorageIds(const DataSetPtr dataset,
+                                                         milvus::OpContext* op_context) const {
     if (!this->index_) {
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
