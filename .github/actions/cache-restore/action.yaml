@@ -9,6 +9,40 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    - name: Detect CPU Feature Bucket
+      id: cpu_feature
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        flags=""
+        if command -v lscpu >/dev/null 2>&1; then
+          flags="$(LC_ALL=C lscpu | awk -F: '/^(Flags|Features):/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}' | tr '[:upper:]' '[:lower:]')"
+        fi
+
+        if [ -z "${flags}" ] && command -v sysctl >/dev/null 2>&1; then
+          flags="$(sysctl -a machdep.cpu.features machdep.cpu.leaf7_features 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)"
+        fi
+
+        if [ -z "${flags}" ] && [ -r /proc/cpuinfo ]; then
+          flags="$(awk -F: '/^(flags|Features)[[:space:]]*:/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}' /proc/cpuinfo | tr '[:upper:]' '[:lower:]')"
+        fi
+
+        features=()
+        for feature in avx512f avx512bw avx512vl avx512dq avx512cd avx512vnni avx512vbmi2 avx512vpopcntdq avx512_bf16 avx512_fp16 avx2 fma sse4_2 sve asimd; do
+          if grep -qw "${feature}" <<< "${flags}"; then
+            features+=("${feature}")
+          fi
+        done
+
+        if [ ${#features[@]} -eq 0 ]; then
+          bucket="cpu-generic"
+        else
+          bucket="cpu-$(IFS=_; echo "${features[*]}")"
+        fi
+
+        echo "bucket=${bucket}" >> "${GITHUB_OUTPUT}"
+        echo "Using cache CPU feature bucket: ${bucket}"
     - name: Cache CCache Volumes
       uses: actions/cache/restore@v4
       with:
@@ -19,8 +53,8 @@ runs:
         # inside the restored tarball still detects thirdparty source changes
         # via its own content hashing, so compilation correctness is unaffected.
         # Key must match cache-save/action.yaml exactly for exact-key hits.
-        key: knowhere-${{ inputs.os }}-${{ github.job }}-ccache-${{ hashFiles('src/**/*.cpp', 'src/**/*.cc', 'src/**/*.c', 'src/**/*.h', 'src/**/*.hpp', 'include/**/*.h', 'include/**/*.hpp', 'tests/**/*.cpp', 'tests/**/*.cc', 'tests/**/*.h', 'benchmark/**/*.cpp', 'benchmark/**/*.cc', 'benchmark/**/*.h', 'cmake/**', 'CMakeLists.txt', 'Makefile', 'conanfile.py') }}
-        restore-keys: knowhere-${{ inputs.os }}-${{ github.job }}-ccache-
+        key: knowhere-${{ inputs.os }}-${{ github.job }}-${{ steps.cpu_feature.outputs.bucket }}-ccache-${{ hashFiles('src/**/*.cpp', 'src/**/*.cc', 'src/**/*.c', 'src/**/*.h', 'src/**/*.hpp', 'include/**/*.h', 'include/**/*.hpp', 'tests/**/*.cpp', 'tests/**/*.cc', 'tests/**/*.h', 'benchmark/**/*.cpp', 'benchmark/**/*.cc', 'benchmark/**/*.h', 'cmake/**', 'CMakeLists.txt', 'Makefile', 'conanfile.py') }}
+        restore-keys: knowhere-${{ inputs.os }}-${{ github.job }}-${{ steps.cpu_feature.outputs.bucket }}-ccache-
     - name: Reset Conan package cache
       shell: bash
       run: rm -rf ~/.conan2/p
@@ -28,4 +62,4 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: ~/.conan2
-        key: knowhere-${{ inputs.os }}-${{ github.job }}-conan2-${{ hashFiles('conanfile.py') }}
+        key: knowhere-${{ inputs.os }}-${{ github.job }}-${{ steps.cpu_feature.outputs.bucket }}-conan2-${{ hashFiles('conanfile.py') }}
