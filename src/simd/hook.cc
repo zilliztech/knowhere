@@ -31,7 +31,7 @@
 #include "distances_rvv.h"
 #endif
 
-#if defined(__ARM_FEATURE_SVE)
+#if defined(__aarch64__) && defined(KNOWHERE_USE_SVE)
 #include "distances_sve.h"
 #endif
 
@@ -382,8 +382,8 @@ fvec_hook(std::string& simd_type) {
 #endif
 
 #if defined(__aarch64__)
+#if defined(KNOWHERE_USE_SVE)
     if (supports_sve()) {
-#if defined(__ARM_FEATURE_SVE)
         // ToDo: Enable remaining functions on SVE
         fvec_L2sqr = fvec_L2sqr_sve;
         fvec_L1 = fvec_L1_sve;
@@ -424,8 +424,8 @@ fvec_hook(std::string& simd_type) {
 
         simd_type = "SVE";
         support_pq_fast_scan = true;
-#endif
     } else {
+#endif
 #if defined(__ARM_NEON)
         // NEON functions
         fvec_inner_product = fvec_inner_product_neon;
@@ -465,7 +465,9 @@ fvec_hook(std::string& simd_type) {
         simd_type = "NEON";
         support_pq_fast_scan = true;
 #endif
+#if defined(KNOWHERE_USE_SVE)
     }
+#endif
 #endif
 
 #if defined(__riscv_vector)

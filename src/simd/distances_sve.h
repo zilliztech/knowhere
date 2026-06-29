@@ -14,8 +14,6 @@
 
 #include "knowhere/operands.h"
 
-#if defined(__ARM_FEATURE_SVE)
-#include <arm_sve.h>
 namespace faiss {
 namespace cppcontrib {
 namespace knowhere {
@@ -113,4 +111,3 @@ bf16_vec_inner_product_batch_4_sve(const ::knowhere::bf16* x, const ::knowhere::
 }  // namespace knowhere
 }  // namespace cppcontrib
 }  // namespace faiss
-#endif
