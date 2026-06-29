@@ -73,12 +73,6 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
         return refine_offset_index_->GetQueryCodeSize();
     }
 
-    Status
-    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
-        internal_offset_to_most_external_id_ = std::move(map);
-        return Status::success;
-    }
-
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
                   const bool is_cosine, milvus::OpContext* op_context) const override;
@@ -121,6 +115,11 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
     bool
     HasRawData(const std::string& metric_type) const override {
         return false;
+    }
+
+    bool
+    NeedBitsetExactCount() const override {
+        return base_index_ != nullptr && base_index_->NeedBitsetExactCount();
     }
 
     expected<DataSetPtr>
@@ -239,7 +238,7 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
                         UpdateNext();
                     }
                 }
-                return std::make_pair(ret.id, ret.val * sign_);
+                return std::make_pair(MapResultId(ret.id), ret.val * sign_);
             }
         }
 
@@ -304,7 +303,6 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
     std::unique_ptr<IndexNode> base_index_;  // base_index will hold data codes in memory, datatype is fp32
     std::unique_ptr<FairRWLock>
         base_index_lock_;  // base_index_lock_ protect all concurrent writes/reads access of base_index_
-    std::vector<uint32_t> internal_offset_to_most_external_id_;
 };
 
 namespace {
@@ -431,38 +429,11 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AddEmbList(const DataSetP
     auto sub_metric_type = sub_metric_type_or.value();
     config.metric_type = sub_metric_type;
 
-    // 2. update emb list offset and id map
-    size_t old_num_el = emb_list_offset_->num_el();
-    size_t old_rows_cnt = Count();
-    size_t new_rows_cnt = old_rows_cnt + num_rows;
+    // 2. update emb_list_offset and id map
+    const auto old_row_count = static_cast<size_t>(Count());
     {
         FairWriteLockGuard guard(*this->base_index_lock_);
-        size_t idx = 0;
-        if (lims[0] != emb_list_offset_->offset[old_num_el]) {
-            LOG_KNOWHERE_WARNING_ << "emb list offset is not continuous";
-            return Status::emb_list_inner_error;
-        }
-        idx++;
-        internal_offset_to_most_external_id_.resize(new_rows_cnt);
-        while (lims[idx] < new_rows_cnt) {
-            if (lims[idx] < lims[idx - 1]) {
-                LOG_KNOWHERE_WARNING_ << "emb list offset is not increasing";
-                return Status::emb_list_inner_error;
-            }
-            emb_list_offset_->offset.push_back(lims[idx]);
-            auto cur_el_id = old_num_el + idx - 1;
-            std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], lims[idx] - lims[idx - 1],
-                        cur_el_id);
-            idx++;
-        }
-        if (lims[idx] != new_rows_cnt) {
-            LOG_KNOWHERE_WARNING_ << "emb list offset should end with the total_cnt of the whole index";
-            return Status::emb_list_inner_error;
-        }
-        emb_list_offset_->offset.push_back(new_rows_cnt);
-        auto cur_el_id = old_num_el + idx - 1;
-        std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], new_rows_cnt - lims[idx - 1],
-                    cur_el_id);
+        RETURN_IF_ERROR(this->AppendEmbListOffsetAndIdMap(lims, old_row_count, num_rows));
     }
 
     // 3. add to index
@@ -495,21 +466,7 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Search(const DataSetPtr d
     knowhere::expected<knowhere::DataSetPtr> quant_res;
     {
         FairReadLockGuard guard(*this->base_index_lock_);
-        BitsetView new_bitset(bitset);
-        if (!internal_offset_to_most_external_id_.empty()) {
-            size_t num_filtered_out_ids = 0;
-            if (!bitset.empty()) {
-                // todo: optimize the calculation
-                for (size_t i = 0; i < new_bitset.size(); i++) {
-                    if (new_bitset.test(i)) {
-                        num_filtered_out_ids += emb_list_offset_->offset[i + 1] - emb_list_offset_->offset[i];
-                    }
-                }
-            }
-            new_bitset.set_out_ids(internal_offset_to_most_external_id_.data(),
-                                   internal_offset_to_most_external_id_.size(), num_filtered_out_ids);
-        }
-        quant_res = base_index_->Search(base_index_ds, std::move(cfg), new_bitset, op_context);
+        quant_res = base_index_->Search(base_index_ds, std::move(cfg), bitset, op_context);
     }
     if (!quant_res.has_value()) {
         return quant_res;
@@ -530,7 +487,9 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::Search(const DataSetPtr d
         LOG_KNOWHERE_WARNING_ << "data view index inner error: " << e.what();
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
     }
-    return GenResultDataSet(nq, topk, std::move(labels), std::move(distances));
+    auto res = GenResultDataSet(nq, topk, std::move(labels), std::move(distances));
+    this->MapSearchResultIdsToOutIds(res);
+    return res;
 }
 
 template <typename DataType, typename BaseIndexNode>
@@ -548,14 +507,24 @@ expected<DataSetPtr>
 IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::CalcDistByIDs(const DataSetPtr dataset,
                                                                      const BitsetView& /*bitset*/,
                                                                      const int64_t* labels, const size_t labels_len,
-                                                                     const bool /*is_cosine*/,
+                                                                     const bool is_cosine,
                                                                      milvus::OpContext* op_context) const {
+    if (this->emb_list_raw_index_) {
+        return CalcDistByRawIndex(dataset, labels, labels_len, is_cosine, ThreadPool::GetGlobalSearchThreadPool(),
+                                  op_context);
+    }
+
+    const bool is_emb_list_rerank = this->emb_list_offset_ != nullptr && this->emb_list_strategy_ != nullptr &&
+                                    this->emb_list_strategy_->NeedsBaseIndexIDMap();
+    std::vector<int64_t> in_labels;
+    const auto* labels_to_calc = is_emb_list_rerank ? labels : this->MapOutToIn(labels, labels_len, in_labels);
+
     auto num_queries = dataset->GetRows();
     auto query_data = dataset->GetTensor();
     auto distances = std::make_unique<float[]>(num_queries * labels_len);
     try {
         bool refine_with_quant = false;
-        refine_offset_index_->CalcDistByIDs(num_queries, query_data, labels_len, labels, distances.get(),
+        refine_offset_index_->CalcDistByIDs(num_queries, query_data, labels_len, labels_to_calc, distances.get(),
                                             refine_with_quant);
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "data view index inner error: " << e.what();
@@ -607,15 +576,19 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AnnIterator(const DataSet
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(
             Status::internal_error, "quant workspace is not equal to the rows count of input dataset.");
     }
+    const auto id_map = this->GetIdMapSnapshot();
+    const auto result_out_ids = this->SearchResultIdMap(id_map);
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
     for (auto i = 0; i < nq; i++) {
         auto cur_query = (const DataType*)data + i * dim;
         std::unique_ptr<DataType[]> copied_query = nullptr;
         copied_query = std::make_unique<DataType[]>(dim);
         std::copy_n(cur_query, dim, copied_query.get());
-        vec[i] = std::shared_ptr<iterator>(new iterator(this->refine_offset_index_, base_workspace_iters[i],
-                                                        std::move(copied_query), larger_is_closer, refine_with_quant,
-                                                        refine_ratio));
+        auto it = std::shared_ptr<iterator>(new iterator(this->refine_offset_index_, base_workspace_iters[i],
+                                                         std::move(copied_query), larger_is_closer, refine_with_quant,
+                                                         refine_ratio));
+        it->SetResultIdMap(result_out_ids);
+        vec[i] = it;
     }
     return vec;
 }

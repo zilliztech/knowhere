@@ -224,8 +224,11 @@ IndexNode::SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, 
     auto num_q_vecs = static_cast<size_t>(dataset->GetRows());
     EmbListOffset query_offset(lims, num_q_vecs);
 
-    // 2. Delegate search to strategy
-    return emb_list_strategy_->Search(dataset, query_offset, this, std::move(cfg), bitset, op_context);
+    auto result = emb_list_strategy_->Search(dataset, query_offset, this, std::move(cfg), bitset, op_context);
+    if (result.has_value()) {
+        MapEmbListResultIdsToOutIds(result.value());
+    }
+    return result;
 }
 
 expected<DataSetPtr>
@@ -304,12 +307,14 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
     auto num_el_ids = dataset->GetRows();
     auto el_ids = dataset->GetIds();
     auto dim = use_raw_index ? emb_list_raw_index_->d : Dim();
+    std::vector<int64_t> in_el_ids;
+    const auto* ids_to_retrieve = MapOutToIn(el_ids, num_el_ids, in_el_ids);
 
     // Build the output offset array
     std::vector<size_t> out_offsets(num_el_ids + 1);
     out_offsets[0] = 0;
     for (int64_t i = 0; i < num_el_ids; i++) {
-        auto el_id = el_ids[i];
+        auto el_id = ids_to_retrieve[i];
         if (el_id < 0 || static_cast<size_t>(el_id) >= emb_list_offset_->num_el()) {
             return expected<DataSetPtr>::Err(Status::invalid_args,
                                              "GetEmbListByIds: el_id " + std::to_string(el_id) + " out of range [0, " +
@@ -336,7 +341,7 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
         auto data = std::make_unique<float[]>(total_vecs * dim);
         float* ptr = data.get();
         for (int64_t i = 0; i < num_el_ids; i++) {
-            auto start = static_cast<int64_t>(emb_list_offset_->offset[el_ids[i]]);
+            auto start = static_cast<int64_t>(emb_list_offset_->offset[ids_to_retrieve[i]]);
             auto len = static_cast<int64_t>(out_offsets[i + 1] - out_offsets[i]);
             if (len > 0) {
                 emb_list_raw_index_->reconstruct_n(start, len, ptr);
@@ -345,28 +350,29 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
         }
         tensor = data.release();
     } else {
-        // TokenANN: collect vec_ids and use base index GetVectorByIds
+        // TokenANN: collect ids in the base vector storage domain.
         //
         // TODO(perf): Vectors within each embedding list are contiguous in the index. However, the current
-        // implementation collects all these contiguous IDs into a flat array and passes them to GetVectorByIds,
+        // implementation collects all these contiguous IDs into a flat array and passes them to GetVectorByStorageIds,
         // which internally calls reconstruct(id, ...) one vector at a time. This could be optimized by using
         // reconstruct_n(start, len, ...) or direct memcpy from raw data storage, avoiding both the redundant
         // ID array allocation and per-vector overhead. We don't do this yet because it would require
         // index-type-specific implementations (HNSW, IVF, FLAT, etc. each store raw data differently),
-        // whereas the current approach works generically across all index types via the GetVectorByIds interface.
+        // whereas the current approach works generically across all index types via the GetVectorByStorageIds
+        // interface.
         std::vector<int64_t> vec_ids;
         vec_ids.reserve(total_vecs);
         for (int64_t i = 0; i < num_el_ids; i++) {
-            size_t start = emb_list_offset_->offset[el_ids[i]];
+            size_t start = emb_list_offset_->offset[ids_to_retrieve[i]];
             size_t len = out_offsets[i + 1] - out_offsets[i];
             for (size_t j = 0; j < len; j++) {
                 vec_ids.push_back(static_cast<int64_t>(start + j));
             }
         }
 
-        // Build result: transfer tensor ownership from GetVectorByIds result to new dataset
+        // Build result: transfer tensor ownership from GetVectorByStorageIds result to new dataset
         auto vec_dataset = GenIdsDataSet(vec_ids.size(), vec_ids.data());
-        auto res = GetVectorByIds(vec_dataset, op_context);
+        auto res = GetVectorByStorageIds(vec_dataset, op_context);
         if (!res.has_value()) {
             return res;
         }
@@ -447,12 +453,7 @@ IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, c
     // 7. Strategy post-build hook
     RETURN_IF_ERROR(emb_list_strategy_->OnBuildComplete(dataset, doc_offset, config));
 
-    // 8. Set ID mapping if strategy requires it (Direct needs vector->doc mapping)
     emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
-    if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
-        return SetBaseIndexIDMap();
-    }
-
     return Status::success;
 }
 
@@ -567,11 +568,8 @@ IndexNode::DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_
             return Status::emb_list_inner_error;
         }
 
-        // 6. Set ID mapping if needed
         emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
-        if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
-            return SetBaseIndexIDMap();
-        }
+        return Status::success;
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "deserialize emb_list error: " << e.what();
         return Status::emb_list_inner_error;
@@ -666,11 +664,8 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
                                << " vectors, mmap=" << cfg.enable_mmap.value();
         }
 
-        // 6. Set ID mapping if needed
         emb_list_offset_ = emb_list_strategy_->GetEmbListOffset();
-        if (emb_list_strategy_->NeedsBaseIndexIDMap()) {
-            return SetBaseIndexIDMap();
-        }
+        return Status::success;
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "deserialize emb_list from file error: " << e.what();
         return Status::emb_list_inner_error;

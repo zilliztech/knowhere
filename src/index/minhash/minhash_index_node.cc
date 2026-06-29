@@ -332,6 +332,7 @@ MinHashLSHNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
         return expected<DataSetPtr>::Err(Status::internal_error, e.what());
     }
     auto res = GenResultDataSet(nq, topk, std::move(p_id), std::move(p_dist));
+    MapSearchResultIdsToOutIds(res);
     return res;
 }
 

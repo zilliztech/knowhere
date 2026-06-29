@@ -194,7 +194,9 @@ class SparseInvertedIndexNode : public IndexNode {
         }
         WaitAllSuccess(futs);
 
-        return GenResultDataSet(nq, k, p_id.release(), p_dist.release());
+        auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
+        this->MapSearchResultIdsToOutIds(res);
+        return res;
     }
 
     // TODO: for now inverted index and wand use the same impl for AnnIterator.
@@ -219,6 +221,8 @@ class SparseInvertedIndexNode : public IndexNode {
         auto search_params = search_params_or.value();
 
         auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
+        const auto id_map = this->GetIdMapSnapshot();
+        const auto result_out_ids = this->SearchResultIdMap(id_map);
         try {
             for (int i = 0; i < nq; ++i) {
                 // Heavy computations with `compute_dist_func` will be deferred until the first call to
@@ -241,6 +245,7 @@ class SparseInvertedIndexNode : public IndexNode {
 
                 auto it =
                     std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, true, use_knowhere_search_pool);
+                it->SetResultIdMap(result_out_ids);
                 vec[i] = it;
             }
         } catch (const std::exception& e) {
@@ -949,6 +954,8 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
 
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
+        std::vector<int64_t> in_ids;
+        ids = this->MapOutToIn(ids, rows, in_ids);
         auto data = std::make_unique<sparse::SparseRow<value_type>[]>(rows);
         int64_t dim = 0;
 

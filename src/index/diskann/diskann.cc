@@ -67,6 +67,11 @@ class DiskANNIndexNode : public IndexNode {
         return Status::not_implemented;
     }
 
+    bool
+    NeedBitsetExactCount() const override {
+        return true;
+    }
+
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
            milvus::OpContext* op_context) const override;
@@ -90,12 +95,6 @@ class DiskANNIndexNode : public IndexNode {
         }
         LOG_KNOWHERE_ERROR_ << "Invalid data type: " << typeid(DataType).name();
         return std::nullopt;
-    }
-
-    Status
-    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) override {
-        internal_id_to_most_external_id_map_ = std::move(map);
-        return Status::success;
     }
 
     expected<DataSetPtr>
@@ -221,6 +220,10 @@ class DiskANNIndexNode : public IndexNode {
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                 bool use_knowhere_search_pool, milvus::OpContext* op_context) const override;
 
+ protected:
+    expected<DataSetPtr>
+    GetVectorByStorageIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override;
+
  private:
     class iterator : public IndexIterator {
      public:
@@ -282,7 +285,6 @@ class DiskANNIndexNode : public IndexNode {
     std::atomic_int64_t dim_;
     std::atomic_int64_t count_;
     std::shared_ptr<ThreadPool> search_pool_;
-    std::vector<uint32_t> internal_id_to_most_external_id_map_;  // for 1-hop bitset check
 };
 
 }  // namespace knowhere
@@ -822,8 +824,7 @@ DiskANNIndexNode<DataType>::DeserializeEmbListIfNeed(const BinarySet& binset, st
     LOG_KNOWHERE_INFO_ << "Created emb_list strategy: " << emb_list_strategy_->Type()
                        << ", doc_count=" << emb_list_strategy_->GetDocCount();
 
-    // Step 5: Set base index id map for 1-hop bitset check
-    return SetBaseIndexIDMap();
+    return Status::success;
 }
 
 template <typename DataType>
@@ -853,12 +854,15 @@ DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_pt
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
     auto metric = search_conf.metric_type.value();
     bool transform = metric != knowhere::metric::L2;
+    const auto id_map = this->GetIdMapSnapshot();
+    const auto result_out_ids = this->SearchResultIdMap(id_map);
 
     try {
         for (int i = 0; i < nq; i++) {
             auto single_query = static_cast<const DataType*>(xq) + i * dim;
             auto it = std::make_shared<iterator>(transform, single_query, lsearch, beamwidth, filter_ratio, bitset,
                                                  pq_flash_index_.get(), use_knowhere_search_pool);
+            it->SetResultIdMap(result_out_ids);
             vec[i] = it;
         }
     } catch (const std::exception& e) {
@@ -899,31 +903,6 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
                                                  search_conf.search_list_size.value(), search_conf.beamwidth.value());
     }
 
-    BitsetView bitset(bitset_);
-    if (!internal_id_to_most_external_id_map_.empty()) {
-        if (emb_list_offset_ != nullptr) {
-            // if emb list, manually calculate the number of filtered out ids
-            size_t num_filtered_out_ids = 0;
-            const auto num_el = std::min(
-                bitset.size(), emb_list_offset_->offset.empty() ? size_t{0} : emb_list_offset_->offset.size() - 1);
-            if (emb_list_offset_->offset.size() < bitset.size() + 1) {
-                LOG_KNOWHERE_WARNING_ << "Bitset size(" << bitset.size() << ") doesn't match emb_list offset size("
-                                      << emb_list_offset_->offset.size()
-                                      << "), will compute filtered ids using min size(" << num_el << ")";
-            }
-            for (size_t i = 0; i < num_el; i++) {
-                if (bitset.test(i)) {
-                    num_filtered_out_ids += emb_list_offset_->offset[i + 1] - emb_list_offset_->offset[i];
-                }
-            }
-            bitset.set_out_ids(internal_id_to_most_external_id_map_.data(), internal_id_to_most_external_id_map_.size(),
-                               num_filtered_out_ids);
-        } else {
-            bitset.set_out_ids(internal_id_to_most_external_id_map_.data(),
-                               internal_id_to_most_external_id_map_.size());
-        }
-    }
-
     auto p_id = std::make_unique<int64_t[]>(k * nq);
     auto p_dist = std::make_unique<DistType[]>(k * nq);
 
@@ -935,7 +914,7 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
             diskann::QueryStats stats;
             pq_flash_index_->cached_beam_search(xq + (index * dim), k, lsearch, p_id_ptr + (index * k),
                                                 p_dist_ptr + (index * k), beamwidth, false, &stats, feder_result,
-                                                bitset, filter_ratio);
+                                                bitset_, filter_ratio);
 #ifdef NOT_COMPILE_FOR_SWIG
             knowhere_diskann_search_hops.Observe(stats.n_hops);
 #endif
@@ -947,6 +926,7 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
     }
 
     auto res = GenResultDataSet(nq, k, std::move(p_id), std::move(p_dist));
+    MapSearchResultIdsToOutIds(res);
 
     // set visit_info json string into result dataset
     if (feder_result != nullptr) {
@@ -988,13 +968,17 @@ DiskANNIndexNode<DataType>::CalcDistByIDs(const DataSetPtr dataset, const Bitset
     auto dim = dataset->GetDim();
     auto xq = static_cast<const DataType*>(dataset->GetTensor());
     auto p_dist = std::make_unique<DistType[]>(nq * labels_len);
+    const bool is_emb_list_rerank = this->emb_list_offset_ != nullptr && this->emb_list_strategy_ != nullptr &&
+                                    this->emb_list_strategy_->NeedsBaseIndexIDMap();
+    std::vector<int64_t> in_labels;
+    const auto* labels_to_calc = is_emb_list_rerank ? labels : this->MapOutToIn(labels, labels_len, in_labels);
 
     std::vector<folly::Future<folly::Unit>> futures;
     futures.reserve(nq);
     for (int64_t row = 0; row < nq; ++row) {
         futures.emplace_back(search_pool_->push([&, index = row, p_dist_ptr = p_dist.get()]() {
             knowhere::checkCancellation(op_context);
-            pq_flash_index_->calc_dist_by_ids(xq + (index * dim), labels, static_cast<int64_t>(labels_len),
+            pq_flash_index_->calc_dist_by_ids(xq + (index * dim), labels_to_calc, static_cast<int64_t>(labels_len),
                                               p_dist_ptr + index * labels_len);
         }));
     }
@@ -1014,6 +998,17 @@ DiskANNIndexNode<DataType>::CalcDistByIDs(const DataSetPtr dataset, const Bitset
 template <typename DataType>
 expected<DataSetPtr>
 DiskANNIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
+    auto rows = dataset->GetRows();
+    auto ids = dataset->GetIds();
+    std::vector<int64_t> in_ids;
+    ids = this->MapOutToIn(ids, rows, in_ids);
+    auto storage_ds = GenIdsDataSet(rows, ids);
+    return GetVectorByStorageIds(storage_ds, op_context);
+}
+
+template <typename DataType>
+expected<DataSetPtr>
+DiskANNIndexNode<DataType>::GetVectorByStorageIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");

@@ -12,20 +12,26 @@
 #ifndef BITSET_H
 #define BITSET_H
 
+#include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
-#include <optional>
+#include <cstring>
+#include <limits>
+#include <memory>
 #include <sstream>
 #include <string>
+#include <utility>
 
 namespace knowhere {
+
 class BitsetView {
  public:
     BitsetView() = default;
     ~BitsetView() = default;
 
-    BitsetView(const uint8_t* data, size_t num_bits, size_t num_filtered_out_bits = 0, size_t id_offset = 0)
-        : bits_(data), num_bits_(num_bits), num_filtered_out_bits_(num_filtered_out_bits), id_offset_(id_offset) {
+    BitsetView(const uint8_t* data, size_t num_bits, int64_t filter_count = -1)
+        : bits_(data), num_bits_(num_bits), vector_count_(num_bits), filtered_count_(filter_count) {
     }
 
     BitsetView(const std::nullptr_t) : BitsetView() {
@@ -33,25 +39,21 @@ class BitsetView {
 
     bool
     empty() const {
-        return num_bits_ == 0;
+        return num_bits_ == 0 || filtered_count_ == 0;
     }
 
-    // return the number of the bits. if with id mapping, return the number of the internal ids.
     size_t
     size() const {
-        if (out_ids_ != nullptr) {
-            return num_internal_ids_;
-        }
-        return num_bits_;
+        return vector_count_;
     }
 
-    // return the number of filtered out bits. if with id mapping, return the number of filtered out ids.
-    size_t
+    int64_t
     count() const {
-        if (out_ids_ != nullptr) {
-            return num_filtered_out_ids_;
+        if (num_bits_ == 0) {
+            return 0;
         }
-        return num_filtered_out_bits_;
+        assert(filtered_count_ >= 0);
+        return filtered_count_;
     }
 
     size_t
@@ -59,9 +61,107 @@ class BitsetView {
         return (num_bits_ + 8 - 1) >> 3;
     }
 
+    size_t
+    num_bits() const {
+        return num_bits_;
+    }
+
     const uint8_t*
     data() const {
         return bits_;
+    }
+
+    void
+    count_filtered_bits(size_t bit_offset, size_t bit_count, const uint8_t* valid_bitmap = nullptr) {
+        if (bits_ == nullptr || num_bits_ == 0 || bit_count == 0 || bit_offset >= num_bits_) {
+            set_vector_count(0);
+            set_filter_count(0);
+            return;
+        }
+
+        const auto count_bits = std::min(bit_count, num_bits_ - bit_offset);
+        const auto end_bit = bit_offset + count_bits;
+        size_t bit_pos = bit_offset;
+        size_t count = 0;
+        size_t vector_count = 0;
+
+        if ((bit_pos & 0x7) != 0) {
+            const auto byte_idx = bit_pos >> 3;
+            const auto bits_in_byte = std::min<size_t>(8 - (bit_pos & 0x7), end_bit - bit_pos);
+            const auto mask = static_cast<uint8_t>(((1U << bits_in_byte) - 1) << (bit_pos & 0x7));
+            auto bits = bits_[byte_idx];
+            auto valid_bits = mask;
+            if (valid_bitmap != nullptr) {
+                valid_bits &= valid_bitmap[byte_idx];
+                bits &= valid_bits;
+            } else {
+                bits &= valid_bits;
+            }
+            vector_count += __builtin_popcount(static_cast<unsigned>(valid_bits));
+            count += __builtin_popcount(static_cast<unsigned>(bits));
+            bit_pos += bits_in_byte;
+        }
+
+        const auto full_bytes = (end_bit - bit_pos) >> 3;
+        const auto byte_begin = bit_pos >> 3;
+        const auto len_uint64 = full_bytes >> 3;
+        for (size_t i = 0; i < len_uint64; ++i) {
+            auto bits = load_u64_unaligned_(bits_ + byte_begin + i * sizeof(uint64_t));
+            if (valid_bitmap != nullptr) {
+                auto valid_bits = load_u64_unaligned_(valid_bitmap + byte_begin + i * sizeof(uint64_t));
+                vector_count += __builtin_popcountll(valid_bits);
+                bits &= valid_bits;
+            } else {
+                vector_count += sizeof(uint64_t) * 8;
+            }
+            count += __builtin_popcountll(bits);
+        }
+
+        auto byte_pos = byte_begin + (len_uint64 << 3);
+        const auto byte_end = byte_begin + full_bytes;
+        while (byte_pos < byte_end) {
+            auto bits = bits_[byte_pos];
+            if (valid_bitmap != nullptr) {
+                auto valid_bits = valid_bitmap[byte_pos];
+                vector_count += __builtin_popcount(static_cast<unsigned>(valid_bits));
+                bits &= valid_bits;
+            } else {
+                vector_count += 8;
+            }
+            count += __builtin_popcount(static_cast<unsigned>(bits));
+            ++byte_pos;
+        }
+        bit_pos += full_bytes << 3;
+
+        if (bit_pos < end_bit) {
+            const auto byte_idx = bit_pos >> 3;
+            const auto tail_bits = end_bit - bit_pos;
+            const auto mask = static_cast<uint8_t>((1U << tail_bits) - 1);
+            auto bits = bits_[byte_idx];
+            auto valid_bits = mask;
+            if (valid_bitmap != nullptr) {
+                valid_bits &= valid_bitmap[byte_idx];
+                bits &= valid_bits;
+            } else {
+                bits &= valid_bits;
+            }
+            vector_count += __builtin_popcount(static_cast<unsigned>(valid_bits));
+            count += __builtin_popcount(static_cast<unsigned>(bits));
+        }
+
+        set_vector_count(vector_count);
+        set_filter_count(count);
+    }
+
+    void
+    set_vector_count(size_t vector_count) {
+        vector_count_ = vector_count;
+    }
+
+    void
+    set_filter_count(size_t filter_count) {
+        assert(filter_count <= static_cast<size_t>(std::numeric_limits<int64_t>::max()));
+        filtered_count_ = static_cast<int64_t>(filter_count);
     }
 
     bool
@@ -70,28 +170,18 @@ class BitsetView {
     }
 
     void
-    set_out_ids(const uint32_t* out_ids, size_t num_internal_ids,
-                std::optional<size_t> num_filtered_out_ids = std::nullopt) {
+    set_out_ids(const void* out_ids, size_t out_ids_count) {
         out_ids_ = out_ids;
-        num_internal_ids_ = num_internal_ids;
-        if (num_filtered_out_ids.has_value()) {
-            num_filtered_out_ids_ = num_filtered_out_ids.value();
-        } else {
-            // auto calculate num_filtered_out_ids if not provided
-            num_filtered_out_ids_ = get_filtered_out_num_();
-        }
+        out_ids_count_ = out_ids_count;
     }
 
-    const uint32_t*
+    const void*
     out_ids_data() const {
-        if (out_ids_ == nullptr) {
-            return nullptr;
-        }
         return out_ids_;
     }
 
     void
-    set_id_offset(size_t id_offset) {
+    set_id_offset(int64_t id_offset) {
         id_offset_ = id_offset;
     }
 
@@ -99,99 +189,69 @@ class BitsetView {
     bool
     test(int64_t index) const {
         int64_t out_id = index + id_offset_;
-        if (out_ids_ != nullptr) {
-            out_id = out_ids_[out_id];
+        if (has_out_ids()) {
+            if (out_id < 0 || out_id >= static_cast<int64_t>(out_ids_count_)) {
+                return true;
+            }
+            out_id = static_cast<const int32_t*>(out_ids_)[out_id];
         }
         // when index is larger than the max_offset, ignore it
-        return (out_id >= static_cast<int64_t>(num_bits_)) || (bits_[out_id >> 3] & (0x1 << (out_id & 0x7)));
+        return (out_id < 0) || (out_id >= static_cast<int64_t>(num_bits_)) ||
+               (bits_[out_id >> 3] & (0x1 << (out_id & 0x7)));
     }
     // return the filtered ratio. if with id mapping, calculated by internal_ids rather than bits.
     float
     filter_ratio() const {
-        return empty() ? 0.0f : ((float)count() / size());
-    }
-
-    size_t
-    get_filtered_out_num_() const {
-        if (empty()) {
-            return 0;
-        }
-        if (out_ids_ != nullptr) {
-            // if with id mapping, there is no optimization for the traversal.
-            size_t count = 0;
-            for (size_t i = 0; i < num_internal_ids_; i++) {
-                if (test(i)) {
-                    count++;
-                }
-            }
-            return count;
-        }
-        // if without id mapping, use a better algorithm to calculate the number of filtered out bits.
-        size_t ret = 0;
-        auto len_uint8 = byte_size();
-        auto len_uint64 = len_uint8 >> 3;
-
-        auto popcount8 = [&](uint8_t x) -> int {
-            x = (x & 0x55) + ((x >> 1) & 0x55);
-            x = (x & 0x33) + ((x >> 2) & 0x33);
-            x = (x & 0x0F) + ((x >> 4) & 0x0F);
-            return x;
-        };
-
-        uint64_t* p_uint64 = (uint64_t*)bits_;
-        for (size_t i = 0; i < len_uint64; i++) {
-            ret += __builtin_popcountll(*p_uint64);
-            p_uint64++;
-        }
-
-        // calculate remainder
-        uint8_t* p_uint8 = (uint8_t*)bits_ + (len_uint64 << 3);
-        for (size_t i = (len_uint64 << 3); i < len_uint8; i++) {
-            ret += popcount8(*p_uint8);
-            p_uint8++;
-        }
-
-        return ret;
+        auto current_size = size();
+        return current_size == 0 ? 0.0f : ((float)count() / current_size);
     }
 
     // return the first valid idx. if with id mapping, return the first valid internal_id.
     size_t
     get_first_valid_index() const {
-        if (out_ids_ != nullptr) {
+        if (has_out_ids()) {
             // if with id mapping, there is no optimization for the traversal.
-            for (size_t i = 0; i < num_internal_ids_; i++) {
+            for (size_t i = 0; i < out_ids_count_; i++) {
                 if (!test(i)) {
                     return i;
                 }
             }
-            return num_internal_ids_;
+            return out_ids_count_;
         }
         // if without id mapping, use a better algorithm to find the first valid index.
         size_t ret = 0;
         auto len_uint8 = byte_size();
         auto len_uint64 = len_uint8 >> 3;
 
-        uint64_t* p_uint64 = (uint64_t*)bits_;
         for (size_t i = 0; i < len_uint64; i++) {
-            uint64_t value = (~(*p_uint64));
+            uint64_t value = ~load_u64_unaligned_(bits_ + i * sizeof(uint64_t));
+            const auto bit_begin = i * 64;
+            const auto remain = num_bits_ - bit_begin;
+            if (remain < 64) {
+                value &= (uint64_t(1) << remain) - 1;
+            }
             if (value == 0) {
-                p_uint64++;
                 continue;
             }
             ret = __builtin_ctzll(value);
-            return i * 64 + ret;
+            return bit_begin + ret;
         }
 
         // calculate remainder
         uint8_t* p_uint8 = (uint8_t*)bits_ + (len_uint64 << 3);
         for (size_t i = 0; i < len_uint8 - (len_uint64 << 3); i++) {
-            uint8_t value = (~(*p_uint8));
+            const auto bit_begin = len_uint64 * 64 + i * 8;
+            const auto remain = num_bits_ - bit_begin;
+            auto value = static_cast<uint8_t>(~(*p_uint8));
+            if (remain < 8) {
+                value &= static_cast<uint8_t>((1U << remain) - 1);
+            }
             if (value == 0) {
                 p_uint8++;
                 continue;
             }
             ret = __builtin_ctz(value);
-            return len_uint64 * 64 + i * 8 + ret;
+            return bit_begin + ret;
         }
 
         return num_bits_;
@@ -211,19 +271,26 @@ class BitsetView {
     }
 
  private:
+    static uint64_t
+    load_u64_unaligned_(const uint8_t* data) {
+        uint64_t value = 0;
+        std::memcpy(&value, data, sizeof(value));
+        return value;
+    }
+
     const uint8_t* bits_ = nullptr;
     size_t num_bits_ = 0;
-    size_t num_filtered_out_bits_ = 0;
+    size_t vector_count_ = 0;
+    int64_t filtered_count_ = -1;
 
     // optional. many indexes will share one bitset, requiring offset to distinguish between them.
     //  like multi-chunk brute-force in /src/common/comp/brute_force.cc, or mv-only in /src/index/hnsw/faiss_hnsw.cc
-    size_t id_offset_ = 0;  // offset of the internal ids
+    int64_t id_offset_ = 0;  // offset of the internal ids
 
     // optional. bitset supports id mapping.
     // Even allows multiple ids to map to the same bit, so the number of internal ids and bits may be not equal.
-    const uint32_t* out_ids_ = nullptr;
-    size_t num_internal_ids_ = 0;
-    size_t num_filtered_out_ids_ = 0;
+    const void* out_ids_ = nullptr;
+    size_t out_ids_count_ = 0;
 };
 }  // namespace knowhere
 
