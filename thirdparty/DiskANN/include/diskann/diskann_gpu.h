@@ -42,6 +42,8 @@
 #ifdef KNOWHERE_WITH_CUVS
 #include <raft/core/device_mdarray.hpp>
 #include <raft/core/device_resources.hpp>
+#include <raft/core/device_resources_manager.hpp>
+#include <raft/core/pinned_mdarray.hpp>
 
 template <typename T, typename idxT = std::size_t>
 raft::device_matrix<T, idxT> read_bin_dataset(const raft::device_resources& dev_resources,
@@ -58,8 +60,19 @@ void vamana_build_and_write(raft::device_resources const& dev_resources,
 bool is_gpu_available();
 
 // train function for centroids computation
+void kmeans_gpu_device_data(
+    const raft::resources& dev_resources,
+    const float* d_chunk_data,
+    size_t num_train,
+    size_t chunk_size,
+    size_t num_centers,
+    int max_iter,
+    float* d_centroids_out,
+	bool is_balanced=false);
+
+// train function for centroids computation
 void kmeans_gpu(
-    raft::resources& dev_resources,
+    const raft::resources& dev_resources,
     const float* h_chunk_data,
     size_t num_train,
     size_t chunk_size,
@@ -68,9 +81,29 @@ void kmeans_gpu(
     float* h_centroids_out,
 	bool is_balanced=false);
 
+// train function for centroids combined with medoids computation
+void kmeans_medoids_gpu(
+    const raft::resources& dev_resources,
+    const float* h_chunk_data,
+    size_t num_train,
+    size_t dim,
+    size_t num_centers,
+    int max_iter,
+    float* h_centroids_out,
+	bool is_balanced,
+	uint32_t* h_medoids);
+
+// mean-centers the (num_train x dim) row-major training matrix in place and
+// writes the per-dimension centroid (length dim) to d_centroid_out
+void mean_center_gpu(const raft::resources& dev_resources,
+                     float* d_train_data,
+                     size_t num_train,
+                     size_t dim,
+                     float* d_centroid_out);
+
 // assign function for computes the compressed PQ vector per each vector in the dataset
 // based on centroids computation
-int predict_gpu(raft::resources& dev_resources,
+int predict_gpu(const raft::resources& dev_resources,
 				const float* h_data,
                 size_t n_samples,
                 size_t dim,
@@ -79,7 +112,7 @@ int predict_gpu(raft::resources& dev_resources,
 				int* h_labels);
 
 template <typename T>
-int brute_force_gpu(raft::resources& dev_resources,
+int brute_force_gpu(const raft::resources& dev_resources,
 		const T* h_data,
         size_t n_samples,
         size_t dim,
@@ -88,7 +121,7 @@ int brute_force_gpu(raft::resources& dev_resources,
         size_t n_queries,
 		int64_t* h_labels);
 
-void gpu_get_mem_info(raft::resources &dev_resources, size_t &gpu_free_mem,size_t &gpu_total_mem);
+void gpu_get_mem_info(const raft::resources &dev_resources, size_t &gpu_free_mem,size_t &gpu_total_mem);
 
 #endif
 
