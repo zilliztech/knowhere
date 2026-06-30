@@ -73,6 +73,19 @@ enum class StatusCategory {
     inner_error = 2,
 };
 
+// Classify every knowhere::Status into a closed 3-value category. This is a
+// switch with NO `default:` plus a post-switch fallback on purpose:
+//   * a `default:` inside the switch suppresses -Wswitch, so a newly added
+//     Status would silently fall into `inner_error` instead of being
+//     deliberately classified;
+//   * the post-switch `return` keeps the function total (and satisfies
+//     -Wreturn-type) without suppressing the exhaustiveness warning.
+// The surrounding pragma promotes -Wswitch to an error, so adding a
+// knowhere::Status without categorizing it here breaks the build -- forcing the
+// author to decide input vs inner. retry/ownership decisions downstream are
+// derived from this category, so a missed status must never default silently.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wswitch"
 inline constexpr StatusCategory
 StatusCategoryOf(knowhere::Status status) {
     switch (status) {
@@ -101,6 +114,7 @@ StatusCategoryOf(knowhere::Status status) {
         case knowhere::Status::diskann_inner_error:
         case knowhere::Status::disk_file_error:
         case knowhere::Status::cuvs_inner_error:
+        case knowhere::Status::cardinal_inner_error:
         case knowhere::Status::cuda_runtime_error:
         case knowhere::Status::cluster_inner_error:
         case knowhere::Status::timeout:
@@ -110,10 +124,11 @@ StatusCategoryOf(knowhere::Status status) {
         case knowhere::Status::emb_list_inner_error:
         case knowhere::Status::aisaq_error:
         case knowhere::Status::knowhere_inner_error:
-        default:
             return StatusCategory::inner_error;
     }
+    return StatusCategory::inner_error;
 }
+#pragma GCC diagnostic pop
 
 inline constexpr bool
 IsInputError(knowhere::Status status) {
