@@ -136,8 +136,7 @@ StartSpan(const std::string& name, TraceContext* ctx) {
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
 std::unique_ptr<milvus::tracer::AutoSpan>
-StartMilvusSpanFromOpContextOrConfig(
-    const std::string& name, milvus::OpContext* op_context, const BaseConfig& cfg) {
+StartMilvusSpanFromOpContextOrConfig(const std::string& name, milvus::OpContext* op_context, const BaseConfig& cfg) {
     if (!milvus::tracer::IsTraceEnabled()) {
         return nullptr;
     }

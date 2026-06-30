@@ -63,8 +63,7 @@ StartSpan(const std::string& name, TraceContext* ctx = nullptr);
 // Starts a Milvus span from OpContext first. If OpContext has no trace span,
 // falls back to legacy trace fields in BaseConfig.
 std::unique_ptr<milvus::tracer::AutoSpan>
-StartMilvusSpanFromOpContextOrConfig(
-    const std::string& name, milvus::OpContext* op_context, const BaseConfig& cfg);
+StartMilvusSpanFromOpContextOrConfig(const std::string& name, milvus::OpContext* op_context, const BaseConfig& cfg);
 #endif
 
 void

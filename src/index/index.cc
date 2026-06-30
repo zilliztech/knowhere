@@ -163,8 +163,7 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
         // LCOV_EXCL_START
-        auto span = knowhere::tracer::StartMilvusSpanFromOpContextOrConfig(
-            "knowhere search", op_context, b_cfg);
+        auto span = knowhere::tracer::StartMilvusSpanFromOpContextOrConfig("knowhere search", op_context, b_cfg);
         auto span_ptr = span != nullptr ? span->GetSpan() : milvus::tracer::SpanPtr{};
         if (span_ptr != nullptr) {
             span_ptr->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
@@ -258,8 +257,7 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
         // LCOV_EXCL_START
-        auto span = knowhere::tracer::StartMilvusSpanFromOpContextOrConfig(
-            "knowhere range search", op_context, b_cfg);
+        auto span = knowhere::tracer::StartMilvusSpanFromOpContextOrConfig("knowhere range search", op_context, b_cfg);
         auto span_ptr = span != nullptr ? span->GetSpan() : milvus::tracer::SpanPtr{};
         if (span_ptr != nullptr) {
             span_ptr->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
