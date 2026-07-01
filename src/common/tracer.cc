@@ -16,6 +16,11 @@
 #include <sstream>
 #include <utility>
 
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+#include "common/OpContext.h"
+#include "common/Tracer.h"
+#include "knowhere/config.h"
+#endif
 #include "knowhere/log.h"
 #include "opentelemetry/exporters/ostream/span_exporter_factory.h"
 #include "opentelemetry/exporters/otlp/otlp_http_exporter_factory.h"
@@ -128,6 +133,31 @@ StartSpan(const std::string& name, TraceContext* ctx) {
     }
     return GetTracer()->StartSpan(name, opts);
 }
+
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+std::unique_ptr<milvus::tracer::AutoSpan>
+StartMilvusSpanFromOpContextOrConfig(const std::string& name, milvus::OpContext* op_context, const BaseConfig& cfg) {
+    if (!milvus::tracer::IsTraceEnabled()) {
+        return nullptr;
+    }
+
+    auto parent = milvus::OpContext::GetTraceSpan(op_context);
+    if (parent != nullptr) {
+        return std::make_unique<milvus::tracer::AutoSpan>(name, parent);
+    }
+
+    if (!cfg.trace_id.has_value() || !cfg.span_id.has_value()) {
+        return nullptr;
+    }
+
+    auto trace_id_str = milvus::tracer::GetIDFromHexStr(cfg.trace_id.value());
+    auto span_id_str = milvus::tracer::GetIDFromHexStr(cfg.span_id.value());
+    auto ctx = milvus::tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
+                                            .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
+                                            .traceFlags = static_cast<uint8_t>(cfg.trace_flags.value())};
+    return std::make_unique<milvus::tracer::AutoSpan>(name, &ctx);
+}
+#endif
 
 thread_local std::shared_ptr<trace::Span> local_span;
 void

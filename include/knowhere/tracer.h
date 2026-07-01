@@ -18,6 +18,19 @@
 
 #define TRACE_SERVICE_KNOWHERE "knowhere"
 
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+namespace milvus {
+struct OpContext;
+namespace tracer {
+struct AutoSpan;
+}  // namespace tracer
+}  // namespace milvus
+
+namespace knowhere {
+class BaseConfig;
+}  // namespace knowhere
+#endif
+
 namespace knowhere::tracer {
 
 struct TraceConfig {
@@ -45,6 +58,13 @@ GetTracer();
 
 std::shared_ptr<trace::Span>
 StartSpan(const std::string& name, TraceContext* ctx = nullptr);
+
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+// Starts a Milvus span from OpContext first. If OpContext has no trace span,
+// falls back to legacy trace fields in BaseConfig.
+std::unique_ptr<milvus::tracer::AutoSpan>
+StartMilvusSpanFromOpContextOrConfig(const std::string& name, milvus::OpContext* op_context, const BaseConfig& cfg);
+#endif
 
 void
 SetRootSpan(std::shared_ptr<trace::Span> span);

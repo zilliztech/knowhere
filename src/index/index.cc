@@ -20,6 +20,7 @@
 #include "knowhere/thread_pool.h"
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+#include "common/Tracer.h"
 #include "knowhere/prometheus_client.h"
 #include "knowhere/tracer.h"
 #endif
@@ -162,36 +163,26 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
         // LCOV_EXCL_START
-        std::shared_ptr<tracer::trace::Span> span = nullptr;
-        if (b_cfg.trace_id.has_value()) {
-            auto trace_id_str = tracer::GetIDFromHexStr(b_cfg.trace_id.value());
-            auto span_id_str = tracer::GetIDFromHexStr(b_cfg.span_id.value());
-            auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
-                                            .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
-                                            .traceFlags = static_cast<uint8_t>(b_cfg.trace_flags.value())};
-            span = tracer::StartSpan("knowhere search", &ctx);
-            span->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
-            span->SetAttribute(meta::TOPK, b_cfg.k.value());
-            span->SetAttribute(meta::ROWS, Count());
-            span->SetAttribute(meta::DIM, Dim());
-            span->SetAttribute(meta::NQ, dataset->GetRows());
+        auto span = knowhere::tracer::StartMilvusSpanFromOpContextOrConfig("knowhere search", op_context, b_cfg);
+        auto span_ptr = span != nullptr ? span->GetSpan() : milvus::tracer::SpanPtr{};
+        if (span_ptr != nullptr) {
+            span_ptr->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
+            span_ptr->SetAttribute(meta::TOPK, b_cfg.k.value());
+            span_ptr->SetAttribute(meta::ROWS, Count());
+            span_ptr->SetAttribute(meta::DIM, Dim());
+            span_ptr->SetAttribute(meta::NQ, dataset->GetRows());
         }
+        auto op_context_trace_span_guard =
+            milvus::tracer::NestedSpanGuard(op_context ? &op_context->trace_span : nullptr, span_ptr);
         // LCOV_EXCL_STOP
 
         TimeRecorder rc("Search");
-        bool has_trace_id = b_cfg.trace_id.has_value();
         auto k = cfg->k.value();
         auto res = this->node->SearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
         auto time = rc.ElapseFromBegin("done");
         time *= 0.001;  // convert to ms
         this->node->GetSearchLatencyMetric().Observe(time);
         knowhere_search_topk.Observe(k);
-
-        // LCOV_EXCL_START
-        if (has_trace_id) {
-            span->End();
-        }
-        // LCOV_EXCL_STOP
 #else
         auto res = this->node->SearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
 #endif
@@ -266,37 +257,27 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
         // LCOV_EXCL_START
-        std::shared_ptr<tracer::trace::Span> span = nullptr;
-        if (b_cfg.trace_id.has_value()) {
-            auto trace_id_str = tracer::GetIDFromHexStr(b_cfg.trace_id.value());
-            auto span_id_str = tracer::GetIDFromHexStr(b_cfg.span_id.value());
-            auto ctx = tracer::TraceContext{.traceID = reinterpret_cast<const uint8_t*>(trace_id_str.c_str()),
-                                            .spanID = reinterpret_cast<const uint8_t*>(span_id_str.c_str()),
-                                            .traceFlags = static_cast<uint8_t>(b_cfg.trace_flags.value())};
-            span = tracer::StartSpan("knowhere range search", &ctx);
-            span->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
-            span->SetAttribute(meta::RADIUS, b_cfg.radius.value());
+        auto span = knowhere::tracer::StartMilvusSpanFromOpContextOrConfig("knowhere range search", op_context, b_cfg);
+        auto span_ptr = span != nullptr ? span->GetSpan() : milvus::tracer::SpanPtr{};
+        if (span_ptr != nullptr) {
+            span_ptr->SetAttribute(meta::METRIC_TYPE, b_cfg.metric_type.value());
+            span_ptr->SetAttribute(meta::RADIUS, b_cfg.radius.value());
             if (b_cfg.range_filter.value() != defaultRangeFilter) {
-                span->SetAttribute(meta::RANGE_FILTER, b_cfg.range_filter.value());
+                span_ptr->SetAttribute(meta::RANGE_FILTER, b_cfg.range_filter.value());
             }
-            span->SetAttribute(meta::ROWS, Count());
-            span->SetAttribute(meta::DIM, Dim());
-            span->SetAttribute(meta::NQ, dataset->GetRows());
+            span_ptr->SetAttribute(meta::ROWS, Count());
+            span_ptr->SetAttribute(meta::DIM, Dim());
+            span_ptr->SetAttribute(meta::NQ, dataset->GetRows());
         }
+        auto op_context_trace_span_guard =
+            milvus::tracer::NestedSpanGuard(op_context ? &op_context->trace_span : nullptr, span_ptr);
         // LCOV_EXCL_STOP
 
         TimeRecorder rc("Range Search");
-        bool has_trace_id = b_cfg.trace_id.has_value();
         auto res = this->node->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
         auto time = rc.ElapseFromBegin("done");
         time *= 0.001;  // convert to ms
         this->node->GetRangeSearchLatencyMetric().Observe(time);
-
-        // LCOV_EXCL_START
-        if (has_trace_id) {
-            span->End();
-        }
-        // LCOV_EXCL_STOP
 #else
         auto res = this->node->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
 #endif
