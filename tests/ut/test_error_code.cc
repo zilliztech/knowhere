@@ -169,3 +169,63 @@ TEST_CASE("Index static facade APIs handle config creation failures", "[error_co
 
     REQUIRE_FALSE(knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(index_type, version, knowhere::Json{}));
 }
+
+TEST_CASE("StatusCategoryOf classifies every status without a silent default", "[error_code]") {
+    using knowhere::Status;
+    using knowhere::StatusCategory;
+
+    // success
+    REQUIRE(knowhere::StatusCategoryOf(Status::success) == StatusCategory::success);
+
+    // caller-input errors
+    const Status input_errors[] = {
+        Status::invalid_args,
+        Status::invalid_param_in_json,
+        Status::out_of_range_in_json,
+        Status::type_conflict_in_json,
+        Status::invalid_metric_type,
+        Status::empty_index,
+        Status::not_implemented,
+        Status::index_not_trained,
+        Status::index_already_trained,
+        Status::invalid_value_in_json,
+        Status::arithmetic_overflow,
+        Status::invalid_binary_set,
+        Status::invalid_instruction_set,
+        Status::invalid_index_error,
+        Status::invalid_cluster_error,
+        Status::invalid_serialized_index_type,
+    };
+    for (auto s : input_errors) {
+        REQUIRE(knowhere::StatusCategoryOf(s) == StatusCategory::input_error);
+        REQUIRE(knowhere::IsInputError(s));
+    }
+
+    // server-side inner errors
+    const Status inner_errors[] = {
+        Status::faiss_inner_error,
+        Status::hnsw_inner_error,
+        Status::malloc_error,
+        Status::diskann_inner_error,
+        Status::disk_file_error,
+        Status::cuvs_inner_error,
+        Status::cardinal_inner_error,
+        Status::cuda_runtime_error,
+        Status::cluster_inner_error,
+        Status::timeout,
+        Status::internal_error,
+        Status::sparse_inner_error,
+        Status::brute_force_inner_error,
+        Status::emb_list_inner_error,
+        Status::aisaq_error,
+        Status::knowhere_inner_error,
+    };
+    for (auto s : inner_errors) {
+        REQUIRE(knowhere::StatusCategoryOf(s) == StatusCategory::inner_error);
+        REQUIRE(knowhere::IsInnerError(s));
+    }
+
+    // Regression: cardinal_inner_error used to be caught only by the removed
+    // `default:` branch; it must now be classified explicitly as an inner error.
+    REQUIRE(knowhere::StatusCategoryOf(Status::cardinal_inner_error) == StatusCategory::inner_error);
+}
