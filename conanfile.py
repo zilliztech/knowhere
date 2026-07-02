@@ -116,7 +116,7 @@ class KnowhereConan(ConanFile):
     def requirements(self):
         self.requires("abseil/20250127.0#481edcc75deb0efb16500f511f0f0a1c")
         self.requires("boost/1.83.0#4e8a94ac1b88312af95eded83cd81ca8")
-        self.requires("milvus-common/1.0.0-ae43d5c@milvus/dev#fe24230e26e129f6bf303a8342ba8980")
+        self.requires("milvus-common/1.0.0-a3299ca@milvus/dev#eea0e22b8d5e36ff6f0a5ffbed14703e")
         self.requires("gflags/2.2.2#7671803f1dc19354cc90bd32874dcfda")
         self.requires("glog/0.7.1#a306e61d7b8311db8cb148ad62c48030")
         self.requires("nlohmann_json/3.11.3#ffb9e9236619f1c883e36662f944345d", force=True)
