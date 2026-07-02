@@ -81,10 +81,10 @@ check_same_iterator(const knowhere::IndexNode::IteratorPtr& iter1, const knowher
     size_t count = 0;
     size_t number_of_imprecise_distances = 0;
     double max_abs_relative_error = 0;
-    while (iter1->HasNext()) {
-        REQUIRE(iter2->HasNext());
-        auto [id1, dist1] = iter1->Next();
-        auto [id2, dist2] = iter2->Next();
+    while (iter1->HasNext().value()) {
+        REQUIRE(iter2->HasNext().value());
+        auto [id1, dist1] = iter1->Next().value();
+        auto [id2, dist2] = iter2->Next().value();
         count++;
 
         // Perform a precise match of ids
@@ -112,7 +112,7 @@ check_same_iterator(const knowhere::IndexNode::IteratorPtr& iter1, const knowher
         printf("Total number of imprecise distances: %ld\n", number_of_imprecise_distances);
         printf("Max abs relative error exponent: %f\n", std::log10(max_abs_relative_error));
     }
-    REQUIRE(!iter2->HasNext());
+    REQUIRE(!iter2->HasNext().value());
     return true;
 }
 

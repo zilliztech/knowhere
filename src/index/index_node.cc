@@ -81,6 +81,8 @@ IndexNode::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, co
     const auto nq = its.size();
     std::vector<std::vector<int64_t>> result_id_array(nq);
     std::vector<std::vector<float>> result_dist_array(nq);
+    std::vector<Status> task_status(nq, Status::success);
+    std::vector<std::string> task_msg(nq);
 
     const bool retain_iterator_order = base_cfg.retain_iterator_order.value();
     LOG_KNOWHERE_DEBUG_ << "retain_iterator_order: " << retain_iterator_order;
@@ -95,11 +97,26 @@ IndexNode::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, co
         checkCancellation(op_context);
 #endif
         auto it = its[idx];
-        while (it->HasNext()) {
+        while (true) {
 #if defined(NOT_COMPILE_FOR_SWIG)
             checkCancellation(op_context);
 #endif
-            auto [id, dist] = it->Next();
+            auto has_next = it->HasNext();
+            if (!has_next.has_value()) {
+                task_status[idx] = has_next.error();
+                task_msg[idx] = has_next.what();
+                return;
+            }
+            if (!has_next.value()) {
+                break;
+            }
+            auto next = it->Next();
+            if (!next.has_value()) {
+                task_status[idx] = next.error();
+                task_msg[idx] = next.what();
+                return;
+            }
+            auto [id, dist] = next.value();
             if (has_closer_bound && too_close(dist)) {
                 continue;
             }
@@ -136,11 +153,26 @@ IndexNode::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, co
         auto same_or_too_far = [&is_first_closer, &tighter_further_bound](float dist) {
             return !is_first_closer(dist, tighter_further_bound);
         };
-        while (it->HasNext()) {
+        while (true) {
 #if defined(NOT_COMPILE_FOR_SWIG)
             checkCancellation(op_context);
 #endif
-            auto [id, dist] = it->Next();
+            auto has_next = it->HasNext();
+            if (!has_next.has_value()) {
+                task_status[idx] = has_next.error();
+                task_msg[idx] = has_next.what();
+                return;
+            }
+            if (!has_next.value()) {
+                break;
+            }
+            auto next = it->Next();
+            if (!next.has_value()) {
+                task_status[idx] = next.error();
+                task_msg[idx] = next.what();
+                return;
+            }
+            auto [id, dist] = next.value();
             num_next++;
             if (has_closer_bound && too_close(dist)) {
                 continue;
@@ -202,6 +234,13 @@ IndexNode::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, co
         }
     }
 #endif
+
+    for (size_t i = 0; i < nq; i++) {
+        if (task_status[i] != Status::success) {
+            LOG_KNOWHERE_WARNING_ << "range search iterator error: " << task_msg[i];
+            return expected<DataSetPtr>::Err(task_status[i], task_msg[i]);
+        }
+    }
 
     auto range_search_result = GetRangeSearchResult(result_dist_array, result_id_array, the_larger_the_closer, nq,
                                                     further_bound, closer_bound);

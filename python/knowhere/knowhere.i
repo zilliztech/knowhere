@@ -148,11 +148,19 @@ class AnnIteratorWrap {
     }
 
     bool HasNext() {
-        return it_->HasNext();
+        auto has_next = it_->HasNext();
+        if (!has_next.has_value()) {
+            throw std::runtime_error("ann iterator HasNext failed: " + has_next.what());
+        }
+        return has_next.value();
     }
 
     std::pair<int64_t, float> Next() {
-        return it_->Next();
+        auto next = it_->Next();
+        if (!next.has_value()) {
+            throw std::runtime_error("ann iterator Next failed: " + next.what());
+        }
+        return next.value();
     }
 
  private:
