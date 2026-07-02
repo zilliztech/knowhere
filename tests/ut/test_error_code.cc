@@ -109,6 +109,18 @@ class ThrowingStaticIndexNode {
     }
 };
 
+class ThrowingIterator : public knowhere::IndexIterator {
+ public:
+    ThrowingIterator() : knowhere::IndexIterator(/*larger_is_closer=*/false, /*use_knowhere_search_pool=*/false) {
+    }
+
+ protected:
+    void
+    next_batch(std::function<void(const std::vector<knowhere::DistId>&)>) override {
+        throw std::runtime_error("boom next batch");
+    }
+};
+
 }  // namespace
 
 TEST_CASE("Status category separates input and inner errors", "[error_code]") {
@@ -150,6 +162,52 @@ TEST_CASE("Index facade APIs are noexcept and convert exceptions to error codes"
     REQUIRE(index.Serialize(binset) == knowhere::Status::knowhere_inner_error);
     REQUIRE(index.Count() == 0);
     REQUIRE(index.Type().empty());
+}
+
+TEST_CASE("Iterator APIs are noexcept and convert exceptions to error codes", "[error_code]") {
+    SECTION("IndexIterator converts next_batch exceptions on first access") {
+        std::shared_ptr<knowhere::IndexNode::iterator> it = std::make_shared<ThrowingIterator>();
+        STATIC_REQUIRE(noexcept(it->Next()));
+        STATIC_REQUIRE(noexcept(it->HasNext()));
+
+        const auto has_next = it->HasNext();
+        REQUIRE(!has_next.has_value());
+        REQUIRE(has_next.error() == knowhere::Status::knowhere_inner_error);
+        REQUIRE(has_next.what().find("boom next batch") != std::string::npos);
+
+        const auto next = it->Next();
+        REQUIRE(!next.has_value());
+        REQUIRE(next.error() == knowhere::Status::knowhere_inner_error);
+    }
+
+    SECTION("PrecomputedDistanceIterator converts deferred compute exceptions") {
+        auto it = std::make_shared<knowhere::PrecomputedDistanceIterator>(
+            []() -> std::vector<knowhere::DistId> { throw std::runtime_error("boom compute dist"); },
+            /*larger_is_closer=*/false, /*use_knowhere_search_pool=*/false);
+
+        const auto next = it->Next();
+        REQUIRE(!next.has_value());
+        REQUIRE(next.error() == knowhere::Status::knowhere_inner_error);
+        REQUIRE(next.what().find("boom compute dist") != std::string::npos);
+    }
+
+    SECTION("exhausted iterator reports an error instead of throwing") {
+        auto it = std::make_shared<knowhere::PrecomputedDistanceIterator>(
+            []() {
+                return std::vector<knowhere::DistId>{{0, 1.0f}};
+            },
+            /*larger_is_closer=*/false, /*use_knowhere_search_pool=*/false);
+
+        REQUIRE(it->HasNext().value());
+        const auto first = it->Next();
+        REQUIRE(first.has_value());
+        REQUIRE(first.value().first == 0);
+
+        REQUIRE(!it->HasNext().value());
+        const auto next = it->Next();
+        REQUIRE(!next.has_value());
+        REQUIRE(next.error() == knowhere::Status::knowhere_inner_error);
+    }
 }
 
 TEST_CASE("Index static facade APIs handle config creation failures", "[error_code]") {

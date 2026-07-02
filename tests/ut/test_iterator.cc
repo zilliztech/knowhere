@@ -37,8 +37,8 @@ GetIteratorKNNResult(const std::vector<std::shared_ptr<knowhere::IndexNode::iter
     for (int i = 0; i < nq; ++i) {
         auto& iter = iterators[i];
         for (int j = 0; j < k; ++j) {
-            if (iter->HasNext()) {
-                auto [id, dist] = iter->Next();
+            if (iter->HasNext().value()) {
+                auto [id, dist] = iter->Next().value();
                 // if bitset is provided, verify we don't return filtered out points.
                 REQUIRE((!bitset || !bitset->test(id)));
                 p_id[i * k + j] = id;
@@ -66,7 +66,7 @@ AssertBruteForceIteratorResultCorrect(size_t nb,
         size_t j = 0;
         while (j < nb) {
             if (gt_ids[j] == -1) {
-                REQUIRE(!iter.HasNext());
+                REQUIRE(!iter.HasNext().value());
                 break;
             }
             auto dis = gt_dist[j];
@@ -76,8 +76,8 @@ AssertBruteForceIteratorResultCorrect(size_t nb,
             }
             ++j;
             while (!ids_set.empty()) {
-                REQUIRE(iter.HasNext());
-                auto [id, dist] = iter.Next();
+                REQUIRE(iter.HasNext().value());
+                auto [id, dist] = iter.Next().value();
                 REQUIRE(ids_set.find(id) != ids_set.end());
                 REQUIRE(dist == dis);
                 ids_set.erase(id);
@@ -301,15 +301,15 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         for (int i = 0; i < nq; ++i) {
             auto& iter = its.value()[i];
             float last_dist;
-            if (iter->HasNext()) {
-                auto [id, dist] = iter->Next();
+            if (iter->HasNext().value()) {
+                auto [id, dist] = iter->Next().value();
                 last_dist = dist;
             } else {
                 continue;
             }
 
-            while (iter->HasNext()) {
-                auto [id, dist] = iter->Next();
+            while (iter->HasNext().value()) {
+                auto [id, dist] = iter->Next().value();
                 REQUIRE(is_first_closer_or_equal(last_dist, dist));
                 last_dist = dist;
             }
@@ -406,7 +406,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
             auto iterator_results = GetIteratorKNNResult(its.value(), topk);
             // after get those remaining points, iterator should return false for HasNext.
             for (const auto& it : its.value()) {
-                REQUIRE(!it->HasNext());
+                REQUIRE(!it->HasNext().value());
             }
             auto search_results = idx.Search(query_ds, json, bitset);
             REQUIRE(search_results.has_value());
@@ -479,8 +479,8 @@ TEST_CASE("Test Iterator IVFFlatCC With Newly Insert Vectors", "[float metrics] 
         for (int i = 0; i < iters_old.size(); ++i) {
             auto& iter = iters_old[i];
             for (int j = 0; j < nb; ++j) {
-                REQUIRE(iter->HasNext());
-                auto [id, dist] = iter->Next();
+                REQUIRE(iter->HasNext().value());
+                auto [id, dist] = iter->Next().value();
                 REQUIRE(id < nb);
             }
         }
@@ -490,8 +490,8 @@ TEST_CASE("Test Iterator IVFFlatCC With Newly Insert Vectors", "[float metrics] 
             auto& iter = iters_new[i];
             bool id_larger_than_nb = false;
             for (int j = 0; j < nb + nb_new; ++j) {
-                REQUIRE(iter->HasNext());
-                auto [id, dist] = iter->Next();
+                REQUIRE(iter->HasNext().value());
+                auto [id, dist] = iter->Next().value();
                 id_larger_than_nb |= id >= nb;
             }
             REQUIRE(id_larger_than_nb);

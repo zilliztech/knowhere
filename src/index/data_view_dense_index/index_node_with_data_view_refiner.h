@@ -218,19 +218,29 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
             refine_computer_->set_query((const float*)copied_query_.get());
         }
 
-        std::pair<int64_t, float>
-        Next() override {
+        expected<std::pair<int64_t, float>>
+        next_impl() override {
             if (!initialized_) {
                 initialize();
             }
             if (!refine_) {
                 return base_workspace_->Next();
             } else {
+                if (refined_res_.empty()) {
+                    return expected<std::pair<int64_t, float>>::Err(Status::knowhere_inner_error, "No more elements");
+                }
                 auto ret = refined_res_.top();
                 refined_res_.pop();
                 UpdateNext();
                 if (retain_iterator_order_) {
-                    while (HasNext()) {
+                    while (true) {
+                        auto has_next = has_next_impl();
+                        if (!has_next.has_value()) {
+                            return expected<std::pair<int64_t, float>>::Err(has_next.error(), has_next.what());
+                        }
+                        if (!has_next.value()) {
+                            break;
+                        }
                         auto next_ret = refined_res_.top();
                         if (next_ret.val >= ret.val) {
                             break;
@@ -243,15 +253,18 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
             }
         }
 
-        [[nodiscard]] bool
-        HasNext() override {
+        expected<bool>
+        has_next_impl() override {
             if (!initialized_) {
                 initialize();
             }
             if (!refine_) {
                 return base_workspace_->HasNext();
             } else {
-                return !refined_res_.empty() || base_workspace_->HasNext();
+                if (!refined_res_.empty()) {
+                    return true;
+                }
+                return base_workspace_->HasNext();
             }
         }
 
@@ -279,14 +292,26 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
         }
 
      private:
+        // Called from throwing contexts (initialize/next_impl); errors from the base workspace
+        //   are rethrown and converted to error codes at the public Next()/HasNext() boundary.
         void
         UpdateNext() {
-            if (!base_workspace_->HasNext() || refine_ == false) {
+            auto base_has_next = [&]() {
+                auto has_next = base_workspace_->HasNext();
+                if (!has_next.has_value()) {
+                    throw std::runtime_error(has_next.what());
+                }
+                return has_next.value();
+            };
+            if (!base_has_next() || refine_ == false) {
                 return;
             }
-            while (base_workspace_->HasNext() && (refined_res_.empty() || refined_res_.size() < min_refine_size())) {
-                auto pair = base_workspace_->Next();
-                refined_res_.emplace(pair.first, raw_distance(pair.first) * sign_);
+            while (base_has_next() && (refined_res_.empty() || refined_res_.size() < min_refine_size())) {
+                auto next = base_workspace_->Next();
+                if (!next.has_value()) {
+                    throw std::runtime_error(next.what());
+                }
+                refined_res_.emplace(next.value().first, raw_distance(next.value().first) * sign_);
             }
         }
 

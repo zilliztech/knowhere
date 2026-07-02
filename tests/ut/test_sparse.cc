@@ -273,8 +273,8 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         for (int i = 0; i < nq; ++i) {
             auto& iter = iterators[i];
             float prev_dist = std::numeric_limits<float>::max();
-            while (iter->HasNext()) {
-                auto [id, dist] = iter->Next();
+            while (iter->HasNext().value()) {
+                auto [id, dist] = iter->Next().value();
                 REQUIRE(!bitset.test(id));
                 count++;
                 if (prev_dist < dist) {

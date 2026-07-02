@@ -172,12 +172,14 @@ class IndexNode : public Object {
     };
 
     // not thread safe.
+    // Next()/HasNext() must not throw: errors are reported through the returned expected<>,
+    // consistent with the error-code based contract of the facade APIs.
     class iterator {
      public:
-        virtual std::pair<int64_t, float>
-        Next() = 0;
-        [[nodiscard]] virtual bool
-        HasNext() = 0;
+        virtual expected<std::pair<int64_t, float>>
+        Next() noexcept = 0;
+        [[nodiscard]] virtual expected<bool>
+        HasNext() noexcept = 0;
         virtual ~iterator() {
         }
     };
@@ -676,14 +678,36 @@ class IndexIterator : public IndexNode::iterator {
           use_knowhere_search_pool_(use_knowhere_search_pool) {
     }
 
-    std::pair<int64_t, float>
-    Next() override {
+    expected<std::pair<int64_t, float>>
+    Next() noexcept final {
+        return GuardedCall([&]() -> expected<std::pair<int64_t, float>> { return next_impl(); });
+    }
+
+    [[nodiscard]] expected<bool>
+    HasNext() noexcept final {
+        return GuardedCall([&]() -> expected<bool> { return has_next_impl(); });
+    }
+
+    virtual void
+    initialize() {
+        if (initialized_) {
+            throw std::runtime_error("initialize should not be called twice");
+        }
+        UpdateNext();
+        initialized_ = true;
+    }
+
+ protected:
+    // The *_impl methods may throw or return an error result; exceptions are converted to
+    //   error codes by GuardedCall at the public Next()/HasNext() boundary.
+    virtual expected<std::pair<int64_t, float>>
+    next_impl() {
         if (!initialized_) {
             initialize();
         }
         auto& q = !refine_ ? res_ : refined_res_;
         if (q.empty()) {
-            throw std::runtime_error("No more elements");
+            return expected<std::pair<int64_t, float>>::Err(Status::knowhere_inner_error, "No more elements");
         }
         auto ret = q.top();
         q.pop();
@@ -691,7 +715,7 @@ class IndexIterator : public IndexNode::iterator {
         auto update_next_func = [&]() {
             UpdateNext();
             if (retain_iterator_order_) {
-                while (HasNext()) {
+                while (!res_.empty() || !refined_res_.empty()) {
                     auto& q = !refine_ ? res_ : refined_res_;
                     auto next_ret = q.top();
                     // with the help of `sign_`, both `res_` and `refine_res` are min-heap.
@@ -723,24 +747,14 @@ class IndexIterator : public IndexNode::iterator {
         return std::make_pair(ret.id, ret.val * sign_);
     }
 
-    [[nodiscard]] bool
-    HasNext() override {
+    virtual expected<bool>
+    has_next_impl() {
         if (!initialized_) {
             initialize();
         }
         return !res_.empty() || !refined_res_.empty();
     }
 
-    virtual void
-    initialize() {
-        if (initialized_) {
-            throw std::runtime_error("initialize should not be called twice");
-        }
-        UpdateNext();
-        initialized_ = true;
-    }
-
- protected:
     inline size_t
     min_refine_size() const {
         // TODO: maybe make this configurable
@@ -805,35 +819,42 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
           use_knowhere_search_pool_(use_knowhere_search_pool) {
     }
 
-    std::pair<int64_t, float>
-    Next() override {
-        if (!initialized_) {
-            initialize();
-        }
-        if (use_knowhere_search_pool_) {
+    expected<std::pair<int64_t, float>>
+    Next() noexcept override {
+        return GuardedCall([&]() -> expected<std::pair<int64_t, float>> {
+            if (!initialized_) {
+                initialize();
+            }
+            if (!has_next_unchecked()) {
+                return expected<std::pair<int64_t, float>>::Err(Status::knowhere_inner_error, "No more elements");
+            }
+            if (use_knowhere_search_pool_) {
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-            std::vector<folly::Future<folly::Unit>> futs;
-            futs.emplace_back(ThreadPool::GetGlobalSearchThreadPool()->push([&]() {
-                ThreadPool::ScopedSearchOmpSetter setter(1);
-                sort_next();
-            }));
-            WaitAllSuccess(futs);
+                std::vector<folly::Future<folly::Unit>> futs;
+                futs.emplace_back(ThreadPool::GetGlobalSearchThreadPool()->push([&]() {
+                    ThreadPool::ScopedSearchOmpSetter setter(1);
+                    sort_next();
+                }));
+                WaitAllSuccess(futs);
 #else
-            sort_next();
+                sort_next();
 #endif
-        } else {
-            sort_next();
-        }
-        auto& result = results_[next_++];
-        return std::make_pair(result.id, result.val);
+            } else {
+                sort_next();
+            }
+            auto& result = results_[next_++];
+            return std::make_pair(result.id, result.val);
+        });
     }
 
-    [[nodiscard]] bool
-    HasNext() override {
-        if (!initialized_) {
-            initialize();
-        }
-        return next_ < results_.size() && results_[next_].id != -1;
+    [[nodiscard]] expected<bool>
+    HasNext() noexcept override {
+        return GuardedCall([&]() -> expected<bool> {
+            if (!initialized_) {
+                initialize();
+            }
+            return has_next_unchecked();
+        });
     }
 
     void
@@ -861,6 +882,11 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
     }
 
  private:
+    bool
+    has_next_unchecked() const {
+        return next_ < results_.size() && results_[next_].id != -1;
+    }
+
     static inline size_t
     get_sort_size(size_t rows) {
         return std::max((size_t)50000, rows / 10);
