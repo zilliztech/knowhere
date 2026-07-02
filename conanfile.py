@@ -221,6 +221,11 @@ class KnowhereConan(ConanFile):
         tc.variables["WITH_LIGHT"] = self.options.with_light
         tc.variables["WITH_COMPILE_PRUNE"] = self.options.with_compile_prune
 
+        # Help cmake 4.x find libaio on Linux (search paths changed in cmake 4)
+        if self.settings.os == "Linux":
+            tc.variables["AIO_INCLUDE_DIR"] = "/usr/include"
+            tc.variables["AIO_LIBRARIES"] = "/usr/lib/x86_64-linux-gnu/libaio.so"
+
         # CMake 4.x removed compatibility with cmake_minimum_required < 3.5
         tc.cache_variables["CMAKE_POLICY_VERSION_MINIMUM"] = "3.5"
 
