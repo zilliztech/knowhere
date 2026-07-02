@@ -843,7 +843,9 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                     }
                 }
 
-                batch_insert_fn(wscores_final, docid_start, curr_window_size, topk_q, threshold, bitset);
+                if (curr_max_score > threshold) {
+                    batch_insert_fn(wscores_final, docid_start, curr_window_size, topk_q, threshold, bitset);
+                }
             }
         } else {
             const auto accumulate_fn = sindi::get_bm25_kernels().accumulate;
@@ -890,7 +892,9 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                     }
                 }
 
-                batch_insert_fn(wscores_final, docid_start, curr_window_size, topk_q, threshold, bitset);
+                if (curr_max_score > threshold) {
+                    batch_insert_fn(wscores_final, docid_start, curr_window_size, topk_q, threshold, bitset);
+                }
             }
         }
 
