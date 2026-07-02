@@ -873,8 +873,11 @@ class FaissHnswIterator : public IndexIterator {
             const faiss::cppcontrib::knowhere::IndexHNSW* index_hnsw =
                 dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(index_refine->base_index);
             if (index_hnsw == nullptr) {
+                // A bare `throw;` with no in-flight exception calls
+                // std::terminate; throw a catchable exception instead so the
+                // API boundary can convert it to a Status.
                 // todo: turn constructor into a factory method
-                throw;
+                KNOWHERE_THROW_MSG("FaissHnswIterator: refine base index is not an IndexHNSW");
             }
 
             workspace.hnsw = &index_hnsw->hnsw;
@@ -913,8 +916,11 @@ class FaissHnswIterator : public IndexIterator {
             const faiss::cppcontrib::knowhere::IndexHNSW* index_hnsw =
                 dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(index.get());
             if (index_hnsw == nullptr) {
+                // A bare `throw;` with no in-flight exception calls
+                // std::terminate; throw a catchable exception instead so the
+                // API boundary can convert it to a Status.
                 // todo: turn constructor into a factory method
-                throw;
+                KNOWHERE_THROW_MSG("FaissHnswIterator: index is not an IndexHNSW");
             }
 
             workspace.hnsw = &index_hnsw->hnsw;
@@ -1999,8 +2005,10 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                         convert_rows_to_fp32(data, cur_query.get(), data_format, i, 1, dim);
                         break;
                     default:
-                        // invalid one. Should not be triggered, bcz input parameters are validated
-                        throw;
+                        // invalid one. Should not be triggered, bcz input parameters are validated.
+                        // A bare `throw;` with no in-flight exception calls std::terminate;
+                        // throw a catchable exception instead.
+                        KNOWHERE_THROW_FORMAT("unsupported data format: %d", static_cast<int>(data_format));
                 }
 
                 const bool should_use_refine =
