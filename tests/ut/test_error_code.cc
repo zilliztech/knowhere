@@ -202,8 +202,7 @@ TEST_CASE("ToSegcoreErrorCode agrees with StatusCategoryOf for every status", "[
                 break;
             case knowhere::StatusCategory::transient_error:
                 // must land on a code the Go-side table marks retriable
-                REQUIRE((code == milvus::ErrorCode::MemAllocateFailed ||
-                         code == milvus::ErrorCode::FileReadFailed));
+                REQUIRE((code == milvus::ErrorCode::MemAllocateFailed || code == milvus::ErrorCode::FileReadFailed));
                 break;
             case knowhere::StatusCategory::permanent_error:
                 REQUIRE((code == milvus::ErrorCode::Unsupported || code == milvus::ErrorCode::DataFormatBroken ||
@@ -221,8 +220,7 @@ TEST_CASE("ToSegcoreErrorCode fine mapping spot checks", "[error_code]") {
     STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::not_implemented) == milvus::ErrorCode::Unsupported);
     STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::invalid_serialized_index_type) ==
                    milvus::ErrorCode::DataFormatBroken);
-    STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::invalid_args) ==
-                   milvus::ErrorCode::InvalidParameter);
+    STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::invalid_args) == milvus::ErrorCode::InvalidParameter);
     STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::timeout) == milvus::ErrorCode::KnowhereError);
     STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::success) == milvus::ErrorCode::Success);
 }
@@ -278,18 +276,10 @@ TEST_CASE("StatusCategoryOf classifies every status without a silent default", "
 
     // caller-input errors
     const Status input_errors[] = {
-        Status::invalid_args,
-        Status::invalid_param_in_json,
-        Status::out_of_range_in_json,
-        Status::type_conflict_in_json,
-        Status::invalid_metric_type,
-        Status::empty_index,
-        Status::index_not_trained,
-        Status::index_already_trained,
-        Status::invalid_value_in_json,
-        Status::arithmetic_overflow,
-        Status::invalid_binary_set,
-        Status::invalid_index_error,
+        Status::invalid_args,          Status::invalid_param_in_json, Status::out_of_range_in_json,
+        Status::type_conflict_in_json, Status::invalid_metric_type,   Status::empty_index,
+        Status::index_not_trained,     Status::index_already_trained, Status::invalid_value_in_json,
+        Status::arithmetic_overflow,   Status::invalid_binary_set,    Status::invalid_index_error,
         Status::invalid_cluster_error,
     };
     for (auto s : input_errors) {
