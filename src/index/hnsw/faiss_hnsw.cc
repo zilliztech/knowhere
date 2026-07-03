@@ -874,7 +874,7 @@ class FaissHnswIterator : public IndexIterator {
                 dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(index_refine->base_index);
             if (index_hnsw == nullptr) {
                 // todo: turn constructor into a factory method
-                throw;
+                KNOWHERE_THROW_MSG("FaissHnswIterator: refine base index is not an IndexHNSW");
             }
 
             workspace.hnsw = &index_hnsw->hnsw;
@@ -914,7 +914,7 @@ class FaissHnswIterator : public IndexIterator {
                 dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(index.get());
             if (index_hnsw == nullptr) {
                 // todo: turn constructor into a factory method
-                throw;
+                KNOWHERE_THROW_MSG("FaissHnswIterator: index is not an IndexHNSW");
             }
 
             workspace.hnsw = &index_hnsw->hnsw;
@@ -1999,8 +1999,11 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                         convert_rows_to_fp32(data, cur_query.get(), data_format, i, 1, dim);
                         break;
                     default:
-                        // invalid one. Should not be triggered, bcz input parameters are validated
-                        throw;
+                        // invalid one. Should not be triggered, bcz input parameters are validated.
+                        LOG_KNOWHERE_ERROR_ << "unsupported data format: " << static_cast<int>(data_format);
+                        return expected<std::vector<IndexNode::IteratorPtr>>::Err(
+                            Status::invalid_args,
+                            "unsupported data format: " + std::to_string(static_cast<int>(data_format)));
                 }
 
                 const bool should_use_refine =
