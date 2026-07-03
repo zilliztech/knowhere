@@ -873,9 +873,6 @@ class FaissHnswIterator : public IndexIterator {
             const faiss::cppcontrib::knowhere::IndexHNSW* index_hnsw =
                 dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(index_refine->base_index);
             if (index_hnsw == nullptr) {
-                // A bare `throw;` with no in-flight exception calls
-                // std::terminate; throw a catchable exception instead so the
-                // API boundary can convert it to a Status.
                 // todo: turn constructor into a factory method
                 KNOWHERE_THROW_MSG("FaissHnswIterator: refine base index is not an IndexHNSW");
             }
@@ -916,9 +913,6 @@ class FaissHnswIterator : public IndexIterator {
             const faiss::cppcontrib::knowhere::IndexHNSW* index_hnsw =
                 dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(index.get());
             if (index_hnsw == nullptr) {
-                // A bare `throw;` with no in-flight exception calls
-                // std::terminate; throw a catchable exception instead so the
-                // API boundary can convert it to a Status.
                 // todo: turn constructor into a factory method
                 KNOWHERE_THROW_MSG("FaissHnswIterator: index is not an IndexHNSW");
             }
@@ -2006,9 +2000,10 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                         break;
                     default:
                         // invalid one. Should not be triggered, bcz input parameters are validated.
-                        // A bare `throw;` with no in-flight exception calls std::terminate;
-                        // throw a catchable exception instead.
-                        KNOWHERE_THROW_FORMAT("unsupported data format: %d", static_cast<int>(data_format));
+                        LOG_KNOWHERE_ERROR_ << "unsupported data format: " << static_cast<int>(data_format);
+                        return expected<std::vector<IndexNode::IteratorPtr>>::Err(
+                            Status::invalid_args,
+                            "unsupported data format: " + std::to_string(static_cast<int>(data_format)));
                 }
 
                 const bool should_use_refine =
