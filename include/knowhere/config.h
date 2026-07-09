@@ -19,7 +19,6 @@
 #include <list>
 #include <optional>
 #include <sstream>
-#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
@@ -670,7 +669,6 @@ class BaseConfig : public Config {
         KNOWHERE_CONFIG_DECLARE_FIELD(num_build_thread)
             .description("index thread limit for build.")
             .allow_empty_without_default()
-            .set_range(1, std::thread::hardware_concurrency())
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(radius)
             .set_default(0.0)
