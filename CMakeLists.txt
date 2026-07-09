@@ -103,6 +103,8 @@ endif()
 find_package(xxHash REQUIRED)
 include_directories(${xxHash_INCLUDE_DIRS})
 find_package(simde REQUIRED)
+find_package(roaring REQUIRED)
+include_directories(${roaring_INCLUDE_DIRS})
 
 if(NOT WITH_LIGHT)
   find_package(opentelemetry-cpp REQUIRED)
@@ -114,6 +116,7 @@ if(NOT WITH_LIGHT)
 endif()
 
 if(APPLE)
+  add_definitions(-D_DARWIN_C_SOURCE)
   # Prevent SDK sysroot include dir from appearing as -I/-isystem in compile
   # commands. Transitive find_package calls (CURL, ZLIB, etc.) resolve headers
   # to the SDK sysroot, and the explicit -I flag breaks C++ wrapper headers
@@ -125,7 +128,7 @@ if(APPLE)
 endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_OSX_DEPLOYMENT_TARGET
-    "10.15"
+    "11.0"
     CACHE STRING "Minimum OS X deployment version" FORCE)
 
 if(OPENMP_FOUND)
@@ -139,6 +142,7 @@ include(cmake/utils/compile_flags.cmake)
 find_package(milvus-common REQUIRED)
 include(cmake/libs/libhnsw.cmake)
 include(cmake/libs/libfaiss.cmake)
+target_link_libraries(faiss PUBLIC roaring::roaring)
 
 if(WITH_COVERAGE)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-arcs -ftest-coverage")
@@ -268,6 +272,7 @@ list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt)
 list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
 list(APPEND KNOWHERE_LINKER_LIBS milvus-common::milvus-common)
 list(APPEND KNOWHERE_LINKER_LIBS simde::simde)
+list(APPEND KNOWHERE_LINKER_LIBS roaring::roaring)
 
 add_library(knowhere SHARED ${KNOWHERE_SRCS})
 add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
