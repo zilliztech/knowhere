@@ -101,9 +101,14 @@ if [[ "${MACHINE}" == "Linux" ]]; then
 fi
 
 if [[ "${MACHINE}" == "Mac"  ]]; then
-    brew install libomp llvm ninja openblas
-    pip3 install conan==1.61.0
-    conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local
+    brew install libomp llvm ninja ccache openblas
+    python_user_base=$(python3 -m site --user-base)
+    export PATH="${python_user_base}/bin:${PATH}"
+    pip3 install --user --break-system-packages conan==1.61.0
+    if [[ -n "${GITHUB_PATH}" ]]; then
+        echo "${python_user_base}/bin" >> "${GITHUB_PATH}"
+    fi
+    conan remote add default-conan-local https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local || true
 fi
 
 if [[ "${MACHINE}" == "MinGw"  ]]; then

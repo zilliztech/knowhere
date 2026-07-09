@@ -53,6 +53,55 @@ jobs:
         with:
           os: ubuntu-22.04
 
+  ut-macos:
+    name: ut on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'none'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Dependency
+        run: |
+          bash scripts/install_deps.sh
+      - name: Restore Cache
+        uses: ./.github/actions/cache-restore
+        with:
+          os: ${{ matrix.os }}
+      - name: Prepare Conan Profile
+        run: |
+          brew install llvm@16
+          export PATH="$(brew --prefix llvm@16)/bin:${PATH}"
+          export CC="$(brew --prefix llvm@16)/bin/clang"
+          export CXX="$(brew --prefix llvm@16)/bin/clang++"
+          conan profile new default --detect --force
+          conan profile update settings.compiler=clang default
+          conan profile update settings.compiler.version=16 default
+          conan profile update settings.compiler.libcxx=libc++ default
+      - name: Build
+        run: |
+          export PATH="/opt/homebrew/opt/llvm@16/bin:$PATH"
+          export CC="/opt/homebrew/opt/llvm@16/bin/clang"
+          export CXX="/opt/homebrew/opt/llvm@16/bin/clang++"
+          export CMAKE_POLICY_VERSION_MINIMUM=3.5
+          mkdir build && cd build \
+          && conan install .. --build=missing -s build_type=Release -o with_ut=True -s compiler=clang -s compiler.version=16 -s compiler.libcxx=libc++ \
+          && conan build .. \
+          && ./Release/tests/ut/knowhere_tests
+      - name: Save Cache
+        uses: ./.github/actions/cache-save
+        with:
+          os: ${{ matrix.os }}
+
   swig-build:
     name: python3 wheel
     runs-on: ubuntu-22.04
