@@ -1270,4 +1270,3 @@ void int8_vec_L2sqr_ny_by_idx_if(
 }
 }
 } //namespace faiss
-

@@ -29,7 +29,7 @@ set(DISKANN_SOURCES
 
 find_package(folly REQUIRED)
 set(DISKANN_LINKER_LIBS PUBLIC ${AIO_LIBRARIES} ${DISKANN_BOOST_PROGRAM_OPTIONS_LIB} nlohmann_json::nlohmann_json
-         	Folly::folly fmt::fmt-header-only prometheus-cpp::core prometheus-cpp::push glog::glog)
+            Folly::folly fmt::fmt-header-only prometheus-cpp::core prometheus-cpp::push glog::glog roaring::roaring)
 if (WITH_CUVS)
     list(APPEND DISKANN_LINKER_LIBS PRIVATE cuvs::cuvs)
     list(APPEND DISKANN_SOURCES thirdparty/DiskANN/src/diskann_gpu.cpp)
@@ -49,7 +49,8 @@ target_link_libraries(
          fmt::fmt
          prometheus-cpp::core
          prometheus-cpp::push
-         glog::glog)
+         glog::glog
+         roaring::roaring)
 if(__X86_64)
   target_compile_options(
     diskann PRIVATE -fno-builtin-malloc -fno-builtin-calloc

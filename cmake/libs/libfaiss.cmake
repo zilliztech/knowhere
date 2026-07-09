@@ -384,7 +384,7 @@ if(__X86_64)
                                             -mavx2 -mfma -mf16c -mpopcnt>)
   target_compile_definitions(faiss_avx2 PRIVATE COMPILE_SIMD_AVX2)
   target_include_directories(faiss_avx2 PRIVATE ${Boost_INCLUDE_DIRS})
-  target_link_libraries(faiss_avx2 PRIVATE milvus-common::milvus-common)
+  target_link_libraries(faiss_avx2 PRIVATE milvus-common::milvus-common roaring::roaring)
   add_library(faiss_avx512 OBJECT ${FAISS_AVX512_SRCS})
   target_compile_options(
     faiss_avx512
@@ -400,7 +400,7 @@ if(__X86_64)
             -mpopcnt>)
   target_compile_definitions(faiss_avx512 PRIVATE COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512)
   target_include_directories(faiss_avx512 PRIVATE ${Boost_INCLUDE_DIRS})
-  target_link_libraries(faiss_avx512 PRIVATE milvus-common::milvus-common)
+  target_link_libraries(faiss_avx512 PRIVATE milvus-common::milvus-common roaring::roaring)
 
   if(FAISS_ENABLE_AVX512_SPR)
     add_library(faiss_avx512_spr OBJECT ${FAISS_AVX512_SPR_SRCS})
@@ -424,7 +424,7 @@ if(__X86_64)
     target_compile_definitions(faiss_avx512_spr PRIVATE
                                COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512 COMPILE_SIMD_AVX512_SPR)
     target_include_directories(faiss_avx512_spr PRIVATE ${Boost_INCLUDE_DIRS})
-    target_link_libraries(faiss_avx512_spr PRIVATE milvus-common::milvus-common)
+    target_link_libraries(faiss_avx512_spr PRIVATE milvus-common::milvus-common roaring::roaring)
   endif()
 
   add_library(faiss STATIC ${FAISS_SRCS})

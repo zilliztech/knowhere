@@ -14,6 +14,8 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <memory>
+#include <vector>
 
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/IDSelector.h>
@@ -30,6 +32,61 @@
 namespace faiss::cppcontrib::knowhere {
 
 namespace {
+bool make_roaring_valid_ids(
+        const ::knowhere::BitsetView& bitset_view,
+        size_t ny,
+        std::vector<idx_t>& ids) {
+    ids.clear();
+    if (!bitset_view.can_iterate_roaring_without_mapping()) {
+        return false;
+    }
+
+    const uint64_t range_start = bitset_view.id_offset();
+    const uint64_t range_end = range_start + ny;
+    std::unique_ptr<roaring_bitmap_t, decltype(&roaring_bitmap_free)> range(
+            roaring_bitmap_from_range(range_start, range_end, 1),
+            roaring_bitmap_free);
+    if (range == nullptr) {
+        return false;
+    }
+    std::unique_ptr<roaring_bitmap_t, decltype(&roaring_bitmap_free)> selected(
+            roaring_bitmap_andnot(range.get(), bitset_view.roaring()),
+            roaring_bitmap_free);
+    if (selected == nullptr) {
+        return false;
+    }
+
+    const auto nselected = roaring_bitmap_get_cardinality(selected.get());
+    ids.resize(nselected);
+    std::vector<uint32_t> selected_ids(nselected);
+    roaring_bitmap_to_uint32_array(selected.get(), selected_ids.data());
+    for (size_t i = 0; i < nselected; ++i) {
+        ids[i] = static_cast<idx_t>(selected_ids[i] - range_start);
+    }
+    return true;
+}
+
+template <class Fn>
+void dispatch_typed_with_roaring_fast_path(
+        const IDSelector* sel,
+        size_t ny,
+        Fn&& fn) {
+    if (const auto* sel_bs =
+                dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
+        std::vector<idx_t> roaring_ids;
+        if (make_roaring_valid_ids(sel_bs->bitset_view, ny, roaring_ids)) {
+            IDSelectorArray sel_array(roaring_ids.size(), roaring_ids.data());
+            fn(sel_array);
+        } else {
+            fn(*sel_bs);
+        }
+    } else if (sel == nullptr) {
+        fn(IDSelectorAll());
+    } else {
+        fn(*sel);
+    }
+}
+
 template <typename DataType, class BlockResultHandler, class IDSelector>
 void exhaustive_inner_product_impl_typed(
         const DataType* __restrict x,
@@ -52,17 +109,20 @@ void exhaustive_inner_product_impl_typed(
             resi.add_result(ip, j);
         };
         if constexpr (std::is_same_v<IDSelector, IDSelectorArray>) {
-            // todo: need more tests about this branch
             auto filter = [](const size_t j) { return true; };
+            auto apply_by_idx = [&resi, &selector](const float distance,
+                                                  const idx_t position) {
+                resi.add_result(distance, selector.ids[position]);
+            };
             if constexpr (std::is_same_v<DataType, ::knowhere::fp16>) {
                 fp16_vec_inner_products_ny_by_idx_if(
-                        x_i, y, selector.ids, d, selector.n, filter, apply);
+                        x_i, y, selector.ids, d, selector.n, filter, apply_by_idx);
             } else if constexpr (std::is_same_v<DataType, ::knowhere::bf16>) {
                 bf16_vec_inner_products_ny_by_idx_if(
-                        x_i, y, selector.ids, d, selector.n, filter, apply);
+                        x_i, y, selector.ids, d, selector.n, filter, apply_by_idx);
             } else if constexpr (std::is_same_v<DataType, ::knowhere::int8>) {
                 int8_vec_inner_products_ny_by_idx_if(
-                        x_i, y, selector.ids, d, selector.n, filter, apply);
+                        x_i, y, selector.ids, d, selector.n, filter, apply_by_idx);
             }
         } else {
             // the lambda that filters acceptable elements.
@@ -103,17 +163,20 @@ void exhaustive_L2sqr_seq_impl_typed(
             resi.add_result(ip, j);
         };
         if constexpr (std::is_same_v<IDSelector, IDSelectorArray>) {
-            // todo: need more tests about this branch
             auto filter = [](const size_t j) { return true; };
+            auto apply_by_idx = [&resi, &selector](const float distance,
+                                                  const idx_t position) {
+                resi.add_result(distance, selector.ids[position]);
+            };
             if constexpr (std::is_same_v<DataType, ::knowhere::fp16>) {
                 fp16_vec_L2sqr_ny_by_idx_if(
-                        x_i, y, selector.ids, d, selector->n, filter, apply);
+                        x_i, y, selector.ids, d, selector.n, filter, apply_by_idx);
             } else if constexpr (std::is_same_v<DataType, ::knowhere::bf16>) {
                 bf16_vec_L2sqr_ny_by_idx_if(
-                        x_i, y, selector.ids, d, selector->n, filter, apply);
+                        x_i, y, selector.ids, d, selector.n, filter, apply_by_idx);
             } else if constexpr (std::is_same_v<DataType, ::knowhere::int8>) {
                 int8_vec_L2sqr_ny_by_idx_if(
-                        x_i, y, selector.ids, d, selector->n, filter, apply);
+                        x_i, y, selector.ids, d, selector.n, filter, apply_by_idx);
             }
         } else {
             // the lambda that filters acceptable elements.
@@ -170,17 +233,34 @@ void exhaustive_cosine_seq_impl_typed(
         resi.begin(i);
         // the lambda that applies a filtered element
         if constexpr (std::is_same_v<IDSelector, IDSelectorArray>) {
-            // todo: need more tests about this branch
             auto filter = [](const size_t j) { return true; };
+            auto apply_by_idx = [&resi,
+                                 &selector,
+                                 x_inv_norm,
+                                 y,
+                                 y_inv_norms,
+                                 d,
+                                 norm_computer](const float ip,
+                                                const idx_t position) {
+                const auto id = selector.ids[position];
+                const float y_inv_norm = (y_inv_norms != nullptr)
+                        ? y_inv_norms[id]
+                        : 1.0f /
+                                std::max(
+                                        sqrtf(norm_computer(y + id * d, d)),
+                                        FLT_MIN);
+
+                resi.add_result(ip * (x_inv_norm * y_inv_norm), id);
+            };
             if constexpr (std::is_same_v<DataType, ::knowhere::fp16>) {
                 fp16_vec_inner_products_ny_by_idx_if(
-                        x_i, y, selector.ids, d, selector->n, filter, apply);
+                        x_i, y, selector.ids, d, selector.n, filter, apply_by_idx);
             } else if constexpr (std::is_same_v<DataType, ::knowhere::bf16>) {
                 bf16_vec_inner_products_ny_by_idx_if(
-                        x_i, y, selector.ids, d, selector->n, filter, apply);
+                        x_i, y, selector.ids, d, selector.n, filter, apply_by_idx);
             } else if constexpr (std::is_same_v<DataType, ::knowhere::int8>) {
                 int8_vec_inner_products_ny_by_idx_if(
-                        x_i, y, selector.ids, d, selector->n, filter, apply);
+                        x_i, y, selector.ids, d, selector.n, filter, apply_by_idx);
             }
         } else {
             // the lambda that filters acceptable elements.
@@ -221,26 +301,18 @@ void knn_inner_product_typed(
     }
     if (k < distance_compute_min_k_reservoir) {
         HeapBlockResultHandler<CMin<float, int64_t>> res(nx, vals, ids, k);
-        if (const auto* sel_bs =
-                    dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
-            exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, *sel_bs);
-        } else if (sel == nullptr) {
-            exhaustive_inner_product_impl_typed(
-                    x, y, d, nx, ny, res, IDSelectorAll());
-        } else {
-            exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, *sel);
-        }
+        dispatch_typed_with_roaring_fast_path(
+                sel, ny, [&](const auto& selector) {
+                    exhaustive_inner_product_impl_typed(
+                            x, y, d, nx, ny, res, selector);
+                });
     } else {
         ReservoirBlockResultHandler<CMin<float, int64_t>> res(nx, vals, ids, k);
-        if (const auto* sel_bs =
-                    dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
-            exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, *sel_bs);
-        } else if (sel == nullptr) {
-            exhaustive_inner_product_impl_typed(
-                    x, y, d, nx, ny, res, IDSelectorAll());
-        } else {
-            exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, *sel);
-        }
+        dispatch_typed_with_roaring_fast_path(
+                sel, ny, [&](const auto& selector) {
+                    exhaustive_inner_product_impl_typed(
+                            x, y, d, nx, ny, res, selector);
+                });
     }
 
     if (imin != 0) {
@@ -266,15 +338,9 @@ void all_inner_product_typed(
     const std::pair<int64_t, float> sentinel{-1, CMax<float, int64_t>::neutral()};
     std::vector<std::pair<int64_t, float>> pairs(n, sentinel);
     CollectAllResultHandler<CMax<float, int64_t>> res(nx, ny, pairs.data());
-    if (const auto* sel_bs =
-                dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
-        exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, *sel_bs);
-    } else if (sel == nullptr) {
-        exhaustive_inner_product_impl_typed(
-                x, y, d, nx, ny, res, IDSelectorAll());
-    } else {
-        exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, *sel);
-    }
+    dispatch_typed_with_roaring_fast_path(sel, ny, [&](const auto& selector) {
+        exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, selector);
+    });
     pairs_to_distids(pairs.data(), output, n);
 }
 
@@ -288,15 +354,9 @@ void all_inner_product_distances_typed(
         float* output,
         const IDSelector* sel) {
     CollectAllDistancesHandler<CMax<float, int64_t>> res(nx, ny, output);
-    if (const auto* sel_bs =
-                dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
-        exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, *sel_bs);
-    } else if (sel == nullptr) {
-        exhaustive_inner_product_impl_typed(
-                x, y, d, nx, ny, res, IDSelectorAll());
-    } else {
-        exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, *sel);
-    }
+    dispatch_typed_with_roaring_fast_path(sel, ny, [&](const auto& selector) {
+        exhaustive_inner_product_impl_typed(x, y, d, nx, ny, res, selector);
+    });
     return;
 }
 
@@ -322,26 +382,18 @@ void knn_L2sqr_typed(
     }
     if (k < distance_compute_min_k_reservoir) {
         HeapBlockResultHandler<CMax<float, int64_t>> res(nx, vals, ids, k);
-        if (const auto* sel_bs =
-                    dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
-            exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, *sel_bs);
-        } else if (sel == nullptr) {
-            exhaustive_L2sqr_seq_impl_typed(
-                    x, y, d, nx, ny, res, IDSelectorAll());
-        } else {
-            exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, *sel);
-        }
+        dispatch_typed_with_roaring_fast_path(
+                sel, ny, [&](const auto& selector) {
+                    exhaustive_L2sqr_seq_impl_typed(
+                            x, y, d, nx, ny, res, selector);
+                });
     } else {
         ReservoirBlockResultHandler<CMax<float, int64_t>> res(nx, vals, ids, k);
-        if (const auto* sel_bs =
-                    dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
-            exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, *sel_bs);
-        } else if (sel == nullptr) {
-            exhaustive_L2sqr_seq_impl_typed(
-                    x, y, d, nx, ny, res, IDSelectorAll());
-        } else {
-            exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, *sel);
-        }
+        dispatch_typed_with_roaring_fast_path(
+                sel, ny, [&](const auto& selector) {
+                    exhaustive_L2sqr_seq_impl_typed(
+                            x, y, d, nx, ny, res, selector);
+                });
     }
     if (imin != 0) {
         for (size_t i = 0; i < nx * k; i++) {
@@ -367,14 +419,9 @@ void all_L2sqr_typed(
     const std::pair<int64_t, float> sentinel{-1, CMax<float, int64_t>::neutral()};
     std::vector<std::pair<int64_t, float>> pairs(n, sentinel);
     CollectAllResultHandler<CMax<float, int64_t>> res(nx, ny, pairs.data());
-    if (const auto* sel_bs =
-                dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
-        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, *sel_bs);
-    } else if (sel == nullptr) {
-        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, IDSelectorAll());
-    } else {
-        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, *sel);
-    }
+    dispatch_typed_with_roaring_fast_path(sel, ny, [&](const auto& selector) {
+        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, selector);
+    });
     pairs_to_distids(pairs.data(), output, n);
 }
 
@@ -389,14 +436,9 @@ void all_L2sqr_distances_typed(
         const float* y_norms,
         const IDSelector* sel) {
     CollectAllDistancesHandler<CMax<float, int64_t>> res(nx, ny, output);
-    if (const auto* sel_bs =
-                dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
-        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, *sel_bs);
-    } else if (sel == nullptr) {
-        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, IDSelectorAll());
-    } else {
-        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, *sel);
-    }
+    dispatch_typed_with_roaring_fast_path(sel, ny, [&](const auto& selector) {
+        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, res, selector);
+    });
     return;
 }
 
@@ -422,30 +464,18 @@ void knn_cosine_typed(
     }
     if (k < distance_compute_min_k_reservoir) {
         HeapBlockResultHandler<CMin<float, int64_t>> res(nx, vals, ids, k);
-        if (const auto* sel_bs =
-                    dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
-            exhaustive_cosine_seq_impl_typed(
-                    x, y, y_inv_norms, d, nx, ny, res, *sel_bs);
-        } else if (sel == nullptr) {
-            exhaustive_cosine_seq_impl_typed(
-                    x, y, y_inv_norms, d, nx, ny, res, IDSelectorAll());
-        } else {
-            exhaustive_cosine_seq_impl_typed(
-                    x, y, y_inv_norms, d, nx, ny, res, *sel);
-        }
+        dispatch_typed_with_roaring_fast_path(
+                sel, ny, [&](const auto& selector) {
+                    exhaustive_cosine_seq_impl_typed(
+                            x, y, y_inv_norms, d, nx, ny, res, selector);
+                });
     } else {
         ReservoirBlockResultHandler<CMin<float, int64_t>> res(nx, vals, ids, k);
-        if (const auto* sel_bs =
-                    dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
-            exhaustive_cosine_seq_impl_typed(
-                    x, y, y_inv_norms, d, nx, ny, res, *sel_bs);
-        } else if (sel == nullptr) {
-            exhaustive_cosine_seq_impl_typed(
-                    x, y, y_inv_norms, d, nx, ny, res, IDSelectorAll());
-        } else {
-            exhaustive_cosine_seq_impl_typed(
-                    x, y, y_inv_norms, d, nx, ny, res, *sel);
-        }
+        dispatch_typed_with_roaring_fast_path(
+                sel, ny, [&](const auto& selector) {
+                    exhaustive_cosine_seq_impl_typed(
+                            x, y, y_inv_norms, d, nx, ny, res, selector);
+                });
     }
     if (imin != 0) {
         for (size_t i = 0; i < nx * k; i++) {
@@ -471,16 +501,10 @@ void all_cosine_typed(
     const std::pair<int64_t, float> sentinel{-1, CMax<float, int64_t>::neutral()};
     std::vector<std::pair<int64_t, float>> pairs(n, sentinel);
     CollectAllResultHandler<CMax<float, int64_t>> res(nx, ny, pairs.data());
-    if (const auto* sel_bs =
-                dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
+    dispatch_typed_with_roaring_fast_path(sel, ny, [&](const auto& selector) {
         exhaustive_cosine_seq_impl_typed(
-                x, y, y_inv_norms, d, nx, ny, res, *sel_bs);
-    } else if (sel == nullptr) {
-        exhaustive_cosine_seq_impl_typed(
-                x, y, y_inv_norms, d, nx, ny, res, IDSelectorAll());
-    } else {
-        exhaustive_cosine_seq_impl_typed(x, y, y_inv_norms, d, nx, ny, res, *sel);
-    }
+                x, y, y_inv_norms, d, nx, ny, res, selector);
+    });
     pairs_to_distids(pairs.data(), output, n);
 }
 
@@ -495,16 +519,10 @@ void all_cosine_distances_typed(
         float* distances,
         const IDSelector* sel) {
     CollectAllDistancesHandler<CMax<float, int64_t>> res(nx, ny, distances);
-    if (const auto* sel_bs =
-                dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
+    dispatch_typed_with_roaring_fast_path(sel, ny, [&](const auto& selector) {
         exhaustive_cosine_seq_impl_typed(
-                x, y, y_inv_norms, d, nx, ny, res, *sel_bs);
-    } else if (sel == nullptr) {
-        exhaustive_cosine_seq_impl_typed(
-                x, y, y_inv_norms, d, nx, ny, res, IDSelectorAll());
-    } else {
-        exhaustive_cosine_seq_impl_typed(x, y, y_inv_norms, d, nx, ny, res, *sel);
-    }
+                x, y, y_inv_norms, d, nx, ny, res, selector);
+    });
     return;
 }
 
@@ -523,14 +541,9 @@ void range_search_L2sqr_typed(
         faiss::RangeSearchResult* res,
         const IDSelector* sel) {
     RangeSearchBlockResultHandler<CMax<float, int64_t>> resh(res, radius);
-    if (const auto* sel_bs =
-                dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
-        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, resh, *sel_bs);
-    } else if (sel == nullptr) {
-        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, resh, IDSelectorAll());
-    } else {
-        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, resh, *sel);
-    }
+    dispatch_typed_with_roaring_fast_path(sel, ny, [&](const auto& selector) {
+        exhaustive_L2sqr_seq_impl_typed(x, y, d, nx, ny, resh, selector);
+    });
     return;
 }
 
@@ -545,15 +558,9 @@ void range_search_inner_product_typed(
         faiss::RangeSearchResult* res,
         const IDSelector* sel) {
     RangeSearchBlockResultHandler<CMin<float, int64_t>> resh(res, radius);
-    if (const auto* sel_bs =
-                dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
-        exhaustive_inner_product_impl_typed(x, y, d, nx, ny, resh, *sel_bs);
-    } else if (sel == nullptr) {
-        exhaustive_inner_product_impl_typed(
-                x, y, d, nx, ny, resh, IDSelectorAll());
-    } else {
-        exhaustive_inner_product_impl_typed(x, y, d, nx, ny, resh, *sel);
-    }
+    dispatch_typed_with_roaring_fast_path(sel, ny, [&](const auto& selector) {
+        exhaustive_inner_product_impl_typed(x, y, d, nx, ny, resh, selector);
+    });
     return;
 }
 
@@ -570,16 +577,10 @@ void range_search_cosine_typed(
         faiss::RangeSearchResult* res,
         const IDSelector* sel) {
     RangeSearchBlockResultHandler<CMin<float, int64_t>> resh(res, radius);
-    if (const auto* sel_bs =
-                dynamic_cast<const ::knowhere::BitsetViewIDSelector*>(sel)) {
+    dispatch_typed_with_roaring_fast_path(sel, ny, [&](const auto& selector) {
         exhaustive_cosine_seq_impl_typed(
-                x, y, y_inv_norms, d, nx, ny, resh, *sel_bs);
-    } else if (sel == nullptr) {
-        exhaustive_cosine_seq_impl_typed(
-                x, y, y_inv_norms, d, nx, ny, resh, IDSelectorAll());
-    } else {
-        exhaustive_cosine_seq_impl_typed(x, y, y_inv_norms, d, nx, ny, resh, *sel);
-    }
+                x, y, y_inv_norms, d, nx, ny, resh, selector);
+    });
     return;
 }
 
@@ -962,4 +963,3 @@ template void faiss::cppcontrib::knowhere::range_search_cosine_typed<::knowhere:
         const faiss::IDSelector*);
 
 }
-

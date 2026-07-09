@@ -137,6 +137,7 @@ class KnowhereConan(ConanFile):
         self.requires("libcurl/8.10.1#a3113369c86086b0e84231844e7ed0a9", force=True, override=True)
         self.requires("simde/0.8.2#5e1edfd5cba92f25d79bf6ef4616b972")
         self.requires("xxhash/0.8.3#caa6d0af1b951c247922e38fbcebdbe6")
+        self.requires("roaring/3.0.0")
         if self.settings.os == "Linux":
             self.requires("openblas/0.3.30")
         if not self.options.with_light:
@@ -283,6 +284,7 @@ class KnowhereConan(ConanFile):
             "milvus-common::milvus-common",
             "prometheus-cpp::core",
             "prometheus-cpp::push",
+            "roaring::roaring",
         ]
 
         self.cpp_info.components["libknowhere"].set_property(

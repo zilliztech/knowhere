@@ -12,11 +12,15 @@
 #ifndef BITSET_H
 #define BITSET_H
 
+#include <roaring/roaring.h>
+
 #include <cassert>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace knowhere {
 class BitsetView {
@@ -25,10 +29,36 @@ class BitsetView {
     ~BitsetView() = default;
 
     BitsetView(const uint8_t* data, size_t num_bits, size_t num_filtered_out_bits = 0, size_t id_offset = 0)
-        : bits_(data), num_bits_(num_bits), num_filtered_out_bits_(num_filtered_out_bits), id_offset_(id_offset) {
+        : kind_(Kind::Dense),
+          bits_(data),
+          num_bits_(num_bits),
+          num_filtered_out_bits_(num_filtered_out_bits),
+          id_offset_(id_offset) {
+    }
+
+    BitsetView(const roaring_bitmap_t* bitmap, size_t num_bits, size_t num_filtered_out_bits = 0, size_t id_offset = 0)
+        : kind_(Kind::Roaring),
+          roaring_(bitmap),
+          num_bits_(num_bits),
+          num_filtered_out_bits_(num_filtered_out_bits),
+          id_offset_(id_offset) {
     }
 
     BitsetView(const std::nullptr_t) : BitsetView() {
+    }
+
+    BitsetView(const std::nullptr_t, size_t num_bits, size_t num_filtered_out_bits = 0, size_t id_offset = 0)
+        : BitsetView(static_cast<const uint8_t*>(nullptr), num_bits, num_filtered_out_bits, id_offset) {
+    }
+
+    static BitsetView
+    FromFrozenRoaring(const void* data, size_t byte_size, size_t num_bits, size_t num_filtered_out_bits = 0,
+                      size_t id_offset = 0) {
+        const auto* bitmap = roaring_bitmap_frozen_view(static_cast<const char*>(data), byte_size);
+        BitsetView bitset(bitmap, num_bits, num_filtered_out_bits, id_offset);
+        bitset.owned_roaring_ = std::shared_ptr<const roaring_bitmap_t>(
+            bitmap, [](const roaring_bitmap_t* p) { roaring_bitmap_free(const_cast<roaring_bitmap_t*>(p)); });
+        return bitset;
     }
 
     bool
@@ -54,6 +84,15 @@ class BitsetView {
         return num_filtered_out_bits_;
     }
 
+    void
+    set_count(size_t num_filtered_out_bits) {
+        if (out_ids_ != nullptr) {
+            num_filtered_out_ids_ = num_filtered_out_bits;
+            return;
+        }
+        num_filtered_out_bits_ = num_filtered_out_bits;
+    }
+
     size_t
     byte_size() const {
         return (num_bits_ + 8 - 1) >> 3;
@@ -62,6 +101,42 @@ class BitsetView {
     const uint8_t*
     data() const {
         return bits_;
+    }
+
+    bool
+    is_dense() const {
+        return kind_ == Kind::Dense;
+    }
+
+    bool
+    is_roaring() const {
+        return kind_ == Kind::Roaring;
+    }
+
+    const roaring_bitmap_t*
+    roaring() const {
+        return roaring_;
+    }
+
+    size_t
+    id_offset() const {
+        return id_offset_;
+    }
+
+    bool
+    can_iterate_roaring_without_mapping() const {
+        return kind_ == Kind::Roaring && out_ids_ == nullptr;
+    }
+
+    std::vector<uint8_t>
+    ToDense() const {
+        std::vector<uint8_t> dense(byte_size(), 0);
+        for (size_t i = 0; i < num_bits_; ++i) {
+            if (test(i)) {
+                dense[i >> 3] |= 0x1 << (i & 0x7);
+            }
+        }
+        return dense;
     }
 
     bool
@@ -103,7 +178,13 @@ class BitsetView {
             out_id = out_ids_[out_id];
         }
         // when index is larger than the max_offset, ignore it
-        return (out_id >= static_cast<int64_t>(num_bits_)) || (bits_[out_id >> 3] & (0x1 << (out_id & 0x7)));
+        if (out_id >= static_cast<int64_t>(num_bits_)) {
+            return true;
+        }
+        if (kind_ == Kind::Roaring) {
+            return roaring_bitmap_contains(roaring_, static_cast<uint32_t>(out_id));
+        }
+        return bits_[out_id >> 3] & (0x1 << (out_id & 0x7));
     }
     // return the filtered ratio. if with id mapping, calculated by internal_ids rather than bits.
     float
@@ -125,6 +206,9 @@ class BitsetView {
                 }
             }
             return count;
+        }
+        if (kind_ == Kind::Roaring) {
+            return roaring_bitmap_get_cardinality(roaring_);
         }
         // if without id mapping, use a better algorithm to calculate the number of filtered out bits.
         size_t ret = 0;
@@ -165,6 +249,14 @@ class BitsetView {
                 }
             }
             return num_internal_ids_;
+        }
+        if (kind_ == Kind::Roaring) {
+            for (size_t i = 0; i < num_bits_; i++) {
+                if (!test(i)) {
+                    return i;
+                }
+            }
+            return num_bits_;
         }
         // if without id mapping, use a better algorithm to find the first valid index.
         size_t ret = 0;
@@ -211,7 +303,12 @@ class BitsetView {
     }
 
  private:
+    enum class Kind { Dense, Roaring };
+
+    Kind kind_ = Kind::Dense;
     const uint8_t* bits_ = nullptr;
+    const roaring_bitmap_t* roaring_ = nullptr;
+    std::shared_ptr<const roaring_bitmap_t> owned_roaring_;
     size_t num_bits_ = 0;
     size_t num_filtered_out_bits_ = 0;
 
