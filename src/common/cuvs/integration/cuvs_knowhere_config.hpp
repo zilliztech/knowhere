@@ -63,6 +63,7 @@ struct cuvs_knowhere_config {
     std::optional<std::string> search_algo = std::nullopt;
     std::optional<int> team_size = std::nullopt;
     std::optional<int> search_width = std::nullopt;
+    std::optional<int> num_random_samplings = std::nullopt;
     std::optional<int> min_iterations = std::nullopt;
     std::optional<int> max_iterations = std::nullopt;
     std::optional<int> thread_block_size = std::nullopt;
@@ -112,6 +113,7 @@ validate_cuvs_knowhere_config(cuvs_knowhere_config config) {
         config.search_algo = config.search_algo.value_or("AUTO");
         config.team_size = config.team_size.value_or(0);
         config.search_width = config.search_width.value_or(1);
+        config.num_random_samplings = config.num_random_samplings.value_or(1);
         config.min_iterations = config.min_iterations.value_or(0);
         config.max_iterations = config.max_iterations.value_or(0);
         config.thread_block_size = config.thread_block_size.value_or(0);
