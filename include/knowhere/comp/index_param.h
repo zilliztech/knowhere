@@ -162,6 +162,7 @@ constexpr const char* BUILD_ALGO = "build_algo";
 constexpr const char* SEARCH_ALGO = "search_algo";
 constexpr const char* TEAM_SIZE = "team_size";
 constexpr const char* SEARCH_WIDTH = "search_width";
+constexpr const char* NUM_RANDOM_SAMPLINGS = "num_random_samplings";
 constexpr const char* MIN_ITERATIONS = "min_iterations";
 constexpr const char* MAX_ITERATIONS = "max_iterations";
 constexpr const char* THREAD_BLOCK_SIZE = "thread_block_size";

@@ -648,6 +648,24 @@ TEST_CASE("Test config json parse", "[config]") {
             s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
             CHECK(s == knowhere::Status::success);
         }
+
+        {
+            // search with legal num_random_samplings
+            knowhere::GpuCuvsCagraConfig cagra_config;
+            auto tmp_json = json;
+            tmp_json["num_random_samplings"] = 32;
+            s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
+            CHECK(s == knowhere::Status::success);
+        }
+
+        {
+            // search with illegal num_random_samplings
+            knowhere::GpuCuvsCagraConfig cagra_config;
+            auto tmp_json = json;
+            tmp_json["num_random_samplings"] = 0;
+            s = knowhere::Config::Load(cagra_config, tmp_json, knowhere::SEARCH);
+            CHECK(s == knowhere::Status::out_of_range_in_json);
+        }
     }
 
 #endif

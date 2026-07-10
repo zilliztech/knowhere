@@ -41,6 +41,7 @@ struct GpuCuvsCagraConfig : public BaseConfig {
     CFG_STRING search_algo;
     CFG_INT team_size;
     CFG_INT search_width;
+    CFG_INT num_random_samplings;
     CFG_INT min_iterations;
     CFG_INT max_iterations;
     CFG_INT thread_block_size;
@@ -87,6 +88,11 @@ struct GpuCuvsCagraConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(search_width)
             .description("nodes to select as starting point in each iteration")
             .allow_empty_without_default()
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(num_random_samplings)
+            .description("number of random seed samplings")
+            .set_default(1)
+            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(min_iterations)
             .description("minimum number of search iterations")
@@ -183,6 +189,7 @@ to_cuvs_knowhere_config(GpuCuvsCagraConfig const& cfg) {
     result.search_algo = cfg.search_algo;
     result.team_size = cfg.team_size;
     result.search_width = cfg.search_width;
+    result.num_random_samplings = cfg.num_random_samplings;
     result.min_iterations = cfg.min_iterations;
     result.max_iterations = cfg.max_iterations;
     result.thread_block_size = cfg.thread_block_size;

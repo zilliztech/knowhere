@@ -340,6 +340,7 @@ config_to_search_params(cuvs_knowhere_config const& raw_config) {
         result.algo = search_algo_string_to_cagra_search_algo(*(config.search_algo));
         result.team_size = *(config.team_size);
         result.search_width = *(config.search_width);
+        result.num_random_samplings = *(config.num_random_samplings);
         result.min_iterations = *(config.min_iterations);
         result.thread_block_size = *(config.thread_block_size);
         result.hashmap_mode = hashmap_mode_string_to_cagra_hashmap_mode(*(config.hashmap_mode));
