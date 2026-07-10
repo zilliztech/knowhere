@@ -292,6 +292,30 @@ class KNOWHERE_NODISCARD expected {
 
 #if !defined(SWIG)
 
+// Exception carrying a knowhere::Status, for propagating an existing error-code result
+// through a throwing code path without losing the original status. GuardedCall converts
+// it back to the carried status instead of recoding it as knowhere_inner_error.
+class StatusException : public std::exception {
+ public:
+    StatusException(Status status, std::string msg) : status_(status), msg_(std::move(msg)) {
+        assert(status_ != Status::success);
+    }
+
+    Status
+    status() const noexcept {
+        return status_;
+    }
+
+    const char*
+    what() const noexcept override {
+        return msg_.c_str();
+    }
+
+ private:
+    Status status_;
+    std::string msg_;
+};
+
 namespace detail {
 
 template <typename T>
@@ -365,6 +389,8 @@ GuardedCall(Func&& func, Args&&... args) noexcept {
         } else {
             return std::invoke(std::forward<Func>(func), std::forward<Args>(args)...);
         }
+    } catch (const StatusException& e) {
+        return detail::GuardedCallFailure<Result>(e.status(), e.what());
     } catch (const std::bad_alloc& e) {
         return detail::GuardedCallFailure<Result>(Status::malloc_error,
                                                   detail::ExceptionMessage("bad alloc", e.what()));

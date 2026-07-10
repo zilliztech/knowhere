@@ -121,6 +121,18 @@ class ThrowingIterator : public knowhere::IndexIterator {
     }
 };
 
+class StatusThrowingIterator : public knowhere::IndexIterator {
+ public:
+    StatusThrowingIterator() : knowhere::IndexIterator(/*larger_is_closer=*/false, /*use_knowhere_search_pool=*/false) {
+    }
+
+ protected:
+    void
+    next_batch(std::function<void(const std::vector<knowhere::DistId>&)>) override {
+        throw knowhere::StatusException(knowhere::Status::malloc_error, "boom status alloc");
+    }
+};
+
 }  // namespace
 
 TEST_CASE("Status category separates input and inner errors", "[error_code]") {
@@ -166,7 +178,8 @@ TEST_CASE("Index facade APIs are noexcept and convert exceptions to error codes"
 
 TEST_CASE("Iterator APIs are noexcept and convert exceptions to error codes", "[error_code]") {
     SECTION("IndexIterator converts next_batch exceptions on first access") {
-        std::shared_ptr<knowhere::IndexNode::iterator> it = std::make_shared<ThrowingIterator>();
+        auto it = std::make_shared<ThrowingIterator>();
+        // the guarded built-in implementations are noexcept at the public boundary
         STATIC_REQUIRE(noexcept(it->Next()));
         STATIC_REQUIRE(noexcept(it->HasNext()));
 
@@ -178,6 +191,16 @@ TEST_CASE("Iterator APIs are noexcept and convert exceptions to error codes", "[
         const auto next = it->Next();
         REQUIRE(!next.has_value());
         REQUIRE(next.error() == knowhere::Status::knowhere_inner_error);
+    }
+
+    SECTION("GuardedCall preserves the status carried by StatusException") {
+        auto it = std::make_shared<StatusThrowingIterator>();
+
+        const auto next = it->Next();
+        REQUIRE(!next.has_value());
+        REQUIRE(next.error() == knowhere::Status::malloc_error);
+        // message must pass through unmodified (no extra prefixing)
+        REQUIRE(next.what() == "boom status alloc");
     }
 
     SECTION("PrecomputedDistanceIterator converts deferred compute exceptions") {

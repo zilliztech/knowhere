@@ -293,13 +293,14 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
 
      private:
         // Called from throwing contexts (initialize/next_impl); errors from the base workspace
-        //   are rethrown and converted to error codes at the public Next()/HasNext() boundary.
+        //   are rethrown as StatusException so GuardedCall at the public Next()/HasNext()
+        //   boundary restores the original status instead of recoding it.
         void
         UpdateNext() {
             auto base_has_next = [&]() {
                 auto has_next = base_workspace_->HasNext();
                 if (!has_next.has_value()) {
-                    throw std::runtime_error(has_next.what());
+                    throw StatusException(has_next.error(), has_next.what());
                 }
                 return has_next.value();
             };
@@ -309,7 +310,7 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
             while (base_has_next() && (refined_res_.empty() || refined_res_.size() < min_refine_size())) {
                 auto next = base_workspace_->Next();
                 if (!next.has_value()) {
-                    throw std::runtime_error(next.what());
+                    throw StatusException(next.error(), next.what());
                 }
                 refined_res_.emplace(next.value().first, raw_distance(next.value().first) * sign_);
             }

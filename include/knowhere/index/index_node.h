@@ -172,14 +172,16 @@ class IndexNode : public Object {
     };
 
     // not thread safe.
-    // Next()/HasNext() must not throw: errors are reported through the returned expected<>,
-    // consistent with the error-code based contract of the facade APIs.
+    // Next()/HasNext() report errors through the returned expected<> instead of throwing,
+    // consistent with the error-code based contract of the facade APIs. Implementations
+    // should convert exceptions at this boundary (see IndexIterator/GuardedCall); the
+    // built-in implementations additionally declare their overrides noexcept.
     class iterator {
      public:
         virtual expected<std::pair<int64_t, float>>
-        Next() noexcept = 0;
+        Next() = 0;
         [[nodiscard]] virtual expected<bool>
-        HasNext() noexcept = 0;
+        HasNext() = 0;
         virtual ~iterator() {
         }
     };
