@@ -1,21 +1,52 @@
 name: 'Knowhere Cache'
-description: ''
+description: 'Save branch-aware Conan and bounded hosted-runner CCache snapshots'
 inputs:
   os:
-    description: 'OS name'
+    description: 'OS name retained for a consistent restore/save interface'
     required: true
     default: 'ubuntu22.04'
+  runner-class:
+    description: 'Stable runner class such as selfhosted-linux, github-linux, or github-macos'
+    required: true
+  cache-branch:
+    description: 'Target branch used to isolate caches between maintained branches'
+    required: true
+  cache-ccache:
+    description: 'Whether to transfer CCache through GitHub Actions cache storage'
+    required: false
+    default: 'true'
+  ccache-max-size:
+    description: 'Maximum CCache size uploaded by ephemeral runners'
+    required: false
+    default: '1G'
 
 runs:
   using: 'composite'
   steps:
-    - name: Cache CCache Volumes
+    # Cap hosted-runner archives at 1G by default before upload. Conan archives
+    # already use most of the repository cache allowance, so an unbounded
+    # compiler cache would cause useful dependency caches to churn out.
+    - name: Prepare CCache for Upload
+      if: ${{ inputs.cache-ccache == 'true' }}
+      id: ccache
+      shell: bash
+      run: |
+        set -euo pipefail
+        ccache --max-size="${{ inputs.ccache-max-size }}"
+        ccache --cleanup
+        echo "dir=$(ccache --get-config cache_dir)" >> "${GITHUB_OUTPUT}"
+
+    - name: Save CCache
+      if: ${{ inputs.cache-ccache == 'true' }}
       uses: actions/cache/save@v4
       with:
-        path: ~/.cache/ccache
-        key: knowhere-${{ inputs.os }}-${{ github.job }}-ccache-${{ hashFiles( '**/*.cpp', '**/*.cc', '**/*.c', '**/*.h', '**/*.hpp', '**/CMakeLists.txt') }}
-    - name: Cache Conan Packages
+        path: ${{ steps.ccache.outputs.dir }}
+        # Must match cache-restore/action.yaml exactly for exact-key hits.
+        key: knowhere-${{ inputs.runner-class }}-${{ inputs.cache-branch }}-${{ github.job }}-ccache-${{ hashFiles('src/**/*.cpp', 'src/**/*.cc', 'src/**/*.c', 'src/**/*.h', 'src/**/*.hpp', 'include/**/*.h', 'include/**/*.hpp', 'tests/**/*.cpp', 'tests/**/*.cc', 'tests/**/*.h', 'benchmark/**/*.cpp', 'benchmark/**/*.cc', 'benchmark/**/*.h', 'cmake/**', 'CMakeLists.txt', 'Makefile', 'conanfile.py') }}
+
+    - name: Save Conan Packages
       uses: actions/cache/save@v4
       with:
         path: ~/.conan
-        key: knowhere-${{ inputs.os }}-${{ github.job }}-conan-${{ hashFiles('conanfile.py') }}
+        # Must match cache-restore/action.yaml exactly for exact-key hits.
+        key: knowhere-${{ inputs.runner-class }}-${{ inputs.cache-branch }}-conan1-${{ hashFiles('conanfile.py') }}
