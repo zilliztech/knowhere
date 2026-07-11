@@ -21,10 +21,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: 'none'
-      - name: Restore Cache
-        uses: ./.github/actions/cache-restore
-        with:
-          os: ubuntu-22.04
       - name: Install GCC 12
         # GCC 11 (ubuntu-22.04 default) has incomplete C++20 support:
         # std::partial_ordering, std::strong_ordering, std::weak_ordering
@@ -36,6 +32,14 @@ jobs:
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 120
       - name: Install Dependency
         run: bash scripts/install_deps.sh
+      # Resolve CCache only after install_deps provides a consistent ccache
+      # binary across hosted runner images.
+      - name: Restore Cache
+        uses: ./.github/actions/cache-restore
+        with:
+          os: ubuntu-22.04
+          runner-class: github-linux
+          cache-branch: ${{ github.base_ref || github.ref_name }}
       - name: Build & Analyzer
         run: |
           make WITH_UT=True \
@@ -44,3 +48,5 @@ jobs:
         uses: ./.github/actions/cache-save
         with:
           os: ubuntu-22.04
+          runner-class: github-linux
+          cache-branch: ${{ github.base_ref || github.ref_name }}

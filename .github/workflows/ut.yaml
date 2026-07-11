@@ -48,6 +48,11 @@ jobs:
         uses: ./.github/actions/cache-restore
         with:
           os: ubuntu-22.04
+          runner-class: selfhosted-linux
+          cache-branch: ${{ github.base_ref || github.ref_name }}
+          # This runner keeps a persistent multi-GB local CCache with a high hit
+          # rate. Uploading it would add transfer time and consume repo quota.
+          cache-ccache: 'false'
       - name: Build
         run: |
           make WITH_UT=True WITH_ASAN=True
@@ -56,6 +61,9 @@ jobs:
         uses: ./.github/actions/cache-save
         with:
           os: ubuntu-22.04
+          runner-class: selfhosted-linux
+          cache-branch: ${{ github.base_ref || github.ref_name }}
+          cache-ccache: 'false'
 
   ut-macos:
     name: ut on ${{ matrix.os }}
@@ -77,6 +85,8 @@ jobs:
         uses: ./.github/actions/cache-restore
         with:
           os: ${{ matrix.os }}
+          runner-class: github-macos
+          cache-branch: ${{ github.base_ref || github.ref_name }}
       - name: Build
         run: |
           # CMake 4.x (Homebrew) removed compat with cmake_minimum_required < 3.5;
@@ -90,6 +100,8 @@ jobs:
         uses: ./.github/actions/cache-save
         with:
           os: ${{ matrix.os }}
+          runner-class: github-macos
+          cache-branch: ${{ github.base_ref || github.ref_name }}
 
   swig-build:
     name: python3 wheel
@@ -122,6 +134,8 @@ jobs:
         uses: ./.github/actions/cache-restore
         with:
           os: ubuntu-22.04
+          runner-class: github-linux
+          cache-branch: ${{ github.base_ref || github.ref_name }}
       - name: Build
         run: |
           make
@@ -129,6 +143,8 @@ jobs:
         uses: ./.github/actions/cache-save
         with:
           os: ubuntu-22.04
+          runner-class: github-linux
+          cache-branch: ${{ github.base_ref || github.ref_name }}
       - name: Build Portable Wheel
         run: |
           cd python && ./build_portable_wheel.sh

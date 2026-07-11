@@ -32,6 +32,8 @@ jobs:
         uses: ./.github/actions/cache-restore
         with:
           os: ubuntu-22.04
+          runner-class: github-linux
+          cache-branch: ${{ github.base_ref || github.ref_name }}
       - name: Build
         env:
           ARTIFACT_NAME: ${{ env.RELEASE_NAME }}-${{ matrix.os }}
@@ -45,6 +47,8 @@ jobs:
         uses: ./.github/actions/cache-save
         with:
           os: ubuntu-22.04
+          runner-class: github-linux
+          cache-branch: ${{ github.base_ref || github.ref_name }}
 
   Release:
     needs: Build
