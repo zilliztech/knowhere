@@ -45,7 +45,6 @@ jobs:
       - name: Restore Cache
         uses: ./.github/actions/cache-restore
         with:
-          os: ubuntu-22.04
           runner-class: github-linux
           # PRs and direct pushes use the same maintained-branch cache namespace.
           cache-branch: ${{ github.base_ref || github.ref_name }}
@@ -58,7 +57,6 @@ jobs:
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:
-          os: ubuntu-22.04
           runner-class: github-linux
           cache-branch: ${{ github.base_ref || github.ref_name }}
 
@@ -85,7 +83,6 @@ jobs:
       - name: Restore Cache
         uses: ./.github/actions/cache-restore
         with:
-          os: ubuntu-22.04
           runner-class: github-linux
           # Keep hosted builds branch-scoped while sharing Conan within the branch.
           cache-branch: ${{ github.base_ref || github.ref_name }}
@@ -98,7 +95,6 @@ jobs:
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:
-          os: ubuntu-22.04
           runner-class: github-linux
           cache-branch: ${{ github.base_ref || github.ref_name }}
       - name: Build Portable Wheel

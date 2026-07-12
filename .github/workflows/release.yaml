@@ -31,7 +31,6 @@ jobs:
       - name: Restore Cache
         uses: ./.github/actions/cache-restore
         with:
-          os: ubuntu-22.04
           runner-class: github-linux
           # Manual releases use the selected ref's maintained-branch cache.
           cache-branch: ${{ github.base_ref || github.ref_name }}
@@ -50,7 +49,6 @@ jobs:
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:
-          os: ubuntu-22.04
           runner-class: github-linux
           cache-branch: ${{ github.base_ref || github.ref_name }}
 

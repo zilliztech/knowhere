@@ -1,10 +1,6 @@
 name: 'Knowhere Cache'
 description: 'Restore branch-aware Conan and hosted-runner CCache snapshots'
 inputs:
-  os:
-    description: 'OS name used only to restore legacy cache keys during migration'
-    required: true
-    default: 'ubuntu22.04'
   runner-class:
     description: 'Stable runner class such as selfhosted-linux, github-linux, or github-macos'
     required: true
@@ -52,7 +48,4 @@ runs:
         # share it. Runner class and branch prevent incompatible environments
         # and maintained branches from contaminating dependency snapshots.
         key: knowhere-${{ inputs.runner-class }}-${{ inputs.cache-branch }}-conan1-${{ hashFiles('conanfile.py') }}
-        # Keep the old OS/job prefix temporarily so existing caches seed the new layout.
-        restore-keys: |
-          knowhere-${{ inputs.runner-class }}-${{ inputs.cache-branch }}-conan1-
-          knowhere-${{ inputs.os }}-${{ github.job }}-conan-
+        restore-keys: knowhere-${{ inputs.runner-class }}-${{ inputs.cache-branch }}-conan1-
