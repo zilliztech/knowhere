@@ -1,10 +1,6 @@
 name: 'Knowhere Cache'
 description: 'Restore branch-aware Conan and hosted-runner CCache snapshots'
 inputs:
-  os:
-    description: 'OS name used only to restore legacy cache keys during migration'
-    required: true
-    default: 'ubuntu22.04'
   runner-class:
     description: 'Stable runner class such as selfhosted-linux, github-linux, or github-macos'
     required: true
@@ -23,43 +19,6 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    # New Conan keys no longer depend on CPU features. Keep this detection only
-    # while the legacy restore prefix is needed to seed the new cache layout.
-    - name: Detect Legacy CPU Feature Bucket
-      id: cpu_feature
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        flags=""
-        if command -v lscpu >/dev/null 2>&1; then
-          flags="$(LC_ALL=C lscpu | awk -F: '/^(Flags|Features):/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}' | tr '[:upper:]' '[:lower:]')"
-        fi
-
-        if [ -z "${flags}" ] && command -v sysctl >/dev/null 2>&1; then
-          flags="$(sysctl -a machdep.cpu.features machdep.cpu.leaf7_features 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)"
-        fi
-
-        if [ -z "${flags}" ] && [ -r /proc/cpuinfo ]; then
-          flags="$(awk -F: '/^(flags|Features)[[:space:]]*:/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}' /proc/cpuinfo | tr '[:upper:]' '[:lower:]')"
-        fi
-
-        features=()
-        for feature in avx512f avx512bw avx512vl avx512dq avx512cd avx512vnni avx512vbmi2 avx512vpopcntdq avx512_bf16 avx512_fp16 avx2 fma sse4_2 sve asimd; do
-          if grep -qw "${feature}" <<< "${flags}"; then
-            features+=("${feature}")
-          fi
-        done
-
-        if [ ${#features[@]} -eq 0 ]; then
-          bucket="cpu-generic"
-        else
-          bucket="cpu-$(IFS=_; echo "${features[*]}")"
-        fi
-
-        echo "bucket=${bucket}" >> "${GITHUB_OUTPUT}"
-        echo "Using legacy cache CPU feature bucket: ${bucket}"
-
     # GitHub-hosted runners are ephemeral, so persist their compiler cache.
     # Query CCache itself because its default path differs by platform/version.
     - name: Resolve CCache Directory
@@ -89,11 +48,8 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: ~/.conan2
-        # Conan stores multiple package IDs/settings in one cache, so jobs and
-        # CPU feature buckets can share it. Runner class and branch prevent
-        # incompatible environments and maintained branches from contaminating
-        # each other's dependency snapshots.
+        # Conan stores multiple package IDs/settings in one cache, so jobs can
+        # share it. Runner class and branch prevent incompatible environments
+        # and maintained branches from contaminating dependency snapshots.
         key: knowhere-${{ inputs.runner-class }}-${{ inputs.cache-branch }}-conan2-${{ hashFiles('conanfile.py') }}
-        restore-keys: |
-          knowhere-${{ inputs.runner-class }}-${{ inputs.cache-branch }}-conan2-
-          knowhere-${{ inputs.os }}-${{ github.job }}-${{ steps.cpu_feature.outputs.bucket }}-conan2-
+        restore-keys: knowhere-${{ inputs.runner-class }}-${{ inputs.cache-branch }}-conan2-

@@ -1,10 +1,6 @@
 name: 'Knowhere Cache'
 description: 'Save branch-aware Conan and bounded hosted-runner CCache snapshots'
 inputs:
-  os:
-    description: 'OS name retained for a consistent restore/save interface'
-    required: true
-    default: 'ubuntu22.04'
   runner-class:
     description: 'Stable runner class such as selfhosted-linux, github-linux, or github-macos'
     required: true
