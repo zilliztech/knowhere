@@ -70,7 +70,7 @@ namespace knowhere {
 //
 class BaseFaissIndexNode : public IndexNode {
  public:
-    BaseFaissIndexNode(const int32_t& /*version*/, const Object& object) {
+    BaseFaissIndexNode(const int32_t& version, const Object& object) : IndexNode(version) {
         build_pool = ThreadPool::GetGlobalBuildThreadPool();
         search_pool = ThreadPool::GetGlobalSearchThreadPool();
     }
@@ -1507,8 +1507,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset_, const int64_t* labels, const size_t labels_len,
                   const bool is_cosine, milvus::OpContext* op_context) const override {
-        // When emb_list_raw_index_ exists (MUVERA/LEMUR), use it for exact distance computation
-        if (emb_list_raw_index_) {
+        // When emb_list raw storage exists (MUVERA/LEMUR), use it for exact distance computation.
+        if (emb_list_raw_storage_) {
             return CalcDistByRawIndex(dataset, labels, labels_len, is_cosine, search_pool, op_context);
         }
 
@@ -2281,6 +2281,33 @@ class HNSWIndexNodeWithFallback : public IndexNode {
     }
 
     int64_t
+    CountForSearchBitset() const override {
+        if (use_base_index) {
+            return base_index->CountForSearchBitset();
+        } else {
+            return fallback_search_index->CountForSearchBitset();
+        }
+    }
+
+    IndexNode*
+    AnnIndexNode() override {
+        if (use_base_index) {
+            return base_index->AnnIndexNode();
+        } else {
+            return fallback_search_index->AnnIndexNode();
+        }
+    }
+
+    const IndexNode*
+    AnnIndexNode() const override {
+        if (use_base_index) {
+            return static_cast<const IndexNode*>(base_index.get())->AnnIndexNode();
+        } else {
+            return static_cast<const IndexNode*>(fallback_search_index.get())->AnnIndexNode();
+        }
+    }
+
+    int64_t
     Size() const override {
         if (use_base_index) {
             return base_index->Size();
@@ -2446,6 +2473,16 @@ class HNSWIndexNodeWithFallback : public IndexNode {
             return base_index->SearchEmbListIfNeed(dataset, std::move(config), bitset, op_context);
         } else {
             return fallback_search_index->SearchEmbListIfNeed(dataset, std::move(config), bitset, op_context);
+        }
+    }
+
+    expected<DataSetPtr>
+    SearchEmbListAnnIndex(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
+                          milvus::OpContext* op_context) const override {
+        if (use_base_index) {
+            return base_index->SearchEmbListAnnIndex(dataset, std::move(config), bitset, op_context);
+        } else {
+            return fallback_search_index->SearchEmbListAnnIndex(dataset, std::move(config), bitset, op_context);
         }
     }
 

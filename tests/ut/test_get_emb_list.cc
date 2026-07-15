@@ -9,7 +9,11 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <cstdint>
+#include <cstdio>
+#include <fstream>
 #include <iostream>
+#include <vector>
 
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -590,7 +594,7 @@ TEST_CASE("Test GetEmbListByIds with MUVERA + HNSW_FLAT", "[GetEmbListByIds]") {
         REQUIRE(result_offsets[0] == 0);
         REQUIRE(result_offsets[1] == each_el_len);
 
-        // MUVERA stores raw vectors in emb_list_raw_index_, verify data matches original
+        // MUVERA stores raw vectors in emb_list raw storage, verify data matches original
         auto result_data = (const float*)result_ds->GetTensor();
         size_t orig_vec_start = original_offsets[el_id];
         for (int64_t v = 0; v < each_el_len; v++) {
@@ -689,7 +693,7 @@ TEST_CASE("Test GetEmbListByIds with LEMUR + HNSW_FLAT", "[GetEmbListByIds]") {
         REQUIRE(result_offsets[0] == 0);
         REQUIRE(result_offsets[1] == each_el_len);
 
-        // LEMUR stores raw vectors in emb_list_raw_index_, verify data matches original
+        // LEMUR stores raw vectors in emb_list raw storage, verify data matches original
         auto result_data = (const float*)result_ds->GetTensor();
         size_t orig_vec_start = original_offsets[el_id];
         for (int64_t v = 0; v < each_el_len; v++) {
@@ -729,7 +733,110 @@ TEST_CASE("Test GetEmbListByIds with LEMUR + HNSW_FLAT", "[GetEmbListByIds]") {
     }
 }
 
-TEST_CASE("Test MUVERA/LEMUR reject non-fp32 data types", "[GetEmbListByIds]") {
+TEST_CASE("Test GetEmbListByIds with binary LEMUR after DeserializeFromFile", "[GetEmbListByIds]") {
+    const int64_t dim = 32;
+    const int64_t each_el_len = 10;
+    const int64_t nb = 256;
+    const int64_t num_el = (nb + each_el_len - 1) / each_el_len;
+    const size_t code_size = static_cast<size_t>(dim / 8);
+
+    auto version = GenTestEmbListVersionList();
+
+    knowhere::Json conf;
+    conf[knowhere::meta::DIM] = dim;
+    conf[knowhere::meta::METRIC_TYPE] = knowhere::metric::MAX_SIM_HAMMING;
+    conf[knowhere::meta::TOPK] = 10;
+    conf[knowhere::meta::ROWS] = nb;
+    conf[knowhere::meta::INDEX_TYPE] = knowhere::IndexEnum::INDEX_HNSW;
+    conf[knowhere::indexparam::HNSW_M] = 16;
+    conf[knowhere::indexparam::EFCONSTRUCTION] = 96;
+    conf[knowhere::indexparam::EF] = 64;
+    conf[knowhere::indexparam::RETRIEVAL_ANN_RATIO] = 3.0f;
+    conf["emb_list_strategy"] = "lemur";
+    conf["lemur_hidden_dim"] = 8;
+    conf["lemur_num_train_samples"] = 128;
+    conf["lemur_num_epochs"] = 1;
+    conf["lemur_batch_size"] = 16;
+    conf["lemur_learning_rate"] = 0.001f;
+    conf["lemur_seed"] = 42;
+    conf["lemur_num_layers"] = 1;
+
+    auto train_ds = GenEmbListBinDataSet(nb, dim, 42, each_el_len);
+    const auto* original_data = static_cast<const uint8_t*>(train_ds->GetTensor());
+    auto original_offsets = train_ds->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+
+    auto idx =
+        knowhere::IndexFactory::Instance().Create<knowhere::bin1>(knowhere::IndexEnum::INDEX_HNSW, version).value();
+    auto res = idx.Build(train_ds, conf);
+    REQUIRE(res == knowhere::Status::success);
+
+    knowhere::BinarySet bs;
+    REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
+
+    std::string base_index_file = "/tmp/test_get_emb_list_bin_lemur_file.index";
+    std::string meta_file = "/tmp/test_get_emb_list_bin_lemur_file_meta.bin";
+    std::string raw_index_file = "/tmp/test_get_emb_list_bin_lemur_file_raw.index";
+    {
+        auto hnsw_bin = bs.GetByName(knowhere::IndexEnum::INDEX_HNSW);
+        REQUIRE(hnsw_bin != nullptr);
+        std::ofstream base_out(base_index_file, std::ios::binary);
+        base_out.write(reinterpret_cast<const char*>(hnsw_bin->data.get()), hnsw_bin->size);
+
+        auto meta_bin = bs.GetByName(knowhere::meta::EMB_LIST_META);
+        REQUIRE(meta_bin != nullptr);
+        std::ofstream meta_out(meta_file, std::ios::binary);
+        meta_out.write(reinterpret_cast<const char*>(meta_bin->data.get()), meta_bin->size);
+
+        auto raw_bin = bs.GetByName(knowhere::meta::EMB_LIST_RAW_INDEX);
+        REQUIRE(raw_bin != nullptr);
+        std::ofstream raw_out(raw_index_file, std::ios::binary);
+        raw_out.write(reinterpret_cast<const char*>(raw_bin->data.get()), raw_bin->size);
+    }
+
+    std::vector<int64_t> el_ids = {0, 5, num_el - 1};
+    auto ids_ds = knowhere::GenIdsDataSet(el_ids.size(), el_ids.data());
+
+    for (bool enable_mmap : {false, true}) {
+        knowhere::Json load_conf = conf;
+        load_conf["emb_list_meta_file_path"] = meta_file;
+        load_conf["emb_list_raw_index_file_path"] = raw_index_file;
+        load_conf["enable_mmap"] = enable_mmap;
+
+        auto idx_loaded =
+            knowhere::IndexFactory::Instance().Create<knowhere::bin1>(knowhere::IndexEnum::INDEX_HNSW, version).value();
+        REQUIRE(idx_loaded.DeserializeFromFile(base_index_file, load_conf) == knowhere::Status::success);
+
+        auto result = idx_loaded.GetEmbListByIds(ids_ds, knowhere::metric::MAX_SIM_HAMMING);
+        REQUIRE_HAS_VALUE(result);
+
+        auto result_ds = result.value();
+        REQUIRE(result_ds->GetRows() == static_cast<int64_t>(el_ids.size()));
+        REQUIRE(result_ds->GetDim() == dim);
+
+        auto result_offsets = result_ds->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+        REQUIRE(result_offsets != nullptr);
+        REQUIRE(result_offsets[0] == 0);
+
+        const auto* result_data = static_cast<const uint8_t*>(result_ds->GetTensor());
+        for (size_t i = 0; i < el_ids.size(); i++) {
+            const auto el_id = el_ids[i];
+            const size_t orig_vec_start = original_offsets[el_id];
+            const size_t el_len = original_offsets[el_id + 1] - original_offsets[el_id];
+            REQUIRE(result_offsets[i + 1] - result_offsets[i] == el_len);
+
+            for (size_t byte = 0; byte < el_len * code_size; byte++) {
+                REQUIRE(result_data[result_offsets[i] * code_size + byte] ==
+                        original_data[orig_vec_start * code_size + byte]);
+            }
+        }
+    }
+
+    std::remove(base_index_file.c_str());
+    std::remove(meta_file.c_str());
+    std::remove(raw_index_file.c_str());
+}
+
+TEST_CASE("Test MUVERA fp32 restriction and LEMUR binary ConfigCheck", "[GetEmbListByIds]") {
     auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
     std::string msg;
 
@@ -765,6 +872,20 @@ TEST_CASE("Test MUVERA/LEMUR reject non-fp32 data types", "[GetEmbListByIds]") {
         REQUIRE(msg.find("fp32") != std::string::npos);
     }
 
+    SECTION("MUVERA with bin1 hamming should fail ConfigCheck") {
+        conf[knowhere::meta::DIM] = 32;
+        conf[knowhere::meta::METRIC_TYPE] = knowhere::metric::MAX_SIM_HAMMING;
+        conf["emb_list_strategy"] = "muvera";
+        conf["muvera_num_projections"] = 3;
+        conf["muvera_num_repeats"] = 5;
+        conf["muvera_seed"] = 42;
+
+        auto status = knowhere::IndexStaticFaced<knowhere::bin1>::ConfigCheck(knowhere::IndexEnum::INDEX_HNSW, version,
+                                                                              conf, msg);
+        REQUIRE(status != knowhere::Status::success);
+        REQUIRE(msg.find("fp32") != std::string::npos);
+    }
+
     SECTION("LEMUR with fp16 should fail ConfigCheck") {
         conf["emb_list_strategy"] = "lemur";
         conf["lemur_hidden_dim"] = 32;
@@ -773,6 +894,17 @@ TEST_CASE("Test MUVERA/LEMUR reject non-fp32 data types", "[GetEmbListByIds]") {
                                                                               conf, msg);
         REQUIRE(status != knowhere::Status::success);
         REQUIRE(msg.find("fp32") != std::string::npos);
+    }
+
+    SECTION("LEMUR with bin1 hamming should pass ConfigCheck") {
+        conf[knowhere::meta::DIM] = 32;
+        conf[knowhere::meta::METRIC_TYPE] = knowhere::metric::MAX_SIM_HAMMING;
+        conf["emb_list_strategy"] = "lemur";
+        conf["lemur_hidden_dim"] = 32;
+
+        auto status = knowhere::IndexStaticFaced<knowhere::bin1>::ConfigCheck(knowhere::IndexEnum::INDEX_HNSW, version,
+                                                                              conf, msg);
+        REQUIRE(status == knowhere::Status::success);
     }
 
     SECTION("MUVERA with fp32 should pass ConfigCheck") {

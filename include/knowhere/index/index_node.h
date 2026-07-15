@@ -13,6 +13,7 @@
 #define INDEX_NODE_H
 
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <queue>
 #include <utility>
@@ -46,13 +47,11 @@ struct OpContext;
 class ThreadPool;
 #endif
 
-namespace faiss {
-class IndexFlat;
-}  // namespace faiss
-
 namespace knowhere {
 
 class Interrupt;
+class EmbListRawStorage;
+struct EmbListSeparateAnnIndexHolder;
 
 class IndexNode : public Object {
  public:
@@ -322,6 +321,23 @@ class IndexNode : public Object {
     virtual int64_t
     Count() const = 0;
 
+    // Returns the ANN index that currently serves vector-level metadata/search.
+    // EmbList strategies normally use this node itself, but a strategy may build
+    // a child ANN index when its ANN representation has a different data type.
+    virtual IndexNode*
+    AnnIndexNode();
+
+    virtual const IndexNode*
+    AnnIndexNode() const;
+
+    virtual int64_t
+    CountForSearchBitset() const {
+        if (emb_list_strategy_ != nullptr && emb_list_strategy_->GetDocCount() >= 0) {
+            return emb_list_strategy_->GetDocCount();
+        }
+        return Count();
+    }
+
     virtual std::string
     Type() const = 0;
 
@@ -500,6 +516,10 @@ class IndexNode : public Object {
     SearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
                         milvus::OpContext* op_context = nullptr) const;
 
+    virtual expected<DataSetPtr>
+    SearchEmbListAnnIndex(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
+                          milvus::OpContext* op_context = nullptr) const;
+
     /**
      * @brief Returns the code size (in bytes) of a single query vector, which varies depending on the data type (e.g.,
      * fp32, bf16, etc).
@@ -623,10 +643,10 @@ class IndexNode : public Object {
 
  protected:
     /**
-     * @brief Compute distances using emb_list_raw_index_ (raw vector storage).
+     * @brief Compute distances using emb_list raw vector storage.
      *
-     * Used by CalcDistByIDs implementations when emb_list_raw_index_ is present
-     * (MUVERA/LEMUR strategies). The raw index stores original vectors indexed by
+     * Used by CalcDistByIDs implementations when emb_list raw storage is present
+     * (MUVERA/LEMUR strategies). The raw storage keeps original vectors indexed by
      * global vector IDs, so no ID translation is needed.
      *
      * @param pool Thread pool for parallel computation
@@ -641,14 +661,14 @@ class IndexNode : public Object {
     std::string el_metric_type_;
     EmbListStrategyPtr emb_list_strategy_;  // emb_list encoding strategy (tokenann/muvera)
     // Raw vector storage for EmbList strategies (MUVERA/LEMUR) that encode documents
-    // into different representations for ANN search. Since the base index holds encoded
-    // vectors (not raw), this IndexFlat stores original vectors for exact distance
-    // computation during MaxSim reranking.
-    // Baseline type so that the same shared_ptr can hold either the knowhere
-    // Jaccard-aware IndexFlat subclass (fresh build path, if ever needed) or
-    // a plain ::faiss::IndexFlat{,IP,L2} restored by the deserialization
-    // factory in cppcontrib/knowhere/impl/index_read.cpp.
-    std::shared_ptr<::faiss::IndexFlat> emb_list_raw_index_;
+    // into different representations for ANN search. The ANN index may be this node's
+    // BaseIndex or a SeparateIndex, so raw storage keeps the original vectors available
+    // for exact distance computation during MaxSim reranking.
+    std::shared_ptr<EmbListRawStorage> emb_list_raw_storage_;
+    // Optional child ANN index used when a strategy's ANN representation has a different
+    // data type from this IndexNode, for example binary LEMUR producing fp32 vectors.
+    std::shared_ptr<EmbListSeparateAnnIndexHolder> emb_list_separate_ann_index_;
+    std::string emb_list_raw_metric_type_;
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     struct PrometheusMetrics {

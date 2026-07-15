@@ -9,6 +9,9 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <faiss/cppcontrib/knowhere/utils/binary_distances.h>
+#include <faiss/cppcontrib/knowhere/utils/hamming.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -16,6 +19,7 @@
 #include <limits>
 #include <numeric>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "index/emb_list/cblas_decl.h"
@@ -28,7 +32,6 @@
 #include "knowhere/object.h"
 #include "knowhere/thread_pool.h"
 #include "knowhere/utils.h"
-#include "simd/hook.h"
 #include "simple_mlp.h"
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
@@ -48,6 +51,29 @@ FindMax(const float* data, size_t len) {
     return max_val;
 }
 
+static inline bool
+IsBinarySubMetric(const std::string& metric_type) {
+    return metric_type == metric::HAMMING || metric_type == metric::JACCARD;
+}
+
+static inline bool
+BinaryBitIsSet(const uint8_t* row, int32_t bit) {
+    return ((row[bit / 8] >> (bit % 8)) & 1U) != 0;
+}
+
+static void
+UnpackBinaryRowsToFloat(const uint8_t* input, size_t rows, int32_t dim, bool signed_mapping, float* output) {
+    const size_t code_size = static_cast<size_t>(dim / 8);
+    for (size_t r = 0; r < rows; ++r) {
+        const uint8_t* row = input + r * code_size;
+        float* out = output + r * dim;
+        for (int32_t d = 0; d < dim; ++d) {
+            const bool bit = BinaryBitIsSet(row, d);
+            out[d] = signed_mapping ? (bit ? 1.0f : -1.0f) : (bit ? 1.0f : 0.0f);
+        }
+    }
+}
+
 /**
  * @brief LEMUR (Learned Multi-Vector Retrieval) strategy.
  *
@@ -57,7 +83,7 @@ FindMax(const float* data, size_t len) {
  *
  * Training:
  *   1. Sample vectors from corpus as training inputs
- *   2. Compute MaxSim between sampled vectors and all documents as labels
+ *   2. Compute emb-list aggregation labels between sampled vectors and all documents
  *   3. Train MLP: input(dim) -> hidden(hidden_dim) -> output(num_docs)
  *   4. W matrix = output_layer weights, shape [num_docs, hidden_dim]
  *
@@ -66,7 +92,7 @@ FindMax(const float* data, size_t len) {
  *   2. Aggregate query features (sum/mean)
  *   3. Approximate scoring: query_feat @ W.T
  *   4. ANN search on W to find candidates
- *   5. MaxSim reranking on candidates
+ *   5. Exact emb-list aggregation reranking on candidates
  */
 class LemurEmbListStrategy : public EmbListStrategy {
  public:
@@ -100,20 +126,31 @@ class LemurEmbListStrategy : public EmbListStrategy {
         }
         size_t total_vectors = doc_offset.offset.back();
 
-        // Parse metric for ComputeMaxSimLabels
+        // Parse metric for training labels.
         auto metric_or = ParseEmbListMetric(config);
         if (!metric_or.has_value()) {
             return expected<std::optional<DataSetPtr>>::Err(metric_or.error(), metric_or.what());
         }
-        is_l2_ = (metric_or.value().sub_metric_type == metric::L2);
+        const auto metric_info = metric_or.value();
+        const auto& sub_metric_type = metric_info.sub_metric_type;
+        is_binary_ = IsBinarySubMetric(sub_metric_type);
+        binary_metric_type_ = is_binary_ ? sub_metric_type : "";
+        is_l2_ = (sub_metric_type == metric::L2);
+        if (is_binary_ && original_dim_ % 8 != 0) {
+            return expected<std::optional<DataSetPtr>>::Err(Status::invalid_args,
+                                                            "LEMUR binary requires dim to be a multiple of 8");
+        }
 
         LOG_KNOWHERE_INFO_ << "LEMUR PrepareDataForBuild: num_docs=" << num_docs_ << ", total_vectors=" << total_vectors
                            << ", original_dim=" << original_dim_ << ", hidden_dim=" << hidden_dim_
-                           << ", num_train_samples=" << num_train_samples_ << ", epochs=" << num_epochs_;
+                           << ", num_train_samples=" << num_train_samples_ << ", epochs=" << num_epochs_
+                           << ", binary=" << is_binary_ << ", agg=" << metric_info.el_metric_type;
 
         // 2. Store doc_offset for reranking
         emb_list_offset_ = std::make_shared<EmbListOffset>(doc_offset.offset);
-        const float* raw_data = static_cast<const float*>(dataset->GetTensor());
+        const float* raw_data = is_binary_ ? nullptr : static_cast<const float*>(dataset->GetTensor());
+        const uint8_t* raw_binary_data = is_binary_ ? static_cast<const uint8_t*>(dataset->GetTensor()) : nullptr;
+        const size_t binary_code_size = is_binary_ ? static_cast<size_t>(original_dim_ / 8) : 0;
 
         // 3. Sample training vectors (reservoir sampling: O(actual_samples) memory).
         std::mt19937 rng(seed_);
@@ -145,22 +182,39 @@ class LemurEmbListStrategy : public EmbListStrategy {
 
         std::vector<float> X_train(actual_samples * original_dim_);
         for (size_t i = 0; i < actual_samples; ++i) {
-            std::memcpy(X_train.data() + i * original_dim_, raw_data + sample_indices[i] * original_dim_,
-                        original_dim_ * sizeof(float));
+            if (is_binary_) {
+                const uint8_t* sample = raw_binary_data + static_cast<size_t>(sample_indices[i]) * binary_code_size;
+                UnpackBinaryRowsToFloat(sample, 1, original_dim_, binary_metric_type_ == metric::HAMMING,
+                                        X_train.data() + i * original_dim_);
+            } else {
+                std::memcpy(X_train.data() + i * original_dim_, raw_data + sample_indices[i] * original_dim_,
+                            original_dim_ * sizeof(float));
+            }
         }
 
         LOG_KNOWHERE_INFO_ << "LEMUR: Sampled " << actual_samples << " vectors for training";
 
-        // 4. Compute training labels (MaxSim for each sample vector against each document)
+        // 4. Compute training labels for each sampled vector against each document.
         auto label_start = std::chrono::high_resolution_clock::now();
         std::vector<float> y_train(actual_samples * num_docs_);
-        ComputeMaxSimLabels(X_train.data(), actual_samples, raw_data, doc_offset, y_train.data());
+        if (is_binary_) {
+            ComputeBinaryMaxSimLabels(sample_indices.data(), actual_samples, raw_binary_data, doc_offset,
+                                      y_train.data());
+        } else {
+            ComputeMaxSimLabels(X_train.data(), actual_samples, raw_data, doc_offset, y_train.data());
+        }
+        std::string empty_doc_label_error;
+        auto fill_label_status =
+            FillEmptyDocLabelsWithRowWiseWorst(doc_offset, actual_samples, y_train.data(), empty_doc_label_error);
+        if (fill_label_status != Status::success) {
+            return expected<std::optional<DataSetPtr>>::Err(fill_label_status, empty_doc_label_error);
+        }
         auto label_end = std::chrono::high_resolution_clock::now();
         double label_ms = std::chrono::duration<double, std::milli>(label_end - label_start).count();
 
-        LOG_KNOWHERE_INFO_ << "LEMUR: Computed MaxSim labels in " << label_ms << " ms";
+        LOG_KNOWHERE_INFO_ << "LEMUR: Computed " << metric_info.el_metric_type << " labels in " << label_ms << " ms";
 
-        // 5. Save raw labels for OLS (original LEMUR uses raw MaxSim, not normalized)
+        // 5. Save raw labels for OLS (original LEMUR uses raw aggregation labels, not normalized)
         std::vector<float> y_train_raw = y_train;
 
         // 6. Normalize labels (z-score normalization for stable MLP training)
@@ -199,7 +253,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
         LOG_KNOWHERE_INFO_ << "LEMUR: MLP training completed in " << train_ms << " ms, final_loss=" << final_loss;
 
         // 8. Compute W using pseudoinverse (fit_corpus step from original LEMUR)
-        // W = pinv(Z) @ Y, where Z = features of sampled vectors, Y = MaxSim labels
+        // W = pinv(Z) @ Y, where Z = features of sampled vectors, Y = raw aggregation labels
         // This is a least-squares solution: find W such that Z @ W^T ≈ Y
         auto ols_start = std::chrono::high_resolution_clock::now();
         final_hidden_dim_ = mlp_->FinalHiddenDim();
@@ -225,7 +279,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
             ZtZ[i * final_hidden_dim_ + i] += lambda;
         }
 
-        // Compute Z^T @ Y using BLAS (Y is raw MaxSim labels, matching original LEMUR)
+        // Compute Z^T @ Y using BLAS.
         cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, final_hidden_dim_, num_docs_, actual_samples, 1.0f,
                     Z.data(), final_hidden_dim_, y_train_raw.data(), num_docs_, 0.0f, ZtY.data(), num_docs_);
 
@@ -294,6 +348,23 @@ class LemurEmbListStrategy : public EmbListStrategy {
         return true;
     }
 
+    [[nodiscard]] EmbListAnnIndexSpec
+    AnnIndexSpec(const BaseConfig& config) const override {
+        auto metric_or = ParseEmbListMetric(config);
+        if (metric_or.has_value() && IsBinarySubMetric(metric_or.value().sub_metric_type)) {
+            return EmbListAnnIndexSpec{
+                .target = EmbListAnnIndexTarget::SeparateIndex,
+                .data_type = EmbListAnnIndexDataType::Fp32,
+                .ann_metric_type = metric::IP,
+            };
+        }
+        return EmbListAnnIndexSpec{
+            .target = EmbListAnnIndexTarget::BaseIndex,
+            .data_type = EmbListAnnIndexDataType::SameAsBaseIndex,
+            .ann_metric_type = metric::IP,
+        };
+    }
+
     expected<DataSetPtr>
     Search(const DataSetPtr query_dataset, const EmbListOffset& query_offset, const IndexNode* index,
            std::unique_ptr<Config> cfg, const BitsetView& bitset, milvus::OpContext* op_context) const override {
@@ -310,9 +381,16 @@ class LemurEmbListStrategy : public EmbListStrategy {
             return expected<DataSetPtr>::Err(metric_or.error(), metric_or.what());
         }
         auto& mi = metric_or.value();
+        const bool is_binary_query = IsBinarySubMetric(mi.sub_metric_type);
+        if (is_binary_query && original_dim_ % 8 != 0) {
+            return expected<DataSetPtr>::Err(Status::invalid_args,
+                                             "LEMUR binary search requires dim to be a multiple of 8");
+        }
 
         auto num_query_docs = query_offset.num_el();
-        const float* query_data = static_cast<const float*>(query_dataset->GetTensor());
+        const float* query_data = nullptr;
+        const uint8_t* query_binary_data = nullptr;
+        const size_t binary_code_size = is_binary_query ? static_cast<size_t>(original_dim_ / 8) : 0;
 
         LOG_KNOWHERE_DEBUG_ << "LEMUR Search: num_query_docs=" << num_query_docs << ", k=" << k;
 
@@ -340,6 +418,17 @@ class LemurEmbListStrategy : public EmbListStrategy {
         if (total_query_tokens > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "total query tokens exceeds int32 limit");
         }
+        std::vector<float> query_float_data;
+        if (is_binary_query) {
+            query_binary_data = static_cast<const uint8_t*>(query_dataset->GetTensor());
+            query_float_data.resize(total_query_tokens * original_dim_);
+            UnpackBinaryRowsToFloat(query_binary_data, total_query_tokens, original_dim_,
+                                    mi.sub_metric_type == metric::HAMMING, query_float_data.data());
+            query_data = query_float_data.data();
+        } else {
+            query_data = static_cast<const float*>(query_dataset->GetTensor());
+        }
+
         std::vector<float> all_feats(total_query_tokens * final_hidden_dim_);
         mlp_->ExtractFeatures(query_data, static_cast<int32_t>(total_query_tokens), all_feats.data());
 
@@ -360,8 +449,8 @@ class LemurEmbListStrategy : public EmbListStrategy {
         // 4. ANN search on W
         auto query_feat_dataset = GenDataSet(num_query_docs, final_hidden_dim_, query_feats.data());
         config.k = ann_k;
-        config.metric_type = mi.sub_metric_type;
-        auto ann_result = index->Search(query_feat_dataset, std::move(cfg), bitset, op_context);
+        config.metric_type = metric::IP;
+        auto ann_result = index->SearchEmbListAnnIndex(query_feat_dataset, std::move(cfg), bitset, op_context);
         if (!ann_result.has_value()) {
             LOG_KNOWHERE_ERROR_ << "LEMUR ANN search failed: " << ann_result.what();
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "ANN search failed");
@@ -381,7 +470,6 @@ class LemurEmbListStrategy : public EmbListStrategy {
             auto ids = std::make_unique<int64_t[]>(num_query_docs * k);
             auto dists = std::make_unique<float[]>(num_query_docs * k);
             const auto* ann_dists = ann_result.value()->GetDistance();
-
             for (size_t q = 0; q < num_query_docs; ++q) {
                 for (int32_t i = 0; i < k; ++i) {
                     if (i < ann_k) {
@@ -389,8 +477,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
                         dists[q * k + i] = ann_dists[q * ann_k + i];
                     } else {
                         ids[q * k + i] = -1;
-                        dists[q * k + i] = mi.larger_is_closer ? -std::numeric_limits<float>::infinity()
-                                                               : std::numeric_limits<float>::infinity();
+                        dists[q * k + i] = -std::numeric_limits<float>::infinity();
                     }
                 }
             }
@@ -398,7 +485,7 @@ class LemurEmbListStrategy : public EmbListStrategy {
                                     std::move(dists));
         }
 
-        // 6. MaxSim reranking via CalcDistByIDs
+        // 6. Exact emb-list aggregation reranking via CalcDistByIDs
         auto ids = std::make_unique<int64_t[]>(num_query_docs * k);
         auto dists = std::make_unique<float[]>(num_query_docs * k);
 
@@ -431,7 +518,12 @@ class LemurEmbListStrategy : public EmbListStrategy {
             total_candidates += candidate_docs.size();
 
             // Build query dataset for this query document
-            auto bf_query_dataset = GenDataSet(nq, original_dim_, query_data + q_vec_start * original_dim_);
+            DataSetPtr bf_query_dataset;
+            if (is_binary_query) {
+                bf_query_dataset = GenDataSet(nq, original_dim_, query_binary_data + q_vec_start * binary_code_size);
+            } else {
+                bf_query_dataset = GenDataSet(nq, original_dim_, query_data + q_vec_start * original_dim_);
+            }
 
             auto status =
                 RerankByCalcDistByIDs(candidate_docs, bf_query_dataset, nq, k, mi.larger_is_closer, mi.is_cosine,
@@ -712,6 +804,197 @@ class LemurEmbListStrategy : public EmbListStrategy {
     }
 
  private:
+    Status
+    FillEmptyDocLabelsWithRowWiseWorst(const EmbListOffset& offset, size_t num_samples, float* labels,
+                                       std::string& error_msg) const {
+        const size_t num_docs = offset.num_el();
+        std::vector<size_t> empty_docs;
+        for (size_t doc_id = 0; doc_id < num_docs; ++doc_id) {
+            if (offset.offset[doc_id] == offset.offset[doc_id + 1]) {
+                empty_docs.push_back(doc_id);
+            }
+        }
+
+        if (empty_docs.empty()) {
+            return Status::success;
+        }
+        if (empty_docs.size() == num_docs) {
+            error_msg = "LEMUR training labels cannot be computed when all emb_list documents are empty";
+            return Status::invalid_args;
+        }
+
+        std::vector<size_t> non_empty_docs;
+        non_empty_docs.reserve(num_docs - empty_docs.size());
+        for (size_t doc_id = 0; doc_id < num_docs; ++doc_id) {
+            if (offset.offset[doc_id] != offset.offset[doc_id + 1]) {
+                non_empty_docs.push_back(doc_id);
+            }
+        }
+
+        // LEMUR labels are all larger-is-better, so the finite minimum is the row-wise worst label.
+        for (size_t sample_id = 0; sample_id < num_samples; ++sample_id) {
+            float worst_label = std::numeric_limits<float>::infinity();
+            float* label_row = labels + sample_id * num_docs;
+            for (const auto doc_id : non_empty_docs) {
+                const float label = label_row[doc_id];
+                if (!std::isfinite(label)) {
+                    error_msg = "LEMUR training produced non-finite label for non-empty emb_list document";
+                    return Status::emb_list_inner_error;
+                }
+                worst_label = std::min(worst_label, label);
+            }
+
+            for (const auto doc_id : empty_docs) {
+                label_row[doc_id] = worst_label;
+            }
+        }
+
+        return Status::success;
+    }
+
+    /**
+     * @brief Compute MaxSim labels for binary raw tokens.
+     *
+     * Hamming uses signed binary dot as the training target:
+     *   dot({-1,+1}, {-1,+1}) = dim - 2 * hamming_distance.
+     * Jaccard uses max Jaccard similarity. Exact rerank still uses the true binary distance.
+     */
+    void
+    ComputeBinaryMaxSimLabels(const int64_t* sample_indices, size_t num_samples, const uint8_t* raw_data,
+                              const EmbListOffset& offset, float* labels) const {
+        auto pool = ThreadPool::GetGlobalSearchThreadPool();
+        const size_t num_docs = offset.num_el();
+        const size_t total_vecs = offset.offset.back();
+        const size_t code_size = static_cast<size_t>(original_dim_ / 8);
+
+        struct Chunk {
+            size_t doc_start;
+            size_t doc_end;
+            size_t vec_start;
+            size_t vec_end;
+        };
+
+        constexpr size_t kTargetChunkVecs = 50000;
+        std::vector<Chunk> chunks;
+        {
+            size_t cur_doc = 0;
+            while (cur_doc < num_docs) {
+                size_t chunk_doc_start = cur_doc;
+                size_t chunk_vec_start = offset.offset[cur_doc];
+                size_t chunk_vec_end = chunk_vec_start;
+
+                while (cur_doc < num_docs) {
+                    chunk_vec_end = offset.offset[cur_doc + 1];
+                    cur_doc++;
+                    if (chunk_vec_end - chunk_vec_start >= kTargetChunkVecs) {
+                        break;
+                    }
+                }
+                chunks.push_back({.doc_start = chunk_doc_start,
+                                  .doc_end = cur_doc,
+                                  .vec_start = chunk_vec_start,
+                                  .vec_end = chunk_vec_end});
+            }
+        }
+
+        std::vector<int> raw_popcounts;
+        if (binary_metric_type_ == metric::JACCARD) {
+            raw_popcounts.resize(total_vecs);
+            for (size_t v = 0; v < total_vecs; ++v) {
+                raw_popcounts[v] = faiss::cppcontrib::knowhere::popcnt(raw_data + v * code_size, code_size);
+            }
+        }
+
+        constexpr size_t kSampleBatchSize = 512;
+        std::vector<folly::Future<folly::Unit>> futs;
+        futs.reserve(chunks.size());
+        for (size_t sample_start = 0; sample_start < num_samples; sample_start += kSampleBatchSize) {
+            size_t sample_end = std::min(sample_start + kSampleBatchSize, num_samples);
+            size_t batch_samples = sample_end - sample_start;
+
+            std::vector<uint8_t> sample_codes(batch_samples * code_size);
+            for (size_t s = 0; s < batch_samples; ++s) {
+                const uint8_t* sample = raw_data + static_cast<size_t>(sample_indices[sample_start + s]) * code_size;
+                std::memcpy(sample_codes.data() + s * code_size, sample, code_size);
+            }
+
+            std::vector<int> sample_popcounts;
+            if (binary_metric_type_ == metric::JACCARD) {
+                sample_popcounts.resize(batch_samples);
+                for (size_t s = 0; s < batch_samples; ++s) {
+                    sample_popcounts[s] =
+                        faiss::cppcontrib::knowhere::popcnt(sample_codes.data() + s * code_size, code_size);
+                }
+            }
+
+            futs.clear();
+
+            for (const auto& chunk : chunks) {
+                futs.emplace_back(pool->push([&, chunk, batch_samples, sample_start]() {
+                    const size_t chunk_vecs = chunk.vec_end - chunk.vec_start;
+                    const uint8_t* chunk_data = raw_data + chunk.vec_start * code_size;
+
+                    if (binary_metric_type_ == metric::JACCARD) {
+                        std::vector<float> local_distances(batch_samples * chunk_vecs);
+                        faiss::cppcontrib::knowhere::all_jaccard_distances(sample_codes.data(), chunk_data, code_size,
+                                                                           batch_samples, chunk_vecs,
+                                                                           local_distances.data(), nullptr);
+
+                        for (size_t s = 0; s < batch_samples; ++s) {
+                            const float* distance_row = local_distances.data() + s * chunk_vecs;
+                            float* label_row = labels + (sample_start + s) * num_docs;
+                            const bool sample_empty = sample_popcounts[s] == 0;
+
+                            for (size_t d = chunk.doc_start; d < chunk.doc_end; ++d) {
+                                const size_t doc_vec_start = offset.offset[d] - chunk.vec_start;
+                                const size_t doc_vec_end = offset.offset[d + 1] - chunk.vec_start;
+                                float best = -std::numeric_limits<float>::infinity();
+
+                                for (size_t v = doc_vec_start; v < doc_vec_end; ++v) {
+                                    const bool token_empty = raw_popcounts[chunk.vec_start + v] == 0;
+                                    const float score = (sample_empty && token_empty) ? 1.0f : 1.0f - distance_row[v];
+                                    best = std::max(best, score);
+                                }
+                                label_row[d] = best;
+                            }
+                        }
+                    } else {
+                        std::vector<int32_t> local_distances(batch_samples * chunk_vecs);
+                        // hammings() has correct row-major output only on its explicit specialized code sizes.
+                        if (code_size == 8 || code_size == 16 || code_size == 32 || code_size == 64) {
+                            faiss::cppcontrib::knowhere::hammings(sample_codes.data(), chunk_data, batch_samples,
+                                                                  chunk_vecs, code_size, local_distances.data());
+                        } else {
+                            faiss::cppcontrib::knowhere::all_hamming_distances(sample_codes.data(), chunk_data,
+                                                                               code_size, batch_samples, chunk_vecs,
+                                                                               local_distances.data(), nullptr);
+                        }
+
+                        for (size_t s = 0; s < batch_samples; ++s) {
+                            const int32_t* distance_row = local_distances.data() + s * chunk_vecs;
+                            float* label_row = labels + (sample_start + s) * num_docs;
+
+                            for (size_t d = chunk.doc_start; d < chunk.doc_end; ++d) {
+                                const size_t doc_vec_start = offset.offset[d] - chunk.vec_start;
+                                const size_t doc_vec_end = offset.offset[d + 1] - chunk.vec_start;
+                                int32_t best = std::numeric_limits<int32_t>::max();
+
+                                for (size_t v = doc_vec_start; v < doc_vec_end; ++v) {
+                                    best = std::min(best, distance_row[v]);
+                                }
+                                label_row[d] = best == std::numeric_limits<int32_t>::max()
+                                                   ? -std::numeric_limits<float>::infinity()
+                                                   : static_cast<float>(original_dim_ - 2 * best);
+                            }
+                        }
+                    }
+                }));
+            }
+
+            WaitAllSuccess(futs);
+        }
+    }
+
     /**
      * @brief Compute MaxSim labels for training (chunk-parallel, fused sgemm+reduce).
      *
@@ -824,7 +1107,9 @@ class LemurEmbListStrategy : public EmbListStrategy {
                         for (size_t d = chunk.doc_start; d < chunk.doc_end; ++d) {
                             size_t doc_vec_start = offset.offset[d] - chunk.vec_start;
                             size_t doc_vec_end = offset.offset[d + 1] - chunk.vec_start;
-                            label_row[d] = FindMax(ip_row + doc_vec_start, doc_vec_end - doc_vec_start);
+                            label_row[d] = doc_vec_start == doc_vec_end
+                                               ? -std::numeric_limits<float>::infinity()
+                                               : FindMax(ip_row + doc_vec_start, doc_vec_end - doc_vec_start);
                         }
                     }
                 }));
@@ -848,6 +1133,8 @@ class LemurEmbListStrategy : public EmbListStrategy {
     int32_t original_dim_ = 0;
     int64_t num_docs_ = 0;
     bool is_l2_ = false;
+    bool is_binary_ = false;
+    std::string binary_metric_type_;
 
     // MLP model
     std::unique_ptr<SimpleMLP> mlp_;

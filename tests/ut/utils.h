@@ -678,6 +678,32 @@ GenEmbListBinDataSet(int rows, int dim, int seed = 42, int each_el_len = 10) {
 }
 
 inline knowhere::DataSetPtr
+GenEmbListBinDataSetWithSomeEmpty(int rows, int dim, int seed = 42, int each_el_len = 10) {
+    std::mt19937 rng(seed);
+    std::uniform_int_distribution<> distrib(0.0, 100.0);
+    int uint8_dim = dim / 8;
+    uint64_t total_size = rows * uint8_dim;
+    uint8_t* ts = new uint8_t[total_size];
+    for (uint64_t i = 0; i < total_size; ++i) ts[i] = (uint8_t)distrib(rng);
+    auto ds = knowhere::GenDataSet(rows, dim, ts);
+    auto ptr = std::make_unique<size_t[]>(size_t(rows / each_el_len) + 2);
+    size_t i = 0;
+    for (; i * each_el_len < (size_t)rows; i += 1) {
+        if (i % 2 == 1) {
+            // make some empty emb lists, like [0, 0, 20, 20, 40, 40, ...]
+            ptr[i] = ptr[i - 1];
+        } else {
+            ptr[i] = i * each_el_len;
+        }
+    }
+    ptr[i] = (size_t)rows;
+    const size_t* ptr_const = ptr.release();
+    ds->Set(knowhere::meta::EMB_LIST_OFFSET, ptr_const);
+    ds->SetIsOwner(true);
+    return ds;
+}
+
+inline knowhere::DataSetPtr
 GenQueryEmbListDataSet(int rows, int dim, const uint64_t seed = 42) {
     std::mt19937 rng(seed);
     // use int type to cover test cases for fb16, bf16, int8
