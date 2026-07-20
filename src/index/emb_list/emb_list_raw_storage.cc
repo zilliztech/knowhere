@@ -50,17 +50,17 @@ class EmbListFloatRawStorage final : public EmbListRawStorage {
     explicit EmbListFloatRawStorage(std::shared_ptr<::faiss::IndexFlat> index) : index_(std::move(index)) {
     }
 
-    int64_t
+    [[nodiscard]] int64_t
     Dim() const override {
         return index_->d;
     }
 
-    int64_t
+    [[nodiscard]] int64_t
     Count() const override {
         return index_->ntotal;
     }
 
-    size_t
+    [[nodiscard]] size_t
     CodeSize() const override {
         return static_cast<size_t>(index_->d) * sizeof(float);
     }
@@ -139,17 +139,17 @@ class EmbListBinaryRawStorage final : public EmbListRawStorage {
         : index_(std::move(index)) {
     }
 
-    int64_t
+    [[nodiscard]] int64_t
     Dim() const override {
         return index_->d;
     }
 
-    int64_t
+    [[nodiscard]] int64_t
     Count() const override {
         return index_->ntotal;
     }
 
-    size_t
+    [[nodiscard]] size_t
     CodeSize() const override {
         return static_cast<size_t>(index_->code_size);
     }

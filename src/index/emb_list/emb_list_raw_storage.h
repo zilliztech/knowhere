@@ -35,13 +35,13 @@ class EmbListRawStorage {
  public:
     virtual ~EmbListRawStorage() = default;
 
-    virtual int64_t
+    [[nodiscard]] virtual int64_t
     Dim() const = 0;
 
-    virtual int64_t
+    [[nodiscard]] virtual int64_t
     Count() const = 0;
 
-    virtual size_t
+    [[nodiscard]] virtual size_t
     CodeSize() const = 0;
 
     virtual Status
