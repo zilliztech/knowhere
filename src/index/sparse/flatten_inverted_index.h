@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <array>
 #include <iostream>
 #include <span>
@@ -46,9 +47,8 @@ class FlattenInvertedIndexCursor {
 
     void
     next_geq(table_t vec_id) {
-        while (pos_ < plist_size_ && plist_ids_[pos_] < vec_id) {
-            ++pos_;
-        }
+        const auto begin = plist_ids_.begin() + std::min(pos_, plist_size_);
+        pos_ = static_cast<size_t>(std::lower_bound(begin, plist_ids_.end(), vec_id) - plist_ids_.begin());
         skip_filtered_ids();
         update_cur_vec_id();
     }

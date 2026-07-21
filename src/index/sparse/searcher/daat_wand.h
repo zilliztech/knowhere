@@ -55,8 +55,9 @@ class DaatWandSearcher : public RankedSearcher {
                               const std::shared_ptr<IndexScorer>& search_scorer, const uint32_t k,
                               const uint32_t max_vec_id, const BitsetView& bitset, float dim_max_score_ratio)
         : RankedSearcher(k),
-          cursors_(make_cursors(index, query, search_scorer, bitset, dim_max_score_ratio)),
-          max_vec_id_(max_vec_id) {
+          filter_bounds_(GetFilterBounds(bitset, max_vec_id)),
+          cursors_(make_cursors(index, query, search_scorer, bitset, dim_max_score_ratio, filter_bounds_)),
+          max_vec_id_(filter_bounds_.upper_bound) {
     }
 
     void
@@ -133,17 +134,19 @@ class DaatWandSearcher : public RankedSearcher {
  private:
     static std::vector<Cursor>
     make_cursors(const IndexType& index, const std::vector<std::pair<uint32_t, float>>& query,
-                 const std::shared_ptr<IndexScorer>& index_scorer, const BitsetView& bitset,
-                 float dim_max_score_ratio) {
+                 const std::shared_ptr<IndexScorer>& index_scorer, const BitsetView& bitset, float dim_max_score_ratio,
+                 const FilterBounds& filter_bounds) {
         std::vector<Cursor> cursors;
         cursors.reserve(query.size());
         for (const auto& [dim_id, dim_val] : query) {
-            cursors.push_back(Cursor{index.get_dim_plist_cursor(dim_id, bitset), index_scorer->dim_scorer(dim_val),
+            cursors.push_back(Cursor{GetFilteredPostingListCursor(index, dim_id, bitset, filter_bounds),
+                                     index_scorer->dim_scorer(dim_val),
                                      dim_max_score_ratio * index.get_dim_max_score(dim_id, dim_val)});
         }
         return cursors;
     }
 
+    FilterBounds filter_bounds_;
     std::vector<Cursor> cursors_;
     uint32_t max_vec_id_;
 };

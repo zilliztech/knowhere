@@ -4,6 +4,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <span>
@@ -13,6 +14,7 @@
 #include "index/sparse/inverted_index.h"
 #include "index/sparse/inverted_index_format.h"
 #include "index/sparse/scorer.h"
+#include "knowhere/bitsetview.h"
 #include "knowhere/log.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/utils.h"
@@ -49,8 +51,11 @@ varint_decode(const uint8_t* in, uint32_t* out, size_t n) {
 template <typename VType>
 class BlockInvertedIndexCursor {
  public:
+    enum class BlockFilterState : uint8_t { AllValid, AllFiltered, Mixed };
+
     BlockInvertedIndexCursor(const BlockCodecPtr& block_codec, std::uint8_t const* data, std::uint32_t universe,
-                             BitsetView bitset)
+                             BitsetView bitset, uint32_t initial_lower_bound = 0,
+                             uint32_t valid_upper_bound = std::numeric_limits<uint32_t>::max())
         : base_(varint_decode(data, &n_, 1)),
           nr_blocks_((n_ + block_codec->block_size() - 1) / block_codec->block_size()),
           block_maxids_(base_),
@@ -59,15 +64,30 @@ class BlockInvertedIndexCursor {
           universe_(universe),
           block_codec_(block_codec),
           block_size_(block_codec->block_size()),
-          bitset_(bitset) {
+          bitset_(bitset),
+          valid_upper_bound_(std::min(universe, valid_upper_bound)) {
         ids_buf_.resize(block_size_);
         vals_buf_.resize(block_size_);
-        reset();
+        reset(initial_lower_bound);
     }
 
     void
-    reset() {
-        decode_vecids_block(0);
+    reset(uint32_t lower_bound = 0) {
+        if (lower_bound >= valid_upper_bound_ || lower_bound > block_maxid(nr_blocks_ - 1)) {
+            set_invalid();
+            return;
+        }
+        const auto* block_maxids = reinterpret_cast<const uint32_t*>(block_maxids_);
+        const auto* block_it = std::lower_bound(block_maxids, block_maxids + nr_blocks_, lower_bound);
+        decode_vecids_block(static_cast<uint32_t>(block_it - block_maxids));
+        while (cur_vec_id_ < lower_bound) {
+            cur_vec_id_ += ids_buf_[++pos_in_block_] + 1;
+            assert(pos_in_block_ < cur_block_size_);
+        }
+        if (cur_vec_id_ >= valid_upper_bound_) {
+            set_invalid();
+            return;
+        }
         skip_filtered_ids();
     }
 
@@ -83,21 +103,14 @@ class BlockInvertedIndexCursor {
         } else {
             cur_vec_id_ += ids_buf_[pos_in_block_] + 1;
         }
+        if (cur_vec_id_ >= valid_upper_bound_) {
+            set_invalid();
+        }
     }
 
     void
     next() {
-        ++pos_in_block_;
-        if (pos_in_block_ == cur_block_size_) [[unlikely]] {
-            if (cur_block_ + 1 == nr_blocks_) {
-                cur_vec_id_ = universe_;
-                return;
-            }
-            decode_vecids_block(cur_block_ + 1);
-        } else {
-            cur_vec_id_ += ids_buf_[pos_in_block_] + 1;
-        }
-
+        next_raw();
         skip_filtered_ids();
     }
 
@@ -110,15 +123,19 @@ class BlockInvertedIndexCursor {
      */
     void
     next_geq(uint32_t lower_bound) {
+        if (lower_bound >= valid_upper_bound_) {
+            set_invalid();
+            return;
+        }
         if (lower_bound > cur_block_maxid_) [[unlikely]] {
             if (lower_bound > block_maxid(nr_blocks_ - 1)) {
                 cur_vec_id_ = universe_;
                 return;
             }
-            uint32_t block = cur_block_ + 1;
-            while (block_maxid(block) < lower_bound) {
-                ++block;
-            }
+            const auto* block_maxids = reinterpret_cast<const uint32_t*>(block_maxids_);
+            const auto* block_it =
+                std::lower_bound(block_maxids + cur_block_ + 1, block_maxids + nr_blocks_, lower_bound);
+            const uint32_t block = static_cast<uint32_t>(block_it - block_maxids);
             decode_vecids_block(block);
         }
 
@@ -161,13 +178,58 @@ class BlockInvertedIndexCursor {
 
     void
     skip_filtered_ids() {
-        while (!bitset_.empty() && cur_vec_id_ < universe_ && bitset_.test(cur_vec_id_)) {
+        while (cur_block_filter_state_ == BlockFilterState::Mixed && cur_vec_id_ < universe_ &&
+               bitset_.test(cur_vec_id_)) {
             next_raw();
         }
     }
 
+    [[nodiscard]] BlockFilterState
+    classify_filter_range(uint32_t blkid) const {
+        if (bitset_.empty()) {
+            return BlockFilterState::AllValid;
+        }
+
+        const size_t begin = blkid == 0 ? 0 : static_cast<size_t>(block_maxid(blkid - 1)) + 1;
+        const size_t end = std::min<size_t>(valid_upper_bound_, static_cast<size_t>(block_maxid(blkid)) + 1);
+        constexpr size_t kMaxRangeScanBits = 1U << 16;
+        if (end <= begin || end > bitset_.size() || end - begin > kMaxRangeScanBits) {
+            return BlockFilterState::Mixed;
+        }
+
+        return bitset_.range_all_filtered(begin, end) ? BlockFilterState::AllFiltered : BlockFilterState::Mixed;
+    }
+
+    void
+    set_invalid() {
+        cur_block_ = nr_blocks_;
+        pos_in_block_ = 0;
+        cur_block_maxid_ = universe_;
+        cur_block_size_ = 0;
+        cur_vec_id_ = universe_;
+        vals_block_data_ = nullptr;
+        vals_decoded_ = false;
+    }
+
     void
     decode_vecids_block(uint32_t blkid) {
+        while (blkid < nr_blocks_) {
+            const size_t block_begin = blkid == 0 ? 0 : static_cast<size_t>(block_maxid(blkid - 1)) + 1;
+            if (block_begin >= valid_upper_bound_) {
+                set_invalid();
+                return;
+            }
+            cur_block_filter_state_ = classify_filter_range(blkid);
+            if (cur_block_filter_state_ != BlockFilterState::AllFiltered) {
+                break;
+            }
+            ++blkid;
+        }
+        if (blkid == nr_blocks_) {
+            set_invalid();
+            return;
+        }
+
         uint32_t endpoint = blkid != 0U ? ((uint32_t const*)block_offsets_)[blkid - 1] : 0;
         uint8_t const* block_data = blocks_data_ + endpoint;
         cur_block_size_ = ((blkid + 1) * block_size_ <= n_) ? block_size_ : (n_ % block_size_);
@@ -226,6 +288,8 @@ class BlockInvertedIndexCursor {
     BlockCodecPtr block_codec_;
     std::size_t block_size_;
     BitsetView bitset_;
+    uint32_t valid_upper_bound_{0};
+    BlockFilterState cur_block_filter_state_{BlockFilterState::AllValid};
 };
 
 template <typename DType, typename QType, IndexScorerType MetricType>
@@ -293,6 +357,15 @@ class BlockInvertedIndex : public CRTPInvertedIndex<BlockInvertedIndex<DType, QT
         auto endpoint = this->posting_blocks_dim_offsets_[dim_id];
         auto* data = this->posting_blocks_data_.data() + endpoint;
         return posting_list_iterator(this->block_codec_, data, this->nr_rows_, bitset);
+    }
+
+    [[nodiscard]] posting_list_iterator
+    get_dim_plist_cursor(uint32_t dim_id, const BitsetView& bitset, uint32_t initial_lower_bound,
+                         uint32_t valid_upper_bound) const {
+        auto endpoint = this->posting_blocks_dim_offsets_[dim_id];
+        auto* data = this->posting_blocks_data_.data() + endpoint;
+        return posting_list_iterator(this->block_codec_, data, this->nr_rows_, bitset, initial_lower_bound,
+                                     valid_upper_bound);
     }
 
  private:
