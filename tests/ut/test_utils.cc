@@ -21,6 +21,7 @@
 #include "knowhere/heap.h"
 #include "knowhere/utils.h"
 #include "knowhere/version.h"
+#include "roaring/roaring.h"
 #include "utils.h"
 
 namespace {
@@ -111,6 +112,69 @@ TEST_CASE("Test Bitset Generation", "[utils]") {
             }
         }
     }
+}
+
+TEST_CASE("Test BitsetView Roaring", "[utils]") {
+    std::vector<uint8_t> dense(2, 0);
+    for (auto id : {1, 3, 8, 13}) {
+        dense[id >> 3] |= 0x1 << (id & 0x7);
+    }
+
+    auto* roaring = roaring_bitmap_create();
+    for (auto id : {1, 3, 8, 13}) {
+        roaring_bitmap_add(roaring, id);
+    }
+
+    knowhere::BitsetView dense_view(dense.data(), 16);
+    knowhere::BitsetView roaring_view(roaring, 16);
+    REQUIRE(roaring_view.is_roaring());
+    REQUIRE(roaring_view.count() == 0);
+    REQUIRE(roaring_view.get_filtered_out_num_() == dense_view.get_filtered_out_num_());
+    REQUIRE(roaring_view.filter_ratio() == dense_view.filter_ratio());
+    REQUIRE(roaring_view.get_first_valid_index() == dense_view.get_first_valid_index());
+    for (size_t i = 0; i < 16; ++i) {
+        REQUIRE(roaring_view.test(i) == dense_view.test(i));
+    }
+    REQUIRE(roaring_view.ToDense() == dense);
+
+    roaring_view.set_id_offset(2);
+    dense_view.set_id_offset(2);
+    for (size_t i = 0; i < 14; ++i) {
+        REQUIRE(roaring_view.test(i) == dense_view.test(i));
+    }
+
+    std::vector<uint32_t> out_ids{0, 1, 3, 7, 8, 13};
+    knowhere::BitsetView roaring_out_ids_view(roaring, 16);
+    knowhere::BitsetView dense_out_ids_view(dense.data(), 16);
+    roaring_out_ids_view.set_out_ids(out_ids.data(), out_ids.size());
+    dense_out_ids_view.set_out_ids(out_ids.data(), out_ids.size());
+    REQUIRE(roaring_out_ids_view.count() == dense_out_ids_view.count());
+    for (size_t i = 0; i < out_ids.size(); ++i) {
+        REQUIRE(roaring_out_ids_view.test(i) == dense_out_ids_view.test(i));
+    }
+
+    roaring_bitmap_free(roaring);
+}
+
+TEST_CASE("Test BitsetView Frozen Roaring", "[utils]") {
+    auto* roaring = roaring_bitmap_create();
+    for (auto id : {0, 2, 4, 10}) {
+        roaring_bitmap_add(roaring, id);
+    }
+    const auto frozen_size = roaring_bitmap_frozen_size_in_bytes(roaring);
+    std::vector<char> frozen(frozen_size);
+    roaring_bitmap_frozen_serialize(roaring, frozen.data());
+
+    auto frozen_view = knowhere::BitsetView::FromFrozenRoaring(frozen.data(), frozen.size(), 12);
+    REQUIRE(frozen_view.is_roaring());
+    REQUIRE(frozen_view.get_filtered_out_num_() == 4);
+    REQUIRE(frozen_view.get_first_valid_index() == 1);
+    REQUIRE(frozen_view.test(0));
+    REQUIRE(!frozen_view.test(1));
+    REQUIRE(frozen_view.test(10));
+    REQUIRE(frozen_view.test(12));
+
+    roaring_bitmap_free(roaring);
 }
 
 namespace {
