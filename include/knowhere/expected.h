@@ -155,12 +155,11 @@ IsInputError(knowhere::Status status) {
     return StatusCategoryOf(status) == StatusCategory::input_error;
 }
 
-// "inner" keeps its historical meaning: any server-side error, i.e. NOT the
-// caller's fault -- both transient and permanent qualify.
+// matches the deprecated alias `inner_error = permanent_error`: transient
+// errors are NOT "inner" -- use IsTransientError() for those.
 inline constexpr bool
 IsInnerError(knowhere::Status status) {
-    auto category = StatusCategoryOf(status);
-    return category == StatusCategory::permanent_error || category == StatusCategory::transient_error;
+    return StatusCategoryOf(status) == StatusCategory::permanent_error;
 }
 
 inline constexpr bool

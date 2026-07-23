@@ -140,10 +140,10 @@ TEST_CASE("Status category separates input, transient and permanent errors", "[e
 
     REQUIRE(knowhere::IsInputError(knowhere::Status::invalid_metric_type));
     REQUIRE_FALSE(knowhere::IsInputError(knowhere::Status::faiss_inner_error));
-    // IsInnerError keeps its historical meaning: any server-side error,
-    // transient included
+    // IsInnerError matches the deprecated alias inner_error = permanent_error:
+    // transient errors are not "inner"
     REQUIRE(knowhere::IsInnerError(knowhere::Status::brute_force_inner_error));
-    REQUIRE(knowhere::IsInnerError(knowhere::Status::malloc_error));
+    REQUIRE_FALSE(knowhere::IsInnerError(knowhere::Status::malloc_error));
     REQUIRE_FALSE(knowhere::IsInnerError(knowhere::Status::invalid_value_in_json));
     REQUIRE(knowhere::IsTransientError(knowhere::Status::disk_file_error));
     REQUIRE_FALSE(knowhere::IsTransientError(knowhere::Status::timeout));
@@ -275,13 +275,23 @@ TEST_CASE("StatusCategoryOf classifies every status without a silent default", "
     REQUIRE(knowhere::StatusCategoryOf(Status::success) == StatusCategory::success);
 
     // caller-input errors
+    // clang-format off
     const Status input_errors[] = {
-        Status::invalid_args,          Status::invalid_param_in_json, Status::out_of_range_in_json,
-        Status::type_conflict_in_json, Status::invalid_metric_type,   Status::empty_index,
-        Status::index_not_trained,     Status::index_already_trained, Status::invalid_value_in_json,
-        Status::arithmetic_overflow,   Status::invalid_binary_set,    Status::invalid_index_error,
+        Status::invalid_args,
+        Status::invalid_param_in_json,
+        Status::out_of_range_in_json,
+        Status::type_conflict_in_json,
+        Status::invalid_metric_type,
+        Status::empty_index,
+        Status::index_not_trained,
+        Status::index_already_trained,
+        Status::invalid_value_in_json,
+        Status::arithmetic_overflow,
+        Status::invalid_binary_set,
+        Status::invalid_index_error,
         Status::invalid_cluster_error,
     };
+    // clang-format on
     for (auto s : input_errors) {
         REQUIRE(knowhere::StatusCategoryOf(s) == StatusCategory::input_error);
         REQUIRE(knowhere::IsInputError(s));
@@ -308,7 +318,7 @@ TEST_CASE("StatusCategoryOf classifies every status without a silent default", "
     for (auto s : transient_errors) {
         REQUIRE(knowhere::StatusCategoryOf(s) == StatusCategory::transient_error);
         REQUIRE(knowhere::IsTransientError(s));
-        REQUIRE(knowhere::IsInnerError(s));  // still a server-side error
+        REQUIRE_FALSE(knowhere::IsInnerError(s));  // "inner" == permanent only
     }
 
     // server-side permanent inner errors
