@@ -28,6 +28,11 @@ struct IndexScorerConfig {
  */
 using DimScorer = std::function<float(uint32_t, float)>;
 
+[[nodiscard]] inline float
+bm25_score_with_document_component(float qval_p1, float tf, float p2, float document_component) noexcept {
+    return qval_p1 * tf / ((tf + p2) + document_component);
+}
+
 /** Index scorer construct scorers for dimensions in the index. */
 class IndexScorer {
  public:
