@@ -33,6 +33,9 @@ class BaseHnswConfig : public BaseConfig {
     CFG_INT overview_levels;
     CFG_BOOL disable_fallback_brute_force;  // default is false, means we will use fallback brute force when hnsw search
                                             // does not get enough topk results
+    CFG_BOOL force_brute_force;             // default is false, when true the search bypasses graph traversal and
+                                            // scans the index storage exhaustively (e.g. quantized codes for
+                                            // HNSW_SQ/PQ), optionally refined when the index was built with refine.
     KNOWHERE_DECLARE_CONFIG(BaseHnswConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(M).description("hnsw M").set_default(30).set_range(2, 2048).for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(efConstruction)
@@ -56,6 +59,11 @@ class BaseHnswConfig : public BaseConfig {
             .description("disable fallback brute force")
             .set_default(false)
             .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(force_brute_force)
+            .description("force exhaustive brute force search instead of graph traversal")
+            .set_default(false)
+            .for_search()
+            .for_range_search();
     }
 
     Status

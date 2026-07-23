@@ -2550,3 +2550,83 @@ TEST_CASE("HNSW RangeSearch BF path with empty bitset", "[faiss_hnsw][range_sear
         REQUIRE(hnsw_total > 0);
     }
 }
+
+// Verifies the `force_brute_force` search param bypasses HNSW graph traversal
+// and performs an exhaustive scan of the index storage. For a flat HNSW the
+// scan is exact, so results must match a FLAT (IDMAP) oracle exactly. For a
+// quantized HNSW (HNSW_SQ) the scan runs over the quantized codes, so recall
+// stays high relative to the fp32 oracle. The flag overrides the topk/filter
+// heuristics in WhetherPerformBruteForceSearch, so it triggers even for a
+// small topk that would otherwise take the regular graph path.
+TEST_CASE("HNSW force_brute_force forces exhaustive search", "[faiss_hnsw][brute_force]") {
+    const int32_t nb = 2000;
+    const int32_t dim = 32;
+    const int32_t nq = 10;
+    const int32_t topk = 20;
+    const std::string metric = knowhere::metric::L2;
+
+    const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+
+    auto train_ds = GenDataSet(nb, dim, /*seed=*/42);
+    auto query_ds = GenDataSet(nq, dim, /*seed=*/43);
+
+    knowhere::Json base_conf;
+    base_conf[knowhere::meta::METRIC_TYPE] = metric;
+    base_conf[knowhere::meta::DIM] = dim;
+    base_conf[knowhere::meta::ROWS] = nb;
+    base_conf[knowhere::meta::TOPK] = topk;
+
+    // FLAT oracle: exact fp32 ground truth.
+    auto flat_index = knowhere::IndexFactory::Instance()
+                          .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IDMAP, version)
+                          .value();
+    REQUIRE(flat_index.Build(train_ds, base_conf) == knowhere::Status::success);
+    auto golden = flat_index.Search(query_ds, base_conf, nullptr);
+    REQUIRE(golden.has_value());
+
+    // Build an HNSW index of the given type and return recall vs. the FLAT oracle.
+    // `ef == topk` (the minimum allowed) keeps graph-search recall imperfect so
+    // that forcing brute force is observably different.
+    auto build_and_recall = [&](const std::string& index_type, const knowhere::Json& extra_conf, bool force_bf) {
+        knowhere::Json conf = base_conf;
+        conf[knowhere::meta::INDEX_TYPE] = index_type;
+        conf[knowhere::indexparam::HNSW_M] = 8;
+        conf[knowhere::indexparam::EFCONSTRUCTION] = 100;
+        conf[knowhere::indexparam::EF] = topk;
+        for (auto it = extra_conf.begin(); it != extra_conf.end(); ++it) {
+            conf[it.key()] = it.value();
+        }
+        if (force_bf) {
+            conf["force_brute_force"] = true;
+        }
+        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type, version).value();
+        REQUIRE(index.Build(train_ds, conf) == knowhere::Status::success);
+        auto res = index.Search(query_ds, conf, nullptr);
+        REQUIRE(res.has_value());
+        return GetKNNRecall(*golden.value(), *res.value());
+    };
+
+    SECTION("flat HNSW: forced brute force is exact") {
+        const float recall_graph =
+            build_and_recall(knowhere::IndexEnum::INDEX_HNSW, knowhere::Json::object(), /*force_bf=*/false);
+        const float recall_forced =
+            build_and_recall(knowhere::IndexEnum::INDEX_HNSW, knowhere::Json::object(), /*force_bf=*/true);
+        INFO("graph recall=" << recall_graph << " forced recall=" << recall_forced);
+
+        // exhaustive exact scan over the flat storage matches the FLAT oracle
+        REQUIRE(recall_forced == 1.0f);
+        // forcing brute force can only help relative to graph traversal
+        REQUIRE(recall_forced >= recall_graph);
+    }
+
+    SECTION("quantized HNSW_SQ: forced brute force scans all codes") {
+        knowhere::Json sq_conf;
+        sq_conf[knowhere::indexparam::SQ_TYPE] = "SQ8";
+        const float recall_forced = build_and_recall(knowhere::IndexEnum::INDEX_HNSW_SQ, sq_conf, /*force_bf=*/true);
+        INFO("forced recall=" << recall_forced);
+
+        // exhaustive scan over the quantized codes stays high-recall vs the
+        // fp32 oracle (SQ8 quantization error is tiny for this data).
+        REQUIRE(recall_forced >= 0.9f);
+    }
+}
