@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <cstdint>
 #include <functional>
 #include <vector>
@@ -29,8 +30,8 @@ struct IndexScorerConfig {
 using DimScorer = std::function<float(uint32_t, float)>;
 
 [[nodiscard]] inline float
-bm25_score_with_document_component(float qval_p1, float tf, float p2, float document_component) noexcept {
-    return qval_p1 * tf / ((tf + p2) + document_component);
+bm25_score_with_doc_norm(float qval_p1, float tf, float p2, float doc_norm) noexcept {
+    return qval_p1 * tf / ((tf + p2) + doc_norm);
 }
 
 /** Index scorer construct scorers for dimensions in the index. */
@@ -127,5 +128,44 @@ struct BM25IndexScorer : public IndexScorer {
     const float p2_;
     const float p3_;
     const std::vector<float>& row_sums_;
+};
+
+class BM25ScoringContext {
+ public:
+    explicit BM25ScoringContext(const std::vector<float>& row_sums, const IndexScorer& scorer) : row_sums_(row_sums) {
+        if (scorer.config().scorer_type == IndexScorerType::BM25) {
+            const auto* bm25_scorer = dynamic_cast<const BM25IndexScorer*>(&scorer);
+            assert(bm25_scorer != nullptr);
+            p1_ = bm25_scorer->p1();
+            p2_ = bm25_scorer->p2();
+            p3_ = bm25_scorer->p3();
+        }
+    }
+
+    [[nodiscard]] float
+    query_component(float query_value) const noexcept {
+        return query_value * p1_;
+    }
+
+    [[nodiscard]] float
+    doc_norm(uint32_t vec_id) const noexcept {
+        return p3_ * row_sums_[vec_id];
+    }
+
+    [[nodiscard]] float
+    score(float qval_p1, float tf, float doc_norm) const noexcept {
+        return bm25_score_with_doc_norm(qval_p1, tf, p2_, doc_norm);
+    }
+
+    void
+    prefetch_document(uint32_t vec_id) const noexcept {
+        __builtin_prefetch(&row_sums_[vec_id], 0, 3);
+    }
+
+ private:
+    const std::vector<float>& row_sums_;
+    float p1_{1.0F};
+    float p2_{0.0F};
+    float p3_{0.0F};
 };
 }  // namespace knowhere::sparse::inverted

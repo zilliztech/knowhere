@@ -78,21 +78,16 @@ class BlockMaxMaxScoreSearcher : public RankedSearcher {
                                       const uint32_t max_vec_id, const BitsetView& bitset, float dim_max_score_ratio)
         : RankedSearcher(k),
           filter_bounds_(GetFilterBounds(bitset, max_vec_id)),
+          bm25_context_(index.get_row_sums(), *search_scorer),
           cursors_([&]() {
               std::sort(query.begin(), query.end(), [&](auto& a, auto& b) {
                   return index.get_dim_max_score(a.first, a.second) > index.get_dim_max_score(b.first, b.second);
               });
-              return make_cursors(index, query, search_scorer, bitset, dim_max_score_ratio, filter_bounds_);
+              return make_cursors(index, query, search_scorer, bm25_context_, bitset, dim_max_score_ratio,
+                                  filter_bounds_);
           }()),
           max_vec_id_(filter_bounds_.upper_bound),
-          row_sums_(index.get_row_sums()),
           scorer_type_(search_scorer->config().scorer_type) {
-        if (scorer_type_ == IndexScorerType::BM25) {
-            const auto* bm25_scorer = dynamic_cast<const BM25IndexScorer*>(search_scorer.get());
-            assert(bm25_scorer != nullptr);
-            bm25_p2_ = bm25_scorer->p2();
-            bm25_p3_ = bm25_scorer->p3();
-        }
     }
 
     void
@@ -130,15 +125,15 @@ class BlockMaxMaxScoreSearcher : public RankedSearcher {
         while (ne_start_cursor_id > 0 && curr_cand_vec_id < max_vec_id_) {
             float score = 0;
             uint32_t next_cand_vec_id = max_vec_id_;
-            float document_component = 0.0F;
+            float doc_norm = 0.0F;
             if constexpr (ScorerType == IndexScorerType::BM25) {
-                document_component = bm25_p3_ * row_sums_[curr_cand_vec_id];
+                doc_norm = bm25_context_.doc_norm(curr_cand_vec_id);
             }
 
             auto score_term = [&](Cursor& cursor) -> float {
                 if constexpr (ScorerType == IndexScorerType::BM25) {
                     const float tf = static_cast<float>(cursor.index_cursor.val());
-                    return bm25_score_with_document_component(cursor.qval_p1, tf, bm25_p2_, document_component);
+                    return bm25_context_.score(cursor.qval_p1, tf, doc_norm);
                 } else {
                     return cursor.score();
                 }
@@ -197,30 +192,23 @@ class BlockMaxMaxScoreSearcher : public RankedSearcher {
 
     static std::vector<Cursor>
     make_cursors(const IndexType& index, const std::vector<std::pair<uint32_t, float>>& query,
-                 const std::shared_ptr<IndexScorer>& index_scorer, const BitsetView& bitset, float dim_max_score_ratio,
-                 const FilterBounds& filter_bounds) {
+                 const std::shared_ptr<IndexScorer>& index_scorer, const BM25ScoringContext& bm25_context,
+                 const BitsetView& bitset, float dim_max_score_ratio, const FilterBounds& filter_bounds) {
         std::vector<Cursor> cursors;
         cursors.reserve(query.size());
-        const BM25IndexScorer* bm25_scorer = nullptr;
-        if (index_scorer->config().scorer_type == IndexScorerType::BM25) {
-            bm25_scorer = dynamic_cast<const BM25IndexScorer*>(index_scorer.get());
-            assert(bm25_scorer != nullptr);
-        }
         for (const auto& [dim_id, dim_val] : query) {
             cursors.push_back(Cursor{
                 GetFilteredPostingListCursor(index, dim_id, bitset, filter_bounds), index_scorer->dim_scorer(dim_val),
                 dim_max_score_ratio * index.get_dim_max_score(dim_id, dim_val), index.get_block_max_data_cursor(dim_id),
-                dim_val, bm25_scorer != nullptr ? dim_val * bm25_scorer->p1() : 0.0F});
+                dim_val, bm25_context.query_component(dim_val)});
         }
         return cursors;
     }
 
     FilterBounds filter_bounds_;
+    BM25ScoringContext bm25_context_;
     std::vector<Cursor> cursors_;
     uint32_t max_vec_id_;
-    const std::vector<float>& row_sums_;
     IndexScorerType scorer_type_;
-    float bm25_p2_{0.0F};
-    float bm25_p3_{0.0F};
 };
 }  // namespace knowhere::sparse::inverted
