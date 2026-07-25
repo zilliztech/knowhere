@@ -15,9 +15,11 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <boost/iterator/iterator_facade.hpp>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <type_traits>
@@ -28,6 +30,133 @@
 #include "knowhere/operands.h"
 
 namespace knowhere::sparse {
+
+// DSP instrumentation (compile with -DKNOWHERE_DSP_INSTRUMENTATION to enable)
+#ifdef KNOWHERE_DSP_INSTRUMENTATION
+struct SeekStats {
+    std::atomic<uint64_t> bucket_0{0};         // delta = 0
+    std::atomic<uint64_t> bucket_1_3{0};       // delta 1-3
+    std::atomic<uint64_t> bucket_4_15{0};      // delta 4-15
+    std::atomic<uint64_t> bucket_16_63{0};     // delta 16-63
+    std::atomic<uint64_t> bucket_64_255{0};    // delta 64-255
+    std::atomic<uint64_t> bucket_256_plus{0};  // delta 256+
+    std::atomic<uint64_t> seek_hits{0};        // seek found target doc_id
+    std::atomic<uint64_t> seek_misses{0};      // seek did NOT find target doc_id
+
+    void
+    record(size_t delta) {
+        if (delta == 0)
+            bucket_0++;
+        else if (delta <= 3)
+            bucket_1_3++;
+        else if (delta <= 15)
+            bucket_4_15++;
+        else if (delta <= 63)
+            bucket_16_63++;
+        else if (delta <= 255)
+            bucket_64_255++;
+        else
+            bucket_256_plus++;
+    }
+
+    void
+    record_hit() {
+        seek_hits++;
+    }
+    void
+    record_miss() {
+        seek_misses++;
+    }
+
+    void
+    print(const char* label = nullptr) const {
+        if (label)
+            printf("\n[Seek Stats: %s]\n", label);
+        else
+            printf("\n[Seek Distance Distribution]\n");
+        uint64_t total = bucket_0 + bucket_1_3 + bucket_4_15 + bucket_16_63 + bucket_64_255 + bucket_256_plus;
+        printf("  delta=0:      %lu (%.1f%%)\n", bucket_0.load(), total ? 100.0 * bucket_0 / total : 0);
+        printf("  delta 1-3:    %lu (%.1f%%)\n", bucket_1_3.load(), total ? 100.0 * bucket_1_3 / total : 0);
+        printf("  delta 4-15:   %lu (%.1f%%)\n", bucket_4_15.load(), total ? 100.0 * bucket_4_15 / total : 0);
+        printf("  delta 16-63:  %lu (%.1f%%)\n", bucket_16_63.load(), total ? 100.0 * bucket_16_63 / total : 0);
+        printf("  delta 64-255: %lu (%.1f%%)\n", bucket_64_255.load(), total ? 100.0 * bucket_64_255 / total : 0);
+        printf("  delta 256+:   %lu (%.1f%%)\n", bucket_256_plus.load(), total ? 100.0 * bucket_256_plus / total : 0);
+        printf("  total seeks:  %lu\n", total);
+        uint64_t h = seek_hits.load(), m = seek_misses.load();
+        uint64_t hm = h + m;
+        printf("  seek hits:    %lu (%.1f%%)\n", h, hm ? 100.0 * h / hm : 0);
+        printf("  seek misses:  %lu (%.1f%%)\n", m, hm ? 100.0 * m / hm : 0);
+    }
+
+    void
+    reset() {
+        bucket_0.store(0, std::memory_order_relaxed);
+        bucket_1_3.store(0, std::memory_order_relaxed);
+        bucket_4_15.store(0, std::memory_order_relaxed);
+        bucket_16_63.store(0, std::memory_order_relaxed);
+        bucket_64_255.store(0, std::memory_order_relaxed);
+        bucket_256_plus.store(0, std::memory_order_relaxed);
+        seek_hits.store(0, std::memory_order_relaxed);
+        seek_misses.store(0, std::memory_order_relaxed);
+    }
+};
+
+inline SeekStats g_seek_stats;
+
+struct DspStats {
+    std::atomic<uint64_t> total_superblocks{0};      // total superblocks considered
+    std::atomic<uint64_t> surviving_superblocks{0};  // superblocks surviving coarse pruning
+    std::atomic<uint64_t> candidate_blocks{0};       // subblocks passing the initial UB threshold
+    std::atomic<uint64_t> blocks_processed{0};       // candidate subblocks actually scored
+    std::atomic<uint64_t> saturated_ubs{0};          // surviving subblock UBs saturated at uint16 max
+    std::atomic<uint64_t> entries_scored{0};         // posting list entries iterated
+    std::atomic<uint64_t> docs_pushed{0};            // docs pushed to heap
+    std::atomic<uint64_t> queries{0};                // number of queries
+    std::atomic<uint64_t> workspace_pool_misses{0};  // searches that allocate because the per-index pool is empty
+
+    void
+    print(const char* label = nullptr) const {
+        if (label)
+            printf("\n[DSP Block Stats: %s]\n", label);
+        else
+            printf("\n[DSP Block Stats]\n");
+        uint64_t q = queries.load();
+        uint64_t total_spb = total_superblocks.load();
+        uint64_t surviving_spb = surviving_superblocks.load();
+        uint64_t candidates = candidate_blocks.load();
+        uint64_t processed = blocks_processed.load();
+        printf("  queries:              %lu\n", q);
+        printf("  superblocks total:    %lu (avg %.1f/q)\n", total_spb, q ? (double)total_spb / q : 0);
+        printf("  superblocks surviving:%lu (avg %.1f/q, %.1f%%)\n", surviving_spb, q ? (double)surviving_spb / q : 0,
+               total_spb ? 100.0 * surviving_spb / total_spb : 0);
+        printf("  candidate blocks:     %lu (avg %.1f/q)\n", candidates, q ? (double)candidates / q : 0);
+        printf("  blocks processed:     %lu (avg %.1f/q, %.1f%% of candidates)\n", processed,
+               q ? (double)processed / q : 0, candidates ? 100.0 * processed / candidates : 0);
+        printf("  saturated UBs:        %lu (avg %.1f/q)\n", saturated_ubs.load(), q ? (double)saturated_ubs / q : 0);
+        printf("  entries scored:       %lu (avg %.1f/q)\n", entries_scored.load(), q ? (double)entries_scored / q : 0);
+        printf("  docs pushed:          %lu (avg %.1f/q)\n", docs_pushed.load(), q ? (double)docs_pushed / q : 0);
+        printf("  workspace pool misses:%lu\n", workspace_pool_misses.load());
+        if (processed > 0) {
+            printf("  entries/block:        %.1f\n", (double)entries_scored / processed);
+        }
+    }
+
+    void
+    reset() {
+        total_superblocks.store(0, std::memory_order_relaxed);
+        surviving_superblocks.store(0, std::memory_order_relaxed);
+        candidate_blocks.store(0, std::memory_order_relaxed);
+        blocks_processed.store(0, std::memory_order_relaxed);
+        saturated_ubs.store(0, std::memory_order_relaxed);
+        entries_scored.store(0, std::memory_order_relaxed);
+        docs_pushed.store(0, std::memory_order_relaxed);
+        queries.store(0, std::memory_order_relaxed);
+        workspace_pool_misses.store(0, std::memory_order_relaxed);
+    }
+};
+
+inline DspStats g_dsp_stats;
+#endif
 
 enum class SparseMetricType {
     METRIC_IP = 1,

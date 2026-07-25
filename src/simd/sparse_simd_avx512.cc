@@ -14,11 +14,73 @@
 
 #include <immintrin.h>
 
+#include <algorithm>
 #include <cassert>
+#include <limits>
 
 #include "sparse_simd.h"
 
 namespace knowhere::sparse {
+
+uint32_t
+find_terms_hybrid_avx512(const uint32_t* terms, uint32_t count, const uint32_t* query_dims, uint32_t query_count,
+                         uint32_t* positions) {
+    const uint32_t full_chunks = count / 16;
+    uint32_t chunk_cursor = 0;
+    uint32_t tail_cursor = full_chunks * 16;
+    uint32_t probes = 0;
+    for (uint32_t qi = 0; qi < query_count; ++qi) {
+        const uint32_t target = query_dims[qi];
+        positions[qi] = std::numeric_limits<uint32_t>::max();
+
+        if (chunk_cursor < full_chunks) {
+            ++probes;
+            if (terms[chunk_cursor * 16 + 15] < target) {
+                const uint32_t base = chunk_cursor;
+                uint32_t step = 1;
+                while (base + step < full_chunks) {
+                    ++probes;
+                    if (terms[(base + step) * 16 + 15] >= target) {
+                        break;
+                    }
+                    step <<= 1;
+                }
+                uint32_t lo = base + (step >> 1) + 1;
+                uint32_t hi = std::min<uint64_t>(full_chunks, uint64_t(base) + step + 1);
+                const uint32_t* first = std::lower_bound(terms + lo * 16, terms + hi * 16, target,
+                                                         [&probes](uint32_t term, uint32_t needle) {
+                                                             ++probes;
+                                                             return term < needle;
+                                                         });
+                chunk_cursor = static_cast<uint32_t>(first - terms) / 16;
+            }
+        }
+
+        if (chunk_cursor < full_chunks) {
+            ++probes;
+            const uint32_t base = chunk_cursor * 16;
+            const __m512i values = _mm512_loadu_si512(reinterpret_cast<const void*>(terms + base));
+            const __m512i needle = _mm512_set1_epi32(static_cast<int>(target));
+            const __mmask16 matches = _mm512_cmpeq_epi32_mask(values, needle);
+            if (matches != 0) {
+                positions[qi] = base + static_cast<uint32_t>(__builtin_ctz(matches));
+            }
+            continue;
+        }
+
+        while (tail_cursor < count && terms[tail_cursor] < target) {
+            ++tail_cursor;
+            ++probes;
+        }
+        if (tail_cursor < count) {
+            ++probes;
+            if (terms[tail_cursor] == target) {
+                positions[qi] = tail_cursor;
+            }
+        }
+    }
+    return probes;
+}
 
 // ============================================================================
 // AVX512 BW: Block UB Threshold Scan — Stride-Specific Specializations
@@ -196,6 +258,33 @@ accumulate_block_ub_avx512(uint16_t* ub, const uint8_t* block_max, uint16_t quer
         return;
     }
     accumulate_block_ub_avx512_generic(ub, block_max, query_weight, n);
+}
+
+void
+accumulate_dense_block_ubs_avx512(uint16_t* block_ub, uint64_t* spb_candidate_mask, uint16_t threshold,
+                                  const uint8_t* const* block_max_rows, const uint16_t* query_weights, uint32_t n_terms,
+                                  const uint32_t* superblock_ids, uint32_t n_superblocks, uint32_t stride) {
+    assert(stride == 64 && "accumulate_dense_block_ubs_avx512 expects 64 subblocks per superblock");
+    const __m512i threshold_vec = _mm512_set1_epi16(static_cast<int16_t>(threshold));
+    for (uint32_t spb_index = 0; spb_index < n_superblocks; ++spb_index) {
+        const uint32_t offset = superblock_ids[spb_index] * stride;
+        __m512i accum0 = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(block_ub + offset));
+        __m512i accum1 = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(block_ub + offset + 32));
+        for (uint32_t term = 0; term < n_terms; ++term) {
+            const uint8_t* block_max = block_max_rows[term] + offset;
+            const __m512i query_weight = _mm512_set1_epi16(static_cast<int16_t>(query_weights[term]));
+            const __m256i max0 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(block_max));
+            const __m256i max1 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(block_max + 32));
+            accum0 = _mm512_adds_epu16(accum0, _mm512_mullo_epi16(_mm512_cvtepu8_epi16(max0), query_weight));
+            accum1 = _mm512_adds_epu16(accum1, _mm512_mullo_epi16(_mm512_cvtepu8_epi16(max1), query_weight));
+        }
+        _mm512_storeu_si512(reinterpret_cast<__m512i*>(block_ub + offset), accum0);
+        _mm512_storeu_si512(reinterpret_cast<__m512i*>(block_ub + offset + 32), accum1);
+        const __mmask32 above0 = _mm512_cmp_epu16_mask(accum0, threshold_vec, _MM_CMPINT_GT);
+        const __mmask32 above1 = _mm512_cmp_epu16_mask(accum1, threshold_vec, _MM_CMPINT_GT);
+        spb_candidate_mask[superblock_ids[spb_index]] =
+            static_cast<uint64_t>(above0) | (static_cast<uint64_t>(above1) << 32);
+    }
 }
 
 }  // namespace knowhere::sparse

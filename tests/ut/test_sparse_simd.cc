@@ -9,6 +9,8 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <limits>
+#include <numeric>
 #include <random>
 #include <set>
 #include <vector>
@@ -52,6 +54,64 @@ accumulate_posting_list_ip_scalar_ref(const uint32_t* doc_ids, const float* doc_
     for (size_t i = 0; i < list_size; ++i) {
         scores[doc_ids[i]] += q_weight * doc_vals[i];
     }
+}
+
+static std::vector<uint32_t>
+membership_reference(const std::vector<uint32_t>& terms, const std::vector<uint32_t>& query) {
+    std::vector<uint32_t> positions(query.size(), std::numeric_limits<uint32_t>::max());
+    for (size_t i = 0; i < query.size(); ++i) {
+        const auto it = std::lower_bound(terms.begin(), terms.end(), query[i]);
+        if (it != terms.end() && *it == query[i]) {
+            positions[i] = static_cast<uint32_t>(it - terms.begin());
+        }
+    }
+    return positions;
+}
+
+TEST_CASE("DSP hybrid SIMD membership matches scalar", "[sparse simd avx512][dsp]") {
+#if defined(__x86_64__) || defined(_M_X64)
+    if (!faiss::cppcontrib::knowhere::InstructionSet::GetInstance().AVX512BW()) {
+        SKIP("AVX512BW not available on this CPU");
+    }
+
+    auto check = [](const std::vector<uint32_t>& terms, const std::vector<uint32_t>& query) {
+        const auto expected = membership_reference(terms, query);
+        std::vector<uint32_t> actual(query.size());
+        find_terms_hybrid_avx512(terms.data(), static_cast<uint32_t>(terms.size()), query.data(),
+                                 static_cast<uint32_t>(query.size()), actual.data());
+        REQUIRE(actual == expected);
+    };
+
+    SECTION("edge cases") {
+        check({}, {});
+        check({}, {1, 2, 3});
+
+        std::vector<uint32_t> terms(80);
+        std::iota(terms.begin(), terms.end(), 100);
+        check(terms, terms);                 // all match
+        check(terms, {164, 165, 178, 179});  // all hits live in the final partial chunk
+
+        terms[15] = 115;
+        terms[16] = 115;  // duplicate spanning a chunk boundary
+        check(terms, {114, 115, 115, 116});
+    }
+
+    SECTION("randomized sorted intersections") {
+        std::mt19937 rng(20260720);
+        for (int iteration = 0; iteration < 500; ++iteration) {
+            const uint32_t term_count = 64 + rng() % 512;
+            const uint32_t query_count = rng() % 17;
+            std::set<uint32_t> term_set;
+            while (term_set.size() < term_count) term_set.insert(rng() % 100000);
+            std::set<uint32_t> query_set;
+            while (query_set.size() < query_count) query_set.insert(rng() % 100000);
+            check(std::vector<uint32_t>(term_set.begin(), term_set.end()),
+                  std::vector<uint32_t>(query_set.begin(), query_set.end()));
+        }
+    }
+#else
+    SKIP("Test only runs on x86_64 platforms");
+#endif
 }
 
 TEST_CASE("Test Sparse SIMD AVX512 - Basic Correctness", "[sparse simd avx512]") {
@@ -272,6 +332,64 @@ TEST_CASE("Test Sparse SIMD AVX512 - Special Values", "[sparse simd avx512]") {
                 continue;
             }
             REQUIRE_THAT(avx512_scores[i], Catch::Matchers::WithinRel(ref_scores[i], tolerance));
+        }
+    }
+#else
+    SKIP("Test only runs on x86_64 platforms");
+#endif
+}
+
+TEST_CASE("Test DSP Superblock-Major UB Accumulation", "[sparse simd avx512][dsp]") {
+#if defined(__x86_64__) || defined(_M_X64)
+    if (!faiss::cppcontrib::knowhere::InstructionSet::GetInstance().AVX512BW()) {
+        SKIP("AVX512BW not available on this CPU");
+    }
+
+    constexpr uint32_t stride = 64;
+    constexpr uint32_t n_superblocks = 3;
+    constexpr uint32_t n_terms = 7;
+    const std::vector<uint32_t> surviving_superblocks = {0, 2};
+
+    std::mt19937 generator(24680);
+    std::uniform_int_distribution<uint32_t> max_distribution(0, 255);
+    std::uniform_int_distribution<uint32_t> weight_distribution(1, 255);
+    std::vector<std::vector<uint8_t>> rows(n_terms, std::vector<uint8_t>(stride * n_superblocks));
+    std::vector<const uint8_t*> row_pointers;
+    std::vector<uint16_t> weights(n_terms);
+    for (uint32_t term = 0; term < n_terms; ++term) {
+        for (auto& value : rows[term]) {
+            value = static_cast<uint8_t>(max_distribution(generator));
+        }
+        row_pointers.push_back(rows[term].data());
+        weights[term] = static_cast<uint16_t>(weight_distribution(generator));
+    }
+
+    for (const uint16_t threshold : {uint16_t{0}, uint16_t{1234}, uint16_t{30000}, uint16_t{65534}, uint16_t{65535}}) {
+        CAPTURE(threshold);
+        std::vector<uint16_t> expected(stride * n_superblocks, 1234);
+        std::vector<uint16_t> actual = expected;
+        std::vector<uint64_t> expected_masks(n_superblocks, 0xdeadbeef);
+        std::vector<uint64_t> actual_masks = expected_masks;
+        accumulate_dense_block_ubs_scalar(expected.data(), expected_masks.data(), threshold, row_pointers.data(),
+                                          weights.data(), n_terms, surviving_superblocks.data(),
+                                          surviving_superblocks.size(), stride);
+        accumulate_dense_block_ubs_avx512(actual.data(), actual_masks.data(), threshold, row_pointers.data(),
+                                          weights.data(), n_terms, surviving_superblocks.data(),
+                                          surviving_superblocks.size(), stride);
+
+        REQUIRE(actual == expected);
+        REQUIRE(actual_masks == expected_masks);
+        for (uint32_t spb : surviving_superblocks) {
+            const auto stripe_begin = expected.begin() + spb * stride;
+            uint64_t expected_mask = 0;
+            for (uint32_t lane = 0; lane < stride; ++lane) {
+                expected_mask |= static_cast<uint64_t>(stripe_begin[lane] > threshold) << lane;
+            }
+            REQUIRE(expected_masks[spb] == expected_mask);
+        }
+        REQUIRE(actual_masks[1] == 0xdeadbeef);
+        for (uint32_t lane = stride; lane < 2 * stride; ++lane) {
+            REQUIRE(actual[lane] == 1234);
         }
     }
 #else

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <boost/intrusive/pack_options.hpp>
 #include <cctype>
+#include <cmath>
 #include <exception>
 #include <optional>
 
@@ -43,6 +44,20 @@
 #include "knowhere/utils.h"
 
 namespace knowhere {
+
+template <typename T>
+bool
+HasInvalidDspValues(const sparse::SparseRow<T>* rows, size_t row_count) {
+    for (size_t row = 0; row < row_count; ++row) {
+        for (size_t entry = 0; entry < rows[row].size(); ++entry) {
+            const T value = rows[row][entry].val;
+            if (!std::isfinite(value) || value < T{0}) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 
 // Peek at the encoding_type stored in serialized index data without fully parsing.
 // Returns nullopt if the data is too small or the first section is not POSTING_LISTS.
@@ -1083,14 +1098,19 @@ class SparseDspIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "Could not add data to empty " << Type();
             return Status::empty_index;
         }
+        const auto* rows = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
+        if (HasInvalidDspValues(rows, dataset->GetRows())) {
+            LOG_KNOWHERE_ERROR_ << Type() << " requires finite, non-negative sparse values";
+            return Status::invalid_args;
+        }
+        if (use_knowhere_build_pool) {
+            // DSP partitions its own forward-index build on the global pool. Do not occupy a worker while waiting for
+            // nested work from that same pool.
+            return index_->Add(rows, dataset->GetRows(), dataset->GetDim());
+        }
         auto build_pool_wrapper = std::make_shared<ThreadPoolWrapper>(build_pool_, use_knowhere_build_pool);
         auto tryObj =
-            build_pool_wrapper
-                ->push([&] {
-                    return index_->Add(static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor()),
-                                       dataset->GetRows(), dataset->GetDim());
-                })
-                .getTry();
+            build_pool_wrapper->push([&] { return index_->Add(rows, dataset->GetRows(), dataset->GetDim()); }).getTry();
         if (!tryObj.hasValue()) {
             LOG_KNOWHERE_WARNING_ << "failed to add data to index " << Type() << ": " << tryObj.exception().what();
             return Status::sparse_inner_error;
@@ -1115,6 +1135,10 @@ class SparseDspIndexNode : public IndexNode {
 
         auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
         auto nq = dataset->GetRows();
+        if (HasInvalidDspValues(queries, nq)) {
+            return expected<DataSetPtr>::Err(Status::invalid_args,
+                                             "DSP requires finite, non-negative sparse query values");
+        }
         auto k = cfg.k.value();
         auto p_id = std::make_unique<sparse::label_t[]>(nq * k);
         auto p_dist = std::make_unique<float[]>(nq * k);
@@ -1370,7 +1394,7 @@ class SparseDspIndexNodeCC : public SparseDspIndexNode<T> {
         auto res = SparseDspIndexNode<T>::Add(dataset, config, use_knowhere_build_pool);
 
         auto cfg = static_cast<const SparseDspConfig&>(*config);
-        if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
+        if (res == Status::success && IsMetricType(cfg.metric_type.value(), metric::IP)) {
             auto data = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
             auto rows = dataset->GetRows();
             raw_data_.insert(raw_data_.end(), data, data + rows);

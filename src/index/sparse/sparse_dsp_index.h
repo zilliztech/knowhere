@@ -22,8 +22,10 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <numeric>
 #include <queue>
 #include <unordered_map>
@@ -32,6 +34,7 @@
 #include "io/memory_io.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/comp/index_param.h"
+#include "knowhere/comp/task.h"
 #include "knowhere/config.h"
 #include "knowhere/expected.h"
 #include "knowhere/heap.h"
@@ -44,6 +47,8 @@
 
 namespace knowhere::sparse {
 
+// Keep score-only admission semantics here: equal-to-threshold scores do not enter the heap. Faiss CMin heaps also
+// compare IDs on score ties, which would change DSP's established tie selection and bit-exact search results.
 using DspHeap = knowhere::ResultMinHeap<float, label_t>;
 
 // Section types for DSP index serialization format
@@ -129,6 +134,9 @@ class DspIndexBase {
 // - Counting sort (bucket sort) for block ordering by upper bound
 // - Forward index with two-pointer merge scoring
 // - Two-level hierarchy: superblocks for coarse pruning, subblocks for scoring
+//
+// The upper-bound construction assumes every corpus and query value is finite and non-negative. The index node
+// validates this precondition at both build and search time; silently clamping invalid values would break rank safety.
 template <typename DType, typename QType, bool mmapped = false>
 class DspIndex : public DspIndexBase<DType> {
  public:
@@ -231,25 +239,86 @@ class DspIndex : public DspIndexBase<DType> {
         if constexpr (mmapped) {
             throw std::invalid_argument("mmapped DspIndex does not support Add");
         } else {
-            auto current_rows = n_rows_internal_;
-            if ((size_t)dim > max_dim_) {
-                max_dim_ = dim;
+            if (n_rows_internal_ != 0 || rows > std::numeric_limits<uint32_t>::max()) {
+                return Status::invalid_args;
             }
-
-            if (metric_type_ == SparseMetricType::METRIC_BM25) {
-                bm25_params_->row_sums.reserve(current_rows + rows);
+            n_rows_internal_ = rows;
+            max_dim_ = std::max(max_dim_, static_cast<size_t>(dim));
+            const bool is_bm25 = metric_type_ == SparseMetricType::METRIC_BM25;
+            std::vector<uint64_t> dim_counts;
+            uint64_t total_entries = 0;
+            if (is_bm25) {
+                bm25_params_->row_sums.clear();
+                bm25_params_->row_sums.reserve(rows);
             }
-            for (size_t i = 0; i < rows; ++i) {
-                add_row_to_index(data[i], current_rows + i);
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+            build_stats_.dataset_nnz_stats_.clear();
+            build_stats_.dataset_nnz_stats_.reserve(rows);
+#endif
+            for (uint32_t doc_id = 0; doc_id < rows; ++doc_id) {
+                float row_sum = 0.0f;
+                if (is_bm25) {
+                    for (size_t j = 0; j < data[doc_id].size(); ++j) {
+                        row_sum += data[doc_id][j].val;
+                    }
+                    bm25_params_->row_sums.push_back(row_sum);
+                }
+#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
+                build_stats_.dataset_nnz_stats_.push_back(data[doc_id].size());
+#endif
+                for (size_t j = 0; j < data[doc_id].size(); ++j) {
+                    const auto [raw_dim, val] = data[doc_id][j];
+                    if (val == 0)
+                        continue;
+                    auto [it, inserted] = dim_map_.try_emplace(raw_dim, next_dim_id_);
+                    if (inserted) {
+                        ++next_dim_id_;
+                        dim_counts.push_back(0);
+                        max_score_in_dim_.emplace_back(0.0f);
+                    }
+                    const uint32_t inner_dim = it->second;
+                    ++dim_counts[inner_dim];
+                    ++total_entries;
+                    const QType quantized = get_quant_val(val);
+                    const float score =
+                        is_bm25 ? bm25_params_->max_score_computer(quantized, row_sum) : static_cast<float>(quantized);
+                    max_score_in_dim_[inner_dim] = std::max(max_score_in_dim_[inner_dim], score);
+                }
             }
-            n_rows_internal_ += rows;
-
-            nr_inner_dims_ = dim_map_.size();
+            if (total_entries > std::numeric_limits<uint32_t>::max()) {
+                return Status::invalid_args;
+            }
+            nr_inner_dims_ = next_dim_id_;
+            inverted_index_ids_.resize(nr_inner_dims_);
+            inverted_index_vals_.resize(nr_inner_dims_);
+            for (uint32_t d = 0; d < nr_inner_dims_; ++d) {
+                inverted_index_ids_[d].resize(dim_counts[d]);
+                inverted_index_vals_[d].resize(dim_counts[d]);
+            }
+            std::vector<uint64_t> write_pos(nr_inner_dims_, 0);
+            std::vector<uint32_t> dim_spb_counts(nr_inner_dims_, 0);
+            std::vector<uint32_t> last_spb(nr_inner_dims_, std::numeric_limits<uint32_t>::max());
+            for (uint32_t doc_id = 0; doc_id < rows; ++doc_id) {
+                for (size_t j = 0; j < data[doc_id].size(); ++j) {
+                    const auto [raw_dim, val] = data[doc_id][j];
+                    if (val == 0)
+                        continue;
+                    const uint32_t inner_dim = dim_map_.at(raw_dim);
+                    const uint64_t pos = write_pos[inner_dim]++;
+                    inverted_index_ids_[inner_dim][pos] = doc_id;
+                    inverted_index_vals_[inner_dim][pos] = get_quant_val(val);
+                    const uint32_t spb = doc_id / kSuperblockSize;
+                    if (last_spb[inner_dim] != spb) {
+                        last_spb[inner_dim] = spb;
+                        ++dim_spb_counts[inner_dim];
+                    }
+                }
+            }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
             build_stats_.posting_list_length_stats_.resize(nr_inner_dims_);
             for (size_t i = 0; i < nr_inner_dims_; ++i) {
-                build_stats_.posting_list_length_stats_[i] = inverted_index_ids_[i].size();
+                build_stats_.posting_list_length_stats_[i] = dim_counts[i];
             }
 #endif
 
@@ -272,7 +341,7 @@ class DspIndex : public DspIndexBase<DType> {
                     boost::span<const float>(bm25_params_->row_sums.data(), bm25_params_->row_sums.size());
             }
 
-            build_dsp_metadata();
+            build_dsp_metadata(data, rows, &dim_spb_counts);
             return Status::success;
         }
     }
@@ -630,17 +699,20 @@ class DspIndex : public DspIndexBase<DType> {
             return;
         }
 
-        const size_t heap_capacity = k * approx_params.refine_factor;
+        if (approx_params.refine_factor > 1) {
+            static std::once_flag refine_warning_once;
+            std::call_once(refine_warning_once, []() {
+                LOG_KNOWHERE_WARNING_ << "DSP ignores refine_factor because its full-precision forward index already "
+                                         "performs exact scoring and build does not retain posting lists";
+            });
+        }
+        const size_t heap_capacity = k;
         DspHeap heap(heap_capacity);
         search_dsp(q_vec, heap, heap_capacity, bitset, computer, approx_params.dsp_mode, approx_params.dsp_mu,
                    approx_params.dsp_eta, approx_params.dsp_gamma, approx_params.dsp_kth_init,
                    approx_params.dsp_kth_alpha);
 
-        if (approx_params.refine_factor == 1) {
-            collect_result(heap, distances, labels);
-        } else {
-            refine_and_collect(query, heap, k, distances, labels, computer);
-        }
+        collect_result(heap, distances, labels);
     }
 
     std::vector<float>
@@ -1004,16 +1076,188 @@ class DspIndex : public DspIndexBase<DType> {
     uint32_t n_sb_padded_ = 0;
     bool dsp_loaded_ = false;
 
+    struct SearchWorkspace {
+        std::vector<float> superblock_ub;
+        std::vector<float> superblock_asc;
+        std::vector<uint32_t> surviving_spb;
+        std::vector<uint8_t> spb_alive;
+        std::vector<uint16_t> block_ub;
+        std::vector<uint64_t> spb_candidate_mask;
+        std::vector<uint8_t> spb_in_batch;
+    };
+
+    // Roughly 5MB/workspace at 10M documents; the production cap of 32 bounds retained scratch near 160MB/index.
+    mutable std::once_flag search_workspace_pool_once_;
+    mutable size_t max_cached_search_workspaces_ = 2;
+    mutable std::mutex search_workspace_mutex_;
+    mutable std::vector<std::unique_ptr<SearchWorkspace>> cached_search_workspaces_;
+
+    struct SearchWorkspaceDeleter {
+        const DspIndex* index;
+        void
+        operator()(SearchWorkspace* workspace) const {
+            index->release_search_workspace(workspace);
+        }
+    };
+    using SearchWorkspacePtr = std::unique_ptr<SearchWorkspace, SearchWorkspaceDeleter>;
+
+    void
+    initialize_search_workspace_pool() const {
+        std::call_once(search_workspace_pool_once_, [this]() {
+            max_cached_search_workspaces_ = std::clamp<size_t>(GetSearchThreadPoolSize(), 2, 32);
+            std::lock_guard<std::mutex> lock(search_workspace_mutex_);
+            cached_search_workspaces_.reserve(max_cached_search_workspaces_);
+        });
+    }
+
+    SearchWorkspacePtr
+    acquire_search_workspace() const {
+        initialize_search_workspace_pool();
+        {
+            std::lock_guard<std::mutex> lock(search_workspace_mutex_);
+            if (!cached_search_workspaces_.empty()) {
+                auto workspace = std::move(cached_search_workspaces_.back());
+                cached_search_workspaces_.pop_back();
+                return SearchWorkspacePtr(workspace.release(), SearchWorkspaceDeleter{this});
+            }
+        }
+#ifdef KNOWHERE_DSP_INSTRUMENTATION
+        g_dsp_stats.workspace_pool_misses++;
+#endif
+        return SearchWorkspacePtr(new SearchWorkspace(), SearchWorkspaceDeleter{this});
+    }
+
+    void
+    release_search_workspace(SearchWorkspace* workspace) const {
+        std::unique_ptr<SearchWorkspace> owned(workspace);
+        std::lock_guard<std::mutex> lock(search_workspace_mutex_);
+        if (cached_search_workspaces_.size() < max_cached_search_workspaces_)
+            cached_search_workspaces_.push_back(std::move(owned));
+    }
+
     static constexpr float kDenseThreshold = 0.125f;
 
     static constexpr uint32_t kNumSegments = 8;
     static constexpr uint32_t kSegmentSize = kSuperblockSize / kNumSegments;
 
+    template <typename Function>
+    static void
+    run_build_ranges(uint32_t count, uint32_t min_grain, Function&& function) {
+        if (count == 0)
+            return;
+        const size_t pool_size = GetBuildThreadPoolSize();
+        const uint32_t task_count =
+            static_cast<uint32_t>(std::min<size_t>(pool_size, (count + min_grain - 1) / min_grain));
+        if (task_count <= 1) {
+            function(0, count);
+            return;
+        }
+        std::vector<std::function<void()>> tasks;
+        tasks.reserve(task_count);
+        for (uint32_t task = 0; task < task_count; ++task) {
+            const uint32_t begin = static_cast<uint32_t>(static_cast<uint64_t>(count) * task / task_count);
+            const uint32_t end = static_cast<uint32_t>(static_cast<uint64_t>(count) * (task + 1) / task_count);
+            tasks.emplace_back([begin, end, &function]() { function(begin, end); });
+        }
+        ExecOverBuildThreadPool(tasks);
+    }
+
+    Status
+    build_forward_index_from_rows(const SparseRow<DType>* data, size_t rows, uint32_t total_entries) {
+        struct BlockEntry {
+            uint32_t inner_dim;
+            uint8_t doc_offset;
+            float score;
+        };
+        std::vector<uint32_t> block_term_counts(n_subblocks_);
+        std::vector<uint32_t> block_entry_counts(n_subblocks_);
+        auto count_blocks = [&](uint32_t begin, uint32_t end) {
+            std::vector<uint32_t> block_dims;
+            block_dims.reserve(1024);
+            for (uint32_t sb = begin; sb < end; ++sb) {
+                block_dims.clear();
+                const uint32_t doc_start = sb * kSubblockSize;
+                const uint32_t doc_end = std::min(doc_start + kSubblockSize, static_cast<uint32_t>(rows));
+                for (uint32_t doc_id = doc_start; doc_id < doc_end; ++doc_id) {
+                    for (size_t j = 0; j < data[doc_id].size(); ++j) {
+                        const auto [raw_dim, val] = data[doc_id][j];
+                        if (val != 0)
+                            block_dims.push_back(dim_map_.at(raw_dim));
+                    }
+                }
+                block_entry_counts[sb] = block_dims.size();
+                std::sort(block_dims.begin(), block_dims.end());
+                block_term_counts[sb] = std::unique(block_dims.begin(), block_dims.end()) - block_dims.begin();
+            }
+        };
+        run_build_ranges(n_subblocks_, 1024, count_blocks);
+
+        uint64_t total_terms = 0;
+        uint64_t counted_entries = 0;
+        fwd_block_term_offsets_.resize(n_subblocks_ + 1);
+        std::vector<uint32_t> block_entry_offsets(n_subblocks_ + 1);
+        for (uint32_t sb = 0; sb < n_subblocks_; ++sb) {
+            fwd_block_term_offsets_[sb] = total_terms;
+            block_entry_offsets[sb] = counted_entries;
+            total_terms += block_term_counts[sb];
+            counted_entries += block_entry_counts[sb];
+        }
+        if (total_terms > std::numeric_limits<uint32_t>::max() || counted_entries != total_entries)
+            return Status::invalid_args;
+        fwd_block_term_offsets_[n_subblocks_] = total_terms;
+        block_entry_offsets[n_subblocks_] = counted_entries;
+        fwd_term_ids_.resize(total_terms);
+        fwd_term_entry_offsets_.resize(total_terms + 1);
+        fwd_doc_offsets_.resize(total_entries);
+        fwd_scores_.resize(total_entries);
+        const bool is_bm25 = metric_type_ == SparseMetricType::METRIC_BM25;
+        auto fill_blocks = [&](uint32_t begin, uint32_t end) {
+            std::vector<BlockEntry> block_entries;
+            block_entries.reserve(1024);
+            for (uint32_t sb = begin; sb < end; ++sb) {
+                block_entries.clear();
+                const uint32_t doc_start = sb * kSubblockSize;
+                const uint32_t doc_end = std::min(doc_start + kSubblockSize, static_cast<uint32_t>(rows));
+                for (uint32_t doc_id = doc_start; doc_id < doc_end; ++doc_id) {
+                    const uint8_t doc_offset = static_cast<uint8_t>(doc_id - doc_start);
+                    const float row_sum = is_bm25 ? bm25_params_->row_sums[doc_id] : 0.0f;
+                    for (size_t j = 0; j < data[doc_id].size(); ++j) {
+                        const auto [raw_dim, val] = data[doc_id][j];
+                        if (val == 0)
+                            continue;
+                        const QType quantized = get_quant_val(val);
+                        const float score = is_bm25 ? bm25_params_->max_score_computer(quantized, row_sum)
+                                                    : static_cast<float>(quantized);
+                        block_entries.push_back({dim_map_.at(raw_dim), doc_offset, score});
+                    }
+                }
+                std::sort(block_entries.begin(), block_entries.end(), [](const auto& lhs, const auto& rhs) {
+                    return lhs.inner_dim < rhs.inner_dim ||
+                           (lhs.inner_dim == rhs.inner_dim && lhs.doc_offset < rhs.doc_offset);
+                });
+                uint32_t term_pos = fwd_block_term_offsets_[sb];
+                uint32_t entry_pos = block_entry_offsets[sb];
+                for (size_t i = 0; i < block_entries.size(); ++i) {
+                    if (i == 0 || block_entries[i].inner_dim != block_entries[i - 1].inner_dim) {
+                        fwd_term_ids_[term_pos] = block_entries[i].inner_dim;
+                        fwd_term_entry_offsets_[term_pos++] = entry_pos;
+                    }
+                    fwd_doc_offsets_[entry_pos] = block_entries[i].doc_offset;
+                    fwd_scores_[entry_pos++] = block_entries[i].score;
+                }
+            }
+        };
+        run_build_ranges(n_subblocks_, 1024, fill_blocks);
+        fwd_term_entry_offsets_[total_terms] = total_entries;
+        return Status::success;
+    }
+
     // ========================================================================
     // Build DSP metadata from inverted index
     // ========================================================================
     void
-    build_dsp_metadata() {
+    build_dsp_metadata(const SparseRow<DType>* source_rows = nullptr, size_t source_row_count = 0,
+                       const std::vector<uint32_t>* precomputed_spb_counts = nullptr) {
         if (n_rows_internal_ == 0 || nr_inner_dims_ == 0) {
             return;
         }
@@ -1030,26 +1274,56 @@ class DspIndex : public DspIndexBase<DType> {
             uint32_t inner_dim = 0;
             float score = 0.0f;
         };
-        std::vector<std::vector<DocFwdEntry>> per_doc_fwd(n_rows_internal_);
+        std::vector<std::vector<DocFwdEntry>> per_doc_fwd;
+        if (source_rows == nullptr) {
+            per_doc_fwd.resize(n_rows_internal_);
+        }
 
         std::vector<float> tmp_sb_max(n_subblocks_, 0.0f);
         std::vector<uint8_t> sb_touched(n_subblocks_, 0);
         std::vector<uint32_t> touched_list;
         touched_list.reserve(n_subblocks_);
 
-        std::vector<float> tmp_spb_max(n_superblocks_, 0.0f);
-        std::vector<uint8_t> spb_touched(n_superblocks_, 0);
-        std::vector<uint32_t> spb_touched_list;
-        spb_touched_list.reserve(n_superblocks_);
+        // Build computes these counts while filling the doc-major -> dim-major CSC. Legacy deserialization has no
+        // source rows, so count distinct (dimension, superblock) pairs from its sorted posting lists here instead.
+        std::vector<uint32_t> legacy_spb_counts;
+        const std::vector<uint32_t>* spb_counts = precomputed_spb_counts;
+        if (spb_counts == nullptr) {
+            legacy_spb_counts.resize(nr_dims, 0);
+            for (uint32_t d = 0; d < nr_dims; ++d) {
+                uint32_t last_spb = std::numeric_limits<uint32_t>::max();
+                for (const uint32_t doc_id : inverted_index_ids_spans_[d]) {
+                    const uint32_t spb = doc_id / kSuperblockSize;
+                    if (spb != last_spb) {
+                        if (last_spb != std::numeric_limits<uint32_t>::max() && spb < last_spb) {
+                            throw std::runtime_error("DSP posting list is not sorted by document ID");
+                        }
+                        last_spb = spb;
+                        ++legacy_spb_counts[d];
+                    }
+                }
+            }
+            spb_counts = &legacy_spb_counts;
+        }
+        if (spb_counts->size() != nr_dims) {
+            throw std::runtime_error("DSP superblock count size does not match dimension count");
+        }
 
-        std::vector<float> tmp_seg_max(n_superblocks_ * kNumSegments, 0.0f);
-
-        struct SpbEntry {
-            uint32_t block_id;
-            float max_score;
-            float asc;
-        };
-        std::vector<std::vector<SpbEntry>> per_dim_spb(nr_dims);
+        spb_dim_offsets_.resize(nr_dims + 1);
+        uint64_t total_spb = 0;
+        for (uint32_t d = 0; d < nr_dims; ++d) {
+            spb_dim_offsets_[d] = static_cast<uint32_t>(total_spb);
+            if (max_score_in_dim_spans_[d] > 0.0f) {
+                total_spb += (*spb_counts)[d];
+            }
+            if (total_spb > std::numeric_limits<uint32_t>::max()) {
+                throw std::runtime_error("DSP superblock metadata exceeds uint32 capacity");
+            }
+        }
+        spb_dim_offsets_[nr_dims] = static_cast<uint32_t>(total_spb);
+        spb_block_ids_.resize(total_spb);
+        spb_max_vals_.resize(total_spb);
+        spb_asc_vals_.resize(total_spb);
 
         dim_block_max_.resize(nr_dims);
 
@@ -1068,6 +1342,30 @@ class DspIndex : public DspIndexBase<DType> {
             const float inv_max_score_u8 = 255.0f / max_score_d;
 
             KthHeap kth_heaps[4];
+            uint32_t current_spb = std::numeric_limits<uint32_t>::max();
+            uint32_t spb_write_pos = spb_dim_offsets_[d];
+            float current_spb_max = 0.0f;
+            std::array<float, kNumSegments> current_seg_max{};
+            auto emit_current_spb = [&]() {
+                if (current_spb == std::numeric_limits<uint32_t>::max()) {
+                    return;
+                }
+                if (spb_write_pos >= spb_dim_offsets_[d + 1]) {
+                    throw std::runtime_error("DSP emitted more superblocks than counted");
+                }
+                float seg_sum = 0.0f;
+                uint32_t seg_count = 0;
+                for (const float seg_max : current_seg_max) {
+                    if (seg_max > 0.0f) {
+                        seg_sum += seg_max;
+                        ++seg_count;
+                    }
+                }
+                spb_block_ids_[spb_write_pos] = current_spb;
+                spb_max_vals_[spb_write_pos] = current_spb_max;
+                spb_asc_vals_[spb_write_pos] = seg_count > 0 ? seg_sum / seg_count : 0.0f;
+                ++spb_write_pos;
+            };
 
             for (size_t i = 0; i < plist_ids.size(); ++i) {
                 const uint32_t doc_id = plist_ids[i];
@@ -1092,22 +1390,33 @@ class DspIndex : public DspIndexBase<DType> {
                 const uint32_t sb = doc_id / kSubblockSize;
                 const uint32_t spb = doc_id / kSuperblockSize;
 
+                if (spb != current_spb) {
+                    if (current_spb != std::numeric_limits<uint32_t>::max() && spb < current_spb) {
+                        throw std::runtime_error("DSP posting list is not sorted by document ID");
+                    }
+                    emit_current_spb();
+                    current_spb = spb;
+                    current_spb_max = 0.0f;
+                    current_seg_max.fill(0.0f);
+                }
+
                 if (!sb_touched[sb]) {
                     touched_list.push_back(sb);
                     sb_touched[sb] = 1;
                 }
                 tmp_sb_max[sb] = std::max(tmp_sb_max[sb], score);
 
-                if (!spb_touched[spb]) {
-                    spb_touched_list.push_back(spb);
-                    spb_touched[spb] = 1;
+                current_spb_max = std::max(current_spb_max, score);
+                const uint32_t segment_in_spb = (doc_id / kSegmentSize) % kNumSegments;
+                current_seg_max[segment_in_spb] = std::max(current_seg_max[segment_in_spb], score);
+
+                if (source_rows == nullptr) {
+                    per_doc_fwd[doc_id].push_back({d, score});
                 }
-                tmp_spb_max[spb] = std::max(tmp_spb_max[spb], score);
-
-                const uint32_t seg = doc_id / kSegmentSize;
-                tmp_seg_max[seg] = std::max(tmp_seg_max[seg], score);
-
-                per_doc_fwd[doc_id].push_back({d, score});
+            }
+            emit_current_spb();
+            if (spb_write_pos != spb_dim_offsets_[d + 1]) {
+                throw std::runtime_error("DSP emitted fewer superblocks than counted");
             }
 
             auto& bm = dim_block_max_[d];
@@ -1140,58 +1449,35 @@ class DspIndex : public DspIndexBase<DType> {
                 }
             }
 
-            std::sort(spb_touched_list.begin(), spb_touched_list.end());
-            per_dim_spb[d].reserve(spb_touched_list.size());
-            for (uint32_t spb : spb_touched_list) {
-                float seg_sum = 0.0f;
-                uint32_t seg_count = 0;
-                for (uint32_t s = 0; s < kNumSegments; ++s) {
-                    float seg_max = tmp_seg_max[spb * kNumSegments + s];
-                    if (seg_max > 0.0f) {
-                        seg_sum += seg_max;
-                        seg_count++;
-                    }
-                }
-                float asc = (seg_count > 0) ? (seg_sum / seg_count) : 0.0f;
-                per_dim_spb[d].push_back({spb, tmp_spb_max[spb], asc});
-            }
-
             for (uint32_t sb : touched_list) {
                 tmp_sb_max[sb] = 0.0f;
                 sb_touched[sb] = 0;
             }
             touched_list.clear();
-            for (uint32_t spb : spb_touched_list) {
-                tmp_spb_max[spb] = 0.0f;
-                spb_touched[spb] = 0;
-                for (uint32_t s = 0; s < kNumSegments; ++s) {
-                    tmp_seg_max[spb * kNumSegments + s] = 0.0f;
-                }
-            }
-            spb_touched_list.clear();
         }
 
-        // ---- Phase 2: Build superblock CSR ----
-        {
-            uint32_t total_spb = 0;
-            spb_dim_offsets_.resize(nr_dims + 1);
-            for (uint32_t d = 0; d < nr_dims; ++d) {
-                spb_dim_offsets_[d] = total_spb;
-                total_spb += per_dim_spb[d].size();
-            }
-            spb_dim_offsets_[nr_dims] = total_spb;
-
-            spb_block_ids_.resize(total_spb);
-            spb_max_vals_.resize(total_spb);
-            spb_asc_vals_.resize(total_spb);
-            for (uint32_t d = 0; d < nr_dims; ++d) {
-                uint32_t off = spb_dim_offsets_[d];
-                for (const auto& e : per_dim_spb[d]) {
-                    spb_block_ids_[off] = e.block_id;
-                    spb_max_vals_[off] = e.max_score;
-                    spb_asc_vals_[off] = e.asc;
-                    ++off;
+        if constexpr (!mmapped) {
+            if (source_rows != nullptr) {
+                uint64_t total_entries = 0;
+                for (uint32_t d = 0; d < nr_dims; ++d) {
+                    total_entries += inverted_index_ids_spans_[d].size();
                 }
+                // The transient exact CSC has served its only purpose. Release it before allocating the flat forward
+                // arrays so the two corpus-sized representations do not overlap at the build peak.
+                inverted_index_ids_spans_.clear();
+                inverted_index_vals_spans_.clear();
+                inverted_index_ids_.clear();
+                inverted_index_vals_.clear();
+                inverted_index_ids_.shrink_to_fit();
+                inverted_index_vals_.shrink_to_fit();
+                inverted_index_ids_spans_.resize(nr_dims);
+                inverted_index_vals_spans_.resize(nr_dims);
+                const auto status =
+                    build_forward_index_from_rows(source_rows, source_row_count, static_cast<uint32_t>(total_entries));
+                if (status != Status::success) {
+                    throw std::runtime_error("failed to build DSP forward index directly from sparse rows");
+                }
+                return;
             }
         }
 
@@ -1309,6 +1595,12 @@ class DspIndex : public DspIndexBase<DType> {
         }
         std::sort(query.begin(), query.end(), [](const auto& a, const auto& b) { return a.inner_dim < b.inner_dim; });
         const size_t n_query_terms = query.size();
+        uint32_t hybrid_query_dims[kHybridMergeMaxQueryTerms] = {};
+        if (n_query_terms <= kHybridMergeMaxQueryTerms) {
+            for (size_t i = 0; i < n_query_terms; ++i) {
+                hybrid_query_dims[i] = query[i].inner_dim;
+            }
+        }
 
         // ---- Step 1: Compute u8 query weights and scale factor ----
         float S = 0.0f;
@@ -1328,10 +1620,17 @@ class DspIndex : public DspIndexBase<DType> {
 
         // ---- Step 2: Initialize thresholds from kth scores ----
         const bool has_filter = !filter.empty();
+        const bool use_asc_survivor_guard = mu < 1.0f;
+        // With mu >= 1, an ASC-only survivor has max_ub <= theta/mu <= theta. Since max_ub bounds every document
+        // score and theta only rises, such a superblock cannot satisfy the strict score > theta admission condition.
+        const bool need_asc =
+            use_asc_survivor_guard && (mode == DspSearchMode::DSP || mode == DspSearchMode::LSP2 || gamma <= 0);
         bool bootstrap_mode = has_filter;
 
         float float_threshold = 0.0f;
-        if (kth_init && !has_filter) {
+#ifndef DSP_DISABLE_KTH_INIT
+        if (kth_init && !has_filter && heap_capacity <= 10000) {
+            // Select kth bucket based on k
             int kth_bucket = (heap_capacity > 10) + (heap_capacity > 100) + (heap_capacity > 1000);
             for (const auto& qt : query) {
                 const auto& bm = dim_block_max_[qt.inner_dim];
@@ -1342,31 +1641,58 @@ class DspIndex : public DspIndexBase<DType> {
                 float term_thresh = qt.weight * kth_float;
                 float_threshold = std::max(float_threshold, term_thresh);
             }
-            float_threshold *= kth_alpha;
+            float_threshold *= kth_alpha * (1.0f - 1e-6f);
         }
+#endif
         float float_block_threshold = (eta > 0.0f) ? float_threshold / eta : float_threshold;
         uint16_t u16_block_threshold = static_cast<uint16_t>(std::min(65535.0f, float_block_threshold * score_scale));
 
+        auto workspace_owner = acquire_search_workspace();
+        auto& workspace = *workspace_owner;
+        workspace.superblock_ub.resize(n_superblocks_);
+        if (need_asc) {
+            workspace.superblock_asc.resize(n_superblocks_);
+        }
+        workspace.surviving_spb.clear();
+        workspace.spb_alive.resize(n_superblocks_);
+        workspace.block_ub.resize(n_sb_padded_);
+        workspace.spb_candidate_mask.resize(n_superblocks_);
+        workspace.spb_in_batch.resize(n_superblocks_);
+        std::fill(workspace.superblock_ub.begin(), workspace.superblock_ub.end(), 0.0f);
+        if (need_asc) {
+            std::fill(workspace.superblock_asc.begin(), workspace.superblock_asc.end(), 0.0f);
+        }
+        std::fill(workspace.spb_alive.begin(), workspace.spb_alive.end(), uint8_t{0});
+        std::fill(workspace.spb_in_batch.begin(), workspace.spb_in_batch.end(), uint8_t{0});
+        auto& superblock_ub = workspace.superblock_ub;
+        auto& superblock_asc = workspace.superblock_asc;
+        auto& surviving_spb = workspace.surviving_spb;
+        auto& spb_alive = workspace.spb_alive;
+        auto& block_ub = workspace.block_ub;
+        auto& spb_candidate_mask = workspace.spb_candidate_mask;
+        auto& spb_in_batch = workspace.spb_in_batch;
+
         // ---- Step 3: Superblock pruning ----
-        std::vector<float> superblock_ub(n_superblocks_, 0.0f);
-        std::vector<float> superblock_asc(n_superblocks_, 0.0f);
         for (const auto& qt : query) {
             const float qw = qt.weight;
             const uint32_t start = spb_dim_offsets_[qt.inner_dim];
             const uint32_t end = spb_dim_offsets_[qt.inner_dim + 1];
-            for (uint32_t i = start; i < end; ++i) {
-                superblock_ub[spb_block_ids_[i]] += qw * spb_max_vals_[i];
-                superblock_asc[spb_block_ids_[i]] += qw * spb_asc_vals_[i];
+            if (need_asc) {
+                for (uint32_t i = start; i < end; ++i) {
+                    superblock_ub[spb_block_ids_[i]] += qw * spb_max_vals_[i];
+                    superblock_asc[spb_block_ids_[i]] += qw * spb_asc_vals_[i];
+                }
+            } else {
+                for (uint32_t i = start; i < end; ++i) {
+                    superblock_ub[spb_block_ids_[i]] += qw * spb_max_vals_[i];
+                }
             }
         }
 
         const float theta = float_threshold;
         float mu_threshold = (mu > 0.0f) ? theta / mu : theta;
         float eta_threshold = (eta > 0.0f) ? theta / eta : theta;
-
-        std::vector<uint32_t> surviving_spb;
         surviving_spb.reserve(n_superblocks_);
-        std::vector<uint8_t> spb_alive(n_superblocks_, 0);
 
         auto mark_alive = [&](uint32_t spb) {
             if (!spb_alive[spb]) {
@@ -1405,7 +1731,8 @@ class DspIndex : public DspIndexBase<DType> {
                 case DspSearchMode::DSP: {
                     // dual-threshold (mu, eta) + optional top-gamma backstop
                     for (uint32_t spb = 0; spb < n_superblocks_; ++spb) {
-                        if (superblock_ub[spb] > mu_threshold || superblock_asc[spb] > eta_threshold) {
+                        if (superblock_ub[spb] > mu_threshold ||
+                            (use_asc_survivor_guard && superblock_asc[spb] > eta_threshold)) {
                             mark_alive(spb);
                         }
                     }
@@ -1418,7 +1745,8 @@ class DspIndex : public DspIndexBase<DType> {
                     if (gamma <= 0) {
                         // fallback to DSP behavior
                         for (uint32_t spb = 0; spb < n_superblocks_; ++spb) {
-                            if (superblock_ub[spb] > mu_threshold || superblock_asc[spb] > eta_threshold) {
+                            if (superblock_ub[spb] > mu_threshold ||
+                                (use_asc_survivor_guard && superblock_asc[spb] > eta_threshold)) {
                                 mark_alive(spb);
                             }
                         }
@@ -1431,7 +1759,8 @@ class DspIndex : public DspIndexBase<DType> {
                     if (gamma <= 0) {
                         // fallback to DSP behavior
                         for (uint32_t spb = 0; spb < n_superblocks_; ++spb) {
-                            if (superblock_ub[spb] > mu_threshold || superblock_asc[spb] > eta_threshold) {
+                            if (superblock_ub[spb] > mu_threshold ||
+                                (use_asc_survivor_guard && superblock_asc[spb] > eta_threshold)) {
                                 mark_alive(spb);
                             }
                         }
@@ -1449,7 +1778,8 @@ class DspIndex : public DspIndexBase<DType> {
                     if (gamma <= 0) {
                         // fallback to DSP behavior
                         for (uint32_t spb = 0; spb < n_superblocks_; ++spb) {
-                            if (superblock_ub[spb] > mu_threshold || superblock_asc[spb] > eta_threshold) {
+                            if (superblock_ub[spb] > mu_threshold ||
+                                (use_asc_survivor_guard && superblock_asc[spb] > eta_threshold)) {
                                 mark_alive(spb);
                             }
                         }
@@ -1457,7 +1787,8 @@ class DspIndex : public DspIndexBase<DType> {
                     }
                     add_top_gamma(gamma, float_threshold, true);
                     for (uint32_t spb = 0; spb < n_superblocks_; ++spb) {
-                        if (superblock_ub[spb] > mu_threshold || superblock_asc[spb] > eta_threshold) {
+                        if (superblock_ub[spb] > mu_threshold ||
+                            (use_asc_survivor_guard && superblock_asc[spb] > eta_threshold)) {
                             mark_alive(spb);
                         }
                     }
@@ -1466,7 +1797,8 @@ class DspIndex : public DspIndexBase<DType> {
                 default: {
                     // Default: same as DSP mode
                     for (uint32_t spb = 0; spb < n_superblocks_; ++spb) {
-                        if (superblock_ub[spb] > mu_threshold || superblock_asc[spb] > eta_threshold) {
+                        if (superblock_ub[spb] > mu_threshold ||
+                            (use_asc_survivor_guard && superblock_asc[spb] > eta_threshold)) {
                             mark_alive(spb);
                         }
                     }
@@ -1478,23 +1810,33 @@ class DspIndex : public DspIndexBase<DType> {
             }
         };
 
+#ifdef KNOWHERE_DSP_INSTRUMENTATION
+        g_dsp_stats.total_superblocks += n_superblocks_;
+        g_dsp_stats.queries++;
+#endif
+
         // ---- Compute block UBs for a set of superblocks ----
-        std::vector<uint16_t> block_ub(n_sb_padded_, 0);
-        std::vector<uint8_t> spb_in_batch(n_superblocks_, 0);
-
         auto compute_block_ubs = [&](const std::vector<uint32_t>& spbs) {
-            for (uint32_t spb : spbs) spb_in_batch[spb] = 1;
+#ifdef KNOWHERE_DSP_INSTRUMENTATION
+            g_dsp_stats.surviving_superblocks += spbs.size();
+#endif
+            for (uint32_t spb : spbs) {
+                spb_in_batch[spb] = 1;
+                spb_candidate_mask[spb] = 0;
+                std::fill_n(block_ub.begin() + spb * kStride, kStride, uint16_t{0});
+            }
 
+            std::vector<const uint8_t*> dense_block_max_rows;
+            std::vector<uint16_t> dense_query_weights;
+            dense_block_max_rows.reserve(n_query_terms);
+            dense_query_weights.reserve(n_query_terms);
             for (const auto& qt : query) {
                 const auto& bm = dim_block_max_[qt.inner_dim];
                 if (bm.n_logical == 0)
                     continue;
                 if (bm.is_dense()) {
-                    for (uint32_t spb : spbs) {
-                        const uint32_t sb_start = spb * kStride;
-                        accumulate_block_ub_dispatch(block_ub.data() + sb_start, bm.max_scores.data() + sb_start,
-                                                     static_cast<uint16_t>(qt.u8_weight), kStride);
-                    }
+                    dense_block_max_rows.push_back(bm.max_scores.data());
+                    dense_query_weights.push_back(static_cast<uint16_t>(qt.u8_weight));
                 } else {
                     const uint16_t u16w = static_cast<uint16_t>(qt.u8_weight);
                     for (size_t i = 0; i < bm.block_ids.size(); ++i) {
@@ -1503,9 +1845,19 @@ class DspIndex : public DspIndexBase<DType> {
                             continue;
                         uint32_t prod = u16w * bm.max_scores[i];
                         uint32_t sum = static_cast<uint32_t>(block_ub[sb]) + prod;
-                        block_ub[sb] = static_cast<uint16_t>(sum < 65535u ? sum : 65535u);
+                        const uint16_t saturated_sum = static_cast<uint16_t>(sum < 65535u ? sum : 65535u);
+                        block_ub[sb] = saturated_sum;
+                        if (saturated_sum > u16_block_threshold) {
+                            spb_candidate_mask[sb / kStride] |= uint64_t{1} << (sb % kStride);
+                        }
                     }
                 }
+            }
+
+            if (!dense_block_max_rows.empty()) {
+                accumulate_dense_block_ubs_dispatch(block_ub.data(), spb_candidate_mask.data(), u16_block_threshold,
+                                                    dense_block_max_rows.data(), dense_query_weights.data(),
+                                                    dense_block_max_rows.size(), spbs.data(), spbs.size(), kStride);
             }
 
             for (uint32_t spb : spbs) spb_in_batch[spb] = 0;
@@ -1516,18 +1868,29 @@ class DspIndex : public DspIndexBase<DType> {
             std::vector<uint32_t> cands;
             cands.reserve(spbs.size() * kStride / 4);
             uint16_t local_max_ub = 0;
+#ifdef KNOWHERE_DSP_INSTRUMENTATION
+            uint64_t local_saturated_ubs = 0;
+#endif
             for (uint32_t spb : spbs) {
                 const uint32_t sb_start = spb * kStride;
-                if (!scan_block_ub_any_above_dispatch(block_ub.data() + sb_start, u16_block_threshold, kStride))
-                    continue;
-                const uint32_t sb_end = std::min(sb_start + kStride, n_subblocks_);
-                for (uint32_t sb = sb_start; sb < sb_end; ++sb) {
-                    if (block_ub[sb] > u16_block_threshold) {
-                        cands.push_back(sb);
-                        local_max_ub = std::max(local_max_ub, block_ub[sb]);
-                    }
+                uint64_t candidate_mask = spb_candidate_mask[spb];
+                while (candidate_mask != 0) {
+                    const uint32_t lane = static_cast<uint32_t>(__builtin_ctzll(candidate_mask));
+                    candidate_mask &= candidate_mask - 1;
+                    const uint32_t sb = sb_start + lane;
+                    if (sb >= n_subblocks_)
+                        continue;
+#ifdef KNOWHERE_DSP_INSTRUMENTATION
+                    local_saturated_ubs += block_ub[sb] == std::numeric_limits<uint16_t>::max();
+#endif
+                    cands.push_back(sb);
+                    local_max_ub = std::max(local_max_ub, block_ub[sb]);
                 }
             }
+#ifdef KNOWHERE_DSP_INSTRUMENTATION
+            g_dsp_stats.candidate_blocks += cands.size();
+            g_dsp_stats.saturated_ubs += local_saturated_ubs;
+#endif
             if (cands.empty())
                 return {};
             const uint32_t rng = local_max_ub - u16_block_threshold;
@@ -1549,15 +1912,38 @@ class DspIndex : public DspIndexBase<DType> {
 
         auto score_blocks = [&](const std::vector<uint32_t>& sorted_blocks) -> bool {
             bool bootstrap_completed = false;
+#ifdef KNOWHERE_DSP_INSTRUMENTATION
+            uint64_t local_entries = 0;
+            uint64_t local_blocks = 0;
+            uint64_t local_docs = 0;
+#endif
             for (size_t ci = 0; ci < sorted_blocks.size(); ++ci) {
                 const uint32_t sb_id = sorted_blocks[ci];
                 if (block_ub[sb_id] <= u16_block_threshold)
                     break;
 
+                const uint32_t doc_base = sb_id * kSubblockSize;
+                const uint32_t doc_end = std::min(doc_base + kSubblockSize, static_cast<uint32_t>(n_rows_internal_));
+                if (has_filter) {
+                    bool all_docs_filtered = true;
+                    for (uint32_t doc_id = doc_base; doc_id < doc_end; ++doc_id) {
+                        if (!filter.test(doc_id)) {
+                            all_docs_filtered = false;
+                            break;
+                        }
+                    }
+                    if (all_docs_filtered)
+                        continue;
+                }
+
                 const uint32_t block_term_start = fwd_block_term_offsets_[sb_id];
                 const uint32_t block_term_end = fwd_block_term_offsets_[sb_id + 1];
                 if (block_term_start == block_term_end)
                     continue;
+
+#ifdef KNOWHERE_DSP_INSTRUMENTATION
+                local_blocks++;
+#endif
 
                 if (ci + 1 < sorted_blocks.size()) {
                     const uint32_t next_sb = sorted_blocks[ci + 1];
@@ -1571,32 +1957,68 @@ class DspIndex : public DspIndexBase<DType> {
                 std::memset(scores, 0, sizeof(scores));
                 size_t qi = 0;
                 uint32_t bi = block_term_start;
-                while (qi < n_query_terms && bi < block_term_end) {
-                    const uint32_t q_dim = query[qi].inner_dim;
-                    const uint32_t b_dim = fwd_term_ids_[bi];
-                    if (q_dim < b_dim) {
-                        ++qi;
-                    } else if (q_dim > b_dim) {
-                        ++bi;
-                    } else {
-                        const float q_weight = query[qi].weight;
-                        const uint32_t e_start = fwd_term_entry_offsets_[bi];
-                        const uint32_t e_end = fwd_term_entry_offsets_[bi + 1];
-                        for (uint32_t j = e_start; j < e_end; ++j) {
-                            scores[fwd_doc_offsets_[j]] += q_weight * fwd_scores_[j];
+                auto accumulate_match = [&](size_t query_idx, uint32_t block_term_idx) {
+                    const float q_weight = query[query_idx].weight;
+                    const uint32_t e_start = fwd_term_entry_offsets_[block_term_idx];
+                    const uint32_t e_end = fwd_term_entry_offsets_[block_term_idx + 1];
+#ifdef KNOWHERE_DSP_INSTRUMENTATION
+                    local_entries += e_end - e_start;
+#endif
+                    for (uint32_t j = e_start; j < e_end; ++j) {
+                        scores[fwd_doc_offsets_[j]] += q_weight * fwd_scores_[j];
+                    }
+                };
+                uint32_t match_positions[kHybridMergeMaxQueryTerms];
+                const bool used_hybrid = find_terms_hybrid_dispatch(
+                    fwd_term_ids_.data() + block_term_start, block_term_end - block_term_start, hybrid_query_dims,
+                    static_cast<uint32_t>(n_query_terms), match_positions);
+                if (used_hybrid) {
+                    for (qi = 0; qi < n_query_terms; ++qi) {
+                        if (match_positions[qi] != std::numeric_limits<uint32_t>::max()) {
+                            accumulate_match(qi, block_term_start + match_positions[qi]);
                         }
-                        ++qi;
-                        ++bi;
+                    }
+                } else {
+                    while (qi < n_query_terms && bi < block_term_end) {
+                        const uint32_t q_dim = query[qi].inner_dim;
+                        const uint32_t b_dim = fwd_term_ids_[bi];
+                        if (q_dim < b_dim) {
+                            ++qi;
+                        } else if (q_dim > b_dim) {
+                            if (metric_type_ == SparseMetricType::METRIC_BM25) {
+                                // BM25 queries are short while a block's term list is comparatively long.
+                                // Gallop to the first term that can match q_dim instead of advancing one
+                                // term at a time. Long-query IP/SPLADE searches retain the linear merge.
+                                const uint32_t base = bi;
+                                uint32_t step = 1;
+                                while (base + step < block_term_end) {
+                                    if (fwd_term_ids_[base + step] >= q_dim)
+                                        break;
+                                    step <<= 1;
+                                }
+                                uint32_t lo = base + (step >> 1) + 1;
+                                uint32_t hi = std::min<uint64_t>(block_term_end, uint64_t(base) + step + 1);
+                                bi = static_cast<uint32_t>(
+                                    std::lower_bound(fwd_term_ids_.begin() + lo, fwd_term_ids_.begin() + hi, q_dim) -
+                                    fwd_term_ids_.begin());
+                            } else {
+                                ++bi;
+                            }
+                        } else {
+                            accumulate_match(qi, bi);
+                            ++qi;
+                            ++bi;
+                        }
                     }
                 }
-
-                const uint32_t doc_base = sb_id * kSubblockSize;
-                const uint32_t doc_end = std::min(doc_base + kSubblockSize, static_cast<uint32_t>(n_rows_internal_));
                 for (uint32_t i = 0; i < doc_end - doc_base; ++i) {
                     if (scores[i] > float_threshold) {
                         const uint32_t doc_id = doc_base + i;
                         if (has_filter && filter.test(doc_id))
                             continue;
+#ifdef KNOWHERE_DSP_INSTRUMENTATION
+                        local_docs++;
+#endif
                         heap.Push(scores[i], doc_id);
                         if (heap.Full()) {
                             float new_thresh = heap.Results().front().first;
@@ -1616,6 +2038,11 @@ class DspIndex : public DspIndexBase<DType> {
                     }
                 }
             }
+#ifdef KNOWHERE_DSP_INSTRUMENTATION
+            g_dsp_stats.blocks_processed += local_blocks;
+            g_dsp_stats.entries_scored += local_entries;
+            g_dsp_stats.docs_pushed += local_docs;
+#endif
             return bootstrap_completed;
         };
 
