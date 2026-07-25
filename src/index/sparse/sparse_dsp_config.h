@@ -36,7 +36,7 @@ class SparseDspConfig : public BaseConfig {
     CFG_INT dsp_gamma;
     CFG_BOOL dsp_kth_init;
     CFG_FLOAT dsp_kth_alpha;
-    KNOHWERE_DECLARE_CONFIG(SparseDspConfig) {
+    KNOWHERE_DECLARE_CONFIG(SparseDspConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(drop_ratio_search)
             .description("drop ratio for search")
             .set_default(0.0f)

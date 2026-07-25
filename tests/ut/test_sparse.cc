@@ -9,12 +9,19 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <array>
+#include <atomic>
+#include <cstring>
 #include <future>
+#include <map>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
+#include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "index/sparse/inverted_index_format.h"
@@ -439,8 +446,6 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP, sparse_dsp_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC, sparse_dsp_gen),
         }));
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
         auto cfg_json = gen().dump();
@@ -485,8 +490,6 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>({
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, sparse_inverted_index_gen),
             make_tuple(knowhere::IndexEnum::INDEX_SPARSE_WAND, sparse_inverted_index_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP, sparse_dsp_gen),
-            make_tuple(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC, sparse_dsp_gen),
         }));
 
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(name, version).value();
@@ -675,6 +678,552 @@ TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
         auto results = idx.RangeSearch(query_ds, json, nullptr);
         REQUIRE(results.has_value());
         check_result(*results.value());
+    }
+}
+
+TEST_CASE("Test DSP Sparse Index Large K Is Rank Safe", "[float metrics][sparse][dsp]") {
+    constexpr int64_t nb = 10001;
+    constexpr int64_t topk = 10001;
+    constexpr int32_t dim = 1;
+
+    std::vector<std::map<int32_t, float>> base_data(nb);
+    for (int64_t i = 0; i < nb - 2; ++i) {
+        base_data[i][0] = 255.0f;
+    }
+    base_data[nb - 2][0] = 200.0f;
+    base_data[nb - 1][0] = 1.0f;
+    const auto train_ds = GenSparseDataSet(base_data, dim);
+    const auto query_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.0f}}}, dim);
+
+    knowhere::Json json = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::IP},
+        {knowhere::meta::TOPK, topk},
+        {knowhere::indexparam::DROP_RATIO_SEARCH, 0.0f},
+        {"dsp_mu", 1.0f},
+        {"dsp_eta", 1.0f},
+    };
+
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC,
+                                                       knowhere::Version::GetCurrentVersion().VersionNumber())
+                     .value();
+    REQUIRE(index.Build(train_ds, json) == knowhere::Status::success);
+
+    auto expected = knowhere::BruteForce::SearchSparse(train_ds, query_ds, json, nullptr);
+    REQUIRE(expected.has_value());
+    auto actual = index.Search(query_ds, json, nullptr);
+    REQUIRE(actual.has_value());
+    REQUIRE(GetKNNRecall(*expected.value(), *actual.value()) == 1.0f);
+}
+
+TEST_CASE("Test DSP BM25 Kth Init Includes Tied Maximum Scores", "[float metrics][sparse][dsp]") {
+    constexpr int64_t nb = 2000;
+    constexpr int64_t topk = 10;
+    constexpr int32_t dim = 1;
+
+    std::vector<std::map<int32_t, float>> base_data(nb, {{{0, 1.0f}}});
+    const auto train_ds = GenSparseDataSet(base_data, dim);
+    const auto query_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.0f}}}, dim);
+
+    knowhere::Json json = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::BM25},
+        {knowhere::meta::TOPK, topk},
+        {knowhere::meta::BM25_K1, 1.2f},
+        {knowhere::meta::BM25_B, 0.75f},
+        {knowhere::meta::BM25_AVGDL, 1.0f},
+        {knowhere::indexparam::DROP_RATIO_SEARCH, 0.0f},
+        {"dsp_mu", 1.0f},
+        {"dsp_eta", 1.0f},
+    };
+
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC,
+                                                       knowhere::Version::GetCurrentVersion().VersionNumber())
+                     .value();
+    REQUIRE(index.Build(train_ds, json) == knowhere::Status::success);
+
+    auto actual = index.Search(query_ds, json, nullptr);
+    REQUIRE(actual.has_value());
+    REQUIRE(actual.value()->GetDim() == topk);
+    const auto* ids = actual.value()->GetIds();
+    for (int64_t i = 0; i < topk; ++i) {
+        REQUIRE(ids[i] != -1);
+    }
+}
+
+TEST_CASE("Test DSP Kth Init Ignores Partially Filled Heaps", "[float metrics][sparse][dsp]") {
+    auto [topk, head_count, nb] = GENERATE(table<int64_t, int64_t, int64_t>({
+        {100, 50, 101},
+        {1000, 100, 1001},
+    }));
+    constexpr int32_t dim = 2;
+    constexpr int64_t tail_id = 0;
+
+    std::vector<std::map<int32_t, float>> base_data(nb);
+    base_data[tail_id][1] = 0.01f;
+    for (int64_t i = 1; i <= head_count; ++i) {
+        base_data[i][0] = 1.0f;
+    }
+    const auto train_ds = GenSparseDataSet(base_data, dim);
+    const auto query_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.0f}, {1, 1.0f}}}, dim);
+
+    knowhere::Json json = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::IP},
+        {knowhere::meta::TOPK, topk},
+        {knowhere::indexparam::DROP_RATIO_SEARCH, 0.0f},
+        {"dsp_mu", 1.0f},
+        {"dsp_eta", 1.0f},
+    };
+
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC,
+                                                       knowhere::Version::GetCurrentVersion().VersionNumber())
+                     .value();
+    REQUIRE(index.Build(train_ds, json) == knowhere::Status::success);
+
+    auto actual = index.Search(query_ds, json, nullptr);
+    REQUIRE(actual.has_value());
+    REQUIRE(actual.value()->GetDim() == topk);
+    const auto* ids = actual.value()->GetIds();
+    REQUIRE(std::find(ids, ids + topk, tail_id) != ids + topk);
+}
+
+TEST_CASE("Test DSP Kth Init Is Disabled With Bitset Filter", "[float metrics][sparse][dsp]") {
+    constexpr int64_t nb = 20;
+    constexpr int64_t topk = 10;
+    constexpr int32_t dim = 1;
+
+    // The corpus-wide 10th score is 100, but all ten documents supporting that threshold are filtered. The filtered
+    // top-10 consists entirely of the remaining score-1 documents, so using the unfiltered kth initializer would
+    // incorrectly prune every valid result. IDs 0..7 also form a fully filtered DSP block, covering its fast skip.
+    std::vector<std::map<int32_t, float>> base_data(nb);
+    for (int64_t i = 0; i < topk; ++i) {
+        base_data[i][0] = 100.0f;
+    }
+    for (int64_t i = topk; i < nb; ++i) {
+        base_data[i][0] = 1.0f;
+    }
+    const auto train_ds = GenSparseDataSet(base_data, dim);
+    const auto query_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.0f}}}, dim);
+
+    knowhere::Json json = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::IP},
+        {knowhere::meta::TOPK, topk},
+        {knowhere::indexparam::DROP_RATIO_SEARCH, 0.0f},
+        {"dsp_mu", 1.0f},
+        {"dsp_eta", 1.0f},
+    };
+
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC,
+                                                       knowhere::Version::GetCurrentVersion().VersionNumber())
+                     .value();
+    REQUIRE(index.Build(train_ds, json) == knowhere::Status::success);
+
+    const auto bitset_data = GenerateBitsetWithFirstTbitsSet(nb, topk);
+    const knowhere::BitsetView bitset(bitset_data.data(), nb);
+    auto expected = knowhere::BruteForce::SearchSparse(train_ds, query_ds, json, bitset);
+    REQUIRE(expected.has_value());
+    auto actual = index.Search(query_ds, json, bitset);
+    REQUIRE(actual.has_value());
+    REQUIRE(GetKNNRecall(*expected.value(), *actual.value()) == 1.0f);
+    for (int64_t rank = 0; rank < topk; ++rank) {
+        REQUIRE(actual.value()->GetIds()[rank] >= topk);
+        REQUIRE(actual.value()->GetDistance()[rank] == 1.0f);
+    }
+}
+
+TEST_CASE("Test DSP Native Serialization Round Trip", "[float metrics][sparse][dsp]") {
+    constexpr int64_t nb = 2000;
+    constexpr int64_t nq = 10;
+    constexpr int64_t topk = 100;
+    constexpr int32_t dim = 300;
+    const auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
+    const bool use_mmap = GENERATE(false, true);
+    const auto train_ds = GenSparseDataSet(nb, dim, 0.95f);
+    const auto query_ds = GenSparseDataSet(nq, dim, 0.97f);
+
+    knowhere::Json json = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, metric},
+        {knowhere::meta::TOPK, topk},
+        {knowhere::meta::BM25_K1, 1.2f},
+        {knowhere::meta::BM25_B, 0.75f},
+        {knowhere::meta::BM25_AVGDL, 100.0f},
+        {knowhere::indexparam::DROP_RATIO_SEARCH, 0.0f},
+        {"dsp_mu", 1.0f},
+        {"dsp_eta", 1.0f},
+    };
+
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC,
+                                                       knowhere::Version::GetCurrentVersion().VersionNumber())
+                     .value();
+    REQUIRE(index.Build(train_ds, json) == knowhere::Status::success);
+    auto before = index.Search(query_ds, json, nullptr);
+    REQUIRE(before.has_value());
+
+    knowhere::BinarySet binary_set;
+    REQUIRE(index.Serialize(binary_set) == knowhere::Status::success);
+    if (use_mmap) {
+        const std::string filename = "/tmp/knowhere_dsp_native_serialization_test";
+        WriteBinaryToFile(filename, binary_set.GetByName(index.Type()));
+        REQUIRE(index.DeserializeFromFile(filename, json) == knowhere::Status::success);
+        REQUIRE(std::remove(filename.c_str()) == 0);
+    } else {
+        REQUIRE(index.Deserialize(binary_set, json) == knowhere::Status::success);
+    }
+
+    auto after = index.Search(query_ds, json, nullptr);
+    REQUIRE(after.has_value());
+    REQUIRE(std::memcmp(after.value()->GetIds(), before.value()->GetIds(), nq * topk * sizeof(int64_t)) == 0);
+    REQUIRE(std::memcmp(after.value()->GetDistance(), before.value()->GetDistance(), nq * topk * sizeof(float)) == 0);
+}
+
+TEST_CASE("Test DSP Loads Legacy Sparse Serialization", "[float metrics][sparse][dsp]") {
+    constexpr int64_t nb = 2048;
+    constexpr int64_t nq = 10;
+    constexpr int64_t topk = 100;
+    constexpr int32_t dim = 32;
+    const bool use_mmap = GENERATE(false, true);
+
+    // A v1 DSP file without a DSP_METADATA section is the legacy format supported by the rebuild fallback. Keep the
+    // corpus deterministic and make the first row contain every dimension so that raw and inner dimension IDs match.
+    std::vector<std::map<int32_t, float>> base_data(nb);
+    for (int32_t d = 0; d < dim; ++d) {
+        base_data[0][d] = 1.0f + static_cast<float>(d % 7) * 0.1f;
+    }
+    for (int64_t doc = 1; doc < nb; ++doc) {
+        const int32_t d0 = static_cast<int32_t>(doc % dim);
+        const int32_t d1 = static_cast<int32_t>((doc * 7 + 3) % dim);
+        base_data[doc][d0] = 0.5f + static_cast<float>(doc % 11) * 0.03f;
+        base_data[doc][d1] = 0.7f + static_cast<float>(doc % 13) * 0.02f;
+    }
+    std::vector<std::map<int32_t, float>> query_data(nq);
+    for (int64_t query = 0; query < nq; ++query) {
+        query_data[query][static_cast<int32_t>(query % dim)] = 1.0f;
+        query_data[query][static_cast<int32_t>((query * 5 + 1) % dim)] = 0.8f;
+    }
+    const auto train_ds = GenSparseDataSet(base_data, dim);
+    const auto query_ds = GenSparseDataSet(query_data, dim);
+
+    knowhere::Json json = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::IP},
+        {knowhere::meta::TOPK, topk},
+        {knowhere::indexparam::DROP_RATIO_SEARCH, 0.0f},
+        {"dsp_mu", 1.0f},
+        {"dsp_eta", 1.0f},
+    };
+
+    auto fresh_dsp = knowhere::IndexFactory::Instance()
+                         .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC,
+                                                           knowhere::Version::GetCurrentVersion().VersionNumber())
+                         .value();
+    REQUIRE(fresh_dsp.Build(train_ds, json) == knowhere::Status::success);
+    auto expected = fresh_dsp.Search(query_ds, json, nullptr);
+    REQUIRE(expected.has_value());
+
+    std::vector<std::vector<uint32_t>> posting_ids(dim);
+    std::vector<std::vector<float>> posting_vals(dim);
+    std::vector<float> max_scores(dim, 0.0f);
+    for (uint32_t doc = 0; doc < nb; ++doc) {
+        for (const auto& [raw_dim, value] : base_data[doc]) {
+            posting_ids[raw_dim].push_back(doc);
+            posting_vals[raw_dim].push_back(value);
+            max_scores[raw_dim] = std::max(max_scores[raw_dim], value);
+        }
+    }
+
+    auto append_bytes = [](std::vector<uint8_t>& output, const void* data, size_t size) {
+        const auto* first = static_cast<const uint8_t*>(data);
+        output.insert(output.end(), first, first + size);
+    };
+    auto append_value = [&](std::vector<uint8_t>& output, const auto& value) {
+        append_bytes(output, &value, sizeof(value));
+    };
+
+    std::vector<uint8_t> posting_section;
+    const uint32_t encoding_type = 0;
+    append_value(posting_section, encoding_type);
+    std::vector<uint64_t> posting_offsets(dim + 1, 0);
+    for (int32_t d = 0; d < dim; ++d) {
+        posting_offsets[d + 1] = posting_offsets[d] + posting_ids[d].size();
+    }
+    append_bytes(posting_section, posting_offsets.data(), posting_offsets.size() * sizeof(uint64_t));
+    for (int32_t d = 0; d < dim; ++d) {
+        append_bytes(posting_section, posting_ids[d].data(), posting_ids[d].size() * sizeof(uint32_t));
+    }
+    for (int32_t d = 0; d < dim; ++d) {
+        append_bytes(posting_section, posting_vals[d].data(), posting_vals[d].size() * sizeof(float));
+    }
+
+    std::vector<uint32_t> dim_map(dim);
+    std::iota(dim_map.begin(), dim_map.end(), 0);
+    struct LegacySectionHeader {
+        uint32_t type;
+        uint32_t padding = 0;
+        uint64_t offset;
+        uint64_t size;
+    };
+    static_assert(sizeof(LegacySectionHeader) == 24);
+    constexpr uint32_t kPostingListsSection = 0;
+    constexpr uint32_t kDimMapSection = 2;
+    constexpr uint32_t kMaxScoresSection = 4;
+    constexpr uint32_t kHeaderSize = 32;
+    constexpr uint32_t kSectionCount = 3;
+    uint64_t next_offset = kHeaderSize + sizeof(uint32_t) + kSectionCount * sizeof(LegacySectionHeader);
+    std::array<LegacySectionHeader, kSectionCount> section_headers = {
+        LegacySectionHeader{kPostingListsSection, 0, next_offset, posting_section.size()},
+        LegacySectionHeader{kDimMapSection, 0, next_offset + posting_section.size(), dim_map.size() * sizeof(uint32_t)},
+        LegacySectionHeader{kMaxScoresSection, 0,
+                            next_offset + posting_section.size() + dim_map.size() * sizeof(uint32_t),
+                            max_scores.size() * sizeof(float)},
+    };
+
+    std::vector<uint8_t> legacy_blob;
+    const uint32_t format_version = 1;
+    const uint32_t row_count = nb;
+    const uint32_t max_dim = dim;
+    const uint32_t inner_dim_count = dim;
+    append_value(legacy_blob, format_version);
+    append_value(legacy_blob, row_count);
+    append_value(legacy_blob, max_dim);
+    append_value(legacy_blob, inner_dim_count);
+    const std::array<uint8_t, 16> reserved{};
+    append_bytes(legacy_blob, reserved.data(), reserved.size());
+    append_value(legacy_blob, kSectionCount);
+    append_bytes(legacy_blob, section_headers.data(), section_headers.size() * sizeof(LegacySectionHeader));
+    append_bytes(legacy_blob, posting_section.data(), posting_section.size());
+    append_bytes(legacy_blob, dim_map.data(), dim_map.size() * sizeof(uint32_t));
+    append_bytes(legacy_blob, max_scores.data(), max_scores.size() * sizeof(float));
+
+    auto legacy_data = std::shared_ptr<uint8_t[]>(new uint8_t[legacy_blob.size()]);
+    std::memcpy(legacy_data.get(), legacy_blob.data(), legacy_blob.size());
+    knowhere::BinarySet legacy_binary;
+    legacy_binary.Append(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC, legacy_data, legacy_blob.size());
+
+    auto loaded_dsp = knowhere::IndexFactory::Instance()
+                          .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC,
+                                                            knowhere::Version::GetCurrentVersion().VersionNumber())
+                          .value();
+    if (use_mmap) {
+        const std::string filename = "/tmp/knowhere_dsp_legacy_serialization_test";
+        WriteBinaryToFile(filename, legacy_binary.GetByName(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC));
+        REQUIRE(loaded_dsp.DeserializeFromFile(filename, json) == knowhere::Status::success);
+        REQUIRE(std::remove(filename.c_str()) == 0);
+    } else {
+        REQUIRE(loaded_dsp.Deserialize(legacy_binary, json) == knowhere::Status::success);
+    }
+    auto actual = loaded_dsp.Search(query_ds, json, nullptr);
+    REQUIRE(actual.has_value());
+    REQUIRE(std::memcmp(actual.value()->GetIds(), expected.value()->GetIds(), nq * topk * sizeof(int64_t)) == 0);
+    REQUIRE(std::memcmp(actual.value()->GetDistance(), expected.value()->GetDistance(), nq * topk * sizeof(float)) ==
+            0);
+}
+
+TEST_CASE("Test DSP Parallel Build Is Byte Identical", "[float metrics][sparse][dsp]") {
+    constexpr int64_t nb = 65536;
+    constexpr int32_t dim = 300;
+    const auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
+    const auto train_ds = GenSparseDataSet(nb, dim, 0.99f);
+    knowhere::Json json = {
+        {knowhere::meta::DIM, dim},      {knowhere::meta::METRIC_TYPE, metric}, {knowhere::meta::TOPK, 100},
+        {knowhere::meta::BM25_K1, 1.2f}, {knowhere::meta::BM25_B, 0.75f},       {knowhere::meta::BM25_AVGDL, 100.0f},
+    };
+
+    struct BuildPoolSizeGuard {
+        size_t original = knowhere::KnowhereConfig::GetBuildThreadPoolSize();
+        ~BuildPoolSizeGuard() {
+            // Zero means the global pool had not been initialized yet; zero is not a valid size to restore.
+            if (original != 0) {
+                knowhere::KnowhereConfig::SetBuildThreadPoolSize(original);
+            }
+        }
+    } pool_size_guard;
+
+    knowhere::KnowhereConfig::SetBuildThreadPoolSize(1);
+    auto serial_index = knowhere::IndexFactory::Instance()
+                            .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC,
+                                                              knowhere::Version::GetCurrentVersion().VersionNumber())
+                            .value();
+    REQUIRE(serial_index.Build(train_ds, json) == knowhere::Status::success);
+    knowhere::BinarySet serial_binary;
+    REQUIRE(serial_index.Serialize(serial_binary) == knowhere::Status::success);
+
+    knowhere::KnowhereConfig::SetBuildThreadPoolSize(8);
+    auto parallel_index = knowhere::IndexFactory::Instance()
+                              .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC,
+                                                                knowhere::Version::GetCurrentVersion().VersionNumber())
+                              .value();
+    REQUIRE(parallel_index.Build(train_ds, json) == knowhere::Status::success);
+    knowhere::BinarySet parallel_binary;
+    REQUIRE(parallel_index.Serialize(parallel_binary) == knowhere::Status::success);
+
+    const auto serial_blob = serial_binary.GetByName(serial_index.Type());
+    const auto parallel_blob = parallel_binary.GetByName(parallel_index.Type());
+    REQUIRE(serial_blob->size == parallel_blob->size);
+    REQUIRE(std::memcmp(serial_blob->data.get(), parallel_blob->data.get(), serial_blob->size) == 0);
+}
+
+TEST_CASE("Test DSP Concurrent Search Reuses Workspaces", "[float metrics][sparse][dsp][concurrent]") {
+    constexpr int64_t nb = 4096;
+    constexpr int64_t nq = 4;
+    constexpr int64_t topk = 100;
+    constexpr int32_t dim = 300;
+    constexpr int32_t num_threads = 8;
+    constexpr int32_t repetitions = 50;
+    const auto train_ds = GenSparseDataSet(nb, dim, 0.95f);
+    const auto query_ds = GenSparseDataSet(nq, dim, 0.97f);
+    knowhere::Json json = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::IP},
+        {knowhere::meta::TOPK, topk},
+        {knowhere::indexparam::DROP_RATIO_SEARCH, 0.0f},
+        {"dsp_mu", 1.0f},
+        {"dsp_eta", 1.0f},
+    };
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC,
+                                                       knowhere::Version::GetCurrentVersion().VersionNumber())
+                     .value();
+    REQUIRE(index.Build(train_ds, json) == knowhere::Status::success);
+    auto expected = index.Search(query_ds, json, nullptr);
+    REQUIRE(expected.has_value());
+
+    std::atomic<bool> all_equal{true};
+    std::vector<std::future<void>> futures;
+    futures.reserve(num_threads);
+    for (int32_t thread = 0; thread < num_threads; ++thread) {
+        futures.emplace_back(std::async(std::launch::async, [&]() {
+            for (int32_t repetition = 0; repetition < repetitions; ++repetition) {
+                auto actual = index.Search(query_ds, json, nullptr);
+                if (!actual.has_value() ||
+                    std::memcmp(actual.value()->GetIds(), expected.value()->GetIds(), nq * topk * sizeof(int64_t)) !=
+                        0 ||
+                    std::memcmp(actual.value()->GetDistance(), expected.value()->GetDistance(),
+                                nq * topk * sizeof(float)) != 0) {
+                    all_equal = false;
+                    return;
+                }
+            }
+        }));
+    }
+    for (auto& future : futures) {
+        future.get();
+    }
+    REQUIRE(all_equal.load());
+}
+
+TEST_CASE("Test DSP Rejects Invalid Sparse Values", "[float metrics][sparse][dsp]") {
+    const auto index_type = GENERATE(knowhere::IndexEnum::INDEX_SPARSE_DSP, knowhere::IndexEnum::INDEX_SPARSE_DSP_CC);
+    const float invalid_value =
+        GENERATE(-1.0f, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity());
+    constexpr int32_t dim = 4;
+    knowhere::Json json = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::IP},
+        {knowhere::meta::TOPK, 1},
+        {knowhere::indexparam::DROP_RATIO_SEARCH, 0.0f},
+    };
+
+    std::vector<std::map<int32_t, float>> invalid_base = {{{0, 1.0f}}, {{1, invalid_value}}};
+    const auto invalid_train_ds = GenSparseDataSet(invalid_base, dim);
+    auto invalid_index =
+        knowhere::IndexFactory::Instance()
+            .Create<knowhere::sparse_u32_f32>(index_type, knowhere::Version::GetCurrentVersion().VersionNumber())
+            .value();
+    REQUIRE(invalid_index.Build(invalid_train_ds, json) == knowhere::Status::invalid_args);
+
+    std::vector<std::map<int32_t, float>> valid_base = {{{0, 1.0f}}, {{1, 2.0f}}};
+    const auto valid_train_ds = GenSparseDataSet(valid_base, dim);
+    auto valid_index =
+        knowhere::IndexFactory::Instance()
+            .Create<knowhere::sparse_u32_f32>(index_type, knowhere::Version::GetCurrentVersion().VersionNumber())
+            .value();
+    REQUIRE(valid_index.Build(valid_train_ds, json) == knowhere::Status::success);
+
+    std::vector<std::map<int32_t, float>> invalid_query = {{{0, 1.0f}, {1, invalid_value}}};
+    const auto invalid_query_ds = GenSparseDataSet(invalid_query, dim);
+    auto result = valid_index.Search(invalid_query_ds, json, nullptr);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error() == knowhere::Status::invalid_args);
+}
+
+TEST_CASE("Test DSP Safe Mode Matches Brute Force", "[float metrics][sparse][dsp]") {
+    using Catch::Approx;
+    constexpr int64_t nb = 2000;
+    constexpr int64_t nq = 10;
+    constexpr int32_t dim = 300;
+    const int64_t topk = GENERATE(10, 100, 1000);
+    INFO("topk=" << topk);
+    const auto train_ds = GenSparseDataSet(nb, dim, 0.95f);
+    const auto query_ds = GenSparseDataSet(nq, dim, 0.97f);
+
+    knowhere::Json json = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::IP},
+        {knowhere::meta::TOPK, topk},
+        {knowhere::indexparam::DROP_RATIO_SEARCH, 0.0f},
+        {"dsp_mu", 1.0f},
+        {"dsp_eta", 1.0f},
+    };
+
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_DSP_CC,
+                                                       knowhere::Version::GetCurrentVersion().VersionNumber())
+                     .value();
+    REQUIRE(index.Build(train_ds, json) == knowhere::Status::success);
+
+    auto expected = knowhere::BruteForce::SearchSparse(train_ds, query_ds, json, nullptr);
+    REQUIRE(expected.has_value());
+    auto actual = index.Search(query_ds, json, nullptr);
+    REQUIRE(actual.has_value());
+    REQUIRE(expected.value()->GetDim() == topk);
+    REQUIRE(actual.value()->GetDim() == topk);
+
+    const auto* expected_ids = expected.value()->GetIds();
+    const auto* expected_scores = expected.value()->GetDistance();
+    const auto* actual_ids = actual.value()->GetIds();
+    const auto* actual_scores = actual.value()->GetDistance();
+    for (int64_t query = 0; query < nq; ++query) {
+        const int64_t offset = query * topk;
+        int64_t positive_count = 0;
+        while (positive_count < topk && expected_scores[offset + positive_count] > 0.0f) {
+            ++positive_count;
+        }
+        CAPTURE(query, positive_count);
+
+        // Brute force may fill the tail with arbitrary zero-score IDs, while DSP (like the other DAAT paths) only
+        // emits positive-score matches. Compare the sorted scores only where a positive match exists. The two paths
+        // accumulate floats in a different order, hence the same relative tolerance used by the brute-force tests;
+        // tied IDs may legitimately appear in a different order.
+        for (int64_t rank = 0; rank < positive_count; ++rank) {
+            REQUIRE(actual_scores[offset + rank] == Approx(expected_scores[offset + rank]).epsilon(0.00001));
+        }
+
+        // IDs above the kth-score tie boundary are unique members of the exact top-k result. IDs at the boundary may
+        // be exchanged with other equal-score documents, so comparing them would make this assertion tie-sensitive.
+        // Use the same tolerance as the score comparison above when identifying that boundary: DSP and brute force
+        // accumulate in different orders, and a tied score can otherwise land a few ulps above kth_score.
+        const float kth_score = expected_scores[offset + topk - 1];
+        const auto is_kth_tie = [kth_score](float score) { return score == Approx(kth_score).epsilon(0.00001); };
+        std::unordered_set<int64_t> expected_strict_ids;
+        std::unordered_set<int64_t> actual_strict_ids;
+        for (int64_t rank = 0; rank < topk; ++rank) {
+            if (expected_scores[offset + rank] > kth_score && !is_kth_tie(expected_scores[offset + rank])) {
+                expected_strict_ids.insert(expected_ids[offset + rank]);
+            }
+            if (actual_ids[offset + rank] >= 0 && actual_scores[offset + rank] > kth_score &&
+                !is_kth_tie(actual_scores[offset + rank])) {
+                actual_strict_ids.insert(actual_ids[offset + rank]);
+            }
+        }
+        REQUIRE(actual_strict_ids == expected_strict_ids);
     }
 }
 
