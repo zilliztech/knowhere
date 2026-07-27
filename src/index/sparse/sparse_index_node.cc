@@ -547,7 +547,8 @@ class SparseInvertedIndexNode : public IndexNode {
 
         if (version_default_to_daat_maxscore()) {
             const std::string algo = get_inverted_index_algo("DAAT_MAXSCORE");
-            const std::string codec = cfg.inverted_index_codec.value_or("block_streamvbyte");
+            const std::string codec =
+                cfg.inverted_index_codec.value_or(version_default_to_flat_codec() ? "" : "block_streamvbyte");
             return create_index_before_v10(algo, codec);
         } else if (is_ip) {
             const std::string algo = get_inverted_index_algo("SINDI");
@@ -797,6 +798,16 @@ class SparseInvertedIndexNode : public IndexNode {
     bool
     version_default_to_daat_maxscore() const {
         return index_version_ < 10;
+    }
+
+    bool
+    version_default_to_flat_codec() const {
+#ifndef KNOWHERE_WITH_CARDINAL
+        // Knowhere 2.6 writes v8/v9 sparse indexes with the legacy flat codec.
+        return index_version_ >= 8 && index_version_ < 10;
+#else
+        return false;
+#endif
     }
 
     // used to load index
