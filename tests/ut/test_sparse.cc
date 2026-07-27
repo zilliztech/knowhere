@@ -763,8 +763,8 @@ TEST_CASE("Sparse v8 and v9 serialize the legacy flat codec", "[sparse]") {
 
     uint32_t encoding = 0;
     std::memcpy(&encoding, binary->data.get() + posting_lists->offset, sizeof(encoding));
-    REQUIRE(static_cast<knowhere::sparse::inverted::InvertedIndexEncoding>(encoding) ==
-            knowhere::sparse::inverted::InvertedIndexEncoding::FLAT);
+    // The v8/v9 wire format defines encoding type 0 as flat.
+    REQUIRE(encoding == 0);
 }
 #endif
 
