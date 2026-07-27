@@ -9,6 +9,7 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <cstring>
 #include <future>
 #include <stdexcept>
 #include <string>
@@ -735,6 +736,37 @@ TEST_CASE("Test Sparse Index Codec and Algo Combinations", "[sparse]") {
         }
     }
 }
+
+#ifndef KNOWHERE_WITH_CARDINAL
+TEST_CASE("Sparse v8 and v9 serialize the legacy flat codec", "[sparse]") {
+    const auto version = GENERATE(8, 9);
+    const auto dataset = GenSparseDataSet(100, 1000, 0.98f);
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = 1000;
+    build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "DAAT_MAXSCORE";
+
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                     .value();
+    REQUIRE(index.Build(dataset, build_json) == knowhere::Status::success);
+
+    knowhere::BinarySet binary_set;
+    REQUIRE(index.Serialize(binary_set) == knowhere::Status::success);
+
+    const auto binary = binary_set.GetByName(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX);
+    const auto sections = ReadSparseIndexSections(binary);
+    const auto* posting_lists =
+        FindSection(sections, knowhere::sparse::inverted::InvertedIndexSectionType::POSTING_LISTS);
+    REQUIRE(posting_lists != nullptr);
+
+    uint32_t encoding = 0;
+    std::memcpy(&encoding, binary->data.get() + posting_lists->offset, sizeof(encoding));
+    // The v8/v9 wire format defines encoding type 0 as flat.
+    REQUIRE(encoding == 0);
+}
+#endif
 
 TEST_CASE("Test Sparse Index Dim Max Score Ratio", "[sparse]") {
     auto nb = 1000;
