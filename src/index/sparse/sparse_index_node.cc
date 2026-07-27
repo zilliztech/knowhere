@@ -547,11 +547,11 @@ class SparseInvertedIndexNode : public IndexNode {
 
         if (version_default_to_daat_maxscore()) {
             const std::string algo = get_inverted_index_algo("DAAT_MAXSCORE");
-            const std::string codec = cfg.inverted_index_codec.value_or("block_streamvbyte");
+            const std::string codec = cfg.inverted_index_codec.value_or("");
             return create_index_before_v10(algo, codec);
         } else if (is_ip) {
             const std::string algo = get_inverted_index_algo("SINDI");
-            const std::string codec = cfg.inverted_index_codec.value_or("block_streamvbyte");
+            const std::string codec = cfg.inverted_index_codec.value_or("");
             // When encoding is available and not FIXED_DOCID_WINDOWS, the file was not
             // built with SINDI, so use create_index_before_v10 to match the actual file encoding.
             bool use_sindi =
