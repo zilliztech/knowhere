@@ -350,7 +350,7 @@ class AdaptiveBlockCodec final : public BlockCodec {
             if (!doc_ids) {
                 // Match Lucene PackedInts.bitsRequired: zero still occupies one base bit. A token width of zero is
                 // reserved for the constant-base optimization after exception planning.
-                ++bit_width_histogram[std::max(1U, std::bit_width(value))];
+                ++bit_width_histogram[std::max(1, static_cast<int>(std::bit_width(value)))];
             }
         }
 
