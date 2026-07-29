@@ -48,7 +48,8 @@ enum class InvertedIndexEncoding : uint32_t {
     FLAT = 0,
     BLOCK_STREAMVBYTE = 1,
     BLOCK_MASKEDVBYTE = 2,
-    FIXED_DOCID_WINDOWS = 3
+    FIXED_DOCID_WINDOWS = 3,
+    BLOCK_ADAPTIVE = 4,
 };
 
 enum class InvertedIndexPrometheusBuildStats : uint32_t { DATASET_NNZ_STATS = 0, POSTING_LIST_LENGTH_STATS = 1 };
@@ -373,8 +374,8 @@ class InvertedIndex {
      */
     [[nodiscard]] BlockMaxDataCursor
     get_block_max_data_cursor(uint32_t dim_id) const {
-        uint32_t start = dim_id == 0 ? 0 : this->meta_data_.block_max_data_.block_offsets_[dim_id - 1];
-        uint32_t num = this->meta_data_.block_max_data_.block_offsets_[dim_id] - start;
+        const size_t start = dim_id == 0 ? 0 : this->meta_data_.block_max_data_.block_offsets_[dim_id - 1];
+        const size_t num = this->meta_data_.block_max_data_.block_offsets_[dim_id] - start;
         return {this->meta_data_.block_max_data_.block_max_ids_.subspan(start, num),
                 this->meta_data_.block_max_data_.block_max_scores_.subspan(start, num)};
     }

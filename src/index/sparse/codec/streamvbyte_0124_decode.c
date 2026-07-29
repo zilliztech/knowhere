@@ -294,6 +294,12 @@ typedef __m128i decode_t;
 
 static inline decode_t
 svb_decode_uint32x4(const uint8_t key, const uint8_t* __restrict__* dataPtrPtr) {
+    // A zero control consumes no payload bytes. Avoid issuing a 16-byte load at the logical end of the stream;
+    // this keeps the fast decoder's required trailing guard at 15 bytes.
+    if (key == 0) {
+        return _mm_setzero_si128();
+    }
+
     uint8_t len = 0;
     decode_t Data = _mm_loadu_si128((const decode_t*)*dataPtrPtr);
     uint8_t* pshuf = (uint8_t*)&shuffleTable[key];
@@ -315,6 +321,12 @@ typedef uint8x16_t decode_t;
 
 static inline decode_t
 svb_decode_uint32x4(const uint8_t key, const uint8_t* __restrict__* dataPtrPtr) {
+    // A zero control consumes no payload bytes. Avoid issuing a 16-byte load at the logical end of the stream;
+    // this keeps the fast decoder's required trailing guard at 15 bytes.
+    if (key == 0) {
+        return vdupq_n_u8(0);
+    }
+
     uint8_t len = 0;
     uint8_t* pshuf = (uint8_t*)&shuffleTable[key];
     uint8x16_t decodingShuffle = vld1q_u8(pshuf);

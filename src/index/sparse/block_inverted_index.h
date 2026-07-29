@@ -21,6 +21,25 @@
 
 namespace knowhere::sparse::inverted {
 
+// Empty posting lists are never materialized. Encoded count value 0 (wire byte 0x80) therefore marks the singleton
+// short form whose logical count is one. Its sole document ID occupies the posting block max-ID slot. BM25 stores
+// TF - 1 after that slot as an untagged internal varint, including an explicit zero for TF == 1; IP keeps its regular
+// raw value payload.
+inline constexpr uint32_t kSingletonShortFormSizeMarker = 0;
+
+struct PostingListSizeInfo {
+    uint32_t size;
+    bool is_singleton_short_form;
+};
+
+[[nodiscard]] inline PostingListSizeInfo
+posting_list_size_info(uint32_t encoded_size) noexcept {
+    const bool is_singleton_short_form = encoded_size == kSingletonShortFormSizeMarker;
+    return {is_singleton_short_form ? 1U : encoded_size, is_singleton_short_form};
+}
+
+// Internal little-endian base-128 varint. Unlike unsigned LEB128 or Lucene VInt, bit 7 marks the final byte: it is
+// clear on continuation bytes and set on the terminator (for example, 0 -> 0x80 and 128 -> 0x00 0x81).
 inline void
 varint_encode(uint32_t val, std::vector<uint8_t>& out) {
     while (val >= 128) {
@@ -56,16 +75,26 @@ class BlockInvertedIndexCursor {
     BlockInvertedIndexCursor(const BlockCodecPtr& block_codec, std::uint8_t const* data, std::uint32_t universe,
                              BitsetView bitset, uint32_t initial_lower_bound = 0,
                              uint32_t valid_upper_bound = std::numeric_limits<uint32_t>::max())
-        : base_(varint_decode(data, &n_, 1)),
-          nr_blocks_((n_ + block_codec->block_size() - 1) / block_codec->block_size()),
-          block_maxids_(base_),
-          block_offsets_(block_maxids_ + sizeof(int32_t) * nr_blocks_),
-          blocks_data_(block_offsets_ + sizeof(uint32_t) * (nr_blocks_ - 1)),
-          universe_(universe),
+        : universe_(universe),
           block_codec_(block_codec),
           block_size_(block_codec->block_size()),
           bitset_(bitset),
           valid_upper_bound_(std::min(universe, valid_upper_bound)) {
+        uint32_t encoded_size = 0;
+        base_ = varint_decode(data, &encoded_size, 1);
+        const auto size_info = posting_list_size_info(encoded_size);
+        n_ = size_info.size;
+        is_singleton_short_form_ = size_info.is_singleton_short_form;
+        assert(!is_singleton_short_form_ || block_codec_->supports_singleton_short_form());
+        assert(n_ > 0 && n_ <= universe_);
+        nr_blocks_ = (n_ + block_size_ - 1) / block_size_;
+
+        const size_t block_maxids_size = sizeof(uint32_t) * nr_blocks_;
+        const size_t block_offsets_size = sizeof(uint32_t) * (nr_blocks_ - 1);
+        block_maxids_ = base_;
+        block_offsets_ = block_maxids_ + block_maxids_size;
+        blocks_data_ = block_offsets_ + block_offsets_size;
+
         ids_buf_.resize(block_size_);
         vals_buf_.resize(block_size_);
         reset(initial_lower_bound);
@@ -77,13 +106,8 @@ class BlockInvertedIndexCursor {
             set_invalid();
             return;
         }
-        const auto* block_maxids = reinterpret_cast<const uint32_t*>(block_maxids_);
-        const auto* block_it = std::lower_bound(block_maxids, block_maxids + nr_blocks_, lower_bound);
-        decode_vecids_block(static_cast<uint32_t>(block_it - block_maxids));
-        while (cur_vec_id_ < lower_bound) {
-            cur_vec_id_ += ids_buf_[++pos_in_block_] + 1;
-            assert(pos_in_block_ < cur_block_size_);
-        }
+        decode_vecids_block(lower_bound_block(0, lower_bound));
+        advance_to(lower_bound);
         if (cur_vec_id_ >= valid_upper_bound_) {
             set_invalid();
             return;
@@ -101,7 +125,7 @@ class BlockInvertedIndexCursor {
             }
             decode_vecids_block(cur_block_ + 1);
         } else {
-            cur_vec_id_ += ids_buf_[pos_in_block_] + 1;
+            cur_vec_id_ = ids_buf_[pos_in_block_];
         }
         if (cur_vec_id_ >= valid_upper_bound_) {
             set_invalid();
@@ -132,17 +156,10 @@ class BlockInvertedIndexCursor {
                 cur_vec_id_ = universe_;
                 return;
             }
-            const auto* block_maxids = reinterpret_cast<const uint32_t*>(block_maxids_);
-            const auto* block_it =
-                std::lower_bound(block_maxids + cur_block_ + 1, block_maxids + nr_blocks_, lower_bound);
-            const uint32_t block = static_cast<uint32_t>(block_it - block_maxids);
-            decode_vecids_block(block);
+            decode_vecids_block(lower_bound_block(cur_block_ + 1, lower_bound));
         }
 
-        while (cur_vec_id_ < lower_bound) {
-            cur_vec_id_ += ids_buf_[++pos_in_block_] + 1;
-            assert(pos_in_block_ < cur_block_size_);
-        }
+        advance_to(lower_bound);
 
         skip_filtered_ids();
     }
@@ -158,7 +175,7 @@ class BlockInvertedIndexCursor {
             decode_vals_block();
         }
 
-        // now only uint32_t is compression supported
+        // Only the uint32_t/BM25 value path stores TF - 1 through the block codec; IP values remain verbatim.
         if constexpr (std::is_same_v<VType, uint32_t>) {
             return vals_buf_[pos_in_block_] + 1;
         } else {
@@ -173,7 +190,7 @@ class BlockInvertedIndexCursor {
 
     [[nodiscard]] uint32_t
     block_maxid(uint32_t blk_idx) const {
-        return ((uint32_t const*)block_maxids_)[blk_idx];
+        return load_u32(block_maxids_ + sizeof(uint32_t) * blk_idx);
     }
 
     void
@@ -211,6 +228,39 @@ class BlockInvertedIndexCursor {
         vals_decoded_ = false;
     }
 
+    [[nodiscard]] static uint32_t
+    load_u32(const uint8_t* data) {
+        uint32_t value = 0;
+        std::memcpy(&value, data, sizeof(value));
+        return value;
+    }
+
+    [[nodiscard]] uint32_t
+    block_offset(uint32_t blk_idx) const {
+        return load_u32(block_offsets_ + sizeof(uint32_t) * blk_idx);
+    }
+
+    [[nodiscard]] uint32_t
+    lower_bound_block(uint32_t first, uint32_t lower_bound) const {
+        uint32_t last = nr_blocks_;
+        while (first < last) {
+            const uint32_t middle = first + (last - first) / 2;
+            if (block_maxid(middle) < lower_bound) {
+                first = middle + 1;
+            } else {
+                last = middle;
+            }
+        }
+        return first;
+    }
+
+    void
+    advance_to(uint32_t lower_bound) {
+        while (cur_vec_id_ < lower_bound) {
+            cur_vec_id_ = ids_buf_[++pos_in_block_];
+        }
+    }
+
     void
     decode_vecids_block(uint32_t blkid) {
         while (blkid < nr_blocks_) {
@@ -230,17 +280,24 @@ class BlockInvertedIndexCursor {
             return;
         }
 
-        uint32_t endpoint = blkid != 0U ? ((uint32_t const*)block_offsets_)[blkid - 1] : 0;
+        const uint32_t endpoint = blkid != 0U ? block_offset(blkid - 1) : 0;
         uint8_t const* block_data = blocks_data_ + endpoint;
         cur_block_size_ = ((blkid + 1) * block_size_ <= n_) ? block_size_ : (n_ % block_size_);
-        uint32_t cur_base = (blkid != 0U ? block_maxid(blkid - 1) : uint32_t(-1)) + 1;
         cur_block_maxid_ = block_maxid(blkid);
-        vals_block_data_ = block_codec_->decode(block_data, ids_buf_.data(), cur_block_size_);
+
+        if (is_singleton_short_form_) [[unlikely]] {
+            assert(n_ == 1 && nr_blocks_ == 1 && blkid == 0 && cur_block_size_ == 1);
+            assert(cur_block_maxid_ < universe_);
+            ids_buf_[0] = cur_block_maxid_;
+            vals_block_data_ = block_data;
+        } else {
+            const uint32_t previous_vec_id = blkid == 0 ? UINT32_MAX : block_maxid(blkid - 1);
+            vals_block_data_ =
+                block_codec_->decode_doc_ids(block_data, ids_buf_.data(), cur_block_size_, previous_vec_id);
+        }
 #if defined(__GNUC__) || defined(__clang__)
         __builtin_prefetch(vals_block_data_, 0, 3);
 #endif
-
-        ids_buf_[0] += cur_base;
 
         cur_block_ = blkid;
         pos_in_block_ = 0;
@@ -251,7 +308,12 @@ class BlockInvertedIndexCursor {
     void
     decode_vals_block() {
         if constexpr (std::is_same_v<VType, uint32_t>) {
-            uint8_t const* next_block = block_codec_->decode(vals_block_data_, vals_buf_.data(), cur_block_size_);
+            uint8_t const* next_block = vals_block_data_;
+            if (is_singleton_short_form_) [[unlikely]] {
+                next_block = varint_decode(vals_block_data_, vals_buf_.data(), 1);
+            } else {
+                next_block = block_codec_->decode(vals_block_data_, vals_buf_.data(), cur_block_size_);
+            }
 #if defined(__GNUC__) || defined(__clang__)
             __builtin_prefetch(next_block, 0, 3);
 #endif
@@ -287,6 +349,7 @@ class BlockInvertedIndexCursor {
     std::vector<VType> vals_buf_;
     BlockCodecPtr block_codec_;
     std::size_t block_size_;
+    bool is_singleton_short_form_{false};
     BitsetView bitset_;
     uint32_t valid_upper_bound_{0};
     BlockFilterState cur_block_filter_state_{BlockFilterState::AllValid};
@@ -354,16 +417,16 @@ class BlockInvertedIndex : public CRTPInvertedIndex<BlockInvertedIndex<DType, QT
 
     [[nodiscard]] posting_list_iterator
     get_dim_plist_cursor(uint32_t dim_id, const BitsetView& bitset) const {
-        auto endpoint = this->posting_blocks_dim_offsets_[dim_id];
-        auto* data = this->posting_blocks_data_.data() + endpoint;
+        const auto begin = this->posting_blocks_dim_offsets_[dim_id];
+        auto* data = this->posting_blocks_data_.data() + begin;
         return posting_list_iterator(this->block_codec_, data, this->nr_rows_, bitset);
     }
 
     [[nodiscard]] posting_list_iterator
     get_dim_plist_cursor(uint32_t dim_id, const BitsetView& bitset, uint32_t initial_lower_bound,
                          uint32_t valid_upper_bound) const {
-        auto endpoint = this->posting_blocks_dim_offsets_[dim_id];
-        auto* data = this->posting_blocks_data_.data() + endpoint;
+        const auto begin = this->posting_blocks_dim_offsets_[dim_id];
+        auto* data = this->posting_blocks_data_.data() + begin;
         return posting_list_iterator(this->block_codec_, data, this->nr_rows_, bitset, initial_lower_bound,
                                      valid_upper_bound);
     }
@@ -429,15 +492,13 @@ class BlockInvertedIndex : public CRTPInvertedIndex<BlockInvertedIndex<DType, QT
      * @param enable_mmap Whether to use file backed memory mapping
      * @param backed_filename File to use for memory mapping if enabled
      *
-     * This function builds the raw index from the serialized data.
-     * It first reads the number of rows and the maximum dimension seen.
-     * Then it calculates the memory requirements for the index structures.
+     * This function starts at the serialized row payload after the caller has read the row and dimension headers. It
+     * first scans the rows to count postings per external dimension, then allocates and fills the flattened raw
+     * arrays.
      * If memory mapping is enabled, it creates a memory mapped file to store the data.
      * Otherwise, it uses heap memory.
      *
-     * The memory is allocated for:
-     * - Inverted lists storing vector IDs (inverted_index_ids_)
-     * - Inverted lists storing values (inverted_index_vals_)
+     * The memory is allocated for the flattened raw_index_ids/raw_index_vals arrays and raw_index_offsets table.
      */
     void
     build_raw_index(MemoryIOReader& reader, std::unique_ptr<BinaryContainer>& raw_index_container,
@@ -495,7 +556,7 @@ class BlockInvertedIndex : public CRTPInvertedIndex<BlockInvertedIndex<DType, QT
     // The start offset of each dimension's list is stored in posting_blocks_dim_offsets_
     std::span<size_t> posting_blocks_dim_offsets_;
 
-    // Inverted lists storing all vector blocks
+    // Posting headers and encoded document-ID/value blocks for all dimensions, followed by a decoder guard.
     std::span<uint8_t> posting_blocks_data_;
 
     // Block codec
@@ -686,22 +747,36 @@ BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<ui
                                                                   std::span<uint32_t> vec_ids, std::span<QType> vals) {
     // Posting list layout:
     // +----------------+------------------------------------------+
-    // | list_sz       | uint32_t: total number of postings       |
+    // | encoded_count | internal varint; 0 marks a singleton     |
     // +----------------+------------------------------------------+
-    // | block_maxids  | int32_t[nr_blocks]: max vector id/block  |
+    // | block_maxids  | uint32_t[nr_blocks]: max vector ID/block |
     // +----------------+------------------------------------------+
     // | block_ends    | uint32_t[nr_blocks-1]: block end offsets |
     // +----------------+------------------------------------------+
     // | blocks        | uint8_t[]: encoded posting data          |
     // +----------------+------------------------------------------+
-    // Note: First block end offset is omitted (always 0)
-    size_t list_sz = vec_ids.size();
-    varint_encode(list_sz, out_buf);
+    // block_ends[i] is the end of block i and therefore the start of block i + 1; block 0 starts implicitly at 0.
+    // A codec with the singleton short form stores no doc-ID payload and reuses block_maxids[0] as the sole document
+    // ID.
+    // BM25 follows it with an untagged internal varint containing TF - 1, including zero for TF == 1. IP follows it
+    // with its regular raw value payload.
+    const uint32_t block_sz = block_codec_->block_size();
 
-    uint32_t block_sz = block_codec_->block_size();
+    const size_t list_sz = vec_ids.size();
+    const bool use_singleton_short_form = list_sz == 1 && block_codec_->supports_singleton_short_form();
+    uint32_t singleton_stored_value = 0;
+    uint32_t encoded_list_size = static_cast<uint32_t>(list_sz);
+    if (use_singleton_short_form) {
+        encoded_list_size = kSingletonShortFormSizeMarker;
+        if constexpr (!kIsIPMetric) {
+            singleton_stored_value = static_cast<uint32_t>(get_quant_val<DType, QType>(vals.front() - 1));
+        }
+    }
+    varint_encode(encoded_list_size, out_buf);
+
     size_t nr_blocks = (list_sz + block_sz - 1) / block_sz;
     size_t begin_block_maxids = out_buf.size();
-    size_t begin_block_endpoints = begin_block_maxids + sizeof(int32_t) * nr_blocks;
+    size_t begin_block_endpoints = begin_block_maxids + sizeof(uint32_t) * nr_blocks;
     size_t begin_blocks = begin_block_endpoints + sizeof(uint32_t) * (nr_blocks - 1);
     out_buf.resize(begin_blocks);
 
@@ -709,7 +784,7 @@ BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<ui
     auto* vals_it = vals.data();
 
     std::vector<uint32_t> ids_buf(block_sz);
-    int32_t last_vecid(-1);
+    uint32_t last_vecid = UINT32_MAX;
     for (size_t b = 0; b < nr_blocks; ++b) {
         uint32_t cur_block_size = ((b + 1) * block_sz <= list_sz) ? block_sz : (list_sz % block_sz);
 
@@ -718,9 +793,11 @@ BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<ui
             ids_buf[i] = vecid - last_vecid - 1;
             last_vecid = vecid;
         }
-        std::memcpy(out_buf.data() + begin_block_maxids + sizeof(int32_t) * b, &last_vecid, sizeof(last_vecid));
+        std::memcpy(out_buf.data() + begin_block_maxids + sizeof(uint32_t) * b, &last_vecid, sizeof(last_vecid));
 
-        block_codec_->encode(ids_buf.data(), cur_block_size, out_buf);
+        if (!use_singleton_short_form) {
+            block_codec_->encode_doc_ids(ids_buf.data(), cur_block_size, out_buf);
+        }
 
         if constexpr (kIsIPMetric) {
             std::vector<QType> vals_buf(cur_block_size);
@@ -729,6 +806,10 @@ BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<ui
             }
             out_buf.insert(out_buf.end(), reinterpret_cast<uint8_t*>(vals_buf.data()),
                            reinterpret_cast<uint8_t*>(vals_buf.data() + cur_block_size));
+        } else if (use_singleton_short_form) {
+            assert(cur_block_size == 1 && b == 0);
+            varint_encode(singleton_stored_value, out_buf);
+            ++vals_it;
         } else {
             std::vector<uint32_t> vals_buf(cur_block_size);
             for (size_t i = 0; i < cur_block_size; ++i) {
@@ -738,7 +819,7 @@ BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<ui
         }
 
         if (b != nr_blocks - 1) {
-            uint32_t endpoint = out_buf.size() - begin_blocks;
+            const uint32_t endpoint = static_cast<uint32_t>(out_buf.size() - begin_blocks);
             std::memcpy(out_buf.data() + begin_block_endpoints + sizeof(uint32_t) * b, &endpoint, sizeof(endpoint));
         }
     }
@@ -773,7 +854,8 @@ BlockInvertedIndex<DType, QType, MetricType>::build_block_index(std::span<uint32
         index_container_->write_at((i + 1) * sizeof(size_t), reinterpret_cast<uint8_t*>(&endpoint), sizeof(size_t));
     }
 
-    // This is a workaround to QMX codex having to sometimes look beyond the buffer due to some SIMD loads.
+    // The vectorized StreamVByte decoder may issue a 16-byte unaligned load from the final payload byte. Keep a
+    // 15-byte zero guard after all postings so that read stays inside the container without changing list offsets.
     std::array<uint8_t, 15> padding{};
     index_container_->append(padding.data(), padding.size());
 
@@ -909,9 +991,8 @@ BlockInvertedIndex<DType, QType, MetricType>::build_from_raw_data(MemoryIOReader
     int64_t rows = 0;
     size_t cols = 0;
 
-    // previous versions used the signness of rows to indicate whether to
-    // use wand. now we use a template parameter to control this thus simply
-    // take the absolute value of rows.
+    // Previous versions used the sign of rows to indicate whether WAND metadata was present. The current format
+    // records that in metadata, so ignore the legacy sign and use the absolute row count.
     readBinaryPOD(reader, rows);
     this->nr_rows_ = std::abs(rows);
     readBinaryPOD(reader, cols);
@@ -954,6 +1035,8 @@ BlockInvertedIndex<DType, QType, MetricType>::serialize(MemoryIOWriter& writer) 
             return static_cast<uint32_t>(InvertedIndexEncoding::BLOCK_STREAMVBYTE);
         } else if (this->block_codec_->get_name() == "block_maskedvbyte") {
             return static_cast<uint32_t>(InvertedIndexEncoding::BLOCK_MASKEDVBYTE);
+        } else if (this->block_codec_->get_name() == "block_adaptive") {
+            return static_cast<uint32_t>(InvertedIndexEncoding::BLOCK_ADAPTIVE);
         } else {
             throw std::runtime_error("Unsupported index encoding type for BlockInvertedIndex");
         }
@@ -1105,6 +1188,10 @@ BlockInvertedIndex<DType, QType, MetricType>::deserialize(MemoryIOReader& reader
                     }
                     if (index_encoding_type == static_cast<uint32_t>(InvertedIndexEncoding::BLOCK_MASKEDVBYTE) &&
                         this->block_codec_->get_name() != "block_maskedvbyte") {
+                        return Status::invalid_serialized_index_type;
+                    }
+                    if (index_encoding_type == static_cast<uint32_t>(InvertedIndexEncoding::BLOCK_ADAPTIVE) &&
+                        this->block_codec_->get_name() != "block_adaptive") {
                         return Status::invalid_serialized_index_type;
                     }
                     // construct posting blocks dim offsets
