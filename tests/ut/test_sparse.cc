@@ -640,8 +640,8 @@ TEST_CASE("Test Sparse Index Codec and Algo Combinations", "[sparse]") {
     auto version = GenTestVersionList();
 
     // Test different codecs
-    auto inverted_index_codec =
-        GENERATE(std::string("block_streamvbyte"), std::string("block_maskedvbyte"), std::string("default"));
+    auto inverted_index_codec = GENERATE(std::string("block_streamvbyte"), std::string("block_maskedvbyte"),
+                                         std::string("block_adaptive"), std::string("default"));
 
     // Test different build algorithms (which also test metadata generation)
     auto inverted_index_algo =

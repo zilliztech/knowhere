@@ -51,7 +51,7 @@ IsSupportedSparseInvertedIndexAlgo(const std::string& algo) {
 
 inline bool
 IsSupportedSparseInvertedIndexCodec(const std::string& codec) {
-    return codec.empty() || codec == "block_streamvbyte" || codec == "block_maskedvbyte";
+    return codec.empty() || codec == "block_streamvbyte" || codec == "block_maskedvbyte" || codec == "block_adaptive";
 }
 
 class SparseInvertedIndexConfig : public BaseConfig {
@@ -175,7 +175,8 @@ class SparseInvertedIndexConfig : public BaseConfig {
         if (inverted_index_codec.has_value() && !IsSupportedSparseInvertedIndexCodec(inverted_index_codec.value())) {
             return HandleError(err_msg,
                                "inverted_index_codec " + inverted_index_codec.value() +
-                                   " not found or not supported, supported: [block_streamvbyte block_maskedvbyte]",
+                                   " not found or not supported, supported: [block_streamvbyte block_maskedvbyte "
+                                   "block_adaptive]",
                                Status::invalid_args);
         }
         if (quant_type.has_value() && !quant_type.value().empty()) {

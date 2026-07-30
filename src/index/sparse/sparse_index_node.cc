@@ -18,6 +18,7 @@
 #include <optional>
 
 #include "index/sparse/block_inverted_index.h"
+#include "index/sparse/codec/adaptive.h"
 #include "index/sparse/codec/maskedvbyte.h"
 #include "index/sparse/codec/streamvbyte.h"
 #include "index/sparse/flatten_inverted_index.h"
@@ -78,7 +79,7 @@ peek_encoding_type_from_index_data(const uint8_t* data, size_t size) {
     }
 
     // encoding_type is the first uint32_t at the section's data offset
-    if (first_section.offset + sizeof(uint32_t) > size) {
+    if (first_section.offset > size || sizeof(uint32_t) > size - first_section.offset) {
         return std::nullopt;
     }
 
@@ -490,6 +491,12 @@ class SparseInvertedIndexNode : public IndexNode {
                         index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
                         break;
                     }
+                    case InvertedIndexEncoding::BLOCK_ADAPTIVE: {
+                        LOG_KNOWHERE_INFO_ << "Detected BLOCK_ADAPTIVE encoding in index file";
+                        auto codec = std::make_shared<sparse::inverted::AdaptiveBlockCodec>();
+                        index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
+                        break;
+                    }
                     case InvertedIndexEncoding::FIXED_DOCID_WINDOWS:
                         // SINDI encoding should not reach create_index_before_v10; fall through to default codec
                         LOG_KNOWHERE_WARNING_ << "Unexpected FIXED_DOCID_WINDOWS encoding in create_index_before_v10";
@@ -507,12 +514,15 @@ class SparseInvertedIndexNode : public IndexNode {
                     index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
                 } else {
                     // use different index type based on codec
-                    if (inverted_index_codec == "block_streamvbyte" || inverted_index_codec == "block_maskedvbyte") {
+                    if (inverted_index_codec == "block_streamvbyte" || inverted_index_codec == "block_maskedvbyte" ||
+                        inverted_index_codec == "block_adaptive") {
                         sparse::inverted::BlockCodecPtr codec;
                         if (inverted_index_codec == "block_streamvbyte") {
                             codec = std::make_shared<sparse::inverted::StreamVByteBlockCodec>();
-                        } else {
+                        } else if (inverted_index_codec == "block_maskedvbyte") {
                             codec = std::make_shared<sparse::inverted::MaskedVByteBlockCodec>();
+                        } else {
+                            codec = std::make_shared<sparse::inverted::AdaptiveBlockCodec>();
                         }
                         index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
                     } else if (!inverted_index_codec.empty()) {

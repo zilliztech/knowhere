@@ -35,13 +35,15 @@ streamvbyte_max_compressedbytes(uint32_t length) {
 }
 
 /**
- * StreamVByte coding.
+ * StreamVByte-0124 block coding.
  *
  * Daniel Lemire, Nathan Kurz, Christoph Rupp: Stream VByte: Faster byte-oriented integer
  * compression. Inf. Process. Lett. 130: 1-6 (2018). DOI: https://doi.org/10.1016/j.ipl.2017.09.011
+ *
+ * This local variant assigns each control code a payload width of 0, 1, 2, or 4 bytes, so zero consumes no payload
+ * byte. It is not wire-compatible with the upstream StreamVByte 1/2/3/4-byte format.
  */
 class StreamVByteBlockCodec : public BlockCodec {
-    static constexpr uint64_t m_streamvbyte_padding = 16;
     static constexpr uint64_t m_block_size = 256;
     static constexpr size_t m_max_compressed_bytes = streamvbyte_max_compressedbytes(m_block_size);
 
