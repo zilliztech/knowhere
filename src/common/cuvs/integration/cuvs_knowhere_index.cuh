@@ -33,6 +33,7 @@
 #include <raft/linalg/matrix_vector_op.cuh>
 #include <raft/linalg/normalize.cuh>
 #include <raft/linalg/reduce.cuh>
+#include <raft/matrix/init.cuh>
 #include <tuple>
 #include <type_traits>
 
@@ -97,8 +98,8 @@ struct check_valid_entry {
     }
     __device__ thrust::tuple<V, U>
     operator()(V id, U distance) {
-        if (distance >= max_distance_ || id >= max_id_)
-            return thrust::tuple<V, U>(V{-1}, distance);
+        if (distance >= max_distance_ || id < V{0} || id >= max_id_)
+            return thrust::tuple<V, U>(V{-1}, max_distance_);
         if (distance < 0)
             return thrust::tuple<V, U>(id, U{0});
         return thrust::tuple<V, U>(id, distance);
@@ -559,6 +560,13 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
         auto device_ids = device_ids_storage.view();
         auto device_distances = device_distances_storage.view();
 
+        auto max_distance =
+            std::nextafter(std::numeric_limits<knowhere_distance_type>::max(), knowhere_distance_type{0});
+        auto invalid_id = std::numeric_limits<indexing_type>::max();
+        // cuVS may leave result slots untouched when fewer candidates than k are selected.
+        raft::matrix::fill(res, device_ids, invalid_id);
+        raft::matrix::fill(res, device_distances, max_distance);
+
         RAFT_EXPECTS(index_, "Index has not yet been trained");
         auto dataset_view = device_dataset_storage
                                 ? std::make_optional(device_dataset_storage->view())
@@ -593,8 +601,6 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
             }
         }();
 
-        auto max_distance =
-            std::nextafter(std::numeric_limits<knowhere_distance_type>::max(), knowhere_distance_type{0});
         auto device_post_process = detail::check_valid_entry<knowhere_distance_type, knowhere_indexing_type>{
             max_distance, knowhere_indexing_type(size())};
         thrust::transform(
