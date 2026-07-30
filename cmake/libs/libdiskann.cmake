@@ -1,6 +1,6 @@
 add_definitions(-DKNOWHERE_WITH_DISKANN)
-find_package(Boost REQUIRED COMPONENTS program_options)
-include_directories(${Boost_INCLUDE_DIR})
+find_package(Boost REQUIRED COMPONENTS program_options CONFIG)
+include_directories(${Boost_INCLUDE_DIRS})
 find_package(aio REQUIRED)
 include_directories(${AIO_INCLUDE})
 find_package(fmt REQUIRED)

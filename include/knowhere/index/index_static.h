@@ -19,8 +19,23 @@
 namespace knowhere {
 
 struct Resource {
-    uint64_t memoryCost;  // in bytes
+    uint64_t memoryCost;  // retained host memory after load completes, in bytes
     uint64_t diskCost;    // in bytes
+    // Peak transient host memory required *during* load, in bytes. Defaults to 0
+    // so existing indexes are unaffected: consumers should fall back to their
+    // memoryCost-based heuristic when this is 0. Indexes whose peak load
+    // footprint differs from the retained footprint (e.g. GPU_HNSW frees its CPU
+    // copy after uploading to VRAM, so memoryCost≈0 but the peak covers the
+    // download buffer + deserialized CPU index + decode/graph staging) set this
+    // to the peak so the loader reserves enough host RAM and does not OOM.
+    uint64_t maxMemoryCost = 0;
+    // Device (GPU) memory retained after load, in bytes. Defaults to 0 so
+    // non-GPU indexes are unaffected and GPU consumers fall back to their prior
+    // heuristic when this is 0. GPU indexes that upload vectors/graph to VRAM
+    // set this to the per-segment device footprint so the loader's GPU
+    // admission reserves the actual VRAM growth, instead of (over-)charging the
+    // host transient maxMemoryCost against the device.
+    uint64_t gpuMemoryCost = 0;
 };
 
 #define DEFINE_HAS_STATIC_FUNC(func_name)                                               \

@@ -71,6 +71,11 @@ class BitsetView {
         return out_ids_ != nullptr;
     }
 
+    size_t
+    id_offset() const {
+        return id_offset_;
+    }
+
     void
     set_out_ids(const uint32_t* out_ids, size_t num_internal_ids,
                 std::optional<size_t> num_filtered_out_ids = std::nullopt) {

@@ -593,3 +593,49 @@ if(__PPC64)
                                       knowhere_utils)
   target_compile_definitions(faiss PRIVATE FINTEGER=int)
 endif()
+
+# GPU HNSW CUDA sources — compiled when WITH_CUVS is enabled.
+#
+# This `faiss_gpu_hnsw` OBJECT library is the ONLY place the faiss GPU sources
+# are compiled in the knowhere build:
+#   * The main `faiss` STATIC target above is built from FAISS_SRCS, which globs
+#     only thirdparty/faiss/faiss/{*.cpp,impl,utils,...} — it deliberately does
+#     NOT include thirdparty/faiss/faiss/gpu/*, so none of the files below are
+#     also compiled into `faiss`.
+#   * Upstream faiss ships its own GPU build file
+#     (thirdparty/faiss/faiss/gpu/CMakeLists.txt → the `faiss_gpu_objs` target
+#     over FAISS_GPU_SRC). Knowhere assembles faiss manually via this .cmake and
+#     never `add_subdirectory()`s the vendored faiss tree, so that file (and
+#     `faiss_gpu_objs`) is never part of the knowhere build graph.
+# Therefore the two GPU build paths are mutually exclusive here — there is no
+# duplicate compilation or ODR hazard. Keep it that way: add GPU sources to the
+# list below, NOT by pulling in the vendored gpu/CMakeLists.txt.
+if(WITH_CUVS)
+  set(FAISS_GPU_HNSW_SRCS
+    thirdparty/faiss/faiss/gpu/GpuIndexHNSW.cu
+    thirdparty/faiss/faiss/gpu/GpuIndex.cu
+    thirdparty/faiss/faiss/gpu/GpuResources.cpp
+    thirdparty/faiss/faiss/gpu/StandardGpuResources.cpp
+    thirdparty/faiss/faiss/gpu/impl/GpuHnswTypes.cu
+    thirdparty/faiss/faiss/gpu/impl/IndexUtils.cu
+    thirdparty/faiss/faiss/gpu/utils/DeviceUtils.cu
+    thirdparty/faiss/faiss/gpu/utils/StackDeviceMemory.cpp
+    thirdparty/faiss/faiss/gpu/utils/Timer.cpp
+  )
+  add_library(faiss_gpu_hnsw OBJECT ${FAISS_GPU_HNSW_SRCS})
+  # These objects are linked into the STATIC `faiss` target which is in turn
+  # linked into the shared libknowhere.so. The global -fPIC in
+  # cmake/utils/compile_flags.cmake only reaches the C++ host compiler, not the
+  # CUDA (.cu) sources built by nvcc, so their objects are non-PIC and trigger
+  # `relocation R_X86_64_PC32 ... can not be used when making a shared object`
+  # (surfaces in clean/Debug test builds). Mirror upstream faiss_gpu_objs and
+  # mark the target PIC so CMake passes -Xcompiler -fPIC to nvcc.
+  set_target_properties(faiss_gpu_hnsw PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_include_directories(faiss_gpu_hnsw PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/faiss
+    ${Boost_INCLUDE_DIRS}
+  )
+  target_compile_definitions(faiss_gpu_hnsw PRIVATE FINTEGER=int)
+  target_link_libraries(faiss_gpu_hnsw PRIVATE CUDA::cudart)
+  target_link_libraries(faiss PUBLIC faiss_gpu_hnsw)
+endif()
