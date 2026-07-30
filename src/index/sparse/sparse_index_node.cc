@@ -12,6 +12,8 @@
 #include <sys/mman.h>
 
 #include <exception>
+#include <limits>
+#include <unordered_set>
 
 #include "index/sparse/sparse_inverted_index.h"
 #include "index/sparse/sparse_inverted_index_config.h"
@@ -31,6 +33,14 @@
 #include "knowhere/utils.h"
 
 namespace knowhere {
+
+namespace {
+// Internal batch size for the streaming bounded-WAND iterator: the number of
+// results one posting-list traversal retrieves before the cursor advances.
+// Bounded-WAND re-traverses per batch, so cost is ~O(L^2 / batch) (SPEC 13 D2);
+// a few hundred keeps per-batch memory small while amortising the re-traversal.
+constexpr size_t kSparseIteratorBatchSize = 256;
+}  // namespace
 
 // Inverted Index impl for sparse vectors.
 //
@@ -184,11 +194,107 @@ class SparseInvertedIndexNode : public IndexNode {
         bool first_return_ = true;
     };
 
+    // Streaming bounded-WAND iterator (SPEC 6.2, v1). Each refill runs one bounded
+    // top-`batch` retrieval (WAND / MaxScore / TAAT) just below a
+    // (last_score, tie-band) cursor, so results stream out in descending score in
+    // O(batch) memory -- unlike PrecomputedDistanceIterator, whose first Next()
+    // materialises the whole result set. The cursor is the only state carried
+    // between batches; per-batch posting traversal is re-done from scratch.
+    class BoundedWandIterator : public IndexNode::iterator {
+     public:
+        BoundedWandIterator(const sparse::BaseInvertedIndex<value_type>* index, sparse::SparseRow<value_type>&& query,
+                            const sparse::DocValueComputer<float>& computer, const BitsetView& bitset,
+                            const sparse::InvertedIndexApproxSearchParams& approx_params, size_t batch_size)
+            : index_(index),
+              query_(std::move(query)),
+              computer_(computer),
+              bitset_(bitset),
+              approx_params_(approx_params),
+              batch_size_(batch_size) {
+        }
+
+        std::pair<int64_t, float>
+        Next() override {
+            refill_if_needed();
+            if (pos_ >= buffer_.size()) {
+                throw std::runtime_error("index out of range while iterating BoundedWandIterator");
+            }
+            const auto& res = buffer_[pos_++];
+            return {res.id, res.val};
+        }
+
+        [[nodiscard]] bool
+        HasNext() override {
+            refill_if_needed();
+            return pos_ < buffer_.size();
+        }
+
+     private:
+        // Refill the batch buffer once drained, advancing the (last_score, tie-band)
+        // cursor so the next batch resumes exactly where this one stopped.
+        void
+        refill_if_needed() {
+            if (pos_ < buffer_.size() || exhausted_) {
+                return;
+            }
+            buffer_ = index_->IterativeSearch(query_, batch_size_, last_score_, tie_band_, bitset_, computer_,
+                                              approx_params_);
+            pos_ = 0;
+            // a short batch means no more candidates exist below the cursor
+            if (buffer_.size() < batch_size_) {
+                exhausted_ = true;
+            }
+            if (buffer_.empty()) {
+                return;
+            }
+            // buffer_ is descending; its minimum score is the next batch's ceiling
+            const float batch_min = buffer_.back().val;
+            std::unordered_set<sparse::table_t> next_tie_band;
+            for (const auto& d : buffer_) {
+                if (d.val == batch_min) {
+                    next_tie_band.insert(static_cast<sparse::table_t>(d.id));
+                }
+            }
+            // a tie band straddling the batch boundary must keep excluding the ids
+            // the previous batch already returned at this exact score
+            if (batch_min == last_score_) {
+                next_tie_band.insert(tie_band_.begin(), tie_band_.end());
+            }
+            last_score_ = batch_min;
+            tie_band_ = std::move(next_tie_band);
+        }
+
+        const sparse::BaseInvertedIndex<value_type>* index_;
+        sparse::SparseRow<value_type> query_;
+        const sparse::DocValueComputer<float> computer_;
+        const BitsetView bitset_;
+        sparse::InvertedIndexApproxSearchParams approx_params_;
+        const size_t batch_size_;
+
+        std::vector<DistId> buffer_;
+        size_t pos_ = 0;
+        float last_score_ = std::numeric_limits<float>::max();
+        std::unordered_set<sparse::table_t> tie_band_;
+        bool exhausted_ = false;
+    };
+
  public:
-    // TODO: for now inverted index and wand use the same impl for AnnIterator.
     [[nodiscard]] expected<std::vector<IndexNode::IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
                 bool use_knowhere_search_pool, milvus::OpContext* op_context) const override {
+        return CreateAnnIterators(dataset, std::move(config), bitset, use_knowhere_search_pool, /*streaming=*/true);
+    }
+
+ protected:
+    // Shared body for AnnIterator. `streaming` selects the bounded-WAND iterator
+    // (SPEC 6.2: streaming, O(batch) memory); otherwise the materialising
+    // PrecomputedDistanceIterator is used. The concurrent (CC) index keeps the
+    // materialising path -- the streaming iterator's deferred per-batch traversal
+    // is not yet hardened against concurrent Add.
+    // TODO: for now inverted index and wand share this impl for AnnIterator.
+    [[nodiscard]] expected<std::vector<IndexNode::IteratorPtr>>
+    CreateAnnIterators(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
+                       bool use_knowhere_search_pool, bool streaming) const {
         if (!index_) {
             LOG_KNOWHERE_WARNING_ << "creating iterator on empty index";
             return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::empty_index,
@@ -206,12 +312,24 @@ class SparseInvertedIndexNode : public IndexNode {
         auto computer = computer_or.value();
         auto drop_ratio_search = cfg.drop_ratio_search.value_or(0.0f);
 
+        sparse::InvertedIndexApproxSearchParams approx_params = {
+            .refine_factor = 1,
+            .drop_ratio_search = drop_ratio_search,
+            .dim_max_score_ratio = cfg.dim_max_score_ratio.value(),
+        };
+
         // TODO: set approximated to false for now since the refinement is too slow after forward index is removed.
         const bool approximated = false;
 
         auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
         try {
             for (int i = 0; i < nq; ++i) {
+                if (streaming) {
+                    sparse::SparseRow<value_type> query_copy(queries[i]);
+                    vec[i] = std::make_shared<BoundedWandIterator>(index_, std::move(query_copy), computer, bitset,
+                                                                   approx_params, kSparseIteratorBatchSize);
+                    continue;
+                }
                 // Heavy computations with `compute_dist_func` will be deferred until the first call to
                 // 'Iterator->Next()'.
                 auto compute_dist_func = [=]() -> std::vector<DistId> {
@@ -248,6 +366,7 @@ class SparseInvertedIndexNode : public IndexNode {
         return vec;
     }
 
+ public:
     [[nodiscard]] expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
         return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByIds not implemented");
@@ -528,12 +647,14 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
                 bool use_knowhere_search_pool, milvus::OpContext* op_context) const override {
         ReadPermission permission(*this);
         // Always uses PrecomputedDistanceIterator for SparseInvertedIndexNodeCC:
-        // If we want to use RefineIterator, it needs to get another ReadPermission when calling
-        // index_->GetRawDistance(). If an Add task is added in between, there will be a deadlock.
+        // the streaming bounded-WAND iterator defers posting-list traversal to each
+        // Next() call, which would run without a ReadPermission and could race a
+        // concurrent Add. Using RefineIterator would likewise need another
+        // ReadPermission inside index_->GetRawDistance() and could deadlock.
         auto config = static_cast<const knowhere::SparseInvertedIndexConfig&>(*cfg);
         config.drop_ratio_search = 0.0f;
-        return SparseInvertedIndexNode<T, use_wand>::AnnIterator(dataset, std::move(cfg), bitset,
-                                                                 use_knowhere_search_pool, op_context);
+        return SparseInvertedIndexNode<T, use_wand>::CreateAnnIterators(dataset, std::move(cfg), bitset,
+                                                                        use_knowhere_search_pool, /*streaming=*/false);
     }
 
     expected<DataSetPtr>

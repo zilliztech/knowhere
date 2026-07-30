@@ -21,6 +21,7 @@
 #include <cstring>
 #include <functional>
 #include <type_traits>
+#include <unordered_set>
 #include <vector>
 
 #include "knowhere/expected.h"
@@ -318,6 +319,58 @@ class MaxMinHeap {
     size_t size_ = 0, capacity_;
     std::vector<SparseIdVal<T>> pool_;
 };  // class MaxMinHeap
+
+// A MaxMinHeap variant for iterative (batched) retrieval. It keeps the top
+// `capacity` elements like MaxMinHeap, but additionally rejects any element
+// scoring above `ceiling` and -- at exactly `ceiling` -- any id in `excluded`.
+//
+// This lets a caller retrieve the score-descending band that follows a batch it
+// has already returned, without re-returning it: `ceiling` is the previous
+// batch's minimum score and `excluded` is the set of ids already returned at
+// exactly that score. On the first batch, pass `ceiling = +inf` and an empty
+// set, which makes it behave exactly like MaxMinHeap.
+template <typename T>
+class BoundedMaxMinHeap {
+ public:
+    BoundedMaxMinHeap(int capacity, T ceiling, const std::unordered_set<table_t>& excluded)
+        : heap_(capacity), ceiling_(ceiling), excluded_(excluded) {
+    }
+    void
+    push(table_t id, T val) {
+        if (val > ceiling_) {
+            return;
+        }
+        if (val == ceiling_ && excluded_.count(id) != 0) {
+            return;
+        }
+        heap_.push(id, val);
+    }
+    table_t
+    pop() {
+        return heap_.pop();
+    }
+    [[nodiscard]] size_t
+    size() const {
+        return heap_.size();
+    }
+    [[nodiscard]] bool
+    empty() const {
+        return heap_.empty();
+    }
+    SparseIdVal<T>
+    top() const {
+        return heap_.top();
+    }
+    [[nodiscard]] bool
+    full() const {
+        return heap_.full();
+    }
+
+ private:
+    MaxMinHeap<T> heap_;
+    const T ceiling_;
+    const std::unordered_set<table_t>& excluded_;
+};  // class BoundedMaxMinHeap
 
 // A std::vector like container but uses fixed size free memory(typically from
 // mmap) as backing store and can only be appended at the end.

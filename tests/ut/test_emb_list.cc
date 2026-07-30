@@ -2178,3 +2178,187 @@ TEST_CASE("Test brute force anniterator on chunk", "[on_chunk]") {
         }
     }
 }
+
+namespace {
+
+// Spearman rank correlation between the iterator's emission order and the order
+// implied by the (exact) emitted scores. 1.0 == perfectly ordered emission.
+double
+emission_spearman_rho(const std::vector<std::pair<int64_t, float>>& emitted, bool larger_is_closer) {
+    const size_t n = emitted.size();
+    if (n < 2) {
+        return 1.0;
+    }
+    std::vector<size_t> by_score(n);
+    for (size_t i = 0; i < n; i++) {
+        by_score[i] = i;
+    }
+    std::stable_sort(by_score.begin(), by_score.end(), [&](size_t a, size_t b) {
+        return larger_is_closer ? emitted[a].second > emitted[b].second : emitted[a].second < emitted[b].second;
+    });
+    std::vector<size_t> ideal_rank(n);
+    for (size_t r = 0; r < n; r++) {
+        ideal_rank[by_score[r]] = r;
+    }
+    double sum_d2 = 0.0;
+    for (size_t i = 0; i < n; i++) {
+        const double d = static_cast<double>(i) - static_cast<double>(ideal_rank[i]);
+        sum_d2 += d * d;
+    }
+    const double dn = static_cast<double>(n);
+    return 1.0 - (6.0 * sum_d2) / (dn * (dn * dn - 1.0));
+}
+
+// Drain an emb_list iterator up to `limit` results, asserting there are no duplicate
+// chunk ids along the way.
+std::vector<std::pair<int64_t, float>>
+drain_emb_list_iterator(const knowhere::IndexNode::IteratorPtr& it, size_t limit) {
+    std::vector<std::pair<int64_t, float>> out;
+    std::unordered_set<int64_t> seen;
+    while (it->HasNext() && out.size() < limit) {
+        auto [id, score] = it->Next();
+        REQUIRE(seen.insert(id).second);  // zero duplicate ids
+        out.emplace_back(id, score);
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("EmbList HNSW AnnIterator", "[emb_list][iterator]") {
+    const std::vector<std::string> DISTANCE_TYPES = {"MAX_SIM_IP", "MAX_SIM_COSINE", "MAX_SIM_L2"};
+    const int32_t dim = 16;
+    const int32_t nb = 800;
+    const int32_t each_el_len = 8;
+    const int32_t num_chunks = nb / each_el_len;
+    const int32_t NQ = 10;
+    const int32_t TOPK = 10;
+    const auto version = GenTestEmbListVersionList();
+
+    knowhere::Json base_conf;
+    base_conf[knowhere::meta::INDEX_TYPE] = knowhere::IndexEnum::INDEX_HNSW;
+    base_conf[knowhere::meta::DIM] = dim;
+    base_conf[knowhere::meta::ROWS] = nb;
+    base_conf[knowhere::meta::TOPK] = TOPK;
+    base_conf[knowhere::indexparam::HNSW_M] = 32;
+    base_conf[knowhere::indexparam::EFCONSTRUCTION] = 200;
+    base_conf[knowhere::indexparam::EF] = 200;
+    base_conf[knowhere::indexparam::RETRIEVAL_ANN_RATIO] = 3.0f;
+
+    SECTION("complete, deduplicated, ordered, exact-scoring chunk-level iteration") {
+        for (const auto& metric : DISTANCE_TYPES) {
+            const bool larger_is_closer = (metric != "MAX_SIM_L2");
+            knowhere::Json conf = base_conf;
+            conf[knowhere::meta::METRIC_TYPE] = metric;
+
+            auto base_ds = GenEmbListDataSet(nb, dim, 42, each_el_len);
+            // query emb_lists of mixed size (1, 3, 5, ...) -- exercises m > 1
+            auto query_ds = GenQueryEmbListDataSet(NQ, dim, 1234);
+
+            auto index = knowhere::IndexFactory::Instance()
+                             .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version)
+                             .value();
+            REQUIRE(index.Build(base_ds, conf) == knowhere::Status::success);
+
+            // reference: the two-stage emb_list Search
+            auto search_or = index.Search(query_ds, conf, nullptr);
+            REQUIRE(search_or.has_value());
+            const auto search_res = search_or.value();
+            const int64_t num_q_el = search_res->GetRows();
+            const int64_t search_k = search_res->GetDim();
+            const int64_t* search_ids = search_res->GetIds();
+            const float* search_dists = search_res->GetDistance();
+
+            auto iters_or = index.AnnIterator(query_ds, conf, nullptr);
+            REQUIRE(iters_or.has_value());
+            auto iters = iters_or.value();
+            REQUIRE(static_cast<int64_t>(iters.size()) == num_q_el);
+
+            for (int64_t q = 0; q < num_q_el; q++) {
+                // chunk ids + exact scores reported by the two-stage Search
+                std::unordered_set<int64_t> search_set;
+                std::unordered_map<int64_t, float> search_score;
+                for (int64_t j = 0; j < search_k; j++) {
+                    const int64_t id = search_ids[q * search_k + j];
+                    if (id < 0) {
+                        continue;
+                    }
+                    search_set.insert(id);
+                    search_score.emplace(id, search_dists[q * search_k + j]);
+                }
+
+                // (b) drain the iterator fully -- the helper asserts zero duplicates
+                const auto full = drain_emb_list_iterator(iters[q], static_cast<size_t>(num_chunks) + 1);
+                REQUIRE(!iters[q]->HasNext());
+
+                // unfiltered, every chunk is reachable: the iterator emits the whole
+                // chunk set exactly once each
+                std::unordered_set<int64_t> iter_set;
+                for (const auto& [id, score] : full) {
+                    REQUIRE(id >= 0);
+                    REQUIRE(id < num_chunks);
+                    iter_set.insert(id);
+                }
+                REQUIRE(static_cast<int32_t>(iter_set.size()) == num_chunks);
+
+                // (a) the iterator's chunk-id set is a consistent superset of the
+                // Search result set -- guards against id-space divergence between the
+                // iterator path and the Search path
+                for (const int64_t id : search_set) {
+                    REQUIRE(iter_set.count(id) != 0);
+                }
+
+                // (d) emission order is approximately descending by score
+                std::vector<std::pair<int64_t, float>> head(
+                    full.begin(), full.begin() + std::min<size_t>(full.size(), static_cast<size_t>(TOPK)));
+                REQUIRE(emission_spearman_rho(head, larger_is_closer) >= 0.98);
+
+                // (c) a chunk also found by Search carries the same exact MAX_SIM score
+                for (const auto& [id, score] : head) {
+                    auto it = search_score.find(id);
+                    if (it != search_score.end()) {
+                        REQUIRE(score == Catch::Approx(it->second).epsilon(1e-4));
+                    }
+                }
+            }
+        }
+    }
+
+    SECTION("single-chunk and full-capacity edge cases") {
+        // single chunk: the whole index is one emb_list
+        // full capacity: chunks of 20 paragraphs (the emb_list max_capacity)
+        const std::vector<std::pair<int32_t, int32_t>> edges = {{8, 8}, {200, 20}};
+        for (const auto& metric : DISTANCE_TYPES) {
+            for (const auto& [edge_nb, edge_el_len] : edges) {
+                knowhere::Json conf = base_conf;
+                conf[knowhere::meta::METRIC_TYPE] = metric;
+                conf[knowhere::meta::ROWS] = edge_nb;
+
+                auto base_ds = GenEmbListDataSet(edge_nb, dim, 7, edge_el_len);
+                auto query_ds = GenQueryEmbListDataSet(NQ, dim, 99);
+                const int32_t edge_chunks = edge_nb / edge_el_len;
+
+                auto index = knowhere::IndexFactory::Instance()
+                                 .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version)
+                                 .value();
+                REQUIRE(index.Build(base_ds, conf) == knowhere::Status::success);
+
+                auto iters_or = index.AnnIterator(query_ds, conf, nullptr);
+                REQUIRE(iters_or.has_value());
+                auto iters = iters_or.value();
+
+                for (auto& it : iters) {
+                    // draining without a cap must terminate, never duplicate a chunk,
+                    // and emit exactly the chunks the index contains
+                    const auto emitted = drain_emb_list_iterator(it, static_cast<size_t>(edge_chunks) + 1);
+                    REQUIRE(!it->HasNext());
+                    REQUIRE(static_cast<int32_t>(emitted.size()) == edge_chunks);
+                    for (const auto& [id, score] : emitted) {
+                        REQUIRE(id >= 0);
+                        REQUIRE(id < edge_chunks);
+                    }
+                }
+            }
+        }
+    }
+}
