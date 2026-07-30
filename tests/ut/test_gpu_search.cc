@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -514,6 +515,108 @@ TEST_CASE("Test All GPU Index", "[search]") {
         for (int i = 1; i < nq; ++i) {
             // Check query distance
             CHECK(GetRelativeLoss(gt_dist[i], dist[i]) < 0.1f);
+        }
+    }
+}
+
+TEST_CASE("Test GPU cuVS indexes pad filtered results", "[search][gpu][cuvs]") {
+    constexpr int64_t rows = 512;
+    constexpr int64_t queries = 2;
+    constexpr int64_t dim = 16;
+    constexpr int64_t topk = 10;
+    constexpr int64_t seed = 42;
+
+    const auto version = GenTestVersionList();
+
+    auto base_config = [=](const std::string& metric) {
+        knowhere::Json config{
+            {knowhere::meta::DIM, dim},
+            {knowhere::meta::METRIC_TYPE, metric},
+            {knowhere::meta::TOPK, topk},
+        };
+        return config;
+    };
+
+    auto ivf_flat_config = [&base_config](const std::string& metric) {
+        auto config = base_config(metric);
+        config[knowhere::indexparam::NLIST] = 16;
+        config[knowhere::indexparam::NPROBE] = 16;
+        return config;
+    };
+
+    auto ivf_pq_config = [&ivf_flat_config](const std::string& metric) {
+        auto config = ivf_flat_config(metric);
+        config[knowhere::indexparam::M] = 4;
+        config[knowhere::indexparam::NBITS] = 8;
+        return config;
+    };
+
+    auto cagra_config = [&base_config](const std::string& metric) {
+        auto config = base_config(metric);
+        config[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = 32;
+        config[knowhere::indexparam::GRAPH_DEGREE] = 32;
+        config[knowhere::indexparam::ITOPK_SIZE] = 32;
+        return config;
+    };
+
+    const std::vector<std::pair<std::string, knowhere::Json>> index_cases = {
+        {knowhere::IndexEnum::INDEX_GPU_BRUTEFORCE, base_config(knowhere::metric::L2)},
+        {knowhere::IndexEnum::INDEX_GPU_BRUTEFORCE, base_config(knowhere::metric::IP)},
+        {knowhere::IndexEnum::INDEX_GPU_BRUTEFORCE, base_config(knowhere::metric::COSINE)},
+        {knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE, base_config(knowhere::metric::L2)},
+        {knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE, base_config(knowhere::metric::IP)},
+        {knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE, base_config(knowhere::metric::COSINE)},
+        {knowhere::IndexEnum::INDEX_CUVS_IVFFLAT, ivf_flat_config(knowhere::metric::L2)},
+        {knowhere::IndexEnum::INDEX_CUVS_IVFPQ, ivf_pq_config(knowhere::metric::L2)},
+        {knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_config(knowhere::metric::L2)},
+    };
+
+    for (const auto& [name, config] : index_cases) {
+        CAPTURE(name, config.dump());
+        auto train_ds = GenDataSet(rows, dim, seed);
+        auto query_ds = GenDataSet(queries, dim, seed + 1);
+        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        REQUIRE(index.Build(train_ds, config) == knowhere::Status::success);
+
+        for (const int64_t live_count : {topk, int64_t{5}, int64_t{0}}) {
+            CAPTURE(live_count);
+            std::vector<uint8_t> bitset_data((rows + 7) / 8, 0xFF);
+            for (int64_t id = 0; id < live_count; ++id) {
+                bitset_data[id / 8] &= static_cast<uint8_t>(~(uint8_t{1} << (id % 8)));
+            }
+            knowhere::BitsetView bitset(bitset_data.data(), rows);
+
+            for (int repeat = 0; repeat < 3; ++repeat) {
+                CAPTURE(repeat);
+                auto result = index.Search(query_ds, config, bitset);
+                REQUIRE(result.has_value());
+                const auto* ids = result.value()->GetIds();
+                const auto* distances = result.value()->GetDistance();
+
+                for (int64_t query = 0; query < queries; ++query) {
+                    std::vector<bool> seen(rows, false);
+                    int64_t returned_count = 0;
+                    for (int64_t slot = 0; slot < topk; ++slot) {
+                        const auto offset = query * topk + slot;
+                        const auto id = ids[offset];
+                        if (id == -1) {
+                            CHECK(distances[offset] >= std::numeric_limits<float>::max() / 2);
+                            continue;
+                        }
+                        REQUIRE(id >= 0);
+                        REQUIRE(id < rows);
+                        REQUIRE_FALSE(bitset.test(id));
+                        REQUIRE_FALSE(seen[id]);
+                        seen[id] = true;
+                        ++returned_count;
+                    }
+                    REQUIRE(returned_count <= live_count);
+                    if (name == knowhere::IndexEnum::INDEX_GPU_BRUTEFORCE ||
+                        name == knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE) {
+                        REQUIRE(returned_count == live_count);
+                    }
+                }
+            }
         }
     }
 }
