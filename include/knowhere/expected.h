@@ -13,9 +13,21 @@
 #define EXPECTED_H
 
 #include <cassert>
+#include <functional>
 #include <iostream>
+#include <memory>
+#include <new>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <utility>
+
+#if defined(SWIG)
+#define KNOWHERE_NODISCARD
+#else
+#define KNOWHERE_NODISCARD [[nodiscard]]
+#endif
 
 namespace knowhere {
 
@@ -52,7 +64,66 @@ enum class Status {
     brute_force_inner_error = 30,
     emb_list_inner_error = 31,
     aisaq_error = 32,
+    knowhere_inner_error = 33,
 };
+
+enum class StatusCategory {
+    success = 0,
+    input_error = 1,
+    inner_error = 2,
+};
+
+inline constexpr StatusCategory
+StatusCategoryOf(knowhere::Status status) {
+    switch (status) {
+        case knowhere::Status::success:
+            return StatusCategory::success;
+        case knowhere::Status::invalid_args:
+        case knowhere::Status::invalid_param_in_json:
+        case knowhere::Status::out_of_range_in_json:
+        case knowhere::Status::type_conflict_in_json:
+        case knowhere::Status::invalid_metric_type:
+        case knowhere::Status::empty_index:
+        case knowhere::Status::not_implemented:
+        case knowhere::Status::index_not_trained:
+        case knowhere::Status::index_already_trained:
+        case knowhere::Status::invalid_value_in_json:
+        case knowhere::Status::arithmetic_overflow:
+        case knowhere::Status::invalid_binary_set:
+        case knowhere::Status::invalid_instruction_set:
+        case knowhere::Status::invalid_index_error:
+        case knowhere::Status::invalid_cluster_error:
+        case knowhere::Status::invalid_serialized_index_type:
+            return StatusCategory::input_error;
+        case knowhere::Status::faiss_inner_error:
+        case knowhere::Status::hnsw_inner_error:
+        case knowhere::Status::malloc_error:
+        case knowhere::Status::diskann_inner_error:
+        case knowhere::Status::disk_file_error:
+        case knowhere::Status::cuvs_inner_error:
+        case knowhere::Status::cuda_runtime_error:
+        case knowhere::Status::cluster_inner_error:
+        case knowhere::Status::timeout:
+        case knowhere::Status::internal_error:
+        case knowhere::Status::sparse_inner_error:
+        case knowhere::Status::brute_force_inner_error:
+        case knowhere::Status::emb_list_inner_error:
+        case knowhere::Status::aisaq_error:
+        case knowhere::Status::knowhere_inner_error:
+        default:
+            return StatusCategory::inner_error;
+    }
+}
+
+inline constexpr bool
+IsInputError(knowhere::Status status) {
+    return StatusCategoryOf(status) == StatusCategory::input_error;
+}
+
+inline constexpr bool
+IsInnerError(knowhere::Status status) {
+    return StatusCategoryOf(status) == StatusCategory::inner_error;
+}
 
 inline std::string
 Status2String(knowhere::Status status) {
@@ -113,13 +184,15 @@ Status2String(knowhere::Status status) {
             return "emb_list inner error";
         case knowhere::Status::aisaq_error:
             return "internal AiSAQ error";
+        case knowhere::Status::knowhere_inner_error:
+            return "knowhere inner error";
         default:
             return "unexpected status";
     }
 }
 
 template <typename T>
-class expected {
+class KNOWHERE_NODISCARD expected {
  public:
     template <typename... Args>
     expected(Args&&... args) : val(std::make_optional<T>(std::forward<Args>(args)...)), err(Status::success) {
@@ -201,6 +274,94 @@ class expected {
     Status err;
     std::string msg;
 };
+
+#if !defined(SWIG)
+
+namespace detail {
+
+template <typename T>
+struct is_expected : std::false_type {};
+
+template <typename T>
+struct is_expected<expected<T>> : std::true_type {};
+
+template <typename T>
+inline constexpr bool is_expected_v = is_expected<std::decay_t<T>>::value;
+
+template <typename T>
+struct expected_value;
+
+template <typename T>
+struct expected_value<expected<T>> {
+    using type = T;
+};
+
+inline std::string
+ExceptionMessage(const char* prefix, const std::string& what) {
+    if (what.empty()) {
+        return prefix;
+    }
+    return std::string(prefix) + ": " + what;
+}
+
+template <typename R>
+std::decay_t<R>
+GuardedFailure(Status status, std::string msg) noexcept {
+    using Result = std::decay_t<R>;
+    if constexpr (std::is_same_v<Result, Status>) {
+        return status;
+    } else if constexpr (is_expected_v<Result>) {
+        using Value = typename expected_value<Result>::type;
+        return expected<Value>::Err(status, std::move(msg));
+    } else if constexpr (std::is_same_v<Result, bool>) {
+        return false;
+    } else if constexpr (std::is_integral_v<Result> || std::is_floating_point_v<Result>) {
+        return Result{};
+    } else if constexpr (std::is_same_v<Result, std::string>) {
+        return {};
+    } else if constexpr (std::is_default_constructible_v<Result>) {
+        return Result{};
+    } else {
+        static_assert(std::is_default_constructible_v<Result>,
+                      "GuardedCall requires Status, expected<T>, or a default-constructible return type");
+    }
+}
+
+template <typename R>
+std::decay_t<R>
+GuardedCallFailure(Status status, std::string msg) noexcept {
+    if constexpr (std::is_void_v<R>) {
+        return;
+    } else {
+        return GuardedFailure<R>(status, std::move(msg));
+    }
+}
+
+}  // namespace detail
+
+template <typename Func, typename... Args>
+std::decay_t<std::invoke_result_t<Func, Args...>>
+GuardedCall(Func&& func, Args&&... args) noexcept {
+    using Result = std::invoke_result_t<Func, Args...>;
+    try {
+        if constexpr (std::is_void_v<Result>) {
+            std::invoke(std::forward<Func>(func), std::forward<Args>(args)...);
+            return;
+        } else {
+            return std::invoke(std::forward<Func>(func), std::forward<Args>(args)...);
+        }
+    } catch (const std::bad_alloc& e) {
+        return detail::GuardedCallFailure<Result>(Status::malloc_error,
+                                                  detail::ExceptionMessage("bad alloc", e.what()));
+    } catch (const std::exception& e) {
+        return detail::GuardedCallFailure<Result>(Status::knowhere_inner_error,
+                                                  detail::ExceptionMessage("unhandled exception", e.what()));
+    } catch (...) {
+        return detail::GuardedCallFailure<Result>(Status::knowhere_inner_error, "unknown exception");
+    }
+}
+
+#endif
 
 // Evaluates expr that returns a Status. Does nothing if the returned Status is
 // a Status::success, otherwise returns the Status from the current function.
