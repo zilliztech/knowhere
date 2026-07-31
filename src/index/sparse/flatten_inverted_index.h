@@ -506,8 +506,8 @@ FlattenInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t row
     auto row_scan = scan_rows_for_build(data, rows, dataset_nnz_stats, row_sums);
     this->dim_map_.build_from_external_dims(row_scan.external_dims);
     this->nr_inner_dims_ = this->dim_map_.size();
-    auto posting_plan = prepare_posting_build_plan(std::move(row_scan.posting_counts_by_worker), this->dim_map_,
-                                                   this->nr_inner_dims_);
+    auto posting_plan =
+        prepare_posting_build_plan(std::move(row_scan.posting_counts_by_worker), this->dim_map_, this->nr_inner_dims_);
     row_scan = {};
     const auto total_nnz = posting_plan.total_postings();
 

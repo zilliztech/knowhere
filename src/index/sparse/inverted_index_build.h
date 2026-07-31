@@ -101,8 +101,7 @@ scan_rows_for_build(const SparseRow<DType>* data, size_t rows, std::vector<uint3
 
 template <typename DimMap>
 PostingBuildPlan
-prepare_posting_build_plan(WorkerPostingCounts posting_counts_by_worker, const DimMap& dim_map,
-                           size_t nr_inner_dims) {
+prepare_posting_build_plan(WorkerPostingCounts posting_counts_by_worker, const DimMap& dim_map, size_t nr_inner_dims) {
     PostingBuildPlan plan;
     plan.cursors_by_worker.assign(posting_counts_by_worker.size(), std::vector<uint32_t>(nr_inner_dims, 0));
     plan.posting_offsets.assign(nr_inner_dims + 1, 0);
@@ -129,12 +128,10 @@ prepare_posting_build_plan(WorkerPostingCounts posting_counts_by_worker, const D
 
     // Prefer absolute cursors in the common case to avoid one addition per posting. Large indexes retain compact
     // uint32_t list-relative cursors and combine them with size_t list offsets in the fill loop.
-    plan.cursor_mode = plan.total_postings() <= std::numeric_limits<uint32_t>::max()
-                           ? WorkerCursorMode::Absolute
-                           : WorkerCursorMode::Relative;
+    plan.cursor_mode = plan.total_postings() <= std::numeric_limits<uint32_t>::max() ? WorkerCursorMode::Absolute
+                                                                                     : WorkerCursorMode::Relative;
     for (size_t inner_dim = 0; inner_dim < nr_inner_dims; ++inner_dim) {
-        size_t next_offset =
-            plan.cursor_mode == WorkerCursorMode::Absolute ? plan.posting_offsets[inner_dim] : 0;
+        size_t next_offset = plan.cursor_mode == WorkerCursorMode::Absolute ? plan.posting_offsets[inner_dim] : 0;
         for (auto& worker_cursors : plan.cursors_by_worker) {
             const auto posting_count = worker_cursors[inner_dim];
             worker_cursors[inner_dim] = static_cast<uint32_t>(next_offset);
@@ -149,8 +146,8 @@ namespace detail {
 template <WorkerCursorMode Mode, typename DType, typename QType, typename DimMap, typename Quantizer>
 void
 fill_postings_by_worker_impl(const SparseRow<DType>* data, size_t rows, const DimMap& dim_map,
-                             std::span<uint32_t> posting_ids, std::span<QType> posting_vals,
-                             PostingBuildPlan& plan, Quantizer&& quantizer) {
+                             std::span<uint32_t> posting_ids, std::span<QType> posting_vals, PostingBuildPlan& plan,
+                             Quantizer&& quantizer) {
     const auto concurrency = plan.cursors_by_worker.size();
 
     parallel_for_workers(concurrency, [&](size_t worker_id) {
@@ -186,11 +183,11 @@ fill_postings_by_worker(const SparseRow<DType>* data, size_t rows, const DimMap&
                         Quantizer&& quantizer) {
     // Dispatch once so the hot loop contains no per-posting mode branch.
     if (plan.cursor_mode == WorkerCursorMode::Absolute) {
-        detail::fill_postings_by_worker_impl<WorkerCursorMode::Absolute>(
-            data, rows, dim_map, posting_ids, posting_vals, plan, std::forward<Quantizer>(quantizer));
+        detail::fill_postings_by_worker_impl<WorkerCursorMode::Absolute>(data, rows, dim_map, posting_ids, posting_vals,
+                                                                         plan, std::forward<Quantizer>(quantizer));
     } else {
-        detail::fill_postings_by_worker_impl<WorkerCursorMode::Relative>(
-            data, rows, dim_map, posting_ids, posting_vals, plan, std::forward<Quantizer>(quantizer));
+        detail::fill_postings_by_worker_impl<WorkerCursorMode::Relative>(data, rows, dim_map, posting_ids, posting_vals,
+                                                                         plan, std::forward<Quantizer>(quantizer));
     }
 }
 

@@ -706,11 +706,11 @@ BlockInvertedIndex<DType, QType, MetricType>::build_block_max_data(std::span<uin
     uint8_t* data = this->meta_data_.block_max_data_.container_->data();
 
     size_t container_offset = 0;
-    this->meta_data_.block_max_data_.block_offsets_ = std::span<size_t>(
-        reinterpret_cast<size_t*>(data + container_offset), this->nr_inner_dims_);
+    this->meta_data_.block_max_data_.block_offsets_ =
+        std::span<size_t>(reinterpret_cast<size_t*>(data + container_offset), this->nr_inner_dims_);
     container_offset += this->nr_inner_dims_ * sizeof(size_t);
-    this->meta_data_.block_max_data_.block_max_ids_ = std::span<uint32_t>(
-        reinterpret_cast<uint32_t*>(data + container_offset), total_blocks);
+    this->meta_data_.block_max_data_.block_max_ids_ =
+        std::span<uint32_t>(reinterpret_cast<uint32_t*>(data + container_offset), total_blocks);
     container_offset += total_blocks * sizeof(uint32_t);
     this->meta_data_.block_max_data_.block_max_scores_ =
         std::span<float>(reinterpret_cast<float*>(data + container_offset), total_blocks);
@@ -878,8 +878,7 @@ BlockInvertedIndex<DType, QType, MetricType>::build_block_index(std::span<uint32
     }
     std::memset(data_ptr + offsets_byte_size + posting_offsets.back(), 0, padding_size);
 
-    posting_blocks_dim_offsets_ =
-        std::span<size_t>(reinterpret_cast<size_t*>(data_ptr), this->nr_inner_dims_ + 1);
+    posting_blocks_dim_offsets_ = std::span<size_t>(reinterpret_cast<size_t*>(data_ptr), this->nr_inner_dims_ + 1);
     posting_blocks_data_ =
         std::span<uint8_t>(data_ptr + offsets_byte_size, index_container_->size() - offsets_byte_size);
 }
@@ -910,8 +909,8 @@ BlockInvertedIndex<DType, QType, MetricType>::add(const SparseRow<DType>* data, 
     auto row_scan = scan_rows_for_build(data, rows, dataset_nnz_stats, row_sums);
     this->dim_map_.build_from_external_dims(row_scan.external_dims);
     this->nr_inner_dims_ = this->dim_map_.size();
-    auto posting_plan = prepare_posting_build_plan(std::move(row_scan.posting_counts_by_worker), this->dim_map_,
-                                                   this->nr_inner_dims_);
+    auto posting_plan =
+        prepare_posting_build_plan(std::move(row_scan.posting_counts_by_worker), this->dim_map_, this->nr_inner_dims_);
     row_scan = {};
     const auto total_nnz = posting_plan.total_postings();
 

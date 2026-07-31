@@ -155,8 +155,7 @@ class SparseInvertedIndexNode : public IndexNode {
             auto build_pool_wrapper = std::make_shared<ThreadPoolWrapper>(build_pool_, use_knowhere_build_pool);
             auto try_obj = build_pool_wrapper->push(add).getTry();
             if (!try_obj.hasValue()) {
-                LOG_KNOWHERE_WARNING_ << "Failed to add data to index " << Type() << ": "
-                                      << try_obj.exception().what();
+                LOG_KNOWHERE_WARNING_ << "Failed to add data to index " << Type() << ": " << try_obj.exception().what();
                 return Status::sparse_inner_error;
             }
             return try_obj.value();
