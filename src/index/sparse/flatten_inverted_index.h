@@ -7,7 +7,9 @@
 #include <vector>
 
 #include "index/sparse/inverted_index.h"
+#include "index/sparse/inverted_index_build.h"
 #include "index/sparse/inverted_index_format.h"
+#include "index/sparse/parallel_build.h"
 #include "index/sparse/scorer.h"
 #include "knowhere/log.h"
 #include "knowhere/sparse_utils.h"
@@ -387,11 +389,20 @@ FlattenInvertedIndex<DType, QType>::build_block_max_data(bool enable_mmap, const
 
     size_t block_max_offset = 0;
     for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+        size_t count = this->raw_index_offsets_[i + 1] - this->raw_index_offsets_[i];
+        block_max_offset +=
+            (count + this->meta_data_.block_max_data_.block_size_ - 1) / this->meta_data_.block_max_data_.block_size_;
+        this->meta_data_.block_max_data_.block_offsets_[i] = block_max_offset;
+    }
+    assert(block_max_offset == total_blocks);
+
+    parallel_for(this->nr_inner_dims_, [&](size_t i) {
         auto offset = this->raw_index_offsets_[i];
         size_t count = this->raw_index_offsets_[i + 1] - offset;
         auto ids = this->raw_index_ids_.subspan(offset, count);
         auto vals = this->raw_index_vals_.subspan(offset, count);
 
+        size_t block_max_offset = i == 0 ? 0 : this->meta_data_.block_max_data_.block_offsets_[i - 1];
         float block_max_score = 0.0f;
         for (size_t j = 0; j < count; ++j) {
             if (j != 0 && (j % this->meta_data_.block_max_data_.block_size_) == 0) {
@@ -405,10 +416,7 @@ FlattenInvertedIndex<DType, QType>::build_block_max_data(bool enable_mmap, const
         this->meta_data_.block_max_data_.block_max_ids_[block_max_offset] = ids[count - 1];
         this->meta_data_.block_max_data_.block_max_scores_[block_max_offset] = block_max_score;
         ++block_max_offset;
-        this->meta_data_.block_max_data_.block_offsets_[i] = block_max_offset;
-    }
-
-    assert(block_max_offset == total_blocks);
+    });
 }
 
 template <typename DType, typename QType>
@@ -475,9 +483,6 @@ FlattenInvertedIndex<DType, QType>::add_row_to_index(const SparseRow<DType>& row
 template <typename DType, typename QType>
 Status
 FlattenInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t rows, int64_t dim) {
-    std::unordered_set<uint32_t> external_dims;
-    size_t total_nnz = 0;
-
     if (this->nr_rows_ != 0) {
         LOG_KNOWHERE_ERROR_ << "FlattenInvertedIndex is already built, and cannot be added to again.";
         return Status::invalid_index_error;
@@ -486,47 +491,30 @@ FlattenInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t row
     this->nr_rows_ = rows;
     this->max_dim_ = dim;
 
+    std::vector<float>* row_sums = nullptr;
+    if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_ROW_SUMS) {
+        this->meta_data_.row_sums_.resize(this->nr_rows_);
+        row_sums = &this->meta_data_.row_sums_;
+    }
+
+    std::vector<uint32_t>* dataset_nnz_stats = nullptr;
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     this->build_stats_.dataset_nnz_stats_.resize(rows);
+    dataset_nnz_stats = &this->build_stats_.dataset_nnz_stats_;
 #endif
 
-    for (uint32_t i = 0; i < rows; ++i) {
-        for (size_t j = 0; j < data[i].size(); ++j) {
-            auto [dim, val] = data[i][j];
-            // Skip values equals to or close enough to zero (which is little to the total IP score).
-            if (std::abs(val) < std::numeric_limits<DType>::epsilon()) {
-                continue;
-            }
-            external_dims.insert(dim);
-            ++total_nnz;
-        }
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-        this->build_stats_.dataset_nnz_stats_[i] = data[i].size();
-#endif
-    }
-
-    this->dim_map_.build_from_external_dims(external_dims);
+    auto row_scan = scan_rows_for_build(data, rows, dataset_nnz_stats, row_sums);
+    this->dim_map_.build_from_external_dims(row_scan.external_dims);
     this->nr_inner_dims_ = this->dim_map_.size();
-
-    std::vector<size_t> plist_cnts(this->nr_inner_dims_, 0);
-    for (uint32_t i = 0; i < rows; ++i) {
-        for (size_t j = 0; j < data[i].size(); ++j) {
-            auto [dim, val] = data[i][j];
-            if (std::abs(val) < std::numeric_limits<DType>::epsilon()) {
-                continue;
-            }
-            auto inner_dim = this->dim_map_.lookup(dim);
-            if (!inner_dim.has_value()) {
-                return Status::sparse_inner_error;
-            }
-            plist_cnts[inner_dim.value()]++;
-        }
-    }
+    auto posting_plan =
+        prepare_posting_build_plan(std::move(row_scan.posting_counts_by_worker), this->dim_map_, this->nr_inner_dims_);
+    row_scan = {};
+    const auto total_nnz = posting_plan.total_postings();
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     this->build_stats_.posting_list_length_stats_.resize(this->nr_inner_dims_);
     for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-        this->build_stats_.posting_list_length_stats_[i] = plist_cnts[i];
+        this->build_stats_.posting_list_length_stats_[i] = posting_plan.posting_count(i);
     }
 #endif
 
@@ -548,26 +536,16 @@ FlattenInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t row
     buffer += raw_index_ids_byte_sz;
     this->raw_index_vals_ = std::span<QType>(reinterpret_cast<QType*>(buffer), total_nnz);
 
-    std::size_t offset = 0;
-    for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-        this->raw_index_offsets_[i] = offset;
-        offset += plist_cnts[i];
-    }
-    this->raw_index_offsets_[this->nr_inner_dims_] = offset;
-
-    std::vector<size_t> curr_offsets(this->nr_inner_dims_);
-    for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-        curr_offsets[i] = this->raw_index_offsets_[i];
-    }
-
-    for (size_t i = 0; i < this->nr_rows_; ++i) {
-        add_row_to_index(data[i], i, curr_offsets);
-    }
+    std::copy(posting_plan.posting_offsets.begin(), posting_plan.posting_offsets.end(),
+              this->raw_index_offsets_.begin());
+    fill_postings_by_worker(data, rows, this->dim_map_, this->raw_index_ids_, this->raw_index_vals_, posting_plan,
+                            [](DType val) { return get_quant_val<DType, QType>(val); });
+    posting_plan = {};
 
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_MAX_SCORES_PER_DIM) {
         this->meta_data_.resize_max_score_per_dim(this->nr_inner_dims_, 0.0f);
 
-        for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+        parallel_for(this->nr_inner_dims_, [&](size_t i) {
             auto offset = this->raw_index_offsets_[i];
             size_t count = this->raw_index_offsets_[i + 1] - offset;
             auto ids = this->raw_index_ids_.subspan(offset, count);
@@ -576,7 +554,7 @@ FlattenInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t row
                 auto score = this->build_scorer_->vec_score(ids[j], vals[j]);
                 this->meta_data_.max_score_per_dim_[i] = std::max(this->meta_data_.max_score_per_dim_[i], score);
             }
-        }
+        });
     }
 
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_BLOCK_MAX_SCORES) {
