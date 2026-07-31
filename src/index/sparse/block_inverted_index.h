@@ -12,7 +12,9 @@
 
 #include "index/sparse/codec/block_codec.h"
 #include "index/sparse/inverted_index.h"
+#include "index/sparse/inverted_index_build.h"
 #include "index/sparse/inverted_index_format.h"
+#include "index/sparse/parallel_build.h"
 #include "index/sparse/scorer.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/log.h"
@@ -690,55 +692,60 @@ BlockInvertedIndex<DType, QType, MetricType>::build_block_max_data(std::span<uin
         this->meta_data_.block_max_data_.container_ = std::make_unique<MemBinaryContainer>();
     }
 
+    const auto block_size = this->meta_data_.block_max_data_.block_size_;
     size_t total_blocks = 0;
     for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-        size_t count = raw_index_offsets[i + 1] - raw_index_offsets[i];
-        total_blocks +=
-            (count + this->meta_data_.block_max_data_.block_size_ - 1) / this->meta_data_.block_max_data_.block_size_;
+        const auto posting_count = raw_index_offsets[i + 1] - raw_index_offsets[i];
+        total_blocks += (posting_count + block_size - 1) / block_size;
     }
 
     this->meta_data_.block_max_data_.container_->resize(this->nr_inner_dims_ * sizeof(size_t) +
                                                         total_blocks * (sizeof(uint32_t) + sizeof(float)));
     this->meta_data_.block_max_data_.container_->seal();
 
-    auto block_max_data_container_data_ = this->meta_data_.block_max_data_.container_->data();
+    uint8_t* data = this->meta_data_.block_max_data_.container_->data();
 
     size_t container_offset = 0;
     this->meta_data_.block_max_data_.block_offsets_ = std::span<size_t>(
-        reinterpret_cast<size_t*>(block_max_data_container_data_ + container_offset), this->nr_inner_dims_);
+        reinterpret_cast<size_t*>(data + container_offset), this->nr_inner_dims_);
     container_offset += this->nr_inner_dims_ * sizeof(size_t);
     this->meta_data_.block_max_data_.block_max_ids_ = std::span<uint32_t>(
-        reinterpret_cast<uint32_t*>(block_max_data_container_data_ + container_offset), total_blocks);
+        reinterpret_cast<uint32_t*>(data + container_offset), total_blocks);
     container_offset += total_blocks * sizeof(uint32_t);
     this->meta_data_.block_max_data_.block_max_scores_ =
-        std::span<float>(reinterpret_cast<float*>(block_max_data_container_data_ + container_offset), total_blocks);
+        std::span<float>(reinterpret_cast<float*>(data + container_offset), total_blocks);
     container_offset += total_blocks * sizeof(float);
     assert(container_offset == this->meta_data_.block_max_data_.container_->size());
 
-    size_t block_max_offset = 0;
+    size_t next_block_offset = 0;
     for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-        auto offset = raw_index_offsets[i];
-        size_t count = raw_index_offsets[i + 1] - offset;
-        auto ids = raw_index_ids.subspan(offset, count);
-        auto vals = raw_index_vals.subspan(offset, count);
+        const auto posting_count = raw_index_offsets[i + 1] - raw_index_offsets[i];
+        next_block_offset += (posting_count + block_size - 1) / block_size;
+        this->meta_data_.block_max_data_.block_offsets_[i] = next_block_offset;
+    }
+    assert(next_block_offset == total_blocks);
 
+    parallel_for(this->nr_inner_dims_, [&](size_t i) {
+        const auto posting_offset = raw_index_offsets[i];
+        const auto posting_count = raw_index_offsets[i + 1] - posting_offset;
+        const auto ids = raw_index_ids.subspan(posting_offset, posting_count);
+        const auto vals = raw_index_vals.subspan(posting_offset, posting_count);
+
+        size_t block_index = i == 0 ? 0 : this->meta_data_.block_max_data_.block_offsets_[i - 1];
         float block_max_score = 0.0f;
-        for (size_t j = 0; j < count; ++j) {
-            if (j != 0 && (j % this->meta_data_.block_max_data_.block_size_) == 0) {
-                this->meta_data_.block_max_data_.block_max_ids_[block_max_offset] = ids[j] - 1;
-                this->meta_data_.block_max_data_.block_max_scores_[block_max_offset] = block_max_score;
-                ++block_max_offset;
+        for (size_t j = 0; j < posting_count; ++j) {
+            if (j != 0 && (j % block_size) == 0) {
+                this->meta_data_.block_max_data_.block_max_ids_[block_index] = ids[j] - 1;
+                this->meta_data_.block_max_data_.block_max_scores_[block_index] = block_max_score;
+                ++block_index;
                 block_max_score = 0.0f;
             }
             block_max_score = std::max(block_max_score, this->build_scorer_->vec_score(ids[j], vals[j]));
         }
-        this->meta_data_.block_max_data_.block_max_ids_[block_max_offset] = ids[count - 1];
-        this->meta_data_.block_max_data_.block_max_scores_[block_max_offset] = block_max_score;
-        ++block_max_offset;
-        this->meta_data_.block_max_data_.block_offsets_[i] = block_max_offset;
-    }
-
-    assert(block_max_offset == total_blocks);
+        this->meta_data_.block_max_data_.block_max_ids_[block_index] = ids.back();
+        this->meta_data_.block_max_data_.block_max_scores_[block_index] = block_max_score;
+        assert(block_index + 1 == this->meta_data_.block_max_data_.block_offsets_[i]);
+    });
 }
 
 template <typename DType, typename QType, IndexScorerType MetricType>
@@ -772,9 +779,12 @@ BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<ui
             singleton_stored_value = static_cast<uint32_t>(get_quant_val<DType, QType>(vals.front() - 1));
         }
     }
-    varint_encode(encoded_list_size, out_buf);
 
     size_t nr_blocks = (list_sz + block_sz - 1) / block_sz;
+    out_buf.reserve(sizeof(size_t) + sizeof(int32_t) * nr_blocks + sizeof(uint32_t) * (nr_blocks - 1) + 64);
+
+    varint_encode(encoded_list_size, out_buf);
+
     size_t begin_block_maxids = out_buf.size();
     size_t begin_block_endpoints = begin_block_maxids + sizeof(uint32_t) * nr_blocks;
     size_t begin_blocks = begin_block_endpoints + sizeof(uint32_t) * (nr_blocks - 1);
@@ -784,7 +794,10 @@ BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<ui
     auto* vals_it = vals.data();
 
     std::vector<uint32_t> ids_buf(block_sz);
+    std::vector<QType> ip_vals_buf(kIsIPMetric ? block_sz : 0);
+    std::vector<uint32_t> bm25_vals_buf(kIsIPMetric ? 0 : block_sz);
     uint32_t last_vecid = UINT32_MAX;
+
     for (size_t b = 0; b < nr_blocks; ++b) {
         uint32_t cur_block_size = ((b + 1) * block_sz <= list_sz) ? block_sz : (list_sz % block_sz);
 
@@ -800,22 +813,22 @@ BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<ui
         }
 
         if constexpr (kIsIPMetric) {
-            std::vector<QType> vals_buf(cur_block_size);
             for (size_t i = 0; i < cur_block_size; ++i) {
-                vals_buf[i] = *vals_it++;
+                ip_vals_buf[i] = *vals_it++;
             }
-            out_buf.insert(out_buf.end(), reinterpret_cast<uint8_t*>(vals_buf.data()),
-                           reinterpret_cast<uint8_t*>(vals_buf.data() + cur_block_size));
+            out_buf.insert(out_buf.end(), reinterpret_cast<uint8_t*>(ip_vals_buf.data()),
+                           reinterpret_cast<uint8_t*>(ip_vals_buf.data() + cur_block_size));
         } else if (use_singleton_short_form) {
             assert(cur_block_size == 1 && b == 0);
             varint_encode(singleton_stored_value, out_buf);
             ++vals_it;
+            out_buf.insert(out_buf.end(), reinterpret_cast<uint8_t*>(ip_vals_buf.data()),
+                           reinterpret_cast<uint8_t*>(ip_vals_buf.data() + cur_block_size));
         } else {
-            std::vector<uint32_t> vals_buf(cur_block_size);
             for (size_t i = 0; i < cur_block_size; ++i) {
-                vals_buf[i] = get_quant_val<DType, QType>(*vals_it++ - 1);
+                bm25_vals_buf[i] = get_quant_val<DType, QType>(*vals_it++ - 1);
             }
-            block_codec_->encode(vals_buf.data(), cur_block_size, out_buf);
+            block_codec_->encode(bm25_vals_buf.data(), cur_block_size, out_buf);
         }
 
         if (b != nr_blocks - 1) {
@@ -838,41 +851,42 @@ BlockInvertedIndex<DType, QType, MetricType>::build_block_index(std::span<uint32
         index_container_ = std::make_unique<MemBinaryContainer>();
     }
 
-    // write the endpoints of each dimension's inverted list
-    index_container_->resize((this->nr_inner_dims_ + 1) * sizeof(size_t));
-    size_t endpoint = 0;
-
-    index_container_->write_at(0, reinterpret_cast<uint8_t*>(&endpoint), sizeof(size_t));
-
-    for (uint32_t i = 0; i < this->nr_inner_dims_; ++i) {
+    std::vector<std::vector<uint8_t>> encoded_posting_lists(this->nr_inner_dims_);
+    parallel_for(this->nr_inner_dims_, [&](size_t i) {
         auto offset = raw_index_offsets[i];
         size_t count = raw_index_offsets[i + 1] - offset;
-        std::vector<uint8_t> out_buf;
-        encode_posting_list(out_buf, raw_index_ids.subspan(offset, count), raw_index_vals.subspan(offset, count));
-        index_container_->append(out_buf.data(), out_buf.size());
-        endpoint += out_buf.size();
-        index_container_->write_at((i + 1) * sizeof(size_t), reinterpret_cast<uint8_t*>(&endpoint), sizeof(size_t));
+        encode_posting_list(encoded_posting_lists[i], raw_index_ids.subspan(offset, count),
+                            raw_index_vals.subspan(offset, count));
+    });
+
+    std::vector<size_t> posting_offsets(this->nr_inner_dims_ + 1, 0);
+    for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+        posting_offsets[i + 1] = posting_offsets[i] + encoded_posting_lists[i].size();
     }
 
-    // The vectorized StreamVByte decoder may issue a 16-byte unaligned load from the final payload byte. Keep a
-    // 15-byte zero guard after all postings so that read stays inside the container without changing list offsets.
-    std::array<uint8_t, 15> padding{};
-    index_container_->append(padding.data(), padding.size());
-
+    // This is a workaround to QMX codex having to sometimes look beyond the buffer due to some SIMD loads.
+    constexpr size_t padding_size = 15;
+    const auto offsets_byte_size = posting_offsets.size() * sizeof(size_t);
+    index_container_->resize(offsets_byte_size + posting_offsets.back() + padding_size);
     index_container_->seal();
 
     auto data_ptr = index_container_->data();
-    posting_blocks_dim_offsets_ = std::span<size_t>(reinterpret_cast<size_t*>(data_ptr), this->nr_inner_dims_ + 1);
-    posting_blocks_data_ = std::span<uint8_t>(data_ptr + sizeof(size_t) * (this->nr_inner_dims_ + 1),
-                                              index_container_->size() - sizeof(size_t) * (this->nr_inner_dims_ + 1));
+    std::memcpy(data_ptr, posting_offsets.data(), offsets_byte_size);
+    for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+        std::memcpy(data_ptr + offsets_byte_size + posting_offsets[i], encoded_posting_lists[i].data(),
+                    encoded_posting_lists[i].size());
+    }
+    std::memset(data_ptr + offsets_byte_size + posting_offsets.back(), 0, padding_size);
+
+    posting_blocks_dim_offsets_ =
+        std::span<size_t>(reinterpret_cast<size_t*>(data_ptr), this->nr_inner_dims_ + 1);
+    posting_blocks_data_ =
+        std::span<uint8_t>(data_ptr + offsets_byte_size, index_container_->size() - offsets_byte_size);
 }
 
 template <typename DType, typename QType, IndexScorerType MetricType>
 Status
 BlockInvertedIndex<DType, QType, MetricType>::add(const SparseRow<DType>* data, size_t rows, int64_t dim) {
-    std::unordered_set<uint32_t> external_dims;
-    size_t total_nnz = 0;
-
     if (this->nr_rows_ != 0) {
         LOG_KNOWHERE_ERROR_ << "BlockInvertedIndex is already built, and cannot be added to again.";
         return Status::invalid_index_error;
@@ -881,47 +895,30 @@ BlockInvertedIndex<DType, QType, MetricType>::add(const SparseRow<DType>* data, 
     this->nr_rows_ = rows;
     this->max_dim_ = dim;
 
+    std::vector<float>* row_sums = nullptr;
+    if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_ROW_SUMS) {
+        this->meta_data_.row_sums_.resize(this->nr_rows_);
+        row_sums = &this->meta_data_.row_sums_;
+    }
+
+    std::vector<uint32_t>* dataset_nnz_stats = nullptr;
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     this->build_stats_.dataset_nnz_stats_.resize(rows);
+    dataset_nnz_stats = &this->build_stats_.dataset_nnz_stats_;
 #endif
 
-    for (uint32_t i = 0; i < rows; ++i) {
-        for (size_t j = 0; j < data[i].size(); ++j) {
-            auto [dim, val] = data[i][j];
-            // Skip values equals to or close enough to zero (which is little to the total IP score).
-            if (std::abs(val) < std::numeric_limits<DType>::epsilon()) {
-                continue;
-            }
-            external_dims.insert(dim);
-            ++total_nnz;
-        }
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-        this->build_stats_.dataset_nnz_stats_[i] = data[i].size();
-#endif
-    }
-
-    this->dim_map_.build_from_external_dims(external_dims);
+    auto row_scan = scan_rows_for_build(data, rows, dataset_nnz_stats, row_sums);
+    this->dim_map_.build_from_external_dims(row_scan.external_dims);
     this->nr_inner_dims_ = this->dim_map_.size();
-
-    std::vector<size_t> plist_cnts(this->nr_inner_dims_, 0);
-    for (uint32_t i = 0; i < rows; ++i) {
-        for (size_t j = 0; j < data[i].size(); ++j) {
-            auto [dim, val] = data[i][j];
-            if (std::abs(val) < std::numeric_limits<DType>::epsilon()) {
-                continue;
-            }
-            auto inner_dim = this->dim_map_.lookup(dim);
-            if (!inner_dim.has_value()) {
-                return Status::sparse_inner_error;
-            }
-            plist_cnts[inner_dim.value()]++;
-        }
-    }
+    auto posting_plan = prepare_posting_build_plan(std::move(row_scan.posting_counts_by_worker), this->dim_map_,
+                                                   this->nr_inner_dims_);
+    row_scan = {};
+    const auto total_nnz = posting_plan.total_postings();
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     this->build_stats_.posting_list_length_stats_.resize(this->nr_inner_dims_);
     for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-        this->build_stats_.posting_list_length_stats_[i] = plist_cnts[i];
+        this->build_stats_.posting_list_length_stats_[i] = posting_plan.posting_count(i);
     }
 #endif
 
@@ -942,42 +939,30 @@ BlockInvertedIndex<DType, QType, MetricType>::add(const SparseRow<DType>* data, 
     auto raw_index_offsets = std::span<size_t>(
         reinterpret_cast<size_t*>(buffer + raw_index_ids_byte_sz + raw_index_vals_byte_sz), this->nr_inner_dims_ + 1);
 
-    std::size_t offset = 0;
-    for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-        raw_index_offsets[i] = offset;
-        offset += plist_cnts[i];
-    }
-    raw_index_offsets[this->nr_inner_dims_] = offset;
-
-    std::vector<size_t> curr_offsets(this->nr_inner_dims_);
-    for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-        curr_offsets[i] = raw_index_offsets[i];
-    }
-
-    for (size_t i = 0; i < this->nr_rows_; ++i) {
-        add_row_to_index(data[i], i, raw_index_ids, raw_index_vals, curr_offsets);
-    }
+    std::copy(posting_plan.posting_offsets.begin(), posting_plan.posting_offsets.end(), raw_index_offsets.begin());
+    fill_postings_by_worker(data, rows, this->dim_map_, raw_index_ids, raw_index_vals, posting_plan,
+                            [](DType val) { return get_quant_val<DType, QType>(val); });
+    posting_plan = {};
 
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_MAX_SCORES_PER_DIM) {
         this->meta_data_.resize_max_score_per_dim(this->nr_inner_dims_, 0.0f);
 
-        for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-            auto offset = raw_index_offsets[i];
-            size_t count = raw_index_offsets[i + 1] - offset;
-            auto ids = raw_index_ids.subspan(offset, count);
-            auto vals = raw_index_vals.subspan(offset, count);
-            for (size_t j = 0; j < count; ++j) {
-                auto score = this->build_scorer_->vec_score(ids[j], vals[j]);
-                this->meta_data_.max_score_per_dim_[i] = std::max(this->meta_data_.max_score_per_dim_[i], score);
+        parallel_for(this->nr_inner_dims_, [&](size_t i) {
+            const auto posting_offset = raw_index_offsets[i];
+            const auto posting_count = raw_index_offsets[i + 1] - posting_offset;
+            const auto ids = raw_index_ids.subspan(posting_offset, posting_count);
+            const auto vals = raw_index_vals.subspan(posting_offset, posting_count);
+            float max_score = 0.0f;
+            for (size_t j = 0; j < posting_count; ++j) {
+                max_score = std::max(max_score, this->build_scorer_->vec_score(ids[j], vals[j]));
             }
-        }
+            this->meta_data_.max_score_per_dim_[i] = max_score;
+        });
     }
-
     // build block max data if the flag is set
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_BLOCK_MAX_SCORES) {
         build_block_max_data(raw_index_ids, raw_index_vals, raw_index_offsets, false, "");
     }
-
     // build block compressed index to postings_data_ and postings_endpoints_
     build_block_index(raw_index_ids, raw_index_vals, raw_index_offsets, false, "");
     return Status::success;

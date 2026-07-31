@@ -141,26 +141,37 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> /*config*/, bool use_knowhere_build_pool) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Could not add data to uninitialized " << Type() << " index";
             return Status::empty_index;
         }
 
-        auto build_pool_wrapper = std::make_shared<ThreadPoolWrapper>(build_pool_, use_knowhere_build_pool);
-        auto tryObj =
-            build_pool_wrapper
-                ->push([&] {
-                    return index_->add(static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor()),
-                                       dataset->GetRows(), dataset->GetDim());
-                })
-                .getTry();
-        if (!tryObj.hasValue()) {
-            LOG_KNOWHERE_WARNING_ << "Failed to add data to index " << Type() << ": " << tryObj.exception().what();
-            return Status::sparse_inner_error;
+        auto add = [&] {
+            return index_->add(static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor()),
+                               dataset->GetRows(), dataset->GetDim());
+        };
+        if (!use_knowhere_build_pool) {
+            auto build_pool_wrapper = std::make_shared<ThreadPoolWrapper>(build_pool_, use_knowhere_build_pool);
+            auto try_obj = build_pool_wrapper->push(add).getTry();
+            if (!try_obj.hasValue()) {
+                LOG_KNOWHERE_WARNING_ << "Failed to add data to index " << Type() << ": "
+                                      << try_obj.exception().what();
+                return Status::sparse_inner_error;
+            }
+            return try_obj.value();
         }
 
-        return tryObj.value();
+        // Sealed index implementations submit their parallel build tasks to the build pool inside add().
+        try {
+            return add();
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "Failed to add data to index " << Type() << ": " << e.what();
+            return Status::sparse_inner_error;
+        } catch (...) {
+            LOG_KNOWHERE_WARNING_ << "Failed to add data to index " << Type() << ": unknown exception";
+            return Status::sparse_inner_error;
+        }
     }
 
     [[nodiscard]] expected<DataSetPtr>
