@@ -894,6 +894,10 @@ BlockInvertedIndex<DType, QType, MetricType>::add(const SparseRow<DType>* data, 
     this->nr_rows_ = rows;
     this->max_dim_ = dim;
 
+    LOG_KNOWHERE_INFO_ << "BlockInvertedIndex build started: rows=" << rows << ", max_dim=" << dim
+                       << ", metric=" << (kIsIPMetric ? "IP" : "BM25") << ", codec=" << block_codec_->get_name()
+                       << ", codec_block_size=" << block_codec_->block_size();
+
     std::vector<float>* row_sums = nullptr;
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_ROW_SUMS) {
         this->meta_data_.row_sums_.resize(this->nr_rows_);
@@ -907,12 +911,25 @@ BlockInvertedIndex<DType, QType, MetricType>::add(const SparseRow<DType>* data, 
 #endif
 
     auto row_scan = scan_rows_for_build(data, rows, dataset_nnz_stats, row_sums);
+    LOG_KNOWHERE_INFO_ << "BlockInvertedIndex row scan completed: external_dims=" << row_scan.external_dims.size();
+
     this->dim_map_.build_from_external_dims(row_scan.external_dims);
     this->nr_inner_dims_ = this->dim_map_.size();
     auto posting_plan =
         prepare_posting_build_plan(std::move(row_scan.posting_counts_by_worker), this->dim_map_, this->nr_inner_dims_);
     row_scan = {};
     const auto total_nnz = posting_plan.total_postings();
+
+    size_t min_posting_count = total_nnz == 0 ? 0 : std::numeric_limits<size_t>::max();
+    size_t max_posting_count = 0;
+    for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
+        const auto posting_count = posting_plan.posting_count(i);
+        min_posting_count = std::min(min_posting_count, posting_count);
+        max_posting_count = std::max(max_posting_count, posting_count);
+    }
+    LOG_KNOWHERE_INFO_ << "BlockInvertedIndex posting plan completed: inner_dims=" << this->nr_inner_dims_
+                       << ", total_postings=" << total_nnz << ", min_posting_length=" << min_posting_count
+                       << ", max_posting_length=" << max_posting_count;
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     this->build_stats_.posting_list_length_stats_.resize(this->nr_inner_dims_);
@@ -926,6 +943,10 @@ BlockInvertedIndex<DType, QType, MetricType>::add(const SparseRow<DType>* data, 
     auto raw_index_vals_byte_sz = total_nnz * sizeof(QType);
     auto raw_index_offsets_byte_sz = (this->nr_inner_dims_ + 1) * sizeof(size_t);
     auto raw_index_byte_sz = raw_index_ids_byte_sz + raw_index_vals_byte_sz + raw_index_offsets_byte_sz;
+
+    LOG_KNOWHERE_INFO_ << "BlockInvertedIndex allocating raw postings: bytes=" << raw_index_byte_sz
+                       << ", ids_bytes=" << raw_index_ids_byte_sz << ", values_bytes=" << raw_index_vals_byte_sz
+                       << ", offsets_bytes=" << raw_index_offsets_byte_sz;
 
     auto raw_index_container = std::make_unique<MemBinaryContainer>();
 
@@ -942,6 +963,7 @@ BlockInvertedIndex<DType, QType, MetricType>::add(const SparseRow<DType>* data, 
     fill_postings_by_worker(data, rows, this->dim_map_, raw_index_ids, raw_index_vals, posting_plan,
                             [](DType val) { return get_quant_val<DType, QType>(val); });
     posting_plan = {};
+    LOG_KNOWHERE_INFO_ << "BlockInvertedIndex raw postings filled: total_postings=" << total_nnz;
 
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_MAX_SCORES_PER_DIM) {
         this->meta_data_.resize_max_score_per_dim(this->nr_inner_dims_, 0.0f);
@@ -957,13 +979,24 @@ BlockInvertedIndex<DType, QType, MetricType>::add(const SparseRow<DType>* data, 
             }
             this->meta_data_.max_score_per_dim_[i] = max_score;
         });
+        LOG_KNOWHERE_INFO_ << "BlockInvertedIndex max scores per dimension built: count=" << this->nr_inner_dims_;
     }
     // build block max data if the flag is set
     if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_BLOCK_MAX_SCORES) {
         build_block_max_data(raw_index_ids, raw_index_vals, raw_index_offsets, false, "");
+        LOG_KNOWHERE_INFO_ << "BlockInvertedIndex block max data built: blocks="
+                           << this->meta_data_.block_max_data_.block_max_ids_.size()
+                           << ", bytes=" << this->meta_data_.block_max_data_.container_->size();
     }
     // build block compressed index to postings_data_ and postings_endpoints_
     build_block_index(raw_index_ids, raw_index_vals, raw_index_offsets, false, "");
+    const auto compressed_bytes = index_container_->size();
+    const double compression_ratio =
+        raw_index_byte_sz == 0 ? 0.0 : static_cast<double>(compressed_bytes) / static_cast<double>(raw_index_byte_sz);
+    LOG_KNOWHERE_INFO_ << "BlockInvertedIndex block postings encoded: bytes=" << compressed_bytes
+                       << ", compressed_to_raw_ratio=" << compression_ratio;
+    LOG_KNOWHERE_INFO_ << "BlockInvertedIndex build completed: rows=" << rows << ", inner_dims=" << this->nr_inner_dims_
+                       << ", total_postings=" << total_nnz << ", index_bytes=" << size();
     return Status::success;
 }
 
