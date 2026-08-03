@@ -39,7 +39,7 @@ IndexNode::GetOrCreateSearchConfig(const Json& json) const {
         return cached->config;
     }
 
-    std::lock_guard lock(search_config_cache_mutex_);
+    std::scoped_lock lock(search_config_cache_mutex_);
     cached = std::atomic_load_explicit(&search_config_cache_, std::memory_order_relaxed);
     if (cached != nullptr && cached->json == json) {
         return cached->config;
@@ -60,7 +60,8 @@ IndexNode::GetOrCreateSearchConfig(const Json& json) const {
     }
 
     std::shared_ptr<const Config> prepared_config(std::move(cfg));
-    auto entry = std::make_shared<const SearchConfigCacheEntry>(SearchConfigCacheEntry{json, prepared_config});
+    auto entry =
+        std::make_shared<const SearchConfigCacheEntry>(SearchConfigCacheEntry{.json = json, .config = prepared_config});
     std::atomic_store_explicit(&search_config_cache_, std::move(entry), std::memory_order_release);
     return prepared_config;
 }
