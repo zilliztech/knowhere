@@ -583,8 +583,8 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
         REQUIRE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC, knowhere::feature::BF16));
         REQUIRE_FALSE(
             IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC, knowhere::feature::BINARY));
-        REQUIRE_FALSE(IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC,
-                                                            knowhere::feature::SPARSE_U32_F32));
+        REQUIRE_FALSE(
+            IndexFactory::Instance().FeatureCheck(IndexEnum::INDEX_SVS_IVF_LEANVEC, knowhere::feature::SPARSE_U32_F32));
 #endif
     }
 

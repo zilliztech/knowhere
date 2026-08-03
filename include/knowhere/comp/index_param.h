@@ -132,9 +132,9 @@ constexpr const char* EMB_LIST_STRATEGY_TOKENANN = "tokenann";
 constexpr const char* EMB_LIST_STRATEGY_MUVERA = "muvera";
 constexpr const char* EMB_LIST_STRATEGY_LEMUR = "lemur";
 
-// Out-of-distribution query-training vectors, attached to the SVS LeanVec train DataSet.
-constexpr const char* SVS_LEANVEC_QUERY_TENSOR = "svs_leanvec_query_tensor";
-constexpr const char* SVS_LEANVEC_QUERY_ROWS = "svs_leanvec_query_rows";
+// Representative query sample attached to a train DataSet, for OOD-aware training.
+constexpr const char* TRAIN_QUERY_TENSOR = "train_query_tensor";
+constexpr const char* TRAIN_QUERY_ROWS = "train_query_rows";
 };  // namespace meta
 
 namespace indexparam {

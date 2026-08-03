@@ -70,7 +70,7 @@ class SvsVamanaConfig : public BaseConfig {
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_is_static)
             .description("build an immutable static Vamana index instead of the dynamic variant.")
-            .set_default(false)
+            .set_default(true)
             .for_train();
     }
 };
@@ -163,7 +163,7 @@ class SvsVamanaLeanVecConfig : public SvsVamanaConfig {
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_leanvec_ood)
             .description("train the LeanVec projection for out-of-distribution queries.")
-            .set_default(false)
+            .set_default(true)
             .for_train();
     }
 };
@@ -223,7 +223,7 @@ class SvsIvfLeanVecConfig : public SvsIvfConfig {
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_leanvec_ood)
             .description("train the LeanVec projection for out-of-distribution queries.")
-            .set_default(false)
+            .set_default(true)
             .for_train();
     }
 };

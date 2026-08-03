@@ -169,6 +169,7 @@ TEST_CASE("Test SVS Vamana Build and Search", "[svs][vamana]") {
         json[knowhere::indexparam::SVS_SEARCH_BUFFER_CAPACITY] = 40;
         json[knowhere::indexparam::SVS_ALPHA] = 1.2f;
         json[knowhere::indexparam::SVS_STORAGE_KIND] = std::string("fp32");
+        json[knowhere::indexparam::SVS_IS_STATIC] = false;
         return json;
     };
 
@@ -302,13 +303,13 @@ TEST_CASE("Test SVS Vamana LeanVec OOD Build and Search", "[svs][vamana][leanvec
         json[knowhere::indexparam::SVS_SEARCH_BUFFER_CAPACITY] = 40;
         json[knowhere::indexparam::SVS_STORAGE_KIND] = std::string("leanvec4x8");
         json[knowhere::indexparam::SVS_LEANVEC_OOD] = true;
+        json[knowhere::indexparam::SVS_IS_STATIC] = false;
         return json;
     };
 
     // attach the query-training sample to the train dataset for OOD training
-    train_ds->Set(knowhere::meta::SVS_LEANVEC_QUERY_TENSOR,
-                  static_cast<const float*>(train_query_ds->GetTensor()));
-    train_ds->Set(knowhere::meta::SVS_LEANVEC_QUERY_ROWS, static_cast<int64_t>(n_train_q));
+    train_ds->Set(knowhere::meta::TRAIN_QUERY_TENSOR, static_cast<const float*>(train_query_ds->GetTensor()));
+    train_ds->Set(knowhere::meta::TRAIN_QUERY_ROWS, static_cast<int64_t>(n_train_q));
 
     SECTION("Build and KNN Search") {
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
@@ -330,6 +331,29 @@ TEST_CASE("Test SVS Vamana LeanVec OOD Build and Search", "[svs][vamana][leanvec
         float recall = GetKNNRecall(*gt.value(), *res.value());
         LOG_KNOWHERE_INFO_ << "SVS Vamana LeanVec OOD recall@" << topk << " = " << recall << " (metric=" << metric
                            << ")";
+        REQUIRE(recall >= 0.70f);
+    }
+
+    SECTION("Build and KNN Search without a query sample") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
+            knowhere::IndexEnum::INDEX_SVS_VAMANA_LEANVEC, version);
+        REQUIRE(idx.has_value());
+        auto index = idx.value();
+
+        auto cfg_json = gen().dump();
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+
+        // OOD is the default and must work when no query sample is attached
+        const auto no_query_ds = CopyDataSet(train_ds, nb);
+        REQUIRE(index.Build(no_query_ds, json) == knowhere::Status::success);
+        REQUIRE(index.Count() == nb);
+
+        auto res = index.Search(query_ds, json, nullptr);
+        REQUIRE(res.has_value());
+
+        float recall = GetKNNRecall(*gt.value(), *res.value());
+        LOG_KNOWHERE_INFO_ << "SVS Vamana LeanVec OOD (no query sample) recall@" << topk << " = " << recall
+                           << " (metric=" << metric << ")";
         REQUIRE(recall >= 0.70f);
     }
 
@@ -526,13 +550,12 @@ TEST_CASE("Test SVS IVF LeanVec OOD Build and Search", "[svs][ivf][leanvec][ood]
     };
 
     // attach the query-training sample to the train dataset for OOD training
-    train_ds->Set(knowhere::meta::SVS_LEANVEC_QUERY_TENSOR,
-                  static_cast<const float*>(train_query_ds->GetTensor()));
-    train_ds->Set(knowhere::meta::SVS_LEANVEC_QUERY_ROWS, static_cast<int64_t>(n_train_q));
+    train_ds->Set(knowhere::meta::TRAIN_QUERY_TENSOR, static_cast<const float*>(train_query_ds->GetTensor()));
+    train_ds->Set(knowhere::meta::TRAIN_QUERY_ROWS, static_cast<int64_t>(n_train_q));
 
     SECTION("Build and KNN Search") {
-        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
-            knowhere::IndexEnum::INDEX_SVS_IVF_LEANVEC, version);
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_SVS_IVF_LEANVEC,
+                                                                             version);
         REQUIRE(idx.has_value());
         auto index = idx.value();
 
@@ -549,6 +572,29 @@ TEST_CASE("Test SVS IVF LeanVec OOD Build and Search", "[svs][ivf][leanvec][ood]
 
         float recall = GetKNNRecall(*gt.value(), *res.value());
         LOG_KNOWHERE_INFO_ << "SVS IVF LeanVec OOD recall@" << topk << " = " << recall << " (metric=" << metric << ")";
+        REQUIRE(recall >= 0.70f);
+    }
+
+    SECTION("Build and KNN Search without a query sample") {
+        auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_SVS_IVF_LEANVEC,
+                                                                             version);
+        REQUIRE(idx.has_value());
+        auto index = idx.value();
+
+        auto cfg_json = gen().dump();
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+
+        // OOD is the default and must work when no query sample is attached
+        const auto no_query_ds = CopyDataSet(train_ds, nb);
+        REQUIRE(index.Build(no_query_ds, json) == knowhere::Status::success);
+        REQUIRE(index.Count() == nb);
+
+        auto res = index.Search(query_ds, json, nullptr);
+        REQUIRE(res.has_value());
+
+        float recall = GetKNNRecall(*gt.value(), *res.value());
+        LOG_KNOWHERE_INFO_ << "SVS IVF LeanVec OOD (no query sample) recall@" << topk << " = " << recall
+                           << " (metric=" << metric << ")";
         REQUIRE(recall >= 0.70f);
     }
 
