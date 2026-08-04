@@ -172,12 +172,16 @@ class SvsIvfConfig : public BaseConfig {
  public:
     // Number of inverted-list centroids / clusters.
     CFG_INT svs_ivf_nlist;
-    // Number of clusters probed during search. Larger values improve recall at the cost of latency.
+    // Number of clusters probed. Larger values improve recall at the cost of latency. Applies at both build time
+    // (as the index default) and search time.
     CFG_INT svs_ivf_nprobe;
-    // Reranking multiplier for compressed datasets. <=0 keeps the index default.
+    // Reranking multiplier for compressed datasets. Applies at both build time (as the index default) and search
+    // time. Leave unset, or pass 0, to keep the SVS default of 1.0.
     CFG_FLOAT svs_ivf_k_reorder;
     // Data storage format: "fp32", "fp16", "sqi8".
     CFG_STRING svs_storage_kind;
+    // Build an immutable static IVF index instead of the dynamic variant.
+    CFG_BOOL svs_is_static;
     KNOWHERE_DECLARE_CONFIG(SvsIvfConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_ivf_nlist)
             .description("number of inverted-list centroids.")
@@ -188,19 +192,25 @@ class SvsIvfConfig : public BaseConfig {
             .description("number of clusters probed during search.")
             .set_default(10)
             .set_range(1, 1000000)
+            .for_train()
             .for_search()
             .for_range_search()
             .for_iterator();
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_ivf_k_reorder)
-            .description("reranking multiplier for compressed datasets.")
+            .description("reranking multiplier for compressed datasets. 0 keeps the SVS default.")
             .allow_empty_without_default()
             .set_range(0.0f, 1000.0f)
+            .for_train()
             .for_search()
             .for_range_search()
             .for_iterator();
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_storage_kind)
             .description("data storage format: fp32, fp16, sqi8.")
             .set_default("fp32")
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(svs_is_static)
+            .description("build an immutable static IVF index instead of the dynamic variant.")
+            .set_default(true)
             .for_train();
     }
 };

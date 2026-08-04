@@ -22,8 +22,10 @@
 #include "faiss/svs/IndexSVSVamanaLVQ.h"
 #include "faiss/svs/IndexSVSVamanaLeanVec.h"
 #include "index/svs/svs_config.h"
+#include "index/svs/svs_utils.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
+#include "knowhere/comp/index_param.h"
 #include "knowhere/comp/task.h"
 #include "knowhere/context.h"
 #include "knowhere/feature.h"
@@ -34,33 +36,6 @@
 #include "knowhere/utils.h"
 
 namespace knowhere {
-
-namespace {
-
-std::optional<faiss::SVSStorageKind>
-str_to_svs_storage_kind(const std::string& s) {
-    if (s == "fp32")
-        return faiss::SVS_FP32;
-    if (s == "fp16")
-        return faiss::SVS_FP16;
-    if (s == "sqi8")
-        return faiss::SVS_SQI8;
-    if (s == "lvq4x0")
-        return faiss::SVS_LVQ4x0;
-    if (s == "lvq4x4")
-        return faiss::SVS_LVQ4x4;
-    if (s == "lvq4x8")
-        return faiss::SVS_LVQ4x8;
-    if (s == "leanvec4x4")
-        return faiss::SVS_LeanVec4x4;
-    if (s == "leanvec4x8")
-        return faiss::SVS_LeanVec4x8;
-    if (s == "leanvec8x8")
-        return faiss::SVS_LeanVec8x8;
-    return std::nullopt;
-}
-
-}  // namespace
 
 template <typename DataType>
 class SvsVamanaIndexNode : public IndexNode {
@@ -114,6 +89,16 @@ class SvsVamanaIndexNode : public IndexNode {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Can not add data to empty index.";
             return Status::empty_index;
+        }
+
+        // A static index consumes all of its data in the first add() and cannot be extended afterwards. Report
+        // that as an explicit unsupported-operation rather than letting the faiss throw surface as an inner error.
+        if (index_->is_static && index_->impl != nullptr) {
+            LOG_KNOWHERE_ERROR_ << "SVS Vamana index was built as static (" << indexparam::SVS_IS_STATIC
+                                << "=true) and does not support incremental add; all data must be supplied in a "
+                                   "single Add call, or set "
+                                << indexparam::SVS_IS_STATIC << "=false to build the dynamic variant.";
+            return Status::not_implemented;
         }
 
         const SvsVamanaConfig& v_cfg = static_cast<const SvsVamanaConfig&>(*cfg);

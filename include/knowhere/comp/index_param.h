@@ -133,6 +133,9 @@ constexpr const char* EMB_LIST_STRATEGY_MUVERA = "muvera";
 constexpr const char* EMB_LIST_STRATEGY_LEMUR = "lemur";
 
 // Representative query sample attached to a train DataSet, for OOD-aware training.
+// The tensor is ALWAYS fp32, regardless of the index data type, and is borrowed rather than owned by the DataSet:
+// the caller must keep it alive for the duration of the build. Keeping it fp32 lets it pass unconverted through
+// IndexNodeDataMockWrapper for the fp16/bf16 index variants.
 constexpr const char* TRAIN_QUERY_TENSOR = "train_query_tensor";
 constexpr const char* TRAIN_QUERY_ROWS = "train_query_rows";
 };  // namespace meta

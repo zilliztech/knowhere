@@ -20,6 +20,7 @@
 #include "faiss/svs/IndexSVSIVF.h"
 #include "faiss/svs/IndexSVSIVFLeanVec.h"
 #include "index/svs/svs_config.h"
+#include "index/svs/svs_utils.h"
 #include "io/memory_io.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/task.h"
@@ -32,33 +33,6 @@
 
 namespace knowhere {
 
-namespace {
-
-std::optional<faiss::SVSStorageKind>
-str_to_svs_storage_kind(const std::string& s) {
-    if (s == "fp32")
-        return faiss::SVS_FP32;
-    if (s == "fp16")
-        return faiss::SVS_FP16;
-    if (s == "sqi8")
-        return faiss::SVS_SQI8;
-    if (s == "lvq4x0")
-        return faiss::SVS_LVQ4x0;
-    if (s == "lvq4x4")
-        return faiss::SVS_LVQ4x4;
-    if (s == "lvq4x8")
-        return faiss::SVS_LVQ4x8;
-    if (s == "leanvec4x4")
-        return faiss::SVS_LeanVec4x4;
-    if (s == "leanvec4x8")
-        return faiss::SVS_LeanVec4x8;
-    if (s == "leanvec8x8")
-        return faiss::SVS_LeanVec8x8;
-    return std::nullopt;
-}
-
-}  // namespace
-
 template <typename DataType>
 class SvsIvfIndexNode : public IndexNode {
  public:
@@ -66,8 +40,16 @@ class SvsIvfIndexNode : public IndexNode {
         search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
 
+    // SVS IVF clusters and ingests all rows in a single faiss train() call, so it does not fit the Train-Add
+    // pattern: there is no meaningful state between the two steps. Build is overridden to do the whole job and
+    // Train/Add are rejected, rather than letting Add silently drop the rows it was handed.
     Status
-    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
+        if (index_) {
+            LOG_KNOWHERE_ERROR_ << "SVS IVF index is immutable and has already been built.";
+            return Status::invalid_args;
+        }
+
         const SvsIvfConfig& i_cfg = static_cast<const SvsIvfConfig&>(*cfg);
 
         auto metric = Str2FaissMetricType(i_cfg.metric_type.value());
@@ -92,31 +74,33 @@ class SvsIvfIndexNode : public IndexNode {
             auto idx = CreateFaissIndex(dataset->GetDim(), i_cfg.svs_ivf_nlist.value(), metric.value(), storage.value(),
                                         i_cfg);
             idx->n_probes = i_cfg.svs_ivf_nprobe.value();
-            if (i_cfg.svs_ivf_k_reorder.has_value()) {
+            // A non-positive k_reorder means "keep the faiss default"; assigning it would clobber that default,
+            // since SearchParametersSVSIVF only honors positive overrides.
+            if (i_cfg.svs_ivf_k_reorder.has_value() && i_cfg.svs_ivf_k_reorder.value() > 0.0f) {
                 idx->k_reorder = i_cfg.svs_ivf_k_reorder.value();
             }
 
-            // SVS IVF train() builds the index and ingests all rows in one shot.
             TrainFaissIndex(idx.get(), dataset, i_cfg, is_cosine);
 
             index_ = std::move(idx);
         } catch (const std::exception& e) {
-            LOG_KNOWHERE_ERROR_ << "SVS IVF train error: " << e.what();
+            LOG_KNOWHERE_ERROR_ << "SVS IVF build error: " << e.what();
             return Status::faiss_inner_error;
         }
 
         return Status::success;
     }
 
-    // SVS IVF ingests all rows during train(); Add is a no-op so the Build (Train+Add) path
-    // does not double-insert the same dataset.
+    Status
+    Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
+        LOG_KNOWHERE_ERROR_ << "SVS IVF is an immutable index; use Build instead of Train/Add.";
+        return Status::not_implemented;
+    }
+
     Status
     Add(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
-        if (!index_) {
-            LOG_KNOWHERE_ERROR_ << "Can not add data to empty index.";
-            return Status::empty_index;
-        }
-        return Status::success;
+        LOG_KNOWHERE_ERROR_ << "SVS IVF is an immutable index; use Build instead of Train/Add.";
+        return Status::not_implemented;
     }
 
     expected<DataSetPtr>
@@ -321,7 +305,7 @@ class SvsIvfIndexNode : public IndexNode {
     virtual std::unique_ptr<faiss::IndexSVSIVF>
     CreateFaissIndex(int64_t dim, int64_t nlist, faiss::MetricType metric, faiss::SVSStorageKind storage,
                      const SvsIvfConfig& cfg) {
-        return std::make_unique<faiss::IndexSVSIVF>(dim, nlist, metric, storage, /*is_static=*/false);
+        return std::make_unique<faiss::IndexSVSIVF>(dim, nlist, metric, storage, cfg.svs_is_static.value());
     }
 
     virtual void
@@ -363,7 +347,7 @@ class SvsIvfLeanVecIndexNode : public SvsIvfIndexNode<DataType> {
         const auto& lv_cfg = static_cast<const SvsIvfLeanVecConfig&>(cfg);
         size_t leanvec_dim = lv_cfg.svs_leanvec_dim.value();
         return std::make_unique<faiss::IndexSVSIVFLeanVec>(dim, nlist, metric, leanvec_dim, storage,
-                                                           /*is_static=*/false);
+                                                           lv_cfg.svs_is_static.value());
     }
 
     void
