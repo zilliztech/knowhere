@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -19,7 +20,9 @@
 
 #include "index/sparse/aligned_allocator.h"
 #include "index/sparse/inverted_index.h"
+#include "index/sparse/inverted_index_build.h"
 #include "index/sparse/inverted_index_format.h"
+#include "index/sparse/parallel_build.h"
 #include "index/sparse/scorer.h"
 #include "index/sparse/sindi_simd.h"
 #include "knowhere/bitsetview.h"
@@ -93,6 +96,77 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     }
 
     void
+    encode_window_nnzs(bool parallel) {
+        const size_t dim_count = this->nr_inner_dims_;
+        plists_window_nnzs_.resize(dim_count);
+        plists_window_nnzs_spans_.resize(dim_count);
+        std::vector<uint8_t> sparse_formats(dim_count, 0);
+
+        // Encode window nnzs with sparse/dense format selection
+        // Sparse format: (wid, wnnz) pairs when cnt_nonempty * 4 < nr_windows * 2
+        // Dense format: one uint16_t per window otherwise
+        auto encode_dim_nnzs = [&](size_t dim_id) {
+            size_t nonempty_windows = 0;
+            for (size_t wid = 0; wid < nr_windows_; ++wid) {
+                nonempty_windows += window_index_plists_sz_spans_[wid][dim_id] != 0;
+            }
+
+            const bool use_sparse = nonempty_windows * sizeof(uint32_t) < nr_windows_ * sizeof(uint16_t);
+            sparse_formats[dim_id] = use_sparse;
+            auto& encoded = plists_window_nnzs_[dim_id];
+            if (use_sparse) {
+                // Sparse format: [wid | wnnz] packed into 32 bits
+                encoded.resize(nonempty_windows * sizeof(uint32_t));
+                auto* output = encoded.data();
+                const auto wnnz_bits = 32 - __builtin_clz(window_size_);
+                for (size_t wid = 0; wid < nr_windows_; ++wid) {
+                    const auto wnnz = window_index_plists_sz_spans_[wid][dim_id];
+                    if (wnnz != 0) {
+                        const auto packed = (static_cast<uint32_t>(wid) << wnnz_bits) | wnnz;
+                        std::memcpy(output, &packed, sizeof(uint32_t));
+                        output += sizeof(uint32_t);
+                    }
+                }
+            } else {
+                // Dense format: one uint16_t per window
+                encoded.resize(nr_windows_ * sizeof(uint16_t));
+                auto* output = encoded.data();
+                for (size_t wid = 0; wid < nr_windows_; ++wid) {
+                    const auto wnnz = window_index_plists_sz_spans_[wid][dim_id];
+                    std::memcpy(output, &wnnz, sizeof(uint16_t));
+                    output += sizeof(uint16_t);
+                }
+            }
+            plists_window_nnzs_spans_[dim_id] = std::span<const uint8_t>(encoded.data(), encoded.size());
+        };
+
+        if (parallel) {
+            parallel_for(dim_count, encode_dim_nnzs);
+        } else {
+            for (size_t dim_id = 0; dim_id < dim_count; ++dim_id) {
+                encode_dim_nnzs(dim_id);
+            }
+        }
+
+        plists_wnnzs_fmts_msk_.assign((dim_count + 7) / 8, 0);
+        size_t sparse_dim_count = 0;
+        size_t encoded_bytes = 0;
+        for (size_t dim_id = 0; dim_id < dim_count; ++dim_id) {
+            if (sparse_formats[dim_id] != 0) {
+                plists_wnnzs_fmts_msk_[dim_id >> 3] |= static_cast<uint8_t>(1u << (dim_id & 0x7));
+                ++sparse_dim_count;
+            }
+            encoded_bytes += plists_window_nnzs_[dim_id].size();
+        }
+        plists_wnnzs_fmts_msk_span_ =
+            std::span<const uint8_t>(plists_wnnzs_fmts_msk_.data(), plists_wnnzs_fmts_msk_.size());
+        LOG_KNOWHERE_INFO_ << "SindiInvertedIndex window NNZ encoding completed: dims=" << dim_count
+                           << ", windows=" << nr_windows_ << ", sparse_format_dims=" << sparse_dim_count
+                           << ", dense_format_dims=" << (dim_count - sparse_dim_count)
+                           << ", encoded_bytes=" << encoded_bytes << ", parallel=" << parallel;
+    }
+
+    void
     append_window_indexes(const SparseRow<DataType>* data, size_t rows) {
         const size_t dim_count = this->nr_inner_dims_;
         total_plists_ids_.resize(dim_count);
@@ -101,10 +175,6 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         total_plists_vals_spans_.resize(dim_count);
 
         plists_dim_offsets_.resize(dim_count + 1, 0);
-        plists_window_nnzs_.resize(dim_count);
-        plists_window_nnzs_spans_.resize(dim_count);
-        plists_wnnzs_fmts_msk_.resize((dim_count + 7) / 8);
-        std::fill(plists_wnnzs_fmts_msk_.begin(), plists_wnnzs_fmts_msk_.end(), static_cast<uint8_t>(0));
 
         nr_windows_ = (this->nr_rows_ + rows + window_size_ - 1) / window_size_;
         window_index_plists_sz_.resize(nr_windows_);
@@ -153,56 +223,120 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 std::span<const uint16_t>(window_index_plists_sz_[wid].data(), window_index_plists_sz_[wid].size());
         }
 
-        // Encode window nnzs with sparse/dense format selection
-        // Sparse format: (wid, wnnz) pairs when cnt_nonempty * 4 < nr_windows * 2
-        // Dense format: one uint16_t per window otherwise
-        auto encode_dim_nnzs = [&](size_t dimid) {
-            plists_window_nnzs_[dimid].clear();
-            auto* mskptr = plists_wnnzs_fmts_msk_.data() + (dimid >> 3);
-            int32_t cnt_nonempty = 0;
-            for (size_t wid = 0; wid < nr_windows_; ++wid) {
-                if (window_index_plists_sz_spans_[wid][dimid] > 0) {
-                    ++cnt_nonempty;
-                }
-            }
-            const bool use_sparse =
-                static_cast<size_t>(cnt_nonempty) * sizeof(uint32_t) < nr_windows_ * sizeof(uint16_t);
+        encode_window_nnzs(/*parallel=*/false);
+    }
 
-            if (use_sparse) {
-                // Sparse format: [wid | wnnz] packed into 32 bits
-                *mskptr |= static_cast<uint8_t>(0x1u << (dimid & 0x7));
-                plists_window_nnzs_[dimid].resize(static_cast<size_t>(cnt_nonempty) * sizeof(uint32_t));
-                auto* pnnz_ptr = plists_window_nnzs_[dimid].data();
-                const auto wnnz_bits = 32 - __builtin_clz(window_size_);
-                for (size_t wid = 0; wid < nr_windows_; ++wid) {
-                    auto wnnz = window_index_plists_sz_spans_[wid][dimid];
-                    if (wnnz > 0) {
-                        auto val = (static_cast<uint32_t>(wid) << wnnz_bits) | wnnz;
-                        std::memcpy(pnnz_ptr, &val, sizeof(uint32_t));
-                        pnnz_ptr += sizeof(uint32_t);
-                    }
-                }
-            } else {
-                // Dense format: one uint16_t per window
-                *mskptr &= static_cast<uint8_t>(~(0x1u << (dimid & 0x7)));
-                plists_window_nnzs_[dimid].resize(nr_windows_ * sizeof(uint16_t));
-                auto* pnnz_ptr = plists_window_nnzs_[dimid].data();
-                for (size_t wid = 0; wid < nr_windows_; ++wid) {
-                    auto wnnz = window_index_plists_sz_spans_[wid][dimid];
-                    std::memcpy(pnnz_ptr, &wnnz, sizeof(uint16_t));
-                    pnnz_ptr += sizeof(uint16_t);
-                }
-            }
-            plists_window_nnzs_spans_[dimid] =
-                std::span<const uint8_t>(plists_window_nnzs_[dimid].data(), plists_window_nnzs_[dimid].size());
-        };
-
-        for (size_t dimid = 0; dimid < dim_count; ++dimid) {
-            encode_dim_nnzs(dimid);
+    void
+    build_window_indexes_parallel(const SparseRow<DataType>* data, size_t rows, PostingBuildPlan posting_plan) {
+        const size_t dim_count = this->nr_inner_dims_;
+        const size_t total_postings = posting_plan.total_postings();
+        if (total_postings > std::numeric_limits<uint32_t>::max()) {
+            throw std::overflow_error("SindiInvertedIndex posting count exceeds uint32_t offset capacity");
         }
 
-        plists_wnnzs_fmts_msk_span_ =
-            std::span<const uint8_t>(plists_wnnzs_fmts_msk_.data(), plists_wnnzs_fmts_msk_.size());
+        total_plists_ids_.resize(dim_count);
+        total_plists_vals_.resize(dim_count);
+        total_plists_ids_spans_.resize(dim_count);
+        total_plists_vals_spans_.resize(dim_count);
+        plists_dim_offsets_.resize(dim_count + 1);
+        std::transform(posting_plan.posting_offsets.begin(), posting_plan.posting_offsets.end(),
+                       plists_dim_offsets_.begin(), [](size_t offset) { return static_cast<uint32_t>(offset); });
+
+        for (size_t dim_id = 0; dim_id < dim_count; ++dim_id) {
+            const size_t count = posting_plan.posting_count(dim_id);
+            total_plists_ids_[dim_id].resize(count);
+            total_plists_vals_[dim_id].resize(count);
+        }
+
+        nr_windows_ = (rows + window_size_ - 1) / window_size_;
+        window_index_plists_sz_.assign(nr_windows_, std::vector<uint16_t>(dim_count, 0));
+        window_index_plists_sz_spans_.resize(nr_windows_);
+
+        const size_t concurrency = posting_plan.cursors_by_worker.size();
+        LOG_KNOWHERE_INFO_ << "SindiInvertedIndex filling preallocated postings: total_postings=" << total_postings
+                           << ", posting_bytes=" << (total_postings * (sizeof(uint16_t) + sizeof(QuantType)))
+                           << ", workers=" << concurrency;
+
+        parallel_for_workers(concurrency, [&](size_t worker_id) {
+            const auto [begin, end] = get_worker_row_range(rows, worker_id, concurrency);
+            auto& worker_cursors = posting_plan.cursors_by_worker[worker_id];
+            for (size_t row_id = begin; row_id < end; ++row_id) {
+                const size_t window_id = row_id / window_size_;
+                const auto local_id = static_cast<uint16_t>(row_id % window_size_);
+                for (size_t j = 0; j < data[row_id].size(); ++j) {
+                    const auto [dim, val] = data[row_id][j];
+                    if (std::abs(val) < std::numeric_limits<DataType>::epsilon()) {
+                        continue;
+                    }
+                    const auto inner_dim = this->dim_map_.lookup_trusted(dim);
+                    const auto worker_offset = worker_cursors[inner_dim]++;
+                    const size_t posting_offset = posting_plan.cursor_mode == WorkerCursorMode::Absolute
+                                                      ? worker_offset - posting_plan.posting_offsets[inner_dim]
+                                                      : worker_offset;
+                    total_plists_ids_[inner_dim][posting_offset] = local_id;
+                    total_plists_vals_[inner_dim][posting_offset] = static_cast<QuantType>(static_cast<float>(val));
+                    std::atomic_ref<uint16_t>(window_index_plists_sz_[window_id][inner_dim])
+                        .fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        });
+        LOG_KNOWHERE_INFO_ << "SindiInvertedIndex preallocated postings filled: total_postings=" << total_postings;
+
+        max_scores_per_dim_.assign(dim_count, 0.0f);
+        float bm25_p1 = 0.0f;
+        float bm25_p2 = 0.0f;
+        float bm25_p3 = 0.0f;
+        if constexpr (std::is_same_v<QuantType, uint16_t>) {
+            const auto& cfg = this->build_scorer_->config();
+            bm25_p1 = cfg.scorer_params.bm25.k1 + 1.0f;
+            bm25_p2 = cfg.scorer_params.bm25.k1 * (1.0f - cfg.scorer_params.bm25.b);
+            bm25_p3 = cfg.scorer_params.bm25.k1 * cfg.scorer_params.bm25.b / cfg.scorer_params.bm25.avgdl;
+        }
+
+        parallel_for(dim_count, [&](size_t dim_id) {
+            const size_t count = posting_plan.posting_count(dim_id);
+            auto& ids = total_plists_ids_[dim_id];
+            auto& vals = total_plists_vals_[dim_id];
+
+            float max_score = 0.0f;
+            if constexpr (std::is_same_v<QuantType, knowhere::fp16>) {
+                for (size_t i = 0; i < count; ++i) {
+                    const float value = std::abs(static_cast<float>(vals[i]));
+                    max_score = std::max(max_score, value);
+                }
+            } else {
+                size_t posting_offset = 0;
+                for (size_t window_id = 0; window_id < nr_windows_; ++window_id) {
+                    const size_t window_nnz = window_index_plists_sz_[window_id][dim_id];
+                    for (size_t i = 0; i < window_nnz; ++i, ++posting_offset) {
+                        const uint32_t global_id = window_id * window_size_ + ids[posting_offset];
+                        const float value = std::abs(static_cast<float>(vals[posting_offset]));
+                        const float dl = row_sums_[global_id];
+                        max_score = std::max(max_score, bm25_p1 * value / (value + bm25_p2 + bm25_p3 * dl));
+                    }
+                }
+                assert(posting_offset == count);
+            }
+            max_scores_per_dim_[dim_id] = max_score;
+        });
+        LOG_KNOWHERE_INFO_ << "SindiInvertedIndex posting lists materialized: dims=" << dim_count
+                           << ", total_postings=" << total_postings << ", windows=" << nr_windows_;
+
+        for (size_t dim_id = 0; dim_id < dim_count; ++dim_id) {
+            total_plists_ids_spans_[dim_id] =
+                std::span<const uint16_t>(total_plists_ids_[dim_id].data(), total_plists_ids_[dim_id].size());
+            total_plists_vals_spans_[dim_id] =
+                std::span<const QuantType>(total_plists_vals_[dim_id].data(), total_plists_vals_[dim_id].size());
+        }
+        plists_dim_offsets_span_ = std::span<const uint32_t>(plists_dim_offsets_.data(), plists_dim_offsets_.size());
+        max_scores_per_dim_span_ = std::span<const float>(max_scores_per_dim_.data(), max_scores_per_dim_.size());
+
+        for (size_t wid = 0; wid < nr_windows_; ++wid) {
+            window_index_plists_sz_spans_[wid] =
+                std::span<const uint16_t>(window_index_plists_sz_[wid].data(), window_index_plists_sz_[wid].size());
+        }
+
+        encode_window_nnzs(/*parallel=*/true);
     }
 
     Status
@@ -215,6 +349,10 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
         const size_t old_nr_rows = this->nr_rows_;
         this->max_dim_ = std::max(this->max_dim_, static_cast<uint32_t>(dim));
+        LOG_KNOWHERE_INFO_ << "SindiInvertedIndex build started: rows=" << rows << ", existing_rows=" << old_nr_rows
+                           << ", max_dim=" << this->max_dim_ << ", window_size=" << window_size_
+                           << ", metric=" << (std::is_same_v<QuantType, knowhere::fp16> ? "IP" : "BM25")
+                           << ", incremental=" << AllowIncremental;
 
         if constexpr (AllowIncremental) {
             for (size_t i = 0; i < rows; ++i) {
@@ -228,28 +366,45 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             }
             this->nr_inner_dims_ = this->dim_map_.size();
         } else {
-            std::unordered_set<uint32_t> external_dims;
-            for (size_t i = 0; i < rows; ++i) {
-                for (size_t j = 0; j < data[i].size(); ++j) {
-                    const auto [dim, val] = data[i][j];
-                    if (std::abs(val) < std::numeric_limits<DataType>::epsilon()) {
-                        continue;
-                    }
-                    external_dims.insert(dim);
-                }
-            }
-            this->dim_map_.build_from_external_dims(external_dims);
+            auto row_scan = scan_rows_for_build(data, rows);
+            LOG_KNOWHERE_INFO_ << "SindiInvertedIndex row scan completed: external_dims="
+                               << row_scan.external_dims.size();
+            this->dim_map_.build_from_external_dims(row_scan.external_dims);
             this->nr_inner_dims_ = this->dim_map_.size();
+            auto posting_plan = prepare_posting_build_plan(std::move(row_scan.posting_counts_by_worker), this->dim_map_,
+                                                           this->nr_inner_dims_);
+            LOG_KNOWHERE_INFO_ << "SindiInvertedIndex posting plan completed: inner_dims=" << this->nr_inner_dims_
+                               << ", total_postings=" << posting_plan.total_postings();
+
+            if constexpr (std::is_same_v<QuantType, uint16_t>) {
+                row_sums_.resize(rows);
+                parallel_for(rows, [&](size_t i) {
+                    float row_sum = 0.0f;
+                    for (size_t j = 0; j < data[i].size(); ++j) {
+                        const auto value = std::abs(data[i][j].val);
+                        if (value >= std::numeric_limits<DataType>::epsilon()) {
+                            row_sum += static_cast<float>(value);
+                        }
+                    }
+                    row_sums_[i] = row_sum;
+                });
+                row_sums_span_ = std::span<const float>(row_sums_.data(), row_sums_.size());
+            }
+
+            build_window_indexes_parallel(data, rows, std::move(posting_plan));
+            this->nr_rows_ = rows;
+            LOG_KNOWHERE_INFO_ << "SindiInvertedIndex build completed: rows=" << this->nr_rows_
+                               << ", inner_dims=" << this->nr_inner_dims_ << ", windows=" << nr_windows_
+                               << ", index_bytes=" << size();
+            return Status::success;
         }
 
-        // update window inverted indexes
+        // Incremental mode retains the append-oriented representation and update path.
         append_window_indexes(data, rows);
-
         this->nr_rows_ += rows;
 
         // Compute row sums for BM25 support (only for uint16_t QuantType)
         if constexpr (std::is_same_v<QuantType, uint16_t>) {
-            // Reserve capacity for existing + new rows to avoid reallocations
             row_sums_.reserve(row_sums_.size() + rows);
             for (size_t i = 0; i < rows; ++i) {
                 float row_sum = 0.0f;
@@ -323,6 +478,10 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             }
         }
         max_scores_per_dim_span_ = std::span<const float>(max_scores_per_dim_.data(), max_scores_per_dim_.size());
+
+        LOG_KNOWHERE_INFO_ << "SindiInvertedIndex incremental build completed: rows=" << this->nr_rows_
+                           << ", inner_dims=" << this->nr_inner_dims_ << ", windows=" << nr_windows_
+                           << ", index_bytes=" << size();
 
         return Status::success;
     }
