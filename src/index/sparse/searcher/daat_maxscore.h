@@ -25,18 +25,12 @@ class DaatMaxScoreSearcher : public RankedSearcher {
  public:
     struct Cursor {
         typename IndexType::posting_list_iterator index_cursor;
-        DimScorer scorer;
         float max_score;
         float qval_p1;
 
         [[nodiscard]] uint32_t
         vec_id() const noexcept {
             return index_cursor.vec_id();
-        }
-
-        [[nodiscard]] float
-        score() noexcept {
-            return scorer(index_cursor.vec_id(), index_cursor.val());
         }
 
         void
@@ -48,27 +42,18 @@ class DaatMaxScoreSearcher : public RankedSearcher {
         next_geq(uint32_t vec_id) noexcept {
             index_cursor.next_geq(vec_id);
         }
-
-        [[nodiscard]] bool
-        valid() const noexcept {
-            return index_cursor.valid();
-        }
     };
 
     explicit DaatMaxScoreSearcher(const IndexType& index, const std::vector<std::pair<uint32_t, float>>& query,
                                   const std::shared_ptr<IndexScorer>& search_scorer, const uint32_t k,
                                   const uint32_t max_vec_id, const BitsetView& bitset, float dim_max_score_ratio)
         : RankedSearcher(k),
-          cursors_(make_cursors(index, query, search_scorer, bitset, dim_max_score_ratio)),
-          max_vec_id_(max_vec_id),
-          row_sums_(index.get_row_sums()),
+          filter_bounds_(GetFilterBounds(bitset, max_vec_id)),
+          bm25_context_(index.get_row_sums(), *search_scorer),
+          cursors_(
+              make_cursors(index, query, search_scorer, bm25_context_, bitset, dim_max_score_ratio, filter_bounds_)),
+          max_vec_id_(filter_bounds_.upper_bound),
           scorer_type_(search_scorer->config().scorer_type) {
-        if (scorer_type_ == IndexScorerType::BM25) {
-            const auto* bm25_scorer = dynamic_cast<const BM25IndexScorer*>(search_scorer.get());
-            assert(bm25_scorer != nullptr);
-            bm25_p2_ = bm25_scorer->p2();
-            bm25_p3_ = bm25_scorer->p3();
-        }
     }
 
     [[nodiscard]] auto
@@ -81,7 +66,7 @@ class DaatMaxScoreSearcher : public RankedSearcher {
         sorted.reserve(cursors.size());
         for (auto pos : term_positions) {
             sorted.push_back(std::move(cursors[pos]));
-        };
+        }
         return sorted;
     }
 
@@ -109,7 +94,7 @@ class DaatMaxScoreSearcher : public RankedSearcher {
 
     template <IndexScorerType ScorerType>
     void
-    run_sorted(std::vector<Cursor>& cursors, uint64_t max_vec_id) {
+    run_sorted(std::vector<Cursor>& cursors, uint32_t max_vec_id) {
         auto upper_bounds = calc_upper_bounds(cursors);
         auto above_threshold = [&](auto score) { return topk_.WouldEnter(score); };
 
@@ -149,16 +134,16 @@ class DaatMaxScoreSearcher : public RankedSearcher {
                 if constexpr (ScorerType == IndexScorerType::BM25) {
                     // Prefetch row_sums_ for next iterations that will be used by the BM25 scorer
                     // Experiments show this prefetch pattern is optimal vs only prefetching next_vec_id
-                    __builtin_prefetch(&row_sums_[current_vec_id], 0, 3);
-                    doc_norm = bm25_p2_ + bm25_p3_ * row_sums_[current_vec_id];
+                    bm25_context_.prefetch_document(current_vec_id);
+                    doc_norm = bm25_context_.doc_norm(current_vec_id);
                 }
 
                 auto score_term = [&](auto& cursor) -> float {
                     if constexpr (ScorerType == IndexScorerType::BM25) {
                         const float tf = static_cast<float>(cursor.index_cursor.val());
-                        return cursor.qval_p1 * tf / (tf + doc_norm);
+                        return bm25_context_.score(cursor.qval_p1, tf, doc_norm);
                     } else {
-                        return cursor.score();
+                        return cursor.qval_p1 * static_cast<float>(cursor.index_cursor.val());
                     }
                 };
 
@@ -169,7 +154,7 @@ class DaatMaxScoreSearcher : public RankedSearcher {
                         if constexpr (ScorerType == IndexScorerType::BM25) {
                             // Prefetch row_sums_ for next iterations that will be used by the BM25 scorer
                             // Experiments show this prefetch pattern is optimal vs only prefetching next_vec_id
-                            __builtin_prefetch(&row_sums_[cursor.vec_id()], 0, 3);
+                            bm25_context_.prefetch_document(cursor.vec_id());
                         }
                     }
                     if (auto vec_id = cursor.vec_id(); vec_id < next_vec_id) {
@@ -215,30 +200,23 @@ class DaatMaxScoreSearcher : public RankedSearcher {
  private:
     static std::vector<Cursor>
     make_cursors(const IndexType& index, const std::vector<std::pair<uint32_t, float>>& query,
-                 const std::shared_ptr<IndexScorer>& index_scorer, const BitsetView& bitset,
-                 float dim_max_score_ratio) {
+                 const std::shared_ptr<IndexScorer>& index_scorer, const BM25ScoringContext& bm25_context,
+                 const BitsetView& bitset, float dim_max_score_ratio, const FilterBounds& filter_bounds) {
         std::vector<Cursor> cursors;
         cursors.reserve(query.size());
-        const BM25IndexScorer* bm25_scorer = nullptr;
-        if (index_scorer->config().scorer_type == IndexScorerType::BM25) {
-            bm25_scorer = dynamic_cast<const BM25IndexScorer*>(index_scorer.get());
-            assert(bm25_scorer != nullptr);
-        }
         for (const auto& [dim_id, dim_val] : query) {
-            cursors.push_back(Cursor{index.get_dim_plist_cursor(dim_id, bitset), index_scorer->dim_scorer(dim_val),
+            cursors.push_back(Cursor{GetFilteredPostingListCursor(index, dim_id, bitset, filter_bounds),
                                      dim_max_score_ratio * index.get_dim_max_score(dim_id, dim_val),
-                                     bm25_scorer != nullptr ? dim_val * bm25_scorer->p1() : 0.0f});
+                                     bm25_context.query_component(dim_val)});
         }
         return cursors;
     }
 
+    FilterBounds filter_bounds_;
+    BM25ScoringContext bm25_context_;
     std::vector<Cursor> cursors_;
     uint32_t max_vec_id_;
-    // row_sums_ is only used for BM25 scorer
-    const std::vector<float>& row_sums_;
     IndexScorerType scorer_type_;
-    float bm25_p2_{0.0f};
-    float bm25_p3_{0.0f};
 };
 
 }  // namespace knowhere::sparse::inverted

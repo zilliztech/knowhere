@@ -16,6 +16,7 @@
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "catch2/matchers/catch_matchers_floating_point.hpp"
+#include "index/sparse/codec/simd_bitpacking_kernel.h"
 #include "simd/instruction_set.h"
 #include "simd/sparse_simd.h"
 
@@ -51,6 +52,89 @@ accumulate_posting_list_ip_scalar_ref(const uint32_t* doc_ids, const float* doc_
                                       float* scores) {
     for (size_t i = 0; i < list_size; ++i) {
         scores[doc_ids[i]] += q_weight * doc_vals[i];
+    }
+}
+
+std::vector<uint8_t>
+simdcomp_pack_scalar_reference(const uint32_t* input, size_t block_count, uint32_t bits) {
+    constexpr size_t values_per_block = 128;
+    constexpr size_t lanes = 4;
+    constexpr size_t values_per_lane = values_per_block / lanes;
+    const size_t words_per_block = static_cast<size_t>(bits) * lanes;
+    std::vector<uint32_t> packed_words(block_count * words_per_block, 0);
+
+    for (size_t block = 0; block < block_count; ++block) {
+        const size_t input_base = block * values_per_block;
+        const size_t output_base = block * words_per_block;
+        for (size_t lane = 0; lane < lanes; ++lane) {
+            for (size_t value_index = 0; value_index < values_per_lane; ++value_index) {
+                const uint32_t value = input[input_base + value_index * lanes + lane];
+                const size_t bit_offset = value_index * bits;
+                const size_t word_index = bit_offset / 32;
+                const uint32_t shift = static_cast<uint32_t>(bit_offset % 32);
+                packed_words[output_base + word_index * lanes + lane] |= value << shift;
+                if (shift + bits > 32) {
+                    packed_words[output_base + (word_index + 1) * lanes + lane] |= value >> (32 - shift);
+                }
+            }
+        }
+    }
+
+    std::vector<uint8_t> packed(packed_words.size() * sizeof(uint32_t));
+    std::memcpy(packed.data(), packed_words.data(), packed.size());
+    return packed;
+}
+
+TEST_CASE("Test simdcomp bit-packing kernels", "[sparse][simd][simdcomp]") {
+    constexpr uint32_t input_guard = 0xa5a55a5aU;
+    constexpr uint32_t output_guard = 0xdeadbeefU;
+    constexpr uint8_t byte_guard = 0x6d;
+    constexpr size_t values_per_block = 128;
+    std::mt19937 rng(20260730);
+
+    for (const size_t block_count : {size_t{1}, size_t{2}, size_t{4}}) {
+        const size_t value_count = block_count * values_per_block;
+        for (uint32_t bits = 1; bits <= 32; ++bits) {
+            CAPTURE(block_count, bits);
+            const uint32_t mask = bits == 32 ? std::numeric_limits<uint32_t>::max() : (uint32_t{1} << bits) - 1;
+            std::vector<uint32_t> input(value_count + 2, input_guard);
+            for (size_t i = 0; i < value_count; ++i) {
+                input[i + 1] = rng() & mask;
+            }
+            input[1] = 0;
+            input[2] = mask;
+            input[3] = uint32_t{1} << (bits - 1);
+            input[value_count] = mask;
+
+            const auto expected = simdcomp_pack_scalar_reference(input.data() + 1, block_count, bits);
+            std::vector<uint8_t> packed(expected.size() + 2, byte_guard);
+            knowhere_simd_pack_128_blocks(input.data() + 1, packed.data() + 1, block_count, bits);
+            REQUIRE(packed.front() == byte_guard);
+            REQUIRE(packed.back() == byte_guard);
+            REQUIRE(std::equal(expected.begin(), expected.end(), packed.begin() + 1));
+            REQUIRE(input.front() == input_guard);
+            REQUIRE(input.back() == input_guard);
+
+            std::vector<uint32_t> unpacked(value_count + 2, output_guard);
+            knowhere_simd_unpack_128_blocks(packed.data() + 1, unpacked.data() + 1, block_count, bits);
+            REQUIRE(std::equal(input.begin() + 1, input.end() - 1, unpacked.begin() + 1));
+            REQUIRE(unpacked.front() == output_guard);
+            REQUIRE(unpacked.back() == output_guard);
+
+            if (bits < 32) {
+                constexpr uint32_t previous_doc_id = 17;
+                std::vector<uint32_t> doc_ids(value_count + 2, output_guard);
+                knowhere_simd_unpack_d1_128_blocks(packed.data() + 1, doc_ids.data() + 1, block_count, bits,
+                                                   previous_doc_id);
+                uint32_t expected_doc_id = previous_doc_id;
+                for (size_t i = 0; i < value_count; ++i) {
+                    expected_doc_id += input[i + 1] + 1;
+                    REQUIRE(doc_ids[i + 1] == expected_doc_id);
+                }
+                REQUIRE(doc_ids.front() == output_guard);
+                REQUIRE(doc_ids.back() == output_guard);
+            }
+        }
     }
 }
 

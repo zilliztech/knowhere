@@ -108,6 +108,14 @@ class SealedDimMap {
     }
 
     [[nodiscard]] uint32_t
+    lookup_trusted(uint32_t dim) const {
+        // PtrHash also returns a candidate for keys that were not part of the build. Use this only when dim is
+        // known to come from the same key set used to build the MPHF; unlike lookup(), this skips the reverse-map
+        // membership check.
+        return static_cast<uint32_t>(dim_map_mphf_view_.index(static_cast<uint64_t>(dim)));
+    }
+
+    [[nodiscard]] uint32_t
     size() const {
         return static_cast<uint32_t>(reverse_size());
     }

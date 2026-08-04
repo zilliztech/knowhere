@@ -50,7 +50,10 @@ class TaatNaiveSearcher : public RankedSearcher {
     explicit TaatNaiveSearcher(const IndexType& index, const std::vector<std::pair<uint32_t, float>>& query,
                                std::shared_ptr<IndexScorer> search_scorer, const uint32_t k, const uint32_t max_vec_id,
                                const BitsetView& bitset)
-        : RankedSearcher(k), cursors_(make_cursors(index, query, search_scorer, bitset)), max_vec_id_(max_vec_id) {
+        : RankedSearcher(k),
+          filter_bounds_(GetFilterBounds(bitset, max_vec_id)),
+          cursors_(make_cursors(index, query, search_scorer, bitset, filter_bounds_)),
+          max_vec_id_(filter_bounds_.upper_bound) {
     }
 
     void
@@ -59,11 +62,11 @@ class TaatNaiveSearcher : public RankedSearcher {
             return;
         }
 
-        std::vector<float> distances(max_vec_id_, 0.0f);
+        std::vector<float> distances(max_vec_id_ - filter_bounds_.lower_bound, 0.0f);
 
         for (auto& en : cursors_) {
             while (en.valid()) {
-                distances[en.vec_id()] += en.score();
+                distances[en.vec_id() - filter_bounds_.lower_bound] += en.score();
                 en.next();
             }
         }
@@ -73,7 +76,7 @@ class TaatNaiveSearcher : public RankedSearcher {
         // need to be excluded.
         for (size_t i = 0; i < distances.size(); ++i) {
             if (distances[i] != 0.0f) {
-                topk_.Push(distances[i], i);
+                topk_.Push(distances[i], i + filter_bounds_.lower_bound);
             }
         }
     }
@@ -81,15 +84,18 @@ class TaatNaiveSearcher : public RankedSearcher {
  private:
     static std::vector<Cursor>
     make_cursors(const IndexType& index, const std::vector<std::pair<uint32_t, float>>& query,
-                 const std::shared_ptr<IndexScorer>& index_scorer, const BitsetView& bitset) {
+                 const std::shared_ptr<IndexScorer>& index_scorer, const BitsetView& bitset,
+                 const FilterBounds& filter_bounds) {
         std::vector<Cursor> cursors;
         cursors.reserve(query.size());
         for (const auto& [dim_id, dim_val] : query) {
-            cursors.push_back(Cursor{index.get_dim_plist_cursor(dim_id, bitset), index_scorer->dim_scorer(dim_val)});
+            cursors.push_back(Cursor{GetFilteredPostingListCursor(index, dim_id, bitset, filter_bounds),
+                                     index_scorer->dim_scorer(dim_val)});
         }
         return cursors;
     }
 
+    FilterBounds filter_bounds_;
     std::vector<Cursor> cursors_;
     uint32_t max_vec_id_;
 };

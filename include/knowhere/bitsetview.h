@@ -12,6 +12,8 @@
 #ifndef BITSET_H
 #define BITSET_H
 
+#include <algorithm>
+#include <bit>
 #include <cassert>
 #include <cstdint>
 #include <optional>
@@ -109,6 +111,82 @@ class BitsetView {
     float
     filter_ratio() const {
         return empty() ? 0.0f : ((float)count() / size());
+    }
+
+    // Return whether every ID in the half-open range [begin, end) is filtered.
+    bool
+    range_all_filtered(size_t begin, size_t end) const {
+        assert(begin <= end);
+        assert(end <= size());
+        if (begin == end) {
+            return true;
+        }
+
+        // With id mapping the bit lookup requires per-index indirection, so a word-level scan is not possible.
+        if (out_ids_ != nullptr) {
+            for (size_t index = begin; index < end; ++index) {
+                if (!test(index)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Without id mapping, internal index i maps to bit (i + id_offset_). Mapped ids >= num_bits_ are
+        // treated as filtered by test(), so only the clamped range [lo, hi) needs an explicit bit check.
+        const size_t lo = begin + id_offset_;
+        const size_t hi = std::min(end + id_offset_, num_bits_);
+        if (hi <= lo) {
+            return true;
+        }
+        return all_bits_set(lo, hi);
+    }
+
+    // Return the last valid ID below upper_bound.
+    std::optional<size_t>
+    previous_valid_index(size_t upper_bound) const {
+        if (upper_bound == 0) {
+            return std::nullopt;
+        }
+        if (empty()) {
+            return upper_bound - 1;
+        }
+
+        // With id mapping the bit lookup requires per-index indirection, so a word-level scan is not possible.
+        if (out_ids_ != nullptr) {
+            size_t index = std::min(upper_bound, num_internal_ids_);
+            while (index > 0) {
+                --index;
+                if (!test(index)) {
+                    return index;
+                }
+            }
+            return std::nullopt;
+        }
+
+        // Without id mapping, internal index i maps to bit (i + id_offset_). Scan the bit range
+        // [id_offset_, hi_bit) word by word, where bits >= num_bits_ are treated as filtered out.
+        const size_t low_bit = id_offset_;
+        const size_t hi_bit = std::min(id_offset_ + upper_bound, num_bits_);
+        if (hi_bit <= low_bit) {
+            return std::nullopt;
+        }
+        const size_t low_word = low_bit >> 6;
+        size_t word_index = (hi_bit - 1) >> 6;
+        uint64_t valid = ~load_word(word_index) & lower_bits_mask(((hi_bit - 1) & 63) + 1);
+        while (true) {
+            if (word_index == low_word) {
+                valid &= ~lower_bits_mask(low_bit & 63);
+            }
+            if (valid != 0) {
+                return (word_index << 6) + 63 - __builtin_clzll(valid) - id_offset_;
+            }
+            if (word_index == low_word) {
+                return std::nullopt;
+            }
+            --word_index;
+            valid = ~load_word(word_index);
+        }
     }
 
     size_t
@@ -211,6 +289,69 @@ class BitsetView {
     }
 
  private:
+    static uint64_t
+    lower_bits_mask(size_t bits) {
+        assert(bits <= 64);
+        return bits == 64 ? ~uint64_t{0} : (uint64_t{1} << bits) - 1;
+    }
+
+    static uint64_t
+    load_full_word(const uint8_t* data) {
+        return static_cast<uint64_t>(data[0]) | (static_cast<uint64_t>(data[1]) << 8) |
+               (static_cast<uint64_t>(data[2]) << 16) | (static_cast<uint64_t>(data[3]) << 24) |
+               (static_cast<uint64_t>(data[4]) << 32) | (static_cast<uint64_t>(data[5]) << 40) |
+               (static_cast<uint64_t>(data[6]) << 48) | (static_cast<uint64_t>(data[7]) << 56);
+    }
+
+    uint64_t
+    load_word(size_t word_index) const {
+        const size_t bytes = byte_size();
+        if (bytes == 0 || word_index > (bytes - 1) / sizeof(uint64_t)) {
+            return 0;
+        }
+
+        const size_t byte_offset = word_index * sizeof(uint64_t);
+        const auto* data = bits_ + byte_offset;
+        const size_t remaining_bytes = bytes - byte_offset;
+        if (remaining_bytes >= sizeof(uint64_t)) {
+            return load_full_word(data);
+        }
+
+        uint64_t word = 0;
+        for (size_t byte = 0; byte < remaining_bytes; ++byte) {
+            word |= static_cast<uint64_t>(data[byte]) << (byte * 8);
+        }
+        return word;
+    }
+
+    // Return whether every bit in the half-open bit range [bit_begin, bit_end) is set.
+    // Requires bit_begin < bit_end <= num_bits_.
+    bool
+    all_bits_set(size_t bit_begin, size_t bit_end) const {
+        // Only the first word carries a low boundary and only the last word carries a high boundary; the
+        // interior words must be fully set, so they reduce to a plain "all bits set" check.
+        const size_t first_word = bit_begin >> 6;
+        const size_t last_word = (bit_end - 1) >> 6;
+        const uint64_t first_mask = ~lower_bits_mask(bit_begin & 63);
+        const uint64_t last_mask = lower_bits_mask(((bit_end - 1) & 63) + 1);
+
+        if (first_word == last_word) {
+            const uint64_t mask = first_mask & last_mask;
+            return (load_word(first_word) & mask) == mask;
+        }
+
+        if ((load_word(first_word) & first_mask) != first_mask) {
+            return false;
+        }
+        // Interior words are fully in-bounds (highest bit < bit_end <= num_bits_), so read them directly.
+        for (size_t word_index = first_word + 1; word_index < last_word; ++word_index) {
+            if (load_full_word(bits_ + (word_index << 3)) != ~uint64_t{0}) {
+                return false;
+            }
+        }
+        return (load_word(last_word) & last_mask) == last_mask;
+    }
+
     const uint8_t* bits_ = nullptr;
     size_t num_bits_ = 0;
     size_t num_filtered_out_bits_ = 0;
@@ -225,6 +366,7 @@ class BitsetView {
     size_t num_internal_ids_ = 0;
     size_t num_filtered_out_ids_ = 0;
 };
+
 }  // namespace knowhere
 
 #endif /* BITSET_H */

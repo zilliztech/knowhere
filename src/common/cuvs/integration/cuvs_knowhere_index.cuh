@@ -30,7 +30,10 @@
 #include <raft/core/resource/cuda_stream.hpp>
 #include <raft/core/resource/thrust_policy.hpp>
 #include <raft/core/serialize.hpp>
+#include <raft/linalg/matrix_vector_op.cuh>
 #include <raft/linalg/normalize.cuh>
+#include <raft/linalg/reduce.cuh>
+#include <raft/matrix/init.cuh>
 #include <tuple>
 #include <type_traits>
 
@@ -41,6 +44,9 @@
 
 namespace cuvs_knowhere {
 namespace detail {
+
+constexpr float kInt8CosineScale = 127.0f;
+constexpr float kInt8CosineInvScaleSqr = 1.0f / (kInt8CosineScale * kInt8CosineScale);
 
 // This helper struct maps the generic type of cuVS index to the specific
 // instantiation of that index used within knowhere.
@@ -92,8 +98,8 @@ struct check_valid_entry {
     }
     __device__ thrust::tuple<V, U>
     operator()(V id, U distance) {
-        if (distance >= max_distance_ || id >= max_id_)
-            return thrust::tuple<V, U>(V{-1}, distance);
+        if (distance >= max_distance_ || id < V{0} || id >= max_id_)
+            return thrust::tuple<V, U>(V{-1}, max_distance_);
         if (distance < 0)
             return thrust::tuple<V, U>(id, U{0});
         return thrust::tuple<V, U>(id, distance);
@@ -103,6 +109,48 @@ struct check_valid_entry {
     U max_distance_;
     V max_id_;
 };
+
+struct normalize_int8_cosine_op {
+    __device__ std::int8_t
+    operator()(std::int8_t value, float norm) const {
+        if (!(norm > 0.0f)) {
+            return std::int8_t{0};
+        }
+        auto scaled = static_cast<float>(value) / norm * kInt8CosineScale;
+        scaled = fminf(kInt8CosineScale, fmaxf(-kInt8CosineScale, scaled));
+        return static_cast<std::int8_t>(roundf(scaled));
+    }
+};
+
+template <typename IdType>
+struct rescale_int8_cosine_distance_op {
+    __device__ thrust::tuple<IdType, knowhere_distance_type>
+    operator()(IdType id, knowhere_distance_type distance) const {
+        if (id < IdType{0}) {
+            return thrust::tuple<IdType, knowhere_distance_type>(id, distance);
+        }
+        auto cosine = distance * kInt8CosineInvScaleSqr;
+        return thrust::tuple<IdType, knowhere_distance_type>(
+            id, fminf(knowhere_distance_type{1.0f}, fmaxf(knowhere_distance_type{-1.0f}, cosine)));
+    }
+};
+
+template <typename DeviceMatrixView>
+void
+normalize_int8_rows_for_cosine(raft::resources const& res, DeviceMatrixView device_data_view) {
+    using index_type = std::decay_t<decltype(device_data_view.extent(0))>;
+
+    const auto row_count = device_data_view.extent(0);
+    const auto feature_count = device_data_view.extent(1);
+    auto row_norms = raft::make_device_vector<float, index_type>(res, row_count);
+    auto stream = raft::resource::get_cuda_stream(res);
+
+    raft::linalg::reduce<true, true>(row_norms.data_handle(), device_data_view.data_handle(), feature_count, row_count,
+                                     0.0f, stream, false, raft::sq_op(), raft::add_op(), raft::sqrt_op());
+    raft::linalg::matrixVectorOp<true, false>(device_data_view.data_handle(), device_data_view.data_handle(),
+                                              row_norms.data_handle(), feature_count, row_count,
+                                              normalize_int8_cosine_op{}, stream);
+}
 
 }  // namespace detail
 
@@ -432,8 +480,12 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
             auto device_data = raft::make_device_matrix<data_type, input_indexing_type>(res, row_count, feature_count);
             auto device_data_view = device_data.view();
             raft::copy(res, device_data_view, host_data);
-            raft::linalg::row_normalize<raft::linalg::NormType::L2Norm>(res, raft::make_const_mdspan(device_data_view),
-                                                                        device_data_view);
+            if constexpr (std::is_same_v<data_type, std::int8_t>) {
+                detail::normalize_int8_rows_for_cosine(res, device_data_view);
+            } else {
+                raft::linalg::row_normalize<raft::linalg::NormType::L2Norm>(
+                    res, raft::make_const_mdspan(device_data_view), device_data_view);
+            }
             auto host_data_view = raft::make_host_matrix_view(const_cast<data_type*>(data), row_count, feature_count);
             raft::copy(res, host_data_view, device_data_view);
             res.sync_stream();
@@ -472,8 +524,12 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
 
         if (config.metric_type == knowhere::metric::COSINE) {
             auto device_data_view = device_data_storage.view();
-            raft::linalg::row_normalize<raft::linalg::NormType::L2Norm>(res, raft::make_const_mdspan(device_data_view),
-                                                                        device_data_view);
+            if constexpr (std::is_same_v<data_type, std::int8_t>) {
+                detail::normalize_int8_rows_for_cosine(res, device_data_view);
+            } else {
+                raft::linalg::row_normalize<raft::linalg::NormType::L2Norm>(
+                    res, raft::make_const_mdspan(device_data_view), device_data_view);
+            }
         }
 
         auto device_bitset = std::optional<
@@ -503,6 +559,13 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
             raft::make_device_matrix<knowhere_distance_type, input_indexing_type>(res, row_count, k);
         auto device_ids = device_ids_storage.view();
         auto device_distances = device_distances_storage.view();
+
+        auto max_distance =
+            std::nextafter(std::numeric_limits<knowhere_distance_type>::max(), knowhere_distance_type{0});
+        auto invalid_id = std::numeric_limits<indexing_type>::max();
+        // cuVS may leave result slots untouched when fewer candidates than k are selected.
+        raft::matrix::fill(res, device_ids, invalid_id);
+        raft::matrix::fill(res, device_distances, max_distance);
 
         RAFT_EXPECTS(index_, "Index has not yet been trained");
         auto dataset_view = device_dataset_storage
@@ -538,8 +601,6 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
             }
         }();
 
-        auto max_distance =
-            std::nextafter(std::numeric_limits<knowhere_distance_type>::max(), knowhere_distance_type{0});
         auto device_post_process = detail::check_valid_entry<knowhere_distance_type, knowhere_indexing_type>{
             max_distance, knowhere_indexing_type(size())};
         thrust::transform(
@@ -551,6 +612,20 @@ struct cuvs_knowhere_index<IndexKind, DataType>::impl {
                 thrust::make_tuple(thrust::device_ptr<knowhere_indexing_type>(device_knowhere_ids.data_handle()),
                                    thrust::device_ptr<knowhere_distance_type>(device_distances.data_handle()))),
             device_post_process);
+
+        if (config.metric_type == knowhere::metric::COSINE) {
+            if constexpr (std::is_same_v<data_type, std::int8_t>) {
+                thrust::transform(raft::resource::get_thrust_policy(res),
+                                  thrust::device_ptr<knowhere_indexing_type>(device_knowhere_ids.data_handle()),
+                                  thrust::device_ptr<knowhere_indexing_type>(device_knowhere_ids.data_handle() +
+                                                                             device_knowhere_ids.size()),
+                                  thrust::device_ptr<knowhere_distance_type>(device_distances.data_handle()),
+                                  thrust::make_zip_iterator(thrust::make_tuple(
+                                      thrust::device_ptr<knowhere_indexing_type>(device_knowhere_ids.data_handle()),
+                                      thrust::device_ptr<knowhere_distance_type>(device_distances.data_handle()))),
+                                  detail::rescale_int8_cosine_distance_op<knowhere_indexing_type>{});
+            }
+        }
 
         raft::copy(res, host_ids, device_knowhere_ids);
         raft::copy(res, host_distances, device_distances);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+
 #include "index/sparse/inverted_index.h"
 #include "index/sparse/scorer.h"
 #include "knowhere/bitsetview.h"
@@ -38,9 +40,8 @@ class GrowableInvertedIndexCursor {
 
     void
     next_geq(uint32_t vec_id) {
-        while (pos_ < plist_size_ && plist_ids_[pos_] < vec_id) {
-            ++pos_;
-        }
+        const auto begin = plist_ids_.begin() + std::min(pos_, plist_size_);
+        pos_ = static_cast<size_t>(std::lower_bound(begin, plist_ids_.end(), vec_id) - plist_ids_.begin());
         skip_filtered_ids();
         update_cur_vec_id();
     }

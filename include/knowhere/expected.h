@@ -69,8 +69,17 @@ enum class Status {
 
 enum class StatusCategory {
     success = 0,
+    // the request itself is at fault (caller must fix it; retry is useless)
     input_error = 1,
-    inner_error = 2,
+    // server-side and permanent: retrying cannot help (capability missing,
+    // data corrupt, engine bug)
+    permanent_error = 2,
+    // server-side and transient: a retry / replica-reroute may succeed
+    // (OOM pressure, disk IO hiccup)
+    transient_error = 3,
+    // deprecated alias for the pre-three-way name; == permanent_error so
+    // existing comparisons keep compiling with unchanged semantics
+    inner_error = permanent_error,
 };
 
 // Classify every knowhere::Status into a closed 3-value category. This is a
@@ -97,22 +106,33 @@ StatusCategoryOf(knowhere::Status status) {
         case knowhere::Status::type_conflict_in_json:
         case knowhere::Status::invalid_metric_type:
         case knowhere::Status::empty_index:
-        case knowhere::Status::not_implemented:
         case knowhere::Status::index_not_trained:
         case knowhere::Status::index_already_trained:
         case knowhere::Status::invalid_value_in_json:
         case knowhere::Status::arithmetic_overflow:
         case knowhere::Status::invalid_binary_set:
-        case knowhere::Status::invalid_instruction_set:
         case knowhere::Status::invalid_index_error:
         case knowhere::Status::invalid_cluster_error:
-        case knowhere::Status::invalid_serialized_index_type:
             return StatusCategory::input_error;
+        // capability errors: the request is fine, this build/CPU simply cannot
+        // serve it -- the server side owns that, so it is NOT an input error
+        // (moved out of input_error to align with the reviewed fine-grained
+        // mapping: Unsupported). Same for a corrupt serialized index: data
+        // corruption is a permanent system error, not the caller's fault.
+        case knowhere::Status::not_implemented:
+        case knowhere::Status::invalid_instruction_set:
+        case knowhere::Status::invalid_serialized_index_type:
+            return StatusCategory::permanent_error;
+        // transient: a retry or replica-reroute may succeed
+        case knowhere::Status::malloc_error:
+        case knowhere::Status::disk_file_error:
+            return StatusCategory::transient_error;
+        // timeout stays permanent for now: it is Cardinal-only
+        // (BuildAsync cancel-or-build-timeout) and conflates cancel with
+        // timeout; revisit once those are separated.
         case knowhere::Status::faiss_inner_error:
         case knowhere::Status::hnsw_inner_error:
-        case knowhere::Status::malloc_error:
         case knowhere::Status::diskann_inner_error:
-        case knowhere::Status::disk_file_error:
         case knowhere::Status::cuvs_inner_error:
         case knowhere::Status::cardinal_inner_error:
         case knowhere::Status::cuda_runtime_error:
@@ -124,9 +144,9 @@ StatusCategoryOf(knowhere::Status status) {
         case knowhere::Status::emb_list_inner_error:
         case knowhere::Status::aisaq_error:
         case knowhere::Status::knowhere_inner_error:
-            return StatusCategory::inner_error;
+            return StatusCategory::permanent_error;
     }
-    return StatusCategory::inner_error;
+    return StatusCategory::permanent_error;
 }
 #pragma GCC diagnostic pop
 
@@ -135,9 +155,16 @@ IsInputError(knowhere::Status status) {
     return StatusCategoryOf(status) == StatusCategory::input_error;
 }
 
+// matches the deprecated alias `inner_error = permanent_error`: transient
+// errors are NOT "inner" -- use IsTransientError() for those.
 inline constexpr bool
 IsInnerError(knowhere::Status status) {
-    return StatusCategoryOf(status) == StatusCategory::inner_error;
+    return StatusCategoryOf(status) == StatusCategory::permanent_error;
+}
+
+inline constexpr bool
+IsTransientError(knowhere::Status status) {
+    return StatusCategoryOf(status) == StatusCategory::transient_error;
 }
 
 inline std::string

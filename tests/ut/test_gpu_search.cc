@@ -9,7 +9,12 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <limits>
 #include <string>
+#include <vector>
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
@@ -22,6 +27,35 @@
 #include "utils.h"
 
 #ifdef KNOWHERE_WITH_CUVS
+
+inline knowhere::DataSetPtr
+GenNormalizedInt8DataSet(int rows, int dim, int seed = 42) {
+    auto* tensor = new knowhere::int8[rows * dim];
+    std::vector<float> row(dim);
+    for (int i = 0; i < rows; ++i) {
+        double norm = 0.0;
+        for (int j = 0; j < dim; ++j) {
+            row[j] = std::sin(float((i + seed + 1) * (j + 3))) + std::cos(float((i + seed + 5) * (j + 1)));
+            norm += double(row[j]) * row[j];
+        }
+        norm = std::sqrt(norm);
+
+        auto nonzero = false;
+        for (int j = 0; j < dim; ++j) {
+            auto scaled = norm == 0.0 ? 0 : int(std::llround(double(row[j]) / norm * 127.0));
+            scaled = std::max(-127, std::min(127, scaled));
+            tensor[i * dim + j] = knowhere::int8(scaled);
+            nonzero = nonzero || scaled != 0;
+        }
+        if (!nonzero) {
+            tensor[i * dim] = knowhere::int8(127);
+        }
+    }
+
+    auto ds = knowhere::GenDataSet(rows, dim, tensor);
+    ds->SetIsOwner(true);
+    return ds;
+}
 
 template <typename T>
 void
@@ -415,6 +449,46 @@ TEST_CASE("Test All GPU Index", "[search]") {
         REQUIRE(recall > 0.65f);
     }
 
+    SECTION("Test Gpu Cagra Int8 Cosine Score Range") {
+        constexpr auto rows = 512;
+        constexpr auto query_rows = 64;
+        constexpr auto test_dim = 64;
+        constexpr auto topk = 10;
+
+        knowhere::Json json;
+        json[knowhere::meta::DIM] = test_dim;
+        json[knowhere::meta::METRIC_TYPE] = knowhere::metric::COSINE;
+        json[knowhere::meta::TOPK] = topk;
+        json[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = 64;
+        json[knowhere::indexparam::GRAPH_DEGREE] = 32;
+        json[knowhere::indexparam::ITOPK_SIZE] = 64;
+        json[knowhere::indexparam::NUM_RANDOM_SAMPLINGS] = 4;
+
+        auto idx = knowhere::IndexFactory::Instance()
+                       .Create<knowhere::int8>(knowhere::IndexEnum::INDEX_CUVS_CAGRA, version)
+                       .value();
+        auto train_ds = GenNormalizedInt8DataSet(rows, test_dim, seed);
+        auto query_ds = GenNormalizedInt8DataSet(query_rows, test_dim, seed);
+
+        auto res = idx.Build(train_ds, json);
+        REQUIRE(res == knowhere::Status::success);
+        auto results = idx.Search(query_ds, json, nullptr);
+        REQUIRE(results.has_value());
+
+        auto ids = results.value()->GetIds();
+        auto distances = results.value()->GetDistance();
+        auto max_distance = -1.0f;
+        for (auto i = 0; i < query_rows * topk; ++i) {
+            if (ids[i] < 0) {
+                continue;
+            }
+            max_distance = std::max(max_distance, distances[i]);
+            CHECK(distances[i] >= -1.00001f);
+            CHECK(distances[i] <= 1.00001f);
+        }
+        CHECK(max_distance > 0.5f);
+    }
+
     SECTION("Test Gpu Index Search Hamming Metric") {
         using std::make_tuple;
         auto [name, gen] = GENERATE_REF(table<std::string, std::function<knowhere::Json()>>(
@@ -441,6 +515,108 @@ TEST_CASE("Test All GPU Index", "[search]") {
         for (int i = 1; i < nq; ++i) {
             // Check query distance
             CHECK(GetRelativeLoss(gt_dist[i], dist[i]) < 0.1f);
+        }
+    }
+}
+
+TEST_CASE("Test GPU cuVS indexes pad filtered results", "[search][gpu][cuvs]") {
+    constexpr int64_t rows = 512;
+    constexpr int64_t queries = 2;
+    constexpr int64_t dim = 16;
+    constexpr int64_t topk = 10;
+    constexpr int64_t seed = 42;
+
+    const auto version = GenTestVersionList();
+
+    auto base_config = [=](const std::string& metric) {
+        knowhere::Json config{
+            {knowhere::meta::DIM, dim},
+            {knowhere::meta::METRIC_TYPE, metric},
+            {knowhere::meta::TOPK, topk},
+        };
+        return config;
+    };
+
+    auto ivf_flat_config = [&base_config](const std::string& metric) {
+        auto config = base_config(metric);
+        config[knowhere::indexparam::NLIST] = 16;
+        config[knowhere::indexparam::NPROBE] = 16;
+        return config;
+    };
+
+    auto ivf_pq_config = [&ivf_flat_config](const std::string& metric) {
+        auto config = ivf_flat_config(metric);
+        config[knowhere::indexparam::M] = 4;
+        config[knowhere::indexparam::NBITS] = 8;
+        return config;
+    };
+
+    auto cagra_config = [&base_config](const std::string& metric) {
+        auto config = base_config(metric);
+        config[knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE] = 32;
+        config[knowhere::indexparam::GRAPH_DEGREE] = 32;
+        config[knowhere::indexparam::ITOPK_SIZE] = 32;
+        return config;
+    };
+
+    const std::vector<std::pair<std::string, knowhere::Json>> index_cases = {
+        {knowhere::IndexEnum::INDEX_GPU_BRUTEFORCE, base_config(knowhere::metric::L2)},
+        {knowhere::IndexEnum::INDEX_GPU_BRUTEFORCE, base_config(knowhere::metric::IP)},
+        {knowhere::IndexEnum::INDEX_GPU_BRUTEFORCE, base_config(knowhere::metric::COSINE)},
+        {knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE, base_config(knowhere::metric::L2)},
+        {knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE, base_config(knowhere::metric::IP)},
+        {knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE, base_config(knowhere::metric::COSINE)},
+        {knowhere::IndexEnum::INDEX_CUVS_IVFFLAT, ivf_flat_config(knowhere::metric::L2)},
+        {knowhere::IndexEnum::INDEX_CUVS_IVFPQ, ivf_pq_config(knowhere::metric::L2)},
+        {knowhere::IndexEnum::INDEX_CUVS_CAGRA, cagra_config(knowhere::metric::L2)},
+    };
+
+    for (const auto& [name, config] : index_cases) {
+        CAPTURE(name, config.dump());
+        auto train_ds = GenDataSet(rows, dim, seed);
+        auto query_ds = GenDataSet(queries, dim, seed + 1);
+        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+        REQUIRE(index.Build(train_ds, config) == knowhere::Status::success);
+
+        for (const int64_t live_count : {topk, int64_t{5}, int64_t{0}}) {
+            CAPTURE(live_count);
+            std::vector<uint8_t> bitset_data((rows + 7) / 8, 0xFF);
+            for (int64_t id = 0; id < live_count; ++id) {
+                bitset_data[id / 8] &= static_cast<uint8_t>(~(uint8_t{1} << (id % 8)));
+            }
+            knowhere::BitsetView bitset(bitset_data.data(), rows);
+
+            for (int repeat = 0; repeat < 3; ++repeat) {
+                CAPTURE(repeat);
+                auto result = index.Search(query_ds, config, bitset);
+                REQUIRE(result.has_value());
+                const auto* ids = result.value()->GetIds();
+                const auto* distances = result.value()->GetDistance();
+
+                for (int64_t query = 0; query < queries; ++query) {
+                    std::vector<bool> seen(rows, false);
+                    int64_t returned_count = 0;
+                    for (int64_t slot = 0; slot < topk; ++slot) {
+                        const auto offset = query * topk + slot;
+                        const auto id = ids[offset];
+                        if (id == -1) {
+                            CHECK(distances[offset] >= std::numeric_limits<float>::max() / 2);
+                            continue;
+                        }
+                        REQUIRE(id >= 0);
+                        REQUIRE(id < rows);
+                        REQUIRE_FALSE(bitset.test(id));
+                        REQUIRE_FALSE(seen[id]);
+                        seen[id] = true;
+                        ++returned_count;
+                    }
+                    REQUIRE(returned_count <= live_count);
+                    if (name == knowhere::IndexEnum::INDEX_GPU_BRUTEFORCE ||
+                        name == knowhere::IndexEnum::INDEX_CUVS_BRUTEFORCE) {
+                        REQUIRE(returned_count == live_count);
+                    }
+                }
+            }
         }
     }
 }

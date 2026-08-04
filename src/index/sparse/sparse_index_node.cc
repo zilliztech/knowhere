@@ -18,6 +18,7 @@
 #include <optional>
 
 #include "index/sparse/block_inverted_index.h"
+#include "index/sparse/codec/adaptive.h"
 #include "index/sparse/codec/maskedvbyte.h"
 #include "index/sparse/codec/streamvbyte.h"
 #include "index/sparse/flatten_inverted_index.h"
@@ -78,7 +79,7 @@ peek_encoding_type_from_index_data(const uint8_t* data, size_t size) {
     }
 
     // encoding_type is the first uint32_t at the section's data offset
-    if (first_section.offset + sizeof(uint32_t) > size) {
+    if (first_section.offset > size || sizeof(uint32_t) > size - first_section.offset) {
         return std::nullopt;
     }
 
@@ -140,26 +141,36 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     Status
-    Add(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
+    Add(const DataSetPtr dataset, std::shared_ptr<Config> /*config*/, bool use_knowhere_build_pool) override {
         if (!index_) {
             LOG_KNOWHERE_ERROR_ << "Could not add data to uninitialized " << Type() << " index";
             return Status::empty_index;
         }
 
-        auto build_pool_wrapper = std::make_shared<ThreadPoolWrapper>(build_pool_, use_knowhere_build_pool);
-        auto tryObj =
-            build_pool_wrapper
-                ->push([&] {
-                    return index_->add(static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor()),
-                                       dataset->GetRows(), dataset->GetDim());
-                })
-                .getTry();
-        if (!tryObj.hasValue()) {
-            LOG_KNOWHERE_WARNING_ << "Failed to add data to index " << Type() << ": " << tryObj.exception().what();
-            return Status::sparse_inner_error;
+        auto add = [&] {
+            return index_->add(static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor()),
+                               dataset->GetRows(), dataset->GetDim());
+        };
+        if (!use_knowhere_build_pool) {
+            auto build_pool_wrapper = std::make_shared<ThreadPoolWrapper>(build_pool_, use_knowhere_build_pool);
+            auto try_obj = build_pool_wrapper->push(add).getTry();
+            if (!try_obj.hasValue()) {
+                LOG_KNOWHERE_WARNING_ << "Failed to add data to index " << Type() << ": " << try_obj.exception().what();
+                return Status::sparse_inner_error;
+            }
+            return try_obj.value();
         }
 
-        return tryObj.value();
+        // Sealed index implementations submit their parallel build tasks to the build pool inside add().
+        try {
+            return add();
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "Failed to add data to index " << Type() << ": " << e.what();
+            return Status::sparse_inner_error;
+        } catch (...) {
+            LOG_KNOWHERE_WARNING_ << "Failed to add data to index " << Type() << ": unknown exception";
+            return Status::sparse_inner_error;
+        }
     }
 
     [[nodiscard]] expected<DataSetPtr>
@@ -490,6 +501,12 @@ class SparseInvertedIndexNode : public IndexNode {
                         index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
                         break;
                     }
+                    case InvertedIndexEncoding::BLOCK_ADAPTIVE: {
+                        LOG_KNOWHERE_INFO_ << "Detected BLOCK_ADAPTIVE encoding in index file";
+                        auto codec = std::make_shared<sparse::inverted::AdaptiveBlockCodec>();
+                        index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
+                        break;
+                    }
                     case InvertedIndexEncoding::FIXED_DOCID_WINDOWS:
                         // SINDI encoding should not reach create_index_before_v10; fall through to default codec
                         LOG_KNOWHERE_WARNING_ << "Unexpected FIXED_DOCID_WINDOWS encoding in create_index_before_v10";
@@ -507,12 +524,15 @@ class SparseInvertedIndexNode : public IndexNode {
                     index = std::make_unique<sparse::inverted::FlattenInvertedIndex<DType, QType>>();
                 } else {
                     // use different index type based on codec
-                    if (inverted_index_codec == "block_streamvbyte" || inverted_index_codec == "block_maskedvbyte") {
+                    if (inverted_index_codec == "block_streamvbyte" || inverted_index_codec == "block_maskedvbyte" ||
+                        inverted_index_codec == "block_adaptive") {
                         sparse::inverted::BlockCodecPtr codec;
                         if (inverted_index_codec == "block_streamvbyte") {
                             codec = std::make_shared<sparse::inverted::StreamVByteBlockCodec>();
-                        } else {
+                        } else if (inverted_index_codec == "block_maskedvbyte") {
                             codec = std::make_shared<sparse::inverted::MaskedVByteBlockCodec>();
+                        } else {
+                            codec = std::make_shared<sparse::inverted::AdaptiveBlockCodec>();
                         }
                         index = std::make_unique<sparse::inverted::BlockInvertedIndex<DType, QType, MetricType>>(codec);
                     } else if (!inverted_index_codec.empty()) {
@@ -547,7 +567,8 @@ class SparseInvertedIndexNode : public IndexNode {
 
         if (version_default_to_daat_maxscore()) {
             const std::string algo = get_inverted_index_algo("DAAT_MAXSCORE");
-            const std::string codec = cfg.inverted_index_codec.value_or("block_streamvbyte");
+            const std::string codec =
+                cfg.inverted_index_codec.value_or(version_default_to_flat_codec() ? "" : "block_streamvbyte");
             return create_index_before_v10(algo, codec);
         } else if (is_ip) {
             const std::string algo = get_inverted_index_algo("SINDI");
@@ -797,6 +818,16 @@ class SparseInvertedIndexNode : public IndexNode {
     bool
     version_default_to_daat_maxscore() const {
         return index_version_ < 10;
+    }
+
+    bool
+    version_default_to_flat_codec() const {
+#ifndef KNOWHERE_WITH_CARDINAL
+        // Knowhere 2.6 writes v8/v9 sparse indexes with the legacy flat codec.
+        return index_version_ >= 8 && index_version_ < 10;
+#else
+        return false;
+#endif
     }
 
     // used to load index

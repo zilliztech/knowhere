@@ -13,6 +13,7 @@
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/index/index.h"
 #include "knowhere/index/index_static.h"
+#include "knowhere/segcore_error_code.h"
 
 namespace {
 
@@ -135,21 +136,117 @@ class StatusThrowingIterator : public knowhere::IndexIterator {
 
 }  // namespace
 
-TEST_CASE("Status category separates input and inner errors", "[error_code]") {
+TEST_CASE("Status category separates input, transient and permanent errors", "[error_code]") {
     STATIC_REQUIRE(knowhere::StatusCategoryOf(knowhere::Status::invalid_args) == knowhere::StatusCategory::input_error);
     STATIC_REQUIRE(knowhere::StatusCategoryOf(knowhere::Status::invalid_param_in_json) ==
                    knowhere::StatusCategory::input_error);
     STATIC_REQUIRE(knowhere::StatusCategoryOf(knowhere::Status::faiss_inner_error) ==
-                   knowhere::StatusCategory::inner_error);
+                   knowhere::StatusCategory::permanent_error);
     STATIC_REQUIRE(knowhere::StatusCategoryOf(knowhere::Status::internal_error) ==
-                   knowhere::StatusCategory::inner_error);
+                   knowhere::StatusCategory::permanent_error);
     STATIC_REQUIRE(knowhere::StatusCategoryOf(knowhere::Status::knowhere_inner_error) ==
-                   knowhere::StatusCategory::inner_error);
+                   knowhere::StatusCategory::permanent_error);
+    // the two transients: retry / replica-reroute may succeed
+    STATIC_REQUIRE(knowhere::StatusCategoryOf(knowhere::Status::malloc_error) ==
+                   knowhere::StatusCategory::transient_error);
+    STATIC_REQUIRE(knowhere::StatusCategoryOf(knowhere::Status::disk_file_error) ==
+                   knowhere::StatusCategory::transient_error);
+    // capability / corrupt-data statuses are the server's problem, not the
+    // caller's: moved out of input_error to agree with the fine mapping
+    STATIC_REQUIRE(knowhere::StatusCategoryOf(knowhere::Status::not_implemented) ==
+                   knowhere::StatusCategory::permanent_error);
+    STATIC_REQUIRE(knowhere::StatusCategoryOf(knowhere::Status::invalid_instruction_set) ==
+                   knowhere::StatusCategory::permanent_error);
+    STATIC_REQUIRE(knowhere::StatusCategoryOf(knowhere::Status::invalid_serialized_index_type) ==
+                   knowhere::StatusCategory::permanent_error);
+    // the deprecated alias keeps compiling and keeps its meaning
+    STATIC_REQUIRE(knowhere::StatusCategory::inner_error == knowhere::StatusCategory::permanent_error);
 
     REQUIRE(knowhere::IsInputError(knowhere::Status::invalid_metric_type));
     REQUIRE_FALSE(knowhere::IsInputError(knowhere::Status::faiss_inner_error));
+    // IsInnerError matches the deprecated alias inner_error = permanent_error:
+    // transient errors are not "inner"
     REQUIRE(knowhere::IsInnerError(knowhere::Status::brute_force_inner_error));
+    REQUIRE_FALSE(knowhere::IsInnerError(knowhere::Status::malloc_error));
     REQUIRE_FALSE(knowhere::IsInnerError(knowhere::Status::invalid_value_in_json));
+    REQUIRE(knowhere::IsTransientError(knowhere::Status::disk_file_error));
+    REQUIRE_FALSE(knowhere::IsTransientError(knowhere::Status::timeout));
+}
+
+namespace {
+// every Status value, for exhaustive category<->code consistency checks
+constexpr knowhere::Status kAllStatuses[] = {
+    knowhere::Status::success,
+    knowhere::Status::invalid_args,
+    knowhere::Status::invalid_param_in_json,
+    knowhere::Status::out_of_range_in_json,
+    knowhere::Status::type_conflict_in_json,
+    knowhere::Status::invalid_metric_type,
+    knowhere::Status::empty_index,
+    knowhere::Status::not_implemented,
+    knowhere::Status::index_not_trained,
+    knowhere::Status::index_already_trained,
+    knowhere::Status::faiss_inner_error,
+    knowhere::Status::hnsw_inner_error,
+    knowhere::Status::malloc_error,
+    knowhere::Status::diskann_inner_error,
+    knowhere::Status::disk_file_error,
+    knowhere::Status::invalid_value_in_json,
+    knowhere::Status::arithmetic_overflow,
+    knowhere::Status::cuvs_inner_error,
+    knowhere::Status::invalid_binary_set,
+    knowhere::Status::invalid_instruction_set,
+    knowhere::Status::cardinal_inner_error,
+    knowhere::Status::cuda_runtime_error,
+    knowhere::Status::invalid_index_error,
+    knowhere::Status::invalid_cluster_error,
+    knowhere::Status::cluster_inner_error,
+    knowhere::Status::timeout,
+    knowhere::Status::internal_error,
+    knowhere::Status::invalid_serialized_index_type,
+    knowhere::Status::sparse_inner_error,
+    knowhere::Status::brute_force_inner_error,
+    knowhere::Status::emb_list_inner_error,
+    knowhere::Status::aisaq_error,
+    knowhere::Status::knowhere_inner_error,
+};
+}  // namespace
+
+TEST_CASE("ToSegcoreErrorCode agrees with StatusCategoryOf for every status", "[error_code]") {
+    for (auto status : kAllStatuses) {
+        const auto category = knowhere::StatusCategoryOf(status);
+        const auto code = knowhere::ToSegcoreErrorCode(status);
+        CAPTURE(static_cast<int>(status), static_cast<int>(category), static_cast<int>(code));
+        switch (category) {
+            case knowhere::StatusCategory::success:
+                REQUIRE(code == milvus::ErrorCode::Success);
+                break;
+            case knowhere::StatusCategory::input_error:
+                REQUIRE(code == milvus::ErrorCode::InvalidParameter);
+                break;
+            case knowhere::StatusCategory::transient_error:
+                // must land on a code the Go-side table marks retriable
+                REQUIRE((code == milvus::ErrorCode::MemAllocateFailed || code == milvus::ErrorCode::FileReadFailed));
+                break;
+            case knowhere::StatusCategory::permanent_error:
+                REQUIRE((code == milvus::ErrorCode::Unsupported || code == milvus::ErrorCode::DataFormatBroken ||
+                         code == milvus::ErrorCode::KnowhereError));
+                break;
+        }
+    }
+}
+
+TEST_CASE("ToSegcoreErrorCode fine mapping spot checks", "[error_code]") {
+    STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::malloc_error) ==
+                   milvus::ErrorCode::MemAllocateFailed);
+    STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::disk_file_error) ==
+                   milvus::ErrorCode::FileReadFailed);
+    STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::not_implemented) == milvus::ErrorCode::Unsupported);
+    STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::invalid_serialized_index_type) ==
+                   milvus::ErrorCode::DataFormatBroken);
+    STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::invalid_args) == milvus::ErrorCode::InvalidParameter);
+    STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::timeout) == milvus::ErrorCode::KnowhereError);
+    STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::success) == milvus::ErrorCode::Success);
 }
 
 TEST_CASE("Index facade APIs are noexcept and convert exceptions to error codes", "[error_code]") {
@@ -259,6 +356,7 @@ TEST_CASE("StatusCategoryOf classifies every status without a silent default", "
     REQUIRE(knowhere::StatusCategoryOf(Status::success) == StatusCategory::success);
 
     // caller-input errors
+    // clang-format off
     const Status input_errors[] = {
         Status::invalid_args,
         Status::invalid_param_in_json,
@@ -266,29 +364,49 @@ TEST_CASE("StatusCategoryOf classifies every status without a silent default", "
         Status::type_conflict_in_json,
         Status::invalid_metric_type,
         Status::empty_index,
-        Status::not_implemented,
         Status::index_not_trained,
         Status::index_already_trained,
         Status::invalid_value_in_json,
         Status::arithmetic_overflow,
         Status::invalid_binary_set,
-        Status::invalid_instruction_set,
         Status::invalid_index_error,
         Status::invalid_cluster_error,
-        Status::invalid_serialized_index_type,
     };
+    // clang-format on
     for (auto s : input_errors) {
         REQUIRE(knowhere::StatusCategoryOf(s) == StatusCategory::input_error);
         REQUIRE(knowhere::IsInputError(s));
     }
 
-    // server-side inner errors
+    // capability / corrupt-data statuses: server-side permanent, not the
+    // caller's fault (aligned with the fine mapping: Unsupported /
+    // DataFormatBroken)
+    const Status capability_and_data_errors[] = {
+        Status::not_implemented,
+        Status::invalid_instruction_set,
+        Status::invalid_serialized_index_type,
+    };
+    for (auto s : capability_and_data_errors) {
+        REQUIRE(knowhere::StatusCategoryOf(s) == StatusCategory::permanent_error);
+        REQUIRE_FALSE(knowhere::IsInputError(s));
+    }
+
+    // transient failures: retry / replica-reroute may succeed
+    const Status transient_errors[] = {
+        Status::malloc_error,
+        Status::disk_file_error,
+    };
+    for (auto s : transient_errors) {
+        REQUIRE(knowhere::StatusCategoryOf(s) == StatusCategory::transient_error);
+        REQUIRE(knowhere::IsTransientError(s));
+        REQUIRE_FALSE(knowhere::IsInnerError(s));  // "inner" == permanent only
+    }
+
+    // server-side permanent inner errors
     const Status inner_errors[] = {
         Status::faiss_inner_error,
         Status::hnsw_inner_error,
-        Status::malloc_error,
         Status::diskann_inner_error,
-        Status::disk_file_error,
         Status::cuvs_inner_error,
         Status::cardinal_inner_error,
         Status::cuda_runtime_error,
@@ -302,11 +420,12 @@ TEST_CASE("StatusCategoryOf classifies every status without a silent default", "
         Status::knowhere_inner_error,
     };
     for (auto s : inner_errors) {
-        REQUIRE(knowhere::StatusCategoryOf(s) == StatusCategory::inner_error);
+        REQUIRE(knowhere::StatusCategoryOf(s) == StatusCategory::permanent_error);
         REQUIRE(knowhere::IsInnerError(s));
+        REQUIRE_FALSE(knowhere::IsTransientError(s));
     }
 
     // Regression: cardinal_inner_error used to be caught only by the removed
-    // `default:` branch; it must now be classified explicitly as an inner error.
-    REQUIRE(knowhere::StatusCategoryOf(Status::cardinal_inner_error) == StatusCategory::inner_error);
+    // `default:` branch; it must stay explicitly classified.
+    REQUIRE(knowhere::StatusCategoryOf(Status::cardinal_inner_error) == StatusCategory::permanent_error);
 }

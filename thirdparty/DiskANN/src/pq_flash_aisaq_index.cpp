@@ -1312,7 +1312,14 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
         return;
     }
     float query_norm = query_norm_opt.value();
-    AisaqThreadData aisaq_data = aisaq_thread_data.pop();
+    /* aisaq_thread_data.pop() returns a default constructed object when the
+     * pool is empty, wait for a slot to be released instead of running the
+     * search with an uninitialized scratch */
+    AisaqThreadData<T> aisaq_data = aisaq_thread_data.pop();
+    while (aisaq_data.aisaq_scratch_mem_offset.empty()) {
+        aisaq_thread_data.wait_for_push_notify();
+        aisaq_data = aisaq_thread_data.pop();
+    }
     auto ctx = this->reader->get_ctx();
     if(aisaq_data.aisaq_pq_reader_ctx) {
         _aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, ctx);
@@ -1321,10 +1328,12 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
         if(aisaq_data.aisaq_pq_reader_ctx){
             _aisaq_pq_vectors_reader->set_io_ctx(*aisaq_data.aisaq_pq_reader_ctx, nullptr);
         }
-        this->thread_data.push(data);
-        this->thread_data.push_notify_all();
+        /* release the aisaq scratch first, a thread woken up by the
+         * thread_data notification below acquires it right after */
         this->aisaq_thread_data.push(aisaq_data);
         this->aisaq_thread_data.push_notify_all();
+        this->thread_data.push(data);
+        this->thread_data.push_notify_all();
         this->reader->put_ctx(ctx);
     };
     auto ctx_pool = AioContextPool::GetGlobalAioPool();
