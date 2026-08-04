@@ -2105,7 +2105,7 @@ TEST_CASE("Test with some empty emb list", "[empty_emb_list]") {
                     conf[knowhere::meta::INDEX_TYPE] = index_type;
                     conf["emb_list_strategy"] = "lemur";
                     conf["lemur_hidden_dim"] = 8;
-                    conf["lemur_num_train_samples"] = 128;
+                    conf["lemur_num_train_samples"] = 1000;
                     conf["lemur_num_epochs"] = 1;
                     conf["lemur_batch_size"] = 16;
                     conf["lemur_learning_rate"] = 0.001f;

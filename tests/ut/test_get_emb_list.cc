@@ -754,7 +754,7 @@ TEST_CASE("Test GetEmbListByIds with binary LEMUR after DeserializeFromFile", "[
     conf[knowhere::indexparam::RETRIEVAL_ANN_RATIO] = 3.0f;
     conf["emb_list_strategy"] = "lemur";
     conf["lemur_hidden_dim"] = 8;
-    conf["lemur_num_train_samples"] = 128;
+    conf["lemur_num_train_samples"] = 1000;
     conf["lemur_num_epochs"] = 1;
     conf["lemur_batch_size"] = 16;
     conf["lemur_learning_rate"] = 0.001f;
