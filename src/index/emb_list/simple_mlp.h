@@ -20,38 +20,33 @@
 #include <thread>
 #include <vector>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include "index/emb_list/cblas_decl.h"
 #include "knowhere/log.h"
 
-// OpenBLAS thread control (only available when linked against OpenBLAS)
-#ifdef __APPLE__
-// Apple Accelerate does not provide openblas thread control; make it a no-op.
-#else
-extern "C" {
-void
-openblas_set_num_threads(int num_threads);
-int
-openblas_get_num_threads(void);
-}
-#endif
-
 namespace knowhere {
 
-// RAII guard for BLAS thread control. On platforms without OpenBLAS (e.g. macOS
-// Accelerate), this is a no-op.
+// OpenBLAS built with USE_OPENMP follows the current OpenMP task's thread
+// setting. Keep this guard task-local instead of changing OpenBLAS's
+// process-global thread state for every operation.
 class ScopedBLASThreads {
     int old_;
 
  public:
-    explicit ScopedBLASThreads(int n) : old_(0) {
-#ifndef __APPLE__
-        old_ = openblas_get_num_threads();
-        openblas_set_num_threads(n);
+    explicit ScopedBLASThreads(int n) : old_(1) {
+#ifdef _OPENMP
+        old_ = omp_get_max_threads();
+        omp_set_num_threads(n);
+#else
+        (void)n;
 #endif
     }
     ~ScopedBLASThreads() {
-#ifndef __APPLE__
-        openblas_set_num_threads(old_);
+#ifdef _OPENMP
+        omp_set_num_threads(old_);
 #endif
     }
     ScopedBLASThreads(const ScopedBLASThreads&) = delete;
