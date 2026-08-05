@@ -864,8 +864,8 @@ BlockInvertedIndex<DType, QType, MetricType>::build_block_index(std::span<uint32
         posting_offsets[i + 1] = posting_offsets[i] + encoded_posting_lists[i].size();
     }
 
-    // This is a workaround to QMX codex having to sometimes look beyond the buffer due to some SIMD loads.
-    constexpr size_t padding_size = 15;
+    // This is a workaround to streamvbyte decode having to sometimes look beyond the buffer due to some SIMD loads.
+    constexpr size_t padding_size = 16;
     const auto offsets_byte_size = posting_offsets.size() * sizeof(size_t);
     index_container_->resize(offsets_byte_size + posting_offsets.back() + padding_size);
     index_container_->seal();
