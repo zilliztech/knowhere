@@ -138,7 +138,7 @@ class KnowhereConan(ConanFile):
         self.requires("simde/0.8.2#5e1edfd5cba92f25d79bf6ef4616b972")
         self.requires("xxhash/0.8.3#caa6d0af1b951c247922e38fbcebdbe6")
         if self.settings.os == "Linux":
-            self.requires("openblas/0.3.30")
+            self.requires("openblas/0.3.30#aca4131c143d4c109923372e052c643c")
         if not self.options.with_light:
             self.requires("opentelemetry-cpp/1.23.0@milvus/dev#11bc565ec6e82910ae8f7471da756720")
         if self.settings.os != "Macos":
