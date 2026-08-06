@@ -377,6 +377,20 @@ base_search() {
                 }
             }
 
+            // A fully filtered search returns before doing any I/O. Verify that
+            // the early return still restores the scratch slot to thread_data;
+            // cal_size() includes the number of currently available slots.
+            auto fully_filtered_query = knowhere::ConvertToDataTypeIfNeeded<DataType>(GenDataSet(1, kDim, 43));
+            auto fully_filtered_data = GenerateBitsetWithFirstTbitsSet(kNumRows, kNumRows);
+            knowhere::BitsetView fully_filtered_bitset(fully_filtered_data.data(), kNumRows);
+            const auto size_before_fully_filtered_search = diskann.Size();
+            auto fully_filtered_results = diskann.Search(fully_filtered_query, knn_json, fully_filtered_bitset);
+            REQUIRE(fully_filtered_results.has_value());
+            for (uint32_t i = 0; i < kK; ++i) {
+                REQUIRE(fully_filtered_results.value()->GetIds()[i] == -1);
+            }
+            REQUIRE(diskann.Size() == size_before_fully_filtered_search);
+
             // range search process
             auto range_search_json = range_search_gen().dump();
             knowhere::Json range_json = knowhere::Json::parse(range_search_json);
