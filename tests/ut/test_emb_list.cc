@@ -1007,7 +1007,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
                             }
 
                             // get a golden result
@@ -1236,7 +1236,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
                             }
 
                             // get a golden result
@@ -1457,7 +1457,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
                             }
 
                             // get a golden result
@@ -1991,6 +1991,7 @@ EmbListAddTest(const knowhere::DataSetPtr train_ds_in, const knowhere::DataSetPt
     auto num_el = (rows + each_el_len - 1) / each_el_len;
 
     auto index = knowhere::IndexFactory::Instance().Create<DataType>(conf[knowhere::meta::INDEX_TYPE], version).value();
+    index.SetIdMapType(knowhere::IdMap::Type::GROWING);
     for (size_t i = 0; i < train_ds_list.size(); i++) {
         auto& base = train_ds_list[i];
         if (i == 0) {

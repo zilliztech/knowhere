@@ -373,6 +373,7 @@ EmbListAddTest(const knowhere::DataSetPtr train_ds_in, const knowhere::DataSetPt
         knowhere::IndexFactory::Instance()
             .Create<DataType>(knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, version, data_view_pack)
             .value();
+    scann_with_dv_refiner.SetIdMapType(knowhere::IdMap::Type::GROWING);
     for (size_t i = 0; i < train_ds_list.size(); i++) {
         auto& base = train_ds_list[i];
         if (i == 0) {

@@ -17,10 +17,12 @@
 #ifndef GPU_CUVS_H
 #define GPU_CUVS_H
 
+#include <algorithm>
 #include <cstdint>
 #include <exception>
 #include <fstream>
 #include <istream>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <thread>
@@ -75,6 +77,11 @@ struct GpuCuvsIndexNode : public IndexNode {
     using data_type = typename cuvs_knowhere::cuvs_data_type_mapper<DataType>::data_type;
 
     GpuCuvsIndexNode(int32_t, const Object& object) {
+    }
+
+    bool
+    NeedBitsetExactCount() const override {
+        return true;
     }
 
     Status
@@ -133,11 +140,46 @@ struct GpuCuvsIndexNode : public IndexNode {
                     LOG_KNOWHERE_ERROR_ << "Empty index.";
                     return expected<DataSetPtr>::Err(Status::empty_index, "empty index");
                 }
-                auto search_result =
-                    index_->search(cuvs_cfg, data, rows, dim, bitset.data(), bitset.byte_size(), bitset.size());
+                std::vector<uint8_t> in_bitset;
+                BitsetView in_bitset_view;
+                const BitsetView* search_bitset = nullptr;
+                const auto has_bitset = bitset.data() != nullptr && bitset.num_bits() != 0;
+                if (has_bitset && bitset.has_out_ids()) {
+                    // cuVS accepts a contiguous bitset in the searched id domain. If PrepareBitset()
+                    // installed an internal-id -> public-id view, materialize the equivalent
+                    // internal-id bitset before calling cuVS.
+                    const auto in_bit_count = bitset.out_ids_count();
+                    in_bitset.assign((in_bit_count + 7) / 8, 0);
+                    for (size_t in_id = 0; in_id < in_bit_count; ++in_id) {
+                        if (bitset.test(in_id)) {
+                            in_bitset[in_id >> 3] |= static_cast<uint8_t>(1U << (in_id & 7));
+                        }
+                    }
+                    in_bitset_view = BitsetView(in_bitset.data(), in_bit_count, bitset.count());
+                    search_bitset = &in_bitset_view;
+                } else if (has_bitset) {
+                    search_bitset = &bitset;
+                }
+                if (search_bitset != nullptr) {
+                    const auto filtered_count = search_bitset->count();
+                    if (filtered_count >= search_bitset->size()) {
+                        const auto output_count = static_cast<size_t>(cuvs_cfg.k) * rows;
+                        auto p_id = std::make_unique<int64_t[]>(output_count);
+                        auto p_dist = std::make_unique<float[]>(output_count);
+                        std::fill_n(p_id.get(), output_count, -1);
+                        std::fill_n(p_dist.get(), output_count, std::numeric_limits<float>::infinity());
+                        return GenResultDataSet(rows, cuvs_cfg.k, p_id.release(), p_dist.release());
+                    }
+                }
+                auto search_result = search_bitset == nullptr
+                                         ? index_->search(cuvs_cfg, data, rows, dim)
+                                         : index_->search(cuvs_cfg, data, rows, dim, search_bitset->data(),
+                                                          search_bitset->byte_size(), search_bitset->size());
                 std::this_thread::yield();
                 index_->synchronize();
-                return GenResultDataSet(rows, cuvs_cfg.k, std::get<0>(search_result), std::get<1>(search_result));
+                auto res = GenResultDataSet(rows, cuvs_cfg.k, std::get<0>(search_result), std::get<1>(search_result));
+                MapSearchResultIdsToOutIds(res);
+                return res;
             } catch (const std::exception& e) {
                 err_msg = std::string{e.what()};
                 LOG_KNOWHERE_ERROR_ << e.what();
