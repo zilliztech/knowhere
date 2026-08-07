@@ -187,7 +187,9 @@ class SvsVamanaIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
-        return GenResultDataSet(nq, k, std::move(ids), std::move(distances));
+        auto res = GenResultDataSet(nq, k, std::move(ids), std::move(distances));
+        MapSearchResultIdsToOutIds(res);
+        return res;
     }
 
     expected<DataSetPtr>
@@ -253,7 +255,9 @@ class SvsVamanaIndexNode : public IndexNode {
             WaitAllSuccess(futs);
             auto range_search_result =
                 GetRangeSearchResult(result_dist_array, result_id_array, is_similarity, nq, radius, range_filter);
-            return GenResultDataSet(nq, std::move(range_search_result));
+            auto res = GenResultDataSet(nq, std::move(range_search_result));
+            MapSearchResultIdsToOutIds(res);
+            return res;
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());

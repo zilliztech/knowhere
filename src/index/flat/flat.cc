@@ -146,7 +146,9 @@ class FlatIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
-        return GenResultDataSet(nq, k, ids, distances);
+        auto res = GenResultDataSet(nq, k, ids, distances);
+        MapSearchResultIdsToOutIds(res);
+        return res;
     }
 
     expected<DataSetPtr>
@@ -226,7 +228,9 @@ class FlatIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
         }
 
-        return GenResultDataSet(nq, std::move(range_search_result));
+        auto res = GenResultDataSet(nq, std::move(range_search_result));
+        MapSearchResultIdsToOutIds(res);
+        return res;
     }
 
     expected<DataSetPtr>
@@ -234,6 +238,8 @@ class FlatIndexNode : public IndexNode {
         auto dim = Dim();
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
+        std::vector<int64_t> in_ids;
+        ids = this->MapOutToIn(ids, rows, in_ids);
         if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexFlat>) {
             DataType* data = nullptr;
             try {
