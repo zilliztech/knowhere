@@ -156,6 +156,15 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         return true;
     }
 
+    [[nodiscard]] EmbListAnnIndexSpec
+    AnnIndexSpec(const BaseConfig& /*config*/) const override {
+        return EmbListAnnIndexSpec{
+            .target = EmbListAnnIndexTarget::BaseIndex,
+            .data_type = EmbListAnnIndexDataType::SameAsBaseIndex,
+            .ann_metric_type = std::nullopt,
+        };
+    }
+
     expected<DataSetPtr>
     Search(const DataSetPtr query_dataset, const EmbListOffset& query_offset, const IndexNode* index,
            std::unique_ptr<Config> cfg, const BitsetView& bitset, milvus::OpContext* op_context) const override {

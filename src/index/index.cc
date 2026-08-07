@@ -143,9 +143,10 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
         // when index is mutable, it could happen that data count larger than bitset size, see
         // https://github.com/zilliztech/knowhere/issues/70
         // so something must be wrong at caller side when passed bitset size larger than data count
-        if (bitset_.size() > static_cast<size_t>(this->Count())) {
+        const auto count_for_bitset = this->node->CountForSearchBitset();
+        if (bitset_.size() > static_cast<size_t>(count_for_bitset)) {
             msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
-                              bitset_.size(), this->Count());
+                              bitset_.size(), count_for_bitset);
             LOG_KNOWHERE_ERROR_ << msg;
             return expected<DataSetPtr>::Err(Status::invalid_args, msg);
         }
@@ -409,19 +410,19 @@ Index<T>::DeserializeFromFile(const std::string& filename, const Json& json) noe
 template <typename T>
 inline int64_t
 Index<T>::Dim() const noexcept {
-    return GuardedCall([&]() { return this->node->Dim(); });
+    return GuardedCall([&]() { return this->node->AnnIndexNode()->Dim(); });
 }
 
 template <typename T>
 inline int64_t
 Index<T>::Size() const noexcept {
-    return GuardedCall([&]() { return this->node->Size(); });
+    return GuardedCall([&]() { return this->node->AnnIndexNode()->Size(); });
 }
 
 template <typename T>
 inline int64_t
 Index<T>::Count() const noexcept {
-    return GuardedCall([&]() { return this->node->Count(); });
+    return GuardedCall([&]() { return this->node->AnnIndexNode()->Count(); });
 }
 
 template <typename T>

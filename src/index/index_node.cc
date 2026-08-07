@@ -12,14 +12,18 @@
 #include "knowhere/index/index_node.h"
 
 #include <cmath>
+#include <cstdint>
 #include <fstream>
+#include <optional>
 #include <queue>
 #include <unordered_set>
+#include <utility>
 
-#include "faiss/cppcontrib/knowhere/IndexFlat.h"
 #include "faiss/cppcontrib/knowhere/index_io.h"
+#include "index/emb_list/emb_list_raw_storage.h"
 #include "io/memory_io.h"
 #include "knowhere/context.h"
+#include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
 #include "knowhere/range_util.h"
 #include "knowhere/utils.h"
@@ -31,6 +35,104 @@
 #endif
 
 namespace knowhere {
+
+struct EmbListSeparateAnnIndexHolder {
+    explicit EmbListSeparateAnnIndexHolder(Index<IndexNode>&& index_in) : index(std::move(index_in)) {
+    }
+
+    Index<IndexNode> index;
+};
+
+IndexNode*
+IndexNode::AnnIndexNode() {
+    if (emb_list_separate_ann_index_) {
+        return emb_list_separate_ann_index_->index.Node();
+    }
+    return this;
+}
+
+const IndexNode*
+IndexNode::AnnIndexNode() const {
+    if (emb_list_separate_ann_index_) {
+        return emb_list_separate_ann_index_->index.Node();
+    }
+    return this;
+}
+
+namespace {
+
+inline const char*
+AnnIndexTargetName(EmbListAnnIndexTarget target) {
+    switch (target) {
+        case EmbListAnnIndexTarget::BaseIndex:
+            return "BaseIndex";
+        case EmbListAnnIndexTarget::SeparateIndex:
+            return "SeparateIndex";
+    }
+    return "Unknown";
+}
+
+inline const char*
+AnnIndexDataTypeName(EmbListAnnIndexDataType data_type) {
+    switch (data_type) {
+        case EmbListAnnIndexDataType::SameAsBaseIndex:
+            return "SameAsBaseIndex";
+        case EmbListAnnIndexDataType::Fp32:
+            return "Fp32";
+        case EmbListAnnIndexDataType::Fp16:
+            return "Fp16";
+        case EmbListAnnIndexDataType::Bf16:
+            return "Bf16";
+        case EmbListAnnIndexDataType::Int8:
+            return "Int8";
+        case EmbListAnnIndexDataType::Bin1:
+            return "Bin1";
+    }
+    return "Unknown";
+}
+
+expected<Index<IndexNode>>
+CreateEmbListSeparateAnnIndex(EmbListAnnIndexDataType data_type, const std::string& index_type, int32_t version) {
+    switch (data_type) {
+        case EmbListAnnIndexDataType::Fp32:
+            return IndexFactory::Instance().Create<fp32>(index_type, version);
+        case EmbListAnnIndexDataType::SameAsBaseIndex:
+            return expected<Index<IndexNode>>::Err(
+                Status::not_implemented,
+                "emb_list separate ANN index does not support SameAsBaseIndex; use BaseIndex target instead");
+        case EmbListAnnIndexDataType::Fp16:
+            return expected<Index<IndexNode>>::Err(Status::not_implemented,
+                                                   "emb_list separate fp16 ANN index is not implemented");
+        case EmbListAnnIndexDataType::Bf16:
+            return expected<Index<IndexNode>>::Err(Status::not_implemented,
+                                                   "emb_list separate bf16 ANN index is not implemented");
+        case EmbListAnnIndexDataType::Int8:
+            return expected<Index<IndexNode>>::Err(Status::not_implemented,
+                                                   "emb_list separate int8 ANN index is not implemented");
+        case EmbListAnnIndexDataType::Bin1:
+            return expected<Index<IndexNode>>::Err(Status::not_implemented,
+                                                   "emb_list separate binary ANN index is not implemented");
+    }
+    return expected<Index<IndexNode>>::Err(Status::not_implemented, "unknown emb_list separate ANN index type");
+}
+
+class ScopedMetricTypeOverride {
+ public:
+    ScopedMetricTypeOverride(BaseConfig& config, std::string metric_type)
+        : config_(config), original_metric_type_(config.metric_type) {
+        config_.metric_type = std::move(metric_type);
+    }
+
+    ~ScopedMetricTypeOverride() {
+        config_.metric_type = std::move(original_metric_type_);
+    }
+
+ private:
+    BaseConfig& config_;
+    std::optional<std::string> original_metric_type_;
+};
+
+}  // namespace
 
 // NOLINTBEGIN(google-default-arguments)
 expected<DataSetPtr>
@@ -294,6 +396,12 @@ IndexNode::SearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config>
 }
 
 expected<DataSetPtr>
+IndexNode::SearchEmbListAnnIndex(const DataSetPtr dataset, std::unique_ptr<Config> config, const BitsetView& bitset,
+                                 milvus::OpContext* op_context) const {
+    return AnnIndexNode()->Search(dataset, std::move(config), bitset, op_context);
+}
+
+expected<DataSetPtr>
 IndexNode::RangeSearchEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                                     milvus::OpContext* op_context) const {
     auto config = static_cast<const knowhere::BaseConfig&>(*cfg);
@@ -332,9 +440,9 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
                                          "GetEmbListByIds: invalid metric type " + metric_type);
     }
 
-    // Raw data can come from emb_list_raw_index_ (MUVERA/LEMUR) or base index (TokenANN)
-    bool use_raw_index = (emb_list_raw_index_ != nullptr);
-    if (!use_raw_index && !HasRawData(sub_metric.value())) {
+    // Raw data can come from emb_list_raw_storage_ (MUVERA/LEMUR) or base index (TokenANN).
+    bool use_raw_storage = (emb_list_raw_storage_ != nullptr);
+    if (!use_raw_storage && !HasRawData(sub_metric.value())) {
         return expected<DataSetPtr>::Err(
             Status::not_implemented,
             "GetEmbListByIds requires raw data support, but the index does not store raw vectors");
@@ -342,7 +450,7 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
 
     auto num_el_ids = dataset->GetRows();
     auto el_ids = dataset->GetIds();
-    auto dim = use_raw_index ? emb_list_raw_index_->d : Dim();
+    auto dim = use_raw_storage ? emb_list_raw_storage_->Dim() : Dim();
 
     // Build the output offset array
     std::vector<size_t> out_offsets(num_el_ids + 1);
@@ -370,16 +478,20 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
 
     const void* tensor = nullptr;
 
-    if (use_raw_index) {
-        // MUVERA/LEMUR: vectors are contiguous per el in emb_list_raw_index_, use reconstruct_n
-        auto data = std::make_unique<float[]>(total_vecs * dim);
-        float* ptr = data.get();
+    if (use_raw_storage) {
+        // MUVERA/LEMUR raw vectors are contiguous per el in emb_list_raw_storage_, use reconstruct_n.
+        const size_t code_size = emb_list_raw_storage_->CodeSize();
+        auto data = std::make_unique<char[]>(total_vecs * code_size);
+        auto* ptr = reinterpret_cast<uint8_t*>(data.get());
         for (int64_t i = 0; i < num_el_ids; i++) {
             auto start = static_cast<int64_t>(emb_list_offset_->offset[el_ids[i]]);
             auto len = static_cast<int64_t>(out_offsets[i + 1] - out_offsets[i]);
             if (len > 0) {
-                emb_list_raw_index_->reconstruct_n(start, len, ptr);
-                ptr += len * dim;
+                const auto status = emb_list_raw_storage_->ReconstructN(start, len, ptr);
+                if (status != Status::success) {
+                    return expected<DataSetPtr>::Err(status, "failed to reconstruct vectors from emb_list raw storage");
+                }
+                ptr += len * code_size;
             }
         }
         tensor = data.release();
@@ -436,6 +548,7 @@ IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, c
     }
     el_metric_type_ = metric_info_or.value().el_metric_type;
     auto sub_metric_type = metric_info_or.value().sub_metric_type;
+    emb_list_raw_metric_type_ = sub_metric_type;
 
     // 2. Create document offset structure
     EmbListOffset doc_offset(lims, num_rows);
@@ -449,38 +562,68 @@ IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, c
     }
     emb_list_strategy_ = std::move(strategy_or.value());
 
-    // 4. Prepare data for build (strategy may transform data, e.g., FDE encoding in MUVERA)
+    // 4. Prepare the ANN dataset and ask the strategy how it should be indexed.
     auto build_data_or = emb_list_strategy_->PrepareDataForBuild(dataset, doc_offset, config);
     if (!build_data_or.has_value()) {
-        LOG_KNOWHERE_WARNING_ << "Failed to prepare data for build";
+        LOG_KNOWHERE_WARNING_ << "Failed to prepare emb_list ANN build data";
         return build_data_or.error();
     }
+    // Some strategies build an ANN index over a representation whose data type differs from the
+    // raw vectors, e.g. binary LEMUR keeps raw data as bin1 but builds an fp32 learned ANN index.
+    // Ask the strategy where that ANN dataset should be indexed, which data type it uses, and
+    // whether it needs a metric different from the outer emb-list raw sub metric.
+    const auto ann_index_spec = emb_list_strategy_->AnnIndexSpec(config);
 
-    // Override metric_type to sub_metric for base index build
-    config.metric_type = sub_metric_type;
+    const auto ann_index_target = ann_index_spec.target;
+    const auto ann_index_data_type = ann_index_spec.data_type;
+    const auto ann_metric_type = ann_index_spec.ann_metric_type.value_or(sub_metric_type);
 
     // 5. Build underlying index (if strategy provides data)
     LOG_KNOWHERE_INFO_ << "Build EmbList-Index with strategy: " << strategy_type << ", metric type: " << el_metric_type_
-                       << ", sub metric type: " << sub_metric_type;
+                       << ", sub metric type: " << sub_metric_type << ", ann metric type: " << ann_metric_type
+                       << ", ann index target: " << AnnIndexTargetName(ann_index_target)
+                       << ", ann index data type: " << AnnIndexDataTypeName(ann_index_data_type);
     if (build_data_or.value().has_value()) {
-        RETURN_IF_ERROR(Build(build_data_or.value().value(), cfg, use_knowhere_build_pool));
+        // The underlying ANN index consumes a plain metric, not the outer emb-list metric.
+        // Keep this override scoped because cfg is shared with later emb-list build steps.
+        ScopedMetricTypeOverride metric_guard(config, ann_metric_type);
+        switch (ann_index_target) {
+            case EmbListAnnIndexTarget::BaseIndex:
+                // BaseIndex means the ANN dataset is compatible with this IndexNode's own data type.
+                // No child index is allocated; the current node builds its normal ANN index directly.
+                RETURN_IF_ERROR(Build(build_data_or.value().value(), cfg, use_knowhere_build_pool));
+                break;
+            case EmbListAnnIndexTarget::SeparateIndex: {
+                // SeparateIndex is used when the strategy emits a representation whose data type differs from
+                // this IndexNode, for example binary LEMUR producing fp32 learned vectors.
+                auto separate_ann_index_or =
+                    CreateEmbListSeparateAnnIndex(ann_index_data_type, Type(), version_.VersionNumber());
+                if (!separate_ann_index_or.has_value()) {
+                    LOG_KNOWHERE_WARNING_
+                        << "Failed to create separate ANN index for emb_list strategy: " << strategy_type
+                        << ", index type: " << Type()
+                        << ", ann index data type: " << AnnIndexDataTypeName(ann_index_data_type);
+                    return separate_ann_index_or.error();
+                }
+                auto separate_ann_index =
+                    std::make_shared<EmbListSeparateAnnIndexHolder>(std::move(separate_ann_index_or.value()));
+                RETURN_IF_ERROR(separate_ann_index->index.Node()->Build(build_data_or.value().value(), cfg,
+                                                                        use_knowhere_build_pool));
+                emb_list_separate_ann_index_ = std::move(separate_ann_index);
+                break;
+            }
+        }
     }
 
     // 6. Create raw vector storage if strategy needs it
     if (emb_list_strategy_->NeedsRawVectorStorage()) {
-        auto original_dim = dataset->GetDim();
-        auto total_vectors = dataset->GetRows();
-        const float* raw_data = static_cast<const float*>(dataset->GetTensor());
-
-        faiss::MetricType faiss_metric = faiss::METRIC_INNER_PRODUCT;
-        if (sub_metric_type == metric::L2) {
-            faiss_metric = faiss::METRIC_L2;
+        auto raw_storage_or = CreateEmbListRawStorageForBuild(dataset, sub_metric_type);
+        if (!raw_storage_or.has_value()) {
+            return raw_storage_or.error();
         }
-
-        emb_list_raw_index_ = std::make_shared<faiss::cppcontrib::knowhere::IndexFlat>(original_dim, faiss_metric);
-        emb_list_raw_index_->add(total_vectors, raw_data);
-
-        LOG_KNOWHERE_INFO_ << "Created raw vector storage: " << total_vectors << " vectors, dim=" << original_dim;
+        emb_list_raw_storage_ = std::move(raw_storage_or.value());
+        LOG_KNOWHERE_INFO_ << "Created raw vector storage: " << emb_list_raw_storage_->Count()
+                           << " vectors, dim=" << emb_list_raw_storage_->Dim() << ", metric=" << sub_metric_type;
     }
 
     // 7. Strategy post-build hook
@@ -536,18 +679,18 @@ IndexNode::SerializeEmbList(BinarySet& binset) const {
         binset.Append(meta::EMB_LIST_META, meta_data, writer.tellg());
 
         // 3. Raw vector index as separate key (large, needs mmap in file path)
-        if (emb_list_raw_index_) {
-            MemoryIOWriter writer;
-            faiss::cppcontrib::knowhere::write_index(emb_list_raw_index_.get(), &writer);
-            std::shared_ptr<uint8_t[]> raw_bin(writer.data());
-            binset.Append(meta::EMB_LIST_RAW_INDEX, raw_bin, writer.tellg());
+        if (emb_list_raw_storage_) {
+            RETURN_IF_ERROR(emb_list_raw_storage_->Serialize(binset));
         }
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "serialize emb_list error: " << e.what();
         return Status::emb_list_inner_error;
     }
 
-    // 4. Serialize base index
+    // 4. Serialize ANN index. BaseIndex is this node; SeparateIndex is the optional child index.
+    if (emb_list_separate_ann_index_) {
+        return emb_list_separate_ann_index_->index.Node()->Serialize(binset);
+    }
     return Serialize(binset);
 }
 
@@ -561,13 +704,10 @@ IndexNode::DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_
         return metric_info_or.error();
     }
     el_metric_type_ = metric_info_or.value().el_metric_type;
-
-    // 2. Deserialize base index from BinarySet (override metric_type for base index)
-    cfg.metric_type = metric_info_or.value().sub_metric_type;
-    RETURN_IF_ERROR(Deserialize(binset, config));
+    emb_list_raw_metric_type_ = metric_info_or.value().sub_metric_type;
 
     try {
-        // 3. Read EMB_LIST_META and parse strategy type + strategy blob
+        // 2. Read EMB_LIST_META and parse strategy type + strategy blob
         auto meta_bin = binset.GetByName(meta::EMB_LIST_META);
         if (!meta_bin) {
             LOG_KNOWHERE_WARNING_ << "EMB_LIST_META not found in binary set";
@@ -577,7 +717,7 @@ IndexNode::DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_
         auto [strategy_type, strategy_blob, strategy_blob_size] =
             ParseEmbListMetaHeader(meta_bin->data.get(), meta_bin->size);
 
-        // 4. Create strategy and deserialize strategy-specific data
+        // 3. Create strategy and deserialize strategy-specific data
         auto strategy_or = CreateEmbListStrategy(strategy_type, cfg);
         if (!strategy_or.has_value()) {
             LOG_KNOWHERE_WARNING_ << "Failed to create emb_list strategy: " << strategy_type;
@@ -588,19 +728,43 @@ IndexNode::DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_
         LOG_KNOWHERE_INFO_ << "Deserialize emb_list with strategy: " << strategy_type;
         RETURN_IF_ERROR(emb_list_strategy_->Deserialize(strategy_blob, strategy_blob_size, cfg));
 
+        // 4. Deserialize ANN index using the same strategy spec selected at build time.
+        const auto ann_index_spec = emb_list_strategy_->AnnIndexSpec(cfg);
+        const auto ann_metric_type = ann_index_spec.ann_metric_type.value_or(emb_list_raw_metric_type_);
+        {
+            ScopedMetricTypeOverride metric_guard(cfg, ann_metric_type);
+            switch (ann_index_spec.target) {
+                case EmbListAnnIndexTarget::BaseIndex:
+                    // BaseIndex was serialized as this IndexNode's own ANN index.
+                    RETURN_IF_ERROR(Deserialize(binset, config));
+                    break;
+                case EmbListAnnIndexTarget::SeparateIndex: {
+                    auto separate_ann_index_or =
+                        CreateEmbListSeparateAnnIndex(ann_index_spec.data_type, Type(), version_.VersionNumber());
+                    if (!separate_ann_index_or.has_value()) {
+                        LOG_KNOWHERE_WARNING_
+                            << "Failed to create separate ANN index for emb_list strategy: " << strategy_type
+                            << ", index type: " << Type()
+                            << ", ann index data type: " << AnnIndexDataTypeName(ann_index_spec.data_type);
+                        return separate_ann_index_or.error();
+                    }
+                    auto separate_ann_index =
+                        std::make_shared<EmbListSeparateAnnIndexHolder>(std::move(separate_ann_index_or.value()));
+                    RETURN_IF_ERROR(separate_ann_index->index.Node()->Deserialize(binset, config));
+                    emb_list_separate_ann_index_ = std::move(separate_ann_index);
+                    break;
+                }
+            }
+        }
+
         // 5. Deserialize raw vector index from BinarySet (if present)
         auto raw_index_bin = binset.GetByName(meta::EMB_LIST_RAW_INDEX);
         if (raw_index_bin) {
-            MemoryIOReader reader(raw_index_bin->data.get(), raw_index_bin->size);
-            auto* index = faiss::cppcontrib::knowhere::read_index(&reader);
-            auto* flat_index = dynamic_cast<::faiss::IndexFlat*>(index);
-            if (flat_index == nullptr) {
-                delete index;
-                LOG_KNOWHERE_WARNING_ << "EMB_LIST_RAW_INDEX is not an IndexFlat";
-                return Status::emb_list_inner_error;
+            auto raw_storage_or = ReadEmbListRawStorageFromBinary(raw_index_bin, emb_list_raw_metric_type_);
+            if (!raw_storage_or.has_value()) {
+                return raw_storage_or.error();
             }
-            emb_list_raw_index_.reset(flat_index);
-            LOG_KNOWHERE_INFO_ << "Loaded raw vector index: " << emb_list_raw_index_->ntotal << " vectors";
+            emb_list_raw_storage_ = std::move(raw_storage_or.value());
         } else if (emb_list_strategy_->NeedsRawVectorStorage()) {
             LOG_KNOWHERE_WARNING_ << "Strategy requires raw vector storage but EMB_LIST_RAW_INDEX not found";
             return Status::emb_list_inner_error;
@@ -629,12 +793,9 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
         return metric_info_or.error();
     }
     el_metric_type_ = metric_info_or.value().el_metric_type;
+    emb_list_raw_metric_type_ = metric_info_or.value().sub_metric_type;
 
-    // 2. Deserialize base index from file (override metric_type for base index)
-    cfg.metric_type = metric_info_or.value().sub_metric_type;
-    RETURN_IF_ERROR(DeserializeFromFile(filename, config));
-
-    // 3. Read meta file and parse strategy type + strategy blob
+    // 2. Read meta file and parse strategy type + strategy blob
     if (!cfg.emb_list_meta_file_path.has_value() || cfg.emb_list_meta_file_path.value().empty()) {
         LOG_KNOWHERE_WARNING_ << "emb_list_meta_file is empty, but metric type is emb_list";
         return Status::emb_list_inner_error;
@@ -668,7 +829,7 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
     auto [strategy_type, strategy_blob, strategy_blob_size] = ParseEmbListMetaHeader(file_data.get(), file_size);
 
     try {
-        // 4. Create strategy and deserialize strategy-specific data
+        // 3. Create strategy and deserialize strategy-specific data
         auto strategy_or = CreateEmbListStrategy(strategy_type, cfg);
         if (!strategy_or.has_value()) {
             LOG_KNOWHERE_WARNING_ << "Failed to create emb_list strategy: " << strategy_type;
@@ -678,6 +839,35 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
 
         LOG_KNOWHERE_INFO_ << "Deserialize emb_list from file with strategy: " << strategy_type;
         RETURN_IF_ERROR(emb_list_strategy_->Deserialize(strategy_blob, strategy_blob_size, cfg));
+
+        // 4. Deserialize ANN index from file using the same strategy spec selected at build time.
+        const auto ann_index_spec = emb_list_strategy_->AnnIndexSpec(cfg);
+        const auto ann_metric_type = ann_index_spec.ann_metric_type.value_or(emb_list_raw_metric_type_);
+        {
+            ScopedMetricTypeOverride metric_guard(cfg, ann_metric_type);
+            switch (ann_index_spec.target) {
+                case EmbListAnnIndexTarget::BaseIndex:
+                    // BaseIndex was serialized as this IndexNode's own ANN index.
+                    RETURN_IF_ERROR(DeserializeFromFile(filename, config));
+                    break;
+                case EmbListAnnIndexTarget::SeparateIndex: {
+                    auto separate_ann_index_or =
+                        CreateEmbListSeparateAnnIndex(ann_index_spec.data_type, Type(), version_.VersionNumber());
+                    if (!separate_ann_index_or.has_value()) {
+                        LOG_KNOWHERE_WARNING_
+                            << "Failed to create separate ANN index for emb_list strategy: " << strategy_type
+                            << ", index type: " << Type()
+                            << ", ann index data type: " << AnnIndexDataTypeName(ann_index_spec.data_type);
+                        return separate_ann_index_or.error();
+                    }
+                    auto separate_ann_index =
+                        std::make_shared<EmbListSeparateAnnIndexHolder>(std::move(separate_ann_index_or.value()));
+                    RETURN_IF_ERROR(separate_ann_index->index.Node()->DeserializeFromFile(filename, config));
+                    emb_list_separate_ann_index_ = std::move(separate_ann_index);
+                    break;
+                }
+            }
+        }
 
         // 5. Load raw vector index from separate file (if strategy needs it)
         if (emb_list_strategy_->NeedsRawVectorStorage()) {
@@ -692,17 +882,13 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
                 io_flags |= faiss::cppcontrib::knowhere::IO_FLAG_MMAP_IFC;
             }
 
-            auto raw_index_file = cfg.emb_list_raw_index_file_path.value();
-            auto* index = faiss::cppcontrib::knowhere::read_index(raw_index_file.data(), io_flags);
-            auto* flat_index = dynamic_cast<::faiss::IndexFlat*>(index);
-            if (flat_index == nullptr) {
-                delete index;
-                LOG_KNOWHERE_WARNING_ << "EMB_LIST_RAW_INDEX file is not an IndexFlat";
-                return Status::emb_list_inner_error;
+            auto raw_storage_or = ReadEmbListRawStorageFromFile(cfg.emb_list_raw_index_file_path.value(), io_flags,
+                                                                emb_list_raw_metric_type_);
+            if (!raw_storage_or.has_value()) {
+                return raw_storage_or.error();
             }
-            emb_list_raw_index_.reset(flat_index);
-            LOG_KNOWHERE_INFO_ << "Loaded raw vector index from file: " << emb_list_raw_index_->ntotal
-                               << " vectors, mmap=" << cfg.enable_mmap.value();
+            emb_list_raw_storage_ = std::move(raw_storage_or.value());
+            LOG_KNOWHERE_INFO_ << "Loaded raw vector storage from file, mmap=" << cfg.enable_mmap.value();
         }
 
         // 6. Set ID mapping if needed
@@ -721,44 +907,11 @@ IndexNode::DeserializeEmbListFromFile(const std::string& filename, std::shared_p
 expected<DataSetPtr>
 IndexNode::CalcDistByRawIndex(const DataSetPtr dataset, const int64_t* labels, size_t labels_len, bool is_cosine,
                               std::shared_ptr<ThreadPool> pool, milvus::OpContext* op_context) const {
-    if (!emb_list_raw_index_) {
-        return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "emb_list_raw_index not initialized");
+    if (!emb_list_raw_storage_) {
+        return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "emb_list raw storage not initialized");
     }
-
-    auto num_queries = dataset->GetRows();
-    auto dim = dataset->GetDim();
-    auto query_data = dataset->GetTensor();
-    auto distances = std::make_unique<float[]>(num_queries * labels_len);
-
-    try {
-        std::vector<folly::Future<folly::Unit>> futs;
-        futs.reserve(num_queries);
-        for (int64_t i = 0; i < num_queries; ++i) {
-            futs.emplace_back(pool->push([&, idx = i]() {
-                knowhere::checkCancellation(op_context);
-                std::unique_ptr<faiss::DistanceComputer> dist_computer(emb_list_raw_index_->get_distance_computer());
-
-                const float* cur_query = static_cast<const float*>(query_data) + idx * dim;
-                std::unique_ptr<float[]> copied_query = nullptr;
-                if (is_cosine) {
-                    copied_query = CopyAndNormalizeVecs(cur_query, 1, dim);
-                    cur_query = copied_query.get();
-                }
-
-                dist_computer->set_query(cur_query);
-                auto cur_distances = distances.get() + idx * labels_len;
-                for (size_t j = 0; j < labels_len; ++j) {
-                    cur_distances[j] = (*dist_computer)(labels[j]);
-                }
-            }));
-        }
-        WaitAllSuccess(futs);
-    } catch (const std::exception& e) {
-        LOG_KNOWHERE_WARNING_ << "CalcDistByRawIndex error: " << e.what();
-        return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
-    }
-
-    return GenResultDataSet(num_queries, labels_len, std::unique_ptr<int64_t[]>{}, std::move(distances));
+    return emb_list_raw_storage_->CalcDistance(dataset, labels, labels_len, emb_list_raw_metric_type_, is_cosine,
+                                               std::move(pool), op_context);
 }
 
 }  // namespace knowhere

@@ -13,6 +13,7 @@
 
 #include <set>
 
+#include "knowhere/index/emb_list_strategy.h"
 #include "knowhere/operands.h"
 
 namespace knowhere {
@@ -68,9 +69,17 @@ IndexStaticFaced<DataType>::ConfigCheck(const IndexType& indexType, const IndexV
 
         if constexpr (!std::is_same_v<DataType, knowhere::fp32>) {
             auto strategy = cfg->emb_list_strategy.value_or("");
-            if (strategy == meta::EMB_LIST_STRATEGY_MUVERA || strategy == meta::EMB_LIST_STRATEGY_LEMUR) {
-                msg = "MUVERA/LEMUR strategies only support fp32 data type, got '" + strategy + "'";
+            if (strategy == meta::EMB_LIST_STRATEGY_MUVERA) {
+                msg = "MUVERA strategy only supports fp32 data type";
                 return Status::invalid_args;
+            }
+            if (strategy == meta::EMB_LIST_STRATEGY_LEMUR) {
+                if constexpr (!std::is_same_v<DataType, knowhere::bin1>) {
+                    msg =
+                        "LEMUR strategy for this data type is not implemented; supported data types today are fp32 "
+                        "and bin1";
+                    return Status::not_implemented;
+                }
             }
         }
 

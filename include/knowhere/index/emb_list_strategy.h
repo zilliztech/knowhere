@@ -14,6 +14,7 @@
 
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "knowhere/bitsetview.h"
@@ -45,6 +46,37 @@ struct EmbListMetricInfo {
     EmbListAggFunc agg_func;
     bool larger_is_closer;
     bool is_cosine;
+};
+
+// Some strategies build ANN data whose physical type differs from the raw vectors.
+// This target tells IndexNode whether that ANN data can use the current index node
+// or needs a separate index with a different data type.
+enum class EmbListAnnIndexTarget {
+    // Build the ANN dataset directly into this IndexNode's own ANN index. This is used when
+    // the ANN dataset has the same data type as the current index node, such as TokenANN and MUVERA.
+    BaseIndex,
+    // Build the ANN dataset into a separately allocated Index<IndexNode>. This is used when
+    // the strategy's ANN representation has a different data type from the current index node,
+    // such as bin1 LEMUR producing fp32 learned representations.
+    SeparateIndex,
+};
+
+enum class EmbListAnnIndexDataType {
+    // Valid for BaseIndex: the current IndexNode data type is reused.
+    // SeparateIndex must request a concrete data type instead.
+    SameAsBaseIndex,
+    Fp32,
+    Fp16,
+    Bf16,
+    Int8,
+    Bin1,
+};
+
+struct EmbListAnnIndexSpec {
+    EmbListAnnIndexTarget target;
+    EmbListAnnIndexDataType data_type;
+    // nullopt means the ANN index uses the raw sub metric parsed from the outer emb-list metric.
+    std::optional<std::string> ann_metric_type;
 };
 
 /**
@@ -205,6 +237,16 @@ class EmbListStrategy {
     NeedsRawVectorStorage() const {
         return false;
     }
+
+    /**
+     * @brief Describe how the strategy's ANN dataset should be indexed.
+     *
+     * BaseIndex means the ANN data is indexed by this IndexNode itself. SeparateIndex means IndexNode must create
+     * a child Index<IndexNode> with the requested data type. nullopt ann_metric_type means the ANN index uses the
+     * raw sub metric parsed from the outer emb-list metric; a value means the strategy overrides it.
+     */
+    [[nodiscard]] virtual EmbListAnnIndexSpec
+    AnnIndexSpec(const BaseConfig& config) const = 0;
 
     /**
      * @brief Execute search with full control over the search flow.

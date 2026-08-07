@@ -1076,4 +1076,3 @@ inline float sq6_decode_component(device const uchar* code, uint i) {
     }
     return (float(bits) + 0.5f) / 63.0f;
 }
-

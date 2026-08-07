@@ -1222,9 +1222,9 @@ expected<DataSetPtr>
 IvfIndexNode<DataType, IndexType>::CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset,
                                                  const int64_t* labels, const size_t labels_len, const bool is_cosine,
                                                  milvus::OpContext* op_context) const {
-    // When emb_list_raw_index_ exists (MUVERA/LEMUR), base index holds encoded vectors,
-    // so use the raw index for exact distance computation during reranking.
-    if (emb_list_raw_index_) {
+    // When emb_list raw storage exists (MUVERA/LEMUR), base index holds encoded vectors,
+    // so use raw storage for exact distance computation during reranking.
+    if (emb_list_raw_storage_) {
         return CalcDistByRawIndex(dataset, labels, labels_len, is_cosine, search_pool_, op_context);
     }
 

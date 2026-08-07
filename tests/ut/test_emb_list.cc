@@ -1782,6 +1782,118 @@ TEST_CASE("Search for EMBList Indices (Binary)", "Benchmark and validation on bi
         }
     }
 
+    SECTION("HNSW FLAT LEMUR") {
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW;
+
+        for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
+            const int32_t dim = 32;
+            const int32_t nb = 256;
+            const uint64_t query_rng_seed = get_params_hash({100, static_cast<int>(distance_type), dim});
+            auto query_ds_ptr = GenQueryEmbListBinDataSet(NQ, dim, query_rng_seed);
+
+            std::vector<int32_t> params = {100, static_cast<int>(distance_type), dim, nb};
+            const uint64_t rng_seed = get_params_hash(params);
+            auto default_ds_ptr = GenEmbListBinDataSetWithSomeEmpty(nb, dim, rng_seed, each_el_len);
+            const auto* lims = default_ds_ptr->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+            knowhere::EmbListOffset doc_offset(lims, default_ds_ptr->GetRows());
+
+            knowhere::Json conf = default_conf;
+            conf[knowhere::meta::INDEX_TYPE] = index_type;
+            conf[knowhere::meta::METRIC_TYPE] = DISTANCE_TYPES[distance_type];
+            conf[knowhere::meta::DIM] = dim;
+            conf[knowhere::meta::ROWS] = nb;
+            conf[knowhere::indexparam::RETRIEVAL_ANN_RATIO] = 10.0f;
+            conf["emb_list_strategy"] = "lemur";
+            conf["lemur_hidden_dim"] = 8;
+            conf["lemur_num_train_samples"] = 1000;
+            conf["lemur_num_epochs"] = 1;
+            conf["lemur_batch_size"] = 16;
+            conf["lemur_learning_rate"] = 0.001f;
+            conf["lemur_seed"] = 42;
+            conf["lemur_num_layers"] = 1;
+
+            auto golden_result =
+                knowhere::BruteForce::Search<knowhere::bin1>(default_ds_ptr, query_ds_ptr, conf, nullptr);
+            REQUIRE(golden_result.has_value());
+
+            auto version = GenTestEmbListVersionList();
+            auto index = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(index_type, version).value();
+            auto build_status = index.Build(default_ds_ptr, conf);
+            REQUIRE(build_status == knowhere::Status::success);
+            REQUIRE(index.Count() == static_cast<int64_t>(doc_offset.num_el()));
+            REQUIRE(index.Dim() == 8);
+            REQUIRE(index.Size() > 0);
+
+            auto result = index.Search(query_ds_ptr, conf, nullptr);
+            REQUIRE(result.has_value());
+            auto recall = GetKNNRecall(*golden_result.value(), *result.value());
+            REQUIRE(recall >= 0.75f);
+
+            knowhere::BinarySet binset;
+            REQUIRE(index.Serialize(binset) == knowhere::Status::success);
+
+            auto index_loaded = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(index_type, version).value();
+            REQUIRE(index_loaded.Deserialize(binset, conf) == knowhere::Status::success);
+            REQUIRE(index_loaded.Count() == static_cast<int64_t>(doc_offset.num_el()));
+            REQUIRE(index_loaded.Dim() == 8);
+            REQUIRE(index_loaded.Size() > 0);
+
+            auto result_loaded = index_loaded.Search(query_ds_ptr, conf, nullptr);
+            REQUIRE(result_loaded.has_value());
+            auto recall_loaded = GetKNNRecall(*golden_result.value(), *result_loaded.value());
+            REQUIRE(recall_loaded >= 0.75f);
+
+            std::string file_suffix = std::to_string(distance_type);
+            std::string base_index_file = "/tmp/test_emb_list_bin_lemur_file_" + file_suffix + ".index";
+            std::string meta_file = "/tmp/test_emb_list_bin_lemur_file_" + file_suffix + "_meta.bin";
+            std::string raw_index_file = "/tmp/test_emb_list_bin_lemur_file_" + file_suffix + "_raw.index";
+            {
+                auto hnsw_bin = binset.GetByName(knowhere::IndexEnum::INDEX_HNSW);
+                REQUIRE(hnsw_bin != nullptr);
+                std::ofstream base_out(base_index_file, std::ios::binary);
+                base_out.write(reinterpret_cast<const char*>(hnsw_bin->data.get()), hnsw_bin->size);
+
+                auto meta_bin = binset.GetByName(knowhere::meta::EMB_LIST_META);
+                REQUIRE(meta_bin != nullptr);
+                std::ofstream meta_out(meta_file, std::ios::binary);
+                meta_out.write(reinterpret_cast<const char*>(meta_bin->data.get()), meta_bin->size);
+
+                auto raw_bin = binset.GetByName(knowhere::meta::EMB_LIST_RAW_INDEX);
+                REQUIRE(raw_bin != nullptr);
+                std::ofstream raw_out(raw_index_file, std::ios::binary);
+                raw_out.write(reinterpret_cast<const char*>(raw_bin->data.get()), raw_bin->size);
+            }
+
+            for (bool enable_mmap : {false, true}) {
+                knowhere::Json load_conf = conf;
+                load_conf["emb_list_meta_file_path"] = meta_file;
+                load_conf["emb_list_raw_index_file_path"] = raw_index_file;
+                load_conf["enable_mmap"] = enable_mmap;
+
+                auto index_file_loaded =
+                    knowhere::IndexFactory::Instance().Create<knowhere::bin1>(index_type, version).value();
+                REQUIRE(index_file_loaded.DeserializeFromFile(base_index_file, load_conf) == knowhere::Status::success);
+                REQUIRE(index_file_loaded.Count() == static_cast<int64_t>(doc_offset.num_el()));
+                REQUIRE(index_file_loaded.Dim() == 8);
+                REQUIRE(index_file_loaded.Size() > 0);
+
+                auto result_file_loaded = index_file_loaded.Search(query_ds_ptr, conf, nullptr);
+                REQUIRE(result_file_loaded.has_value());
+
+                const auto* ids = result.value()->GetIds();
+                const auto* file_loaded_ids = result_file_loaded.value()->GetIds();
+                auto num_q = result.value()->GetRows();
+                for (int64_t i = 0; i < num_q * TOPK; ++i) {
+                    REQUIRE(ids[i] == file_loaded_ids[i]);
+                }
+            }
+
+            std::remove(base_index_file.c_str());
+            std::remove(meta_file.c_str());
+            std::remove(raw_index_file.c_str());
+        }
+    }
+
 #ifdef KNOWHERE_WITH_CARDINAL
     SECTION("CARDINAL_TIERED") {
         static const int64_t mb = 1024 * 1024;
@@ -1966,6 +2078,60 @@ TEST_CASE("Test with some empty emb list", "[empty_emb_list]") {
                                                                                           conf, bitset_view);
                         printf(
                             "\nProcessing EMBList HNSW,Flat MUVERA fp32 (empty) for %s distance, dim=%d, nrows=%d, "
+                            "%d%% points filtered out\n",
+                            DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
+                        auto index_file = test_emb_list_index<knowhere::fp32>(
+                            default_ds_ptr, query_ds_ptr, golden_result.value(), params, conf, false, bitset_view);
+                        std::remove(index_file.c_str());
+                    }
+                }
+            }
+        }
+    }
+
+    SECTION("HNSW FLAT LEMUR") {
+        const std::string& index_type = knowhere::IndexEnum::INDEX_HNSW;
+
+        for (size_t distance_type = 0; distance_type < DISTANCE_TYPES.size(); distance_type++) {
+            for (const int32_t dim : DIMS) {
+                const uint64_t query_rng_seed = get_params_hash({(int)distance_type, dim, 2});
+                auto query_ds_ptr = GenQueryEmbListDataSet(NQ, dim, query_rng_seed);
+
+                for (const int32_t nb : NBS) {
+                    knowhere::Json conf = default_conf;
+                    conf[knowhere::meta::METRIC_TYPE] = DISTANCE_TYPES[distance_type];
+                    conf[knowhere::meta::DIM] = dim;
+                    conf[knowhere::meta::ROWS] = nb;
+                    conf[knowhere::meta::INDEX_TYPE] = index_type;
+                    conf["emb_list_strategy"] = "lemur";
+                    conf["lemur_hidden_dim"] = 8;
+                    conf["lemur_num_train_samples"] = 1000;
+                    conf["lemur_num_epochs"] = 1;
+                    conf["lemur_batch_size"] = 16;
+                    conf["lemur_learning_rate"] = 0.001f;
+                    conf["lemur_seed"] = 42;
+                    conf["lemur_num_layers"] = 1;
+
+                    std::vector<int32_t> params = {(int)distance_type, dim, nb, 2};
+                    const uint64_t rng_seed = get_params_hash(params);
+                    int num_el = int(nb / each_el_len) + 1;
+                    auto default_ds_ptr = GenEmbListDataSetWithSomeEmpty(nb, dim, rng_seed, each_el_len);
+
+                    for (const float bitset_rate : BITSET_RATES) {
+                        printf("bitset_rate: %f\n", bitset_rate);
+                        const std::vector<uint8_t> bitset_data =
+                            GenerateBitsetByPartition(num_el, 1.0f - bitset_rate, 1);
+                        knowhere::BitsetView bitset_view = nullptr;
+                        if (bitset_rate != 0.0f) {
+                            bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
+                        }
+
+                        auto golden_result = knowhere::BruteForce::Search<knowhere::fp32>(default_ds_ptr, query_ds_ptr,
+                                                                                          conf, bitset_view);
+                        REQUIRE(golden_result.has_value());
+
+                        printf(
+                            "\nProcessing EMBList HNSW,Flat LEMUR fp32 (empty) for %s distance, dim=%d, nrows=%d, "
                             "%d%% points filtered out\n",
                             DISTANCE_TYPES[distance_type].c_str(), dim, nb, int(bitset_rate * 100));
                         auto index_file = test_emb_list_index<knowhere::fp32>(
@@ -3422,6 +3588,18 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
             REQUIRE(strategy_or.has_value());
             auto result = strategy_or.value()->PrepareDataForBuild(ds, doc_offset, cfg);
             REQUIRE(result.has_value());
+        }
+
+        // Case 4: all docs are empty; no finite training target can be derived
+        {
+            auto ds = knowhere::GenDataSet(0, DIM, nullptr);
+            knowhere::EmbListOffset doc_offset(std::vector<size_t>{0, 0, 0});
+
+            auto strategy_or = knowhere::CreateEmbListStrategy("lemur", cfg);
+            REQUIRE(strategy_or.has_value());
+            auto result = strategy_or.value()->PrepareDataForBuild(ds, doc_offset, cfg);
+            REQUIRE(!result.has_value());
+            REQUIRE(result.error() == knowhere::Status::invalid_args);
         }
     }
 
