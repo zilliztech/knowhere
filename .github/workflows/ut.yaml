@@ -44,18 +44,12 @@ jobs:
         run: |
           bash scripts/install_deps.sh
           sudo pip3 install cmake==3.28.1
-      - name: Restore Cache
-        uses: ./.github/actions/cache-restore
-        with:
-          os: ubuntu-22.04
+      # This runner keeps CCache and Conan on persistent local storage. Avoid
+      # duplicating those caches in GitHub storage and consuming repository quota.
       - name: Build
         run: |
           make WITH_UT=True WITH_ASAN=True
           make test
-      - name: Save Cache
-        uses: ./.github/actions/cache-save
-        with:
-          os: ubuntu-22.04
 
   ut-macos:
     name: ut on ${{ matrix.os }}
@@ -76,7 +70,8 @@ jobs:
       - name: Restore Cache
         uses: ./.github/actions/cache-restore
         with:
-          os: ${{ matrix.os }}
+          runner-class: github-macos
+          cache-branch: ${{ github.base_ref || github.ref_name }}
       - name: Build
         run: |
           # CMake 4.x (Homebrew) removed compat with cmake_minimum_required < 3.5;
@@ -89,7 +84,8 @@ jobs:
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:
-          os: ${{ matrix.os }}
+          runner-class: github-macos
+          cache-branch: ${{ github.base_ref || github.ref_name }}
 
   swig-build:
     name: python3 wheel
@@ -121,14 +117,16 @@ jobs:
       - name: Restore Cache
         uses: ./.github/actions/cache-restore
         with:
-          os: ubuntu-22.04
+          runner-class: github-linux
+          cache-branch: ${{ github.base_ref || github.ref_name }}
       - name: Build
         run: |
           make
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:
-          os: ubuntu-22.04
+          runner-class: github-linux
+          cache-branch: ${{ github.base_ref || github.ref_name }}
       - name: Build Portable Wheel
         run: |
           cd python && ./build_portable_wheel.sh
