@@ -830,19 +830,26 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
             if (!has_next_unchecked()) {
                 return expected<std::pair<int64_t, float>>::Err(Status::knowhere_inner_error, "No more elements");
             }
-            if (use_knowhere_search_pool_) {
+            // sort_next() is a no-op unless the cursor has caught up with the
+            // sorted prefix, which happens once every sort_size_ elements
+            // (>= 50000). Checking that here rather than inside the task keeps
+            // the common case from paying for a thread-pool round trip and a
+            // blocking wait just to return immediately.
+            if (needs_sort()) {
+                if (use_knowhere_search_pool_) {
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-                std::vector<folly::Future<folly::Unit>> futs;
-                futs.emplace_back(ThreadPool::GetGlobalSearchThreadPool()->push([&]() {
-                    ThreadPool::ScopedSearchOmpSetter setter(1);
-                    sort_next();
-                }));
-                WaitAllSuccess(futs);
+                    std::vector<folly::Future<folly::Unit>> futs;
+                    futs.emplace_back(ThreadPool::GetGlobalSearchThreadPool()->push([&]() {
+                        ThreadPool::ScopedSearchOmpSetter setter(1);
+                        sort_next();
+                    }));
+                    WaitAllSuccess(futs);
 #else
-                sort_next();
+                    sort_next();
 #endif
-            } else {
-                sort_next();
+                } else {
+                    sort_next();
+                }
             }
             auto& result = results_[next_++];
             return std::make_pair(result.id, result.val);
@@ -894,10 +901,17 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
         return std::max((size_t)50000, rows / 10);
     }
 
+    // Whether the cursor has caught up with the sorted prefix and sort_next()
+    // would do real work.
+    inline bool
+    needs_sort() const {
+        return next_ >= sorted_;
+    }
+
     // sort the next sort_size_ elements
     inline void
     sort_next() {
-        if (next_ < sorted_) {
+        if (!needs_sort()) {
             return;
         }
         size_t current_end = std::min(results_.size(), sorted_ + sort_size_);
