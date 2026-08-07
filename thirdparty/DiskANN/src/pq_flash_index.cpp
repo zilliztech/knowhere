@@ -1124,6 +1124,14 @@ namespace diskann {
             distances[i] = -1;
           }
         }
+        // Everything is filtered out, but the scratch slot and the reader
+        // context were already acquired above and must be returned, exactly
+        // like on every other exit from this function. Leaking them here
+        // permanently shrinks the thread_data pool: after max_nthreads such
+        // queries every subsequent search blocks in wait_for_push_notify().
+        this->thread_data.push(data);
+        this->thread_data.push_notify_all();
+        this->reader->put_ctx(ctx);
         return;
       }
 
