@@ -9,6 +9,8 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <atomic>
+#include <future>
 #include <unordered_set>
 
 #include "catch2/catch_approx.hpp"
@@ -136,6 +138,49 @@ class BaseFlatIndexNode : public IndexNode {
     }
 };
 
+template <typename DataType>
+class CachedSearchConfigIndexNode : public BaseFlatIndexNode<DataType> {
+ public:
+    CachedSearchConfigIndexNode(const int32_t& version, const Object& object)
+        : BaseFlatIndexNode<DataType>(version, object) {
+    }
+
+    bool
+    SupportsSearchConfigCache() const override {
+        return true;
+    }
+
+    expected<DataSetPtr>
+    SearchWithPreparedConfig(const DataSetPtr, std::shared_ptr<const Config> cfg, const BitsetView&,
+                             milvus::OpContext*) const override {
+        const Config* expected = nullptr;
+        first_config_.compare_exchange_strong(expected, cfg.get());
+        reused_same_config_.store(reused_same_config_.load() && first_config_.load() == cfg.get());
+        return std::make_shared<DataSet>();
+    }
+
+    std::unique_ptr<BaseConfig>
+    CreateConfig() const override {
+        create_config_calls_.fetch_add(1);
+        return std::make_unique<BaseConfig>();
+    }
+
+    int
+    CreateConfigCalls() const {
+        return create_config_calls_.load();
+    }
+
+    bool
+    ReusedSameConfig() const {
+        return reused_same_config_.load();
+    }
+
+ private:
+    mutable std::atomic<int> create_config_calls_{0};
+    mutable std::atomic<const Config*> first_config_{nullptr};
+    mutable std::atomic<bool> reused_same_config_{true};
+};
+
 TEST_CASE("Test index node") {
     auto version = GenTestVersionList();
     DataSetPtr ds = std::make_shared<DataSet>();
@@ -207,4 +252,45 @@ TEST_CASE("Test index node") {
         REQUIRE(index.Type() == INDEX_BASE_FLAT);
     }
 #pragma GCC diagnostic pop
+}
+
+TEST_CASE("Search reuses an immutable prepared config", "[search_config_cache]") {
+    KNOWHERE_SIMPLE_REGISTER_GLOBAL(SEARCH_CONFIG_CACHE, CachedSearchConfigIndexNode, fp32, knowhere::feature::FLOAT32);
+    const auto version = GenTestVersionList();
+    auto dataset = std::make_shared<DataSet>();
+    const Json base_search_config = {{meta::METRIC_TYPE, metric::L2}, {meta::TOPK, 10}};
+
+    SECTION("same config reuses the prepared object") {
+        auto index = IndexFactory::Instance().Create<fp32>("SEARCH_CONFIG_CACHE", version).value();
+        auto* node = dynamic_cast<CachedSearchConfigIndexNode<fp32>*>(index.Node());
+        REQUIRE(node != nullptr);
+
+        REQUIRE(index.Search(dataset, base_search_config, nullptr).has_value());
+        REQUIRE(index.Search(dataset, base_search_config, nullptr).has_value());
+        REQUIRE(node->CreateConfigCalls() == 1);
+        REQUIRE(node->ReusedSameConfig());
+
+        auto changed_search_config = base_search_config;
+        changed_search_config[meta::TOPK] = 20;
+        REQUIRE(index.Search(dataset, changed_search_config, nullptr).has_value());
+        REQUIRE(node->CreateConfigCalls() == 2);
+    }
+
+    SECTION("concurrent searches prepare the config once") {
+        auto index = IndexFactory::Instance().Create<fp32>("SEARCH_CONFIG_CACHE", version).value();
+        auto* node = dynamic_cast<CachedSearchConfigIndexNode<fp32>*>(index.Node());
+        REQUIRE(node != nullptr);
+
+        std::vector<std::future<expected<DataSetPtr>>> searches;
+        for (int i = 0; i < 32; ++i) {
+            searches.emplace_back(
+                std::async(std::launch::async, [&] { return index.Search(dataset, base_search_config, nullptr); }));
+        }
+        for (auto& search : searches) {
+            REQUIRE(search.get().has_value());
+        }
+
+        REQUIRE(node->CreateConfigCalls() == 1);
+        REQUIRE(node->ReusedSameConfig());
+    }
 }

@@ -32,6 +32,40 @@
 
 namespace knowhere {
 
+expected<std::shared_ptr<const Config>>
+IndexNode::GetOrCreateSearchConfig(const Json& json) const {
+    auto cached = std::atomic_load_explicit(&search_config_cache_, std::memory_order_acquire);
+    if (cached != nullptr && cached->json == json) {
+        return cached->config;
+    }
+
+    std::scoped_lock lock(search_config_cache_mutex_);
+    cached = std::atomic_load_explicit(&search_config_cache_, std::memory_order_relaxed);
+    if (cached != nullptr && cached->json == json) {
+        return cached->config;
+    }
+
+    auto cfg = CreateConfig();
+    Json normalized_json(json);
+    std::string msg;
+    auto status = Config::FormatAndCheck(*cfg, normalized_json, &msg);
+    LOG_KNOWHERE_DEBUG_ << "Search config dump: " << normalized_json.dump();
+    if (status != Status::success) {
+        return expected<std::shared_ptr<const Config>>::Err(status, msg);
+    }
+    cfg->CaptureRawJson(normalized_json);
+    status = Config::Load(*cfg, normalized_json, knowhere::SEARCH, &msg);
+    if (status != Status::success) {
+        return expected<std::shared_ptr<const Config>>::Err(status, msg);
+    }
+
+    std::shared_ptr<const Config> prepared_config(std::move(cfg));
+    auto entry =
+        std::make_shared<const SearchConfigCacheEntry>(SearchConfigCacheEntry{.json = json, .config = prepared_config});
+    std::atomic_store_explicit(&search_config_cache_, std::move(entry), std::memory_order_release);
+    return prepared_config;
+}
+
 // NOLINTBEGIN(google-default-arguments)
 expected<DataSetPtr>
 IndexNode::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,

@@ -12,7 +12,11 @@
 #ifndef INDEX_NODE_H
 #define INDEX_NODE_H
 
+#define KNOWHERE_SEARCH_CONFIG_CACHE_VERSION 1
+
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <queue>
 #include <utility>
@@ -618,6 +622,22 @@ class IndexNode : public Object {
     SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                   milvus::OpContext* op_context = nullptr) const;
 
+ public:
+    virtual bool
+    SupportsSearchConfigCache() const {
+        return false;
+    }
+
+    virtual expected<DataSetPtr>
+    SearchWithPreparedConfig(const DataSetPtr, std::shared_ptr<const Config>, const BitsetView&,
+                             milvus::OpContext* = nullptr) const {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "prepared search config is not supported");
+    }
+
+    expected<std::shared_ptr<const Config>>
+    GetOrCreateSearchConfig(const Json& json) const;
+
+ protected:
     static EmbListMetaHeader
     ParseEmbListMetaHeader(const uint8_t* data, int64_t size);
 
@@ -637,6 +657,17 @@ class IndexNode : public Object {
                        std::shared_ptr<ThreadPool> pool, milvus::OpContext* op_context = nullptr) const;
 
     Version version_;
+
+ private:
+    struct SearchConfigCacheEntry {
+        Json json;
+        std::shared_ptr<const Config> config;
+    };
+
+    mutable std::shared_ptr<const SearchConfigCacheEntry> search_config_cache_;
+    mutable std::mutex search_config_cache_mutex_;
+
+ protected:
     std::shared_ptr<EmbListOffset> emb_list_offset_;  // emb_list group offset structure (shared with strategy)
     std::string el_metric_type_;
     EmbListStrategyPtr emb_list_strategy_;  // emb_list encoding strategy (tokenann/muvera)
