@@ -4,7 +4,7 @@ set(FAISS_TEST_SRCS
   ../../thirdparty/faiss/tests/test_partitioning.cpp
   ../../thirdparty/faiss/tests/test_simdlib.cpp
   ../../thirdparty/faiss/tests/test_approx_topk.cpp
-  ../../thirdparty/faiss/tests/test_code_distance.cpp
+  ../../thirdparty/faiss/tests/test_pq_code_distance.cpp
   ../../thirdparty/faiss/tests/test_cppcontrib_uintreader.cpp
   ../../thirdparty/faiss/tests/test_distances_simd.cpp
   ../../thirdparty/faiss/tests/test_hnsw.cpp
@@ -22,7 +22,7 @@ set(FAISS_TEST_SRCS
   ../../thirdparty/faiss/tests/test_params_override.cpp
   ../../thirdparty/faiss/tests/test_sliding_ivf.cpp
   ../../thirdparty/faiss/tests/test_transfer_invlists.cpp
-  ../../thirdparty/faiss/tests/test_distances_if.cpp
+  ../../thirdparty/faiss/tests/test_distances_dispatch.cpp
   ../../thirdparty/faiss/tests/test_fastscan_perf.cpp
   ../../thirdparty/faiss/tests/test_ivf_index.cpp
   ../../thirdparty/faiss/tests/test_disable_pq_sdc_tables.cpp
@@ -31,6 +31,7 @@ set(FAISS_TEST_SRCS
   )
 
 find_package(GTest REQUIRED)
+find_package(aio REQUIRED)
 
 if(__X86_64)
   add_executable(faiss_tests ${FAISS_TEST_SRCS})
@@ -50,7 +51,8 @@ if(__X86_64)
             -Wno-unused-function
             -Wno-strict-aliasing>)
   target_link_libraries(
-    faiss_tests PUBLIC faiss knowhere GTest::gtest GTest::gtest_main)
+    faiss_tests PUBLIC faiss GTest::gtest GTest::gtest_main ${AIO_LIBRARIES})
+  target_link_options(faiss_tests PRIVATE "LINKER:--no-as-needed")
   target_compile_definitions(faiss_tests PRIVATE FINTEGER=int)
 endif()
 
@@ -67,6 +69,7 @@ if(__AARCH64)
             -Wno-strict-aliasing>)
 
   add_dependencies(faiss_tests faiss)
-  target_link_libraries(faiss_tests PUBLIC faiss knowhere GTest::gtest GTest::gtest_main)
+  target_link_libraries(faiss_tests PUBLIC faiss GTest::gtest GTest::gtest_main ${AIO_LIBRARIES})
+  target_link_options(faiss_tests PRIVATE "LINKER:--no-as-needed")
   target_compile_definitions(faiss_tests PRIVATE FINTEGER=int)
 endif()
