@@ -40,8 +40,8 @@ namespace knowhere::sparse::inverted {
  * count and are never padded to 256 values.
  *
  * Complete 128-value chunks at widths 1..31 use vertical SIMD kernels derived from fast-pack/simdcomp; width 32 is a
- * direct copy. Document-ID decoding uses the integrated d1 unpacker to reconstruct absolute IDs; TF decoding remains
- * ordinary bit unpacking. A logical block still carries one outer encoding tag.
+ * direct copy. Decoding returns the stored integers verbatim; document-ID gaps are integrated lazily by the posting
+ * cursor. A logical block still carries one outer encoding tag.
  *
  * Block layout:
  *   byte 0      : encoding tag
@@ -77,19 +77,6 @@ class AdaptiveBlockCodec final : public BlockCodec {
         assert(out != nullptr);
         assert(n > 0 && n <= kBlockSize);
         return decode_block(in, out, n);
-    }
-
-    uint8_t const*
-    decode_doc_ids(uint8_t const* in, uint32_t* out, size_t n, uint32_t previous_value) const override {
-        assert(in != nullptr);
-        assert(out != nullptr);
-        assert(n > 0 && n <= kBlockSize);
-
-        const uint8_t type = *in;
-        if (is_bitpacked(type)) {
-            return simd_bitpacking::unpack_doc_ids(in + 1, out, n, type, previous_value);
-        }
-        return BlockCodec::decode_doc_ids(in, out, n, previous_value);
     }
 
     [[nodiscard]] auto
