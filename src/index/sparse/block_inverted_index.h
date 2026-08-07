@@ -127,7 +127,7 @@ class BlockInvertedIndexCursor {
             }
             decode_vecids_block(cur_block_ + 1);
         } else {
-            cur_vec_id_ = ids_buf_[pos_in_block_];
+            cur_vec_id_ += ids_buf_[pos_in_block_] + 1;
         }
         if (cur_vec_id_ >= valid_upper_bound_) {
             set_invalid();
@@ -259,7 +259,7 @@ class BlockInvertedIndexCursor {
     void
     advance_to(uint32_t lower_bound) {
         while (cur_vec_id_ < lower_bound) {
-            cur_vec_id_ = ids_buf_[++pos_in_block_];
+            cur_vec_id_ += ids_buf_[++pos_in_block_] + 1;
         }
     }
 
@@ -293,9 +293,12 @@ class BlockInvertedIndexCursor {
             ids_buf_[0] = cur_block_maxid_;
             vals_block_data_ = block_data;
         } else {
-            const uint32_t previous_vec_id = blkid == 0 ? UINT32_MAX : block_maxid(blkid - 1);
-            vals_block_data_ =
-                block_codec_->decode_doc_ids(block_data, ids_buf_.data(), cur_block_size_, previous_vec_id);
+            vals_block_data_ = block_codec_->decode(block_data, ids_buf_.data(), cur_block_size_);
+
+            // Materialize only the first document ID. The remaining decoded values stay as gaps and are integrated
+            // lazily as the cursor advances, avoiding a full-block prefix sum.
+            const uint32_t block_base = blkid == 0 ? 0 : block_maxid(blkid - 1) + 1;
+            ids_buf_[0] += block_base;
         }
 #if defined(__GNUC__) || defined(__clang__)
         __builtin_prefetch(vals_block_data_, 0, 3);
@@ -822,8 +825,6 @@ BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<ui
             assert(cur_block_size == 1 && b == 0);
             varint_encode(singleton_stored_value, out_buf);
             ++vals_it;
-            out_buf.insert(out_buf.end(), reinterpret_cast<uint8_t*>(ip_vals_buf.data()),
-                           reinterpret_cast<uint8_t*>(ip_vals_buf.data() + cur_block_size));
         } else {
             for (size_t i = 0; i < cur_block_size; ++i) {
                 bm25_vals_buf[i] = get_quant_val<DType, QType>(*vals_it++ - 1);

@@ -6,8 +6,6 @@
 #include <string_view>
 #include <vector>
 
-#include "index/sparse/codec/simd_prefix_sum.h"
-
 namespace knowhere::sparse::inverted {
 
 /**
@@ -39,18 +37,6 @@ class BlockCodec {
      */
     virtual uint8_t const*
     decode(uint8_t const* in, uint32_t* out, size_t n) const = 0;
-
-    /**
-     * Decodes document-ID gaps and reconstructs absolute IDs with the shared SIMD prefix sum. `previous_value` is
-     * the document ID immediately before this block; UINT32_MAX represents the implicit value before document zero.
-     * Codecs may override this to fuse unpacking and prefix sums.
-     */
-    virtual uint8_t const*
-    decode_doc_ids(uint8_t const* in, uint32_t* out, size_t n, uint32_t previous_value) const {
-        uint8_t const* next = decode(in, out, n);
-        simd_prefix_sum::integrate_doc_id_gaps(out, n, previous_value);
-        return next;
-    }
 
     /**
      * Returns the maximum logical block length. Complete blocks contain `block_size()` values; the final block may
