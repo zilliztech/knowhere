@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -1007,7 +1008,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
                             }
 
                             // get a golden result
@@ -1236,7 +1237,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
                             }
 
                             // get a golden result
@@ -1457,7 +1458,7 @@ TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on flo
                             // provide a default one if nbits_set == 0
                             knowhere::BitsetView bitset_view = nullptr;
                             if (bitset_rate != 0.0f || mv_only_enable) {
-                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el, num_el * bitset_rate);
+                                bitset_view = knowhere::BitsetView(bitset_data.data(), num_el);
                             }
 
                             // get a golden result
@@ -1991,8 +1992,13 @@ EmbListAddTest(const knowhere::DataSetPtr train_ds_in, const knowhere::DataSetPt
     auto num_el = (rows + each_el_len - 1) / each_el_len;
 
     auto index = knowhere::IndexFactory::Instance().Create<DataType>(conf[knowhere::meta::INDEX_TYPE], version).value();
+    index.SetIdMapType(knowhere::IdMap::Type::GROWING);
     for (size_t i = 0; i < train_ds_list.size(); i++) {
         auto& base = train_ds_list[i];
+        auto part_num_el = static_cast<size_t>(base->template Get<int64_t>(knowhere::meta::NQ));
+        std::vector<int32_t> part_ids(part_num_el);
+        std::iota(part_ids.begin(), part_ids.end(), 0);
+        base->SetIdMapData(knowhere::IdMapData::FromIds(part_ids.data(), part_ids.size(), part_ids.size()));
         if (i == 0) {
             REQUIRE(index.Build(base, conf, false) == knowhere::Status::success);
         } else {

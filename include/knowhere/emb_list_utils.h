@@ -40,6 +40,17 @@ class EmbListOffset {
         offset.push_back(lims[idx]);
     }
 
+    EmbListOffset(const size_t* lims, size_t rows, size_t num_el) {
+        assert(lims != nullptr);
+        assert(num_el > 0);
+        assert(lims[0] == 0);
+        offset.assign(lims, lims + num_el + 1);
+        assert(offset.back() == rows);
+        for (size_t i = 1; i < offset.size(); ++i) {
+            assert(offset[i] >= offset[i - 1]);
+        }
+    }
+
     EmbListOffset(std::vector<size_t>& offset_) {
         assert(offset_.size() > 0);
         assert(offset_[0] == 0);

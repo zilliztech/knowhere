@@ -12,9 +12,20 @@
 #ifndef INDEX_NODE_H
 #define INDEX_NODE_H
 
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <exception>
 #include <functional>
+#include <iterator>
+#include <limits>
+#include <memory>
 #include <mutex>
+#include <numeric>
+#include <optional>
 #include <queue>
+#include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -24,6 +35,7 @@
 #include "knowhere/dataset.h"
 #include "knowhere/emb_list_utils.h"
 #include "knowhere/expected.h"
+#include "knowhere/id_map.h"
 #include "knowhere/index/emb_list_strategy.h"
 #include "knowhere/object.h"
 #include "knowhere/operands.h"
@@ -187,6 +199,16 @@ class IndexNode : public Object {
     };
     using IteratorPtr = std::shared_ptr<iterator>;
 
+    struct PreparedBitset {
+        // BitsetView after id-domain projection.
+        BitsetView bitset;
+
+        PreparedBitset() = default;
+
+        explicit PreparedBitset(BitsetView bitset) : bitset(bitset) {
+        }
+    };
+
     virtual expected<std::vector<IteratorPtr>>
     AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                 bool use_knowhere_search_pool = true, milvus::OpContext* op_context = nullptr) const {
@@ -237,6 +259,40 @@ class IndexNode : public Object {
     HasRawData(const std::string& metric_type) const = 0;
 
     virtual bool
+    NeedBitsetExactCount() const {
+        // Backends with filter-ratio shortcuts need exact projected counts.
+        return false;
+    }
+
+    // Projects a public-id bitset to the backend id domain.
+    virtual expected<PreparedBitset>
+    PrepareBitset(BitsetView bitset) const {
+        PreparedBitset prepared(bitset);
+        const auto& id_map = GetIdMap();
+        const auto count = id_map.OutCount();
+        if (count != 0 && bitset.num_bits() > static_cast<size_t>(count)) {
+            const auto msg = std::string("bitset size should be <= external count, but we get bitset size: ") +
+                             std::to_string(bitset.num_bits()) + ", external count: " + std::to_string(count);
+            LOG_KNOWHERE_ERROR_ << msg;
+            return expected<PreparedBitset>::Err(Status::invalid_args, msg);
+        }
+        if (bitset.num_bits() == 0) {
+            return prepared;
+        }
+        if (bitset.data() == nullptr) {
+            const auto msg = std::string("bitset data is null while bitset size is non-zero");
+            LOG_KNOWHERE_ERROR_ << msg;
+            return expected<PreparedBitset>::Err(Status::invalid_args, msg);
+        }
+
+        PrepareBitsetMap(prepared, id_map);
+        if (NeedBitsetExactCount()) {
+            CalcBitsetCount(prepared.bitset, id_map, 0, std::numeric_limits<size_t>::max());
+        }
+        return prepared;
+    }
+
+    virtual bool
     IsAdditionalScalarSupported(bool is_mv_only) const {
         return false;
     }
@@ -247,9 +303,7 @@ class IndexNode : public Object {
     }
 
     /**
-     * @unused Milvus is not using this method, so it cannot guarantee all indexes implement this method.
-     *
-     * This is for Feder, and we can ignore it for now.
+     * @unused Not every index implementation supports this optional metadata path.
      */
     virtual expected<DataSetPtr>
     GetIndexMeta(std::unique_ptr<Config> cfg) const = 0;
@@ -304,8 +358,6 @@ class IndexNode : public Object {
     Dim() const = 0;
 
     /**
-     * @unused Milvus is not using this method, so it cannot guarantee all indexes implement this method.
-     *
      * @brief Gets the memory usage of the index in bytes.
      *
      * @return The size of the index as an int64_t.
@@ -322,6 +374,402 @@ class IndexNode : public Object {
     virtual int64_t
     Count() const = 0;
 
+    virtual IdMap&
+    GetIdMap() {
+        return id_map_;
+    }
+
+    virtual const IdMap&
+    GetIdMap() const {
+        return id_map_;
+    }
+
+    virtual void
+    SetIdMapType(IdMap::Type type) {
+        // Selects sealed/growing id-map storage for this node and wrappers.
+        GetIdMap().SetType(type);
+    }
+
+    virtual expected<int64_t>
+    CompactOutToIn(int64_t out_id, size_t compact_count) const {
+        return GetIdMap().CompactOutToIn(out_id, compact_count);
+    }
+
+    virtual expected<const int64_t*>
+    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids,
+                   size_t compact_count) const {
+        return GetIdMap().CompactOutToIn(out_ids, count, compact_ids, compact_count);
+    }
+
+    /**
+     * Finalizes derived id maps after backend layout is available.
+     *
+     * Bitmap input carries public validity only. This step builds the
+     * internal-to-public and public-to-internal maps used by result mapping and
+     * selected-id APIs. EmbList strategies may also derive a base-vector ->
+     * public-list map for vector-level filtering.
+     */
+    virtual Status
+    FinalizeIdMap() {
+        if (id_map_.InToOutIds().empty()) {
+            id_map_.FinalizeVectorIds();
+        }
+        if (emb_list_offset_ != nullptr && emb_list_strategy_ != nullptr && emb_list_strategy_->NeedsBaseIndexIDMap()) {
+            id_map_.FinalizeEmbListIds(emb_list_offset_->offset.data(), emb_list_offset_->num_el());
+        }
+        return Status::success;
+    }
+
+ protected:
+    // Retrieve vectors by ids already in this node's base-vector storage domain.
+    virtual expected<DataSetPtr>
+    GetVectorByStorageIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByStorageIds not implemented");
+    }
+
+    Status
+    AppendEmbListOffsetAndIdMap(const size_t* lims, size_t append_row_count, size_t append_el_count_hint = 0) {
+        // lims is absolute in the whole index; AppendEmbListIds consumes the
+        // appended local offset window.
+        const auto old_el_count = emb_list_offset_->num_el();
+        const auto old_vector_count = emb_list_offset_->offset.back();
+        const auto new_vector_count = old_vector_count + append_row_count;
+        if (lims[0] != old_vector_count) {
+            LOG_KNOWHERE_WARNING_ << "emb list offset is not continuous";
+            return Status::emb_list_inner_error;
+        }
+
+        size_t append_el_count = 1;
+        if (append_el_count_hint != 0) {
+            append_el_count = append_el_count_hint;
+            for (size_t i = 1; i <= append_el_count; ++i) {
+                if (lims[i] < lims[i - 1]) {
+                    LOG_KNOWHERE_WARNING_ << "emb list offset is not increasing";
+                    return Status::emb_list_inner_error;
+                }
+            }
+        } else {
+            while (lims[append_el_count] < new_vector_count) {
+                if (lims[append_el_count] < lims[append_el_count - 1]) {
+                    LOG_KNOWHERE_WARNING_ << "emb list offset is not increasing";
+                    return Status::emb_list_inner_error;
+                }
+                ++append_el_count;
+            }
+        }
+        if (lims[append_el_count] != new_vector_count) {
+            LOG_KNOWHERE_WARNING_ << "emb list offset should end with the total_cnt of the whole index";
+            return Status::emb_list_inner_error;
+        }
+
+        std::vector<size_t> append_lims;
+        append_lims.reserve(append_el_count + 1);
+        append_lims.push_back(0);
+        for (size_t i = 1; i <= append_el_count; ++i) {
+            append_lims.push_back(lims[i] - old_vector_count);
+        }
+        emb_list_offset_->offset.reserve(emb_list_offset_->offset.size() + append_el_count);
+
+        if (emb_list_strategy_ != nullptr && emb_list_strategy_->NeedsBaseIndexIDMap()) {
+            const auto& ebl_ids = id_map_.InToOutIds(IdMap::Domain::EMB_LIST);
+            if (ebl_ids.size() != old_vector_count && ebl_ids.size() != new_vector_count) {
+                LOG_KNOWHERE_WARNING_ << "invalid emb_list external id map size: " << ebl_ids.size()
+                                      << ", expected: " << old_vector_count << " or " << new_vector_count;
+                return Status::invalid_args;
+            }
+            try {
+                if (ebl_ids.size() == old_vector_count) {
+                    // Extend the vector -> public-list map for this append batch.
+                    id_map_.AppendEmbListIds(static_cast<int64_t>(old_el_count), append_lims.data(),
+                                             static_cast<int64_t>(append_el_count));
+                }
+            } catch (const std::exception& e) {
+                LOG_KNOWHERE_WARNING_ << "invalid emb_list external id map: " << e.what();
+                return Status::invalid_args;
+            }
+        }
+        for (size_t i = 1; i <= append_el_count; ++i) {
+            emb_list_offset_->offset.push_back(lims[i]);
+        }
+        return Status::success;
+    }
+
+    void
+    PrepareBitsetMap(PreparedBitset& prepared, const IdMap& id_map) const {
+        // Backend selectors test internal ids; bitsets use public ids.
+        const auto& ebl_out_ids = id_map.InToOutIds(IdMap::Domain::EMB_LIST);
+        const auto& out_ids = ebl_out_ids.empty() ? id_map.InToOutIds() : ebl_out_ids;
+        if (!out_ids.empty()) {
+            prepared.bitset.set_id_offset(0);
+            prepared.bitset.set_out_ids(out_ids, out_ids.size());
+        }
+    }
+
+    static size_t
+    CountBitmapBits(const uint8_t* data, size_t bit_offset, size_t bit_count) {
+        // Counts a logical bit range in a packed public-id bitmap.
+        if (data == nullptr || bit_count == 0) {
+            return 0;
+        }
+
+        const auto end_bit = bit_offset + bit_count;
+        auto bit_pos = bit_offset;
+        size_t count = 0;
+
+        if ((bit_pos & 7) != 0) {
+            const auto byte_idx = bit_pos >> 3;
+            const auto bits_in_byte = std::min<size_t>(8 - (bit_pos & 7), end_bit - bit_pos);
+            const auto mask = static_cast<uint8_t>(((1U << bits_in_byte) - 1) << (bit_pos & 7));
+            count += __builtin_popcount(static_cast<unsigned>(data[byte_idx] & mask));
+            bit_pos += bits_in_byte;
+        }
+
+        const auto full_bytes = (end_bit - bit_pos) >> 3;
+        const auto byte_begin = bit_pos >> 3;
+        const auto len_u64 = full_bytes >> 3;
+        for (size_t i = 0; i < len_u64; ++i) {
+            uint64_t bits;
+            std::memcpy(&bits, data + byte_begin + i * sizeof(uint64_t), sizeof(bits));
+            count += __builtin_popcountll(bits);
+        }
+
+        auto byte_pos = byte_begin + len_u64 * sizeof(uint64_t);
+        const auto byte_end = byte_begin + full_bytes;
+        while (byte_pos < byte_end) {
+            count += __builtin_popcount(static_cast<unsigned>(data[byte_pos]));
+            ++byte_pos;
+        }
+        bit_pos += full_bytes << 3;
+
+        if (bit_pos < end_bit) {
+            const auto byte_idx = bit_pos >> 3;
+            const auto tail_bits = end_bit - bit_pos;
+            const auto mask = static_cast<uint8_t>((1U << tail_bits) - 1);
+            count += __builtin_popcount(static_cast<unsigned>(data[byte_idx] & mask));
+        }
+
+        return count;
+    }
+
+    static size_t
+    CountBitmapBits(const BitmapArray& data, size_t bit_offset, size_t bit_count) {
+        // BitmapArray may be backed by append records, where data() is not a
+        // contiguous pointer.
+        if (data.empty() || bit_count == 0 || bit_offset >= data.size()) {
+            return 0;
+        }
+
+        const auto end_bit = bit_offset + std::min(bit_count, data.size() - bit_offset);
+        auto bit_pos = bit_offset;
+        size_t count = 0;
+
+        if ((bit_pos & 7) != 0) {
+            const auto byte_idx = bit_pos >> 3;
+            const auto bits_in_byte = std::min<size_t>(8 - (bit_pos & 7), end_bit - bit_pos);
+            const auto mask = static_cast<uint8_t>(((1U << bits_in_byte) - 1) << (bit_pos & 7));
+            count += __builtin_popcount(static_cast<unsigned>(data[byte_idx] & mask));
+            bit_pos += bits_in_byte;
+        }
+
+        const auto full_bytes = (end_bit - bit_pos) >> 3;
+        const auto byte_begin = bit_pos >> 3;
+        const auto len_u64 = full_bytes >> 3;
+        for (size_t i = 0; i < len_u64; ++i) {
+            uint64_t bits = 0;
+            const auto byte_offset = byte_begin + i * sizeof(uint64_t);
+            for (size_t byte = 0; byte < sizeof(uint64_t); ++byte) {
+                bits |= static_cast<uint64_t>(data[byte_offset + byte]) << (byte * 8);
+            }
+            count += __builtin_popcountll(bits);
+        }
+
+        auto byte_pos = byte_begin + len_u64 * sizeof(uint64_t);
+        const auto byte_end = byte_begin + full_bytes;
+        while (byte_pos < byte_end) {
+            count += __builtin_popcount(static_cast<unsigned>(data[byte_pos]));
+            ++byte_pos;
+        }
+        bit_pos += full_bytes << 3;
+
+        if (bit_pos < end_bit) {
+            const auto byte_idx = bit_pos >> 3;
+            const auto tail_bits = end_bit - bit_pos;
+            const auto mask = static_cast<uint8_t>((1U << tail_bits) - 1);
+            count += __builtin_popcount(static_cast<unsigned>(data[byte_idx] & mask));
+        }
+
+        return count;
+    }
+
+    void
+    CalcBitsetCount(BitsetView& bitset, const IdMap& id_map, size_t offset = 0,
+                    size_t bitset_count = std::numeric_limits<size_t>::max()) const {
+        // Exact filter counts are reported in the backend vector domain.
+        if (bitset.num_bits() == 0 || bitset.data() == nullptr) {
+            return;
+        }
+
+        auto count_to_check = [](size_t total, size_t offset, size_t bitset_count) {
+            if (offset >= total) {
+                return static_cast<size_t>(0);
+            }
+            const auto remain = total - offset;
+            return bitset_count == std::numeric_limits<size_t>::max() ? remain : std::min(bitset_count, remain);
+        };
+
+        const auto& valid_bitmap = id_map.ValidBitmap();
+        if (emb_list_offset_ != nullptr) {
+            auto bit_is_set = [](const uint8_t* data, size_t bit) { return (data[bit >> 3] & (1U << (bit & 7))) != 0; };
+
+            auto is_valid_out_id = [&](int64_t out_id) { return id_map.IsValidOutId(out_id); };
+
+            auto is_filtered_out_id = [&](int64_t out_id) {
+                if (out_id < 0) {
+                    return true;
+                }
+                const auto bit = static_cast<size_t>(out_id);
+                return bit >= bitset.num_bits() || bit_is_set(bitset.data(), bit);
+            };
+
+            const auto& in_to_out_ids = id_map.InToOutIds();
+            auto get_out_el_id = [&](size_t in_el_id) {
+                if (in_to_out_ids.empty()) {
+                    return static_cast<int64_t>(in_el_id);
+                }
+                return static_cast<int64_t>(in_to_out_ids[in_el_id]);
+            };
+
+            const auto& in_to_out_ebl_ids = id_map.InToOutIds(IdMap::Domain::EMB_LIST);
+            const auto in_el_count = emb_list_offset_->num_el();
+            if (!in_to_out_ebl_ids.empty()) {
+                // Base-vector EmbList backends search vector ids while filters
+                // are list-id addressed.
+                const auto total_vector_count = emb_list_offset_->offset.back();
+                const auto scoped_count = count_to_check(total_vector_count, offset, bitset_count);
+                const auto scope_end = offset + scoped_count;
+                size_t vector_count = 0;
+                size_t filtered_count = 0;
+                auto iter = std::upper_bound(emb_list_offset_->offset.begin(), emb_list_offset_->offset.end(), offset);
+                size_t in_el_id = iter == emb_list_offset_->offset.begin()
+                                      ? 0
+                                      : static_cast<size_t>(std::distance(emb_list_offset_->offset.begin(), iter) - 1);
+                for (; in_el_id < in_el_count && emb_list_offset_->offset[in_el_id] < scope_end; ++in_el_id) {
+                    const auto vector_begin = std::max(emb_list_offset_->offset[in_el_id], offset);
+                    const auto vector_end = std::min(emb_list_offset_->offset[in_el_id + 1], scope_end);
+                    if (vector_begin >= vector_end) {
+                        continue;
+                    }
+                    const auto out_el_id = static_cast<int64_t>(in_to_out_ebl_ids[vector_begin]);
+                    if (!is_valid_out_id(out_el_id)) {
+                        continue;
+                    }
+                    vector_count += vector_end - vector_begin;
+                    if (is_filtered_out_id(out_el_id)) {
+                        filtered_count += vector_end - vector_begin;
+                    }
+                }
+                bitset.set_vector_count(vector_count);
+                bitset.set_filter_count(filtered_count);
+                return;
+            }
+
+            // Compact-list strategies count by list ranges.
+            const auto total_vector_count = emb_list_offset_->offset.back();
+            const auto scoped_count = count_to_check(total_vector_count, offset, bitset_count);
+            const auto scope_end = offset + scoped_count;
+            size_t vector_count = 0;
+            size_t filtered_count = 0;
+            auto iter = std::upper_bound(emb_list_offset_->offset.begin(), emb_list_offset_->offset.end(), offset);
+            size_t in_el_id = iter == emb_list_offset_->offset.begin()
+                                  ? 0
+                                  : static_cast<size_t>(std::distance(emb_list_offset_->offset.begin(), iter) - 1);
+            for (; in_el_id < in_el_count && emb_list_offset_->offset[in_el_id] < scope_end; ++in_el_id) {
+                const auto vector_begin = std::max(emb_list_offset_->offset[in_el_id], offset);
+                const auto vector_end = std::min(emb_list_offset_->offset[in_el_id + 1], scope_end);
+                if (vector_begin >= vector_end) {
+                    continue;
+                }
+                const auto out_el_id = get_out_el_id(in_el_id);
+                if (!is_valid_out_id(out_el_id)) {
+                    continue;
+                }
+                vector_count += vector_end - vector_begin;
+                if (is_filtered_out_id(out_el_id)) {
+                    filtered_count += vector_end - vector_begin;
+                }
+            }
+            bitset.set_vector_count(vector_count);
+            bitset.set_filter_count(filtered_count);
+            return;
+        }
+
+        const auto count = Count();
+        const auto total = valid_bitmap.empty() && count > 0 ? static_cast<size_t>(count) : bitset.num_bits();
+        const auto scoped_count = count_to_check(total, offset, bitset_count);
+        // Vector indexes intersect the public filter with public validity.
+        if (valid_bitmap.empty()) {
+            bitset.count_filtered_bits(offset, scoped_count);
+        } else {
+            bitset.count_filtered_bits(offset, scoped_count, valid_bitmap);
+        }
+        if (offset != 0 || bitset_count != std::numeric_limits<size_t>::max()) {
+            return;
+        }
+        if (!valid_bitmap.empty()) {
+            if (valid_bitmap.size() <= bitset.num_bits()) {
+                return;
+            }
+            auto filter_count = bitset.count();
+            filter_count += CountBitmapBits(valid_bitmap, bitset.num_bits(), valid_bitmap.size() - bitset.num_bits());
+            bitset.set_vector_count(count > 0 ? static_cast<size_t>(count) : bitset.size());
+            bitset.set_filter_count(std::min(filter_count, bitset.size()));
+            return;
+        }
+        if (count > 0 && static_cast<size_t>(count) > bitset.num_bits()) {
+            auto filter_count = bitset.count();
+            bitset.set_vector_count(static_cast<size_t>(count));
+            bitset.set_filter_count(
+                std::min(filter_count + static_cast<size_t>(count) - bitset.num_bits(), bitset.size()));
+        }
+    }
+
+    // Base ANN result id map. Base-vector EmbList stages keep compact ids until
+    // final list mapping.
+    const IdMap*
+    SearchResultIdMap(const IdMap& id_map) const {
+        if (emb_list_offset_ != nullptr && emb_list_strategy_ != nullptr && emb_list_strategy_->NeedsBaseIndexIDMap()) {
+            return nullptr;
+        }
+        return &id_map;
+    }
+
+    void
+    MapResultIdsToOutIds(const DataSetPtr& result, const IdMap* id_map) const {
+        // Backend storage ids -> public result ids.
+        if (id_map == nullptr || result == nullptr || result->GetIds() == nullptr) {
+            return;
+        }
+        auto* ids = const_cast<int64_t*>(result->GetIds());
+        const auto* lims = result->GetLims();
+        const auto rows = result->GetRows();
+        const auto count = lims != nullptr ? lims[rows] : static_cast<size_t>(rows * result->GetDim());
+        id_map->MapInToOut(ids, count);
+    }
+
+    void
+    MapSearchResultIdsToOutIds(const DataSetPtr& result) const {
+        const auto& id_map = GetIdMap();
+        MapResultIdsToOutIds(result, SearchResultIdMap(id_map));
+    }
+
+    void
+    MapEmbListResultIdsToOutIds(const DataSetPtr& result) const {
+        // Compact list ids -> public list ids.
+        const auto& id_map = GetIdMap();
+        MapResultIdsToOutIds(result, &id_map);
+    }
+
+ public:
     virtual std::string
     Type() const = 0;
 
@@ -359,32 +807,6 @@ class IndexNode : public Object {
     }
 #endif
 
-    /**
-     * @brief Gets the mapping from internal IDs to external IDs.
-     *
-     * @return A reference to the mapping vector.
-     * @note If not implemented, the default implementation is to return a mapping, from 0 to Count()-1.
-     */
-    virtual std::shared_ptr<std::vector<uint32_t>>
-    GetInternalIdToExternalIdMap() const {
-        auto n_rows = Count();
-        auto internal_id_to_external_id_map = std::make_shared<std::vector<uint32_t>>(n_rows);
-        std::iota(internal_id_to_external_id_map->begin(), internal_id_to_external_id_map->end(), 0);
-        return internal_id_to_external_id_map;
-    }
-
-    /**
-     * @brief Sets the mapping from internal IDs to "most external" IDs for 1-hop bitset check!
-     * Only used for hierarchical indexnode, such as emb_list + hnsw, each index node has its own relayout mapping.
-     *
-     * @param map The mapping vector to set.
-     * @return Status indicating success or failure of the mapping.
-     */
-    virtual Status
-    SetInternalIdToMostExternalIdMap(std::vector<uint32_t>&& map) {
-        return Status::not_implemented;
-    }
-
     virtual Status
     BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
         auto& config = static_cast<BaseConfig&>(*cfg);
@@ -404,7 +826,9 @@ class IndexNode : public Object {
             return Status::emb_list_inner_error;
         }
 
-        return BuildEmbList(dataset, std::move(cfg), lims, dataset->GetRows(), use_knowhere_build_pool);
+        return BuildEmbList(dataset, std::move(cfg), lims, dataset->GetRows(),
+                            EmbListCount(dataset, lims, static_cast<size_t>(dataset->GetRows())),
+                            use_knowhere_build_pool);
     }
 
     virtual Status
@@ -523,18 +947,9 @@ class IndexNode : public Object {
                              bool use_knowhere_search_pool = true, milvus::OpContext* op_context = nullptr) const;
 
     /**
-     * @brief Retrieve raw vectors for embedding list rows by their row-level IDs (el_ids).
+     * @brief Retrieve raw vectors for public embedding-list ids.
      *
-     * @param dataset Input dataset containing row-level IDs (el_ids) via GetIds(), and GetRows() for the count.
-     * @param metric_type The original metric type (e.g., MAX_SIM_COSINE) used to check raw data availability.
-     * @param op_context Optional operation context.
-     * @return DataSetPtr containing:
-     *   - Tensor: flattened raw vector data for all vectors across requested rows
-     *   - Rows: number of requested el_ids (i.e., num_el_ids)
-     *   - Dim: vector dimension
-     *   - EMB_LIST_OFFSET: size_t array of length (num_el_ids + 1), marking per-row vector boundaries
-     *
-     * Returns error if emb_list_offset_ is not available (i.e., not an embedding list index).
+     * The result tensor is flattened and accompanied by EMB_LIST_OFFSET.
      */
     virtual expected<DataSetPtr>
     GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_type,
@@ -554,31 +969,9 @@ class IndexNode : public Object {
         int64_t strategy_blob_size;
     };
 
-    /**
-     * @brief Establishes the mapping from internal base-index IDs to emb_list IDs.
-     *
-     * This mapping is essential for base indexes to correctly apply bitset filtering using only a 1-hop mapping during
-     * search. In some cases, such as with mv-only *relayout*, a base-index may have its own
-     * (base)internal-to-external ID mapping.
-     * However, the emb_list search bitset operates on emb_list IDs, which we refer to as the "most external" IDs.
-     * Therefore, we need to create a mapping from the base_internal_id (used by the base-index) to the most external
-     * emb_list_id, ensuring that bitset checks and search results are consistent at the emb_list level.
-     */
-    Status
-    SetBaseIndexIDMap() {
-        auto internal_id_to_external_id_map = GetInternalIdToExternalIdMap();
-        size_t id_map_size = internal_id_to_external_id_map->size();
-        assert(id_map_size == static_cast<size_t>(Count()));
-        std::vector<uint32_t> internal_id_to_most_external_id_map(id_map_size);
-        for (size_t i = 0; i < id_map_size; i++) {
-            internal_id_to_most_external_id_map[i] = emb_list_offset_->get_el_id(internal_id_to_external_id_map->at(i));
-        }
-        return SetInternalIdToMostExternalIdMap(std::move(internal_id_to_most_external_id_map));
-    }
-
     virtual Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                 bool use_knowhere_build_pool);
+                 size_t num_el, bool use_knowhere_build_pool);
 
     /**
      * @brief Serialize emb_list: strategy meta, raw index, and base index to BinarySet.
@@ -587,32 +980,22 @@ class IndexNode : public Object {
     SerializeEmbList(BinarySet& binset) const;
 
     /**
-     * @brief Deserialize emb_list: base index, strategy, raw index, and ID mapping from BinarySet.
+     * @brief Deserialize emb_list: base index, strategy, and optional raw index from BinarySet.
      */
     Status
     DeserializeEmbListFromBinarySet(const BinarySet& binset, std::shared_ptr<Config> config);
 
     /**
-     * @brief Deserialize emb_list: base index, strategy, raw index, and ID mapping from files.
+     * @brief Deserialize emb_list: base index, strategy, and optional raw index from files.
      */
     Status
     DeserializeEmbListFromFile(const std::string& filename, std::shared_ptr<Config> config);
 
     /**
-     * @brief Search interface supporting two-stage emb_list search.
-     * @param dataset Query dataset
-     * @param cfg     Search configuration
-     * @param bitset  Mask for filtering vectors
+     * @brief Search embedding-list queries through the selected strategy.
      *
-     * Search process:
-     * 1. Check emb_list offset information and build the query group structure.
-     * 2. Stage 1: Call (vector-based) Search method to retrieve candidate vector IDs for each query emb_list.
-     * 3. Stage 2: For each query emb_list, collect candidate emb_list IDs and its vectors, and perform brute-force
-     *    distance calculation to aggregate scores at the emb_list level.
-     * 4. Return top-k emb_list results.
-     *
-     * Note: The emb_list index node does not need to split tasks by nq and dispatch them to the search thread pool for
-     * parallel processing, because the (vector-based) Search method already handles this.
+     * Input filters are public list-id addressed. Strategy results are compact
+     * list ids until this boundary maps them back to public ids.
      */
     virtual expected<DataSetPtr>
     SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
@@ -636,18 +1019,28 @@ class IndexNode : public Object {
     CalcDistByRawIndex(const DataSetPtr dataset, const int64_t* labels, size_t labels_len, bool is_cosine,
                        std::shared_ptr<ThreadPool> pool, milvus::OpContext* op_context = nullptr) const;
 
+    static size_t
+    EmbListCount(const DataSetPtr& dataset, const size_t* lims, size_t num_rows) {
+        if (dataset != nullptr) {
+            const auto nq = dataset->Get<int64_t>(meta::NQ);
+            if (nq > 0) {
+                return static_cast<size_t>(nq);
+            }
+        }
+        size_t count = 0;
+        while (lims[count] < num_rows) {
+            ++count;
+        }
+        return count;
+    }
+
     Version version_;
     std::shared_ptr<EmbListOffset> emb_list_offset_;  // emb_list group offset structure (shared with strategy)
+    IdMap id_map_;
     std::string el_metric_type_;
     EmbListStrategyPtr emb_list_strategy_;  // emb_list encoding strategy (tokenann/muvera)
-    // Raw vector storage for EmbList strategies (MUVERA/LEMUR) that encode documents
-    // into different representations for ANN search. Since the base index holds encoded
-    // vectors (not raw), this IndexFlat stores original vectors for exact distance
-    // computation during MaxSim reranking.
-    // Baseline type so that the same shared_ptr can hold either the knowhere
-    // Jaccard-aware IndexFlat subclass (fresh build path, if ever needed) or
-    // a plain ::faiss::IndexFlat{,IP,L2} restored by the deserialization
-    // factory in cppcontrib/knowhere/impl/index_read.cpp.
+    // Raw vector storage for EmbList strategies whose ANN payload is encoded.
+    // Distance rerank uses original vectors by compact base-vector id.
     std::shared_ptr<::faiss::IndexFlat> emb_list_raw_index_;
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
@@ -678,6 +1071,12 @@ class IndexIterator : public IndexNode::iterator {
           retain_iterator_order_(retain_iterator_order),
           sign_(larger_is_closer ? -1 : 1),
           use_knowhere_search_pool_(use_knowhere_search_pool) {
+    }
+
+    void
+    SetResultIdMap(const IdMap* id_map) {
+        // Index-owned backend id -> public id map.
+        result_id_map_ = id_map;
     }
 
     expected<std::pair<int64_t, float>>
@@ -746,7 +1145,7 @@ class IndexIterator : public IndexNode::iterator {
             update_next_func();
         }
 
-        return std::make_pair(ret.id, ret.val * sign_);
+        return std::make_pair(MapResultId(ret.id), ret.val * sign_);
     }
 
     virtual expected<bool>
@@ -774,6 +1173,11 @@ class IndexIterator : public IndexNode::iterator {
             throw std::runtime_error("raw_distance should not be called for indexes without quantization");
         }
         throw std::runtime_error("raw_distance not implemented");
+    }
+
+    int64_t
+    MapResultId(int64_t id) const {
+        return result_id_map_ == nullptr ? id : result_id_map_->MapInToOut(id);
     }
 
     const float refine_ratio_;
@@ -805,6 +1209,7 @@ class IndexIterator : public IndexNode::iterator {
     }
 
     bool use_knowhere_search_pool_ = true;
+    const IdMap* result_id_map_ = nullptr;
 };
 
 // An iterator implementation that accepts a function to get distances and ids list and returns them in order.
@@ -819,6 +1224,12 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
         : compute_dist_func_(compute_dist_func),
           larger_is_closer_(larger_is_closer),
           use_knowhere_search_pool_(use_knowhere_search_pool) {
+    }
+
+    void
+    SetResultIdMap(const IdMap* id_map) {
+        // Index-owned backend id -> public id map.
+        result_id_map_ = id_map;
     }
 
     expected<std::pair<int64_t, float>>
@@ -852,7 +1263,7 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
                 }
             }
             auto& result = results_[next_++];
-            return std::make_pair(result.id, result.val);
+            return std::make_pair(MapResultId(result.id), result.val);
         });
     }
 
@@ -926,6 +1337,11 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
         sorted_ = current_end;
     }
 
+    int64_t
+    MapResultId(int64_t id) const {
+        return result_id_map_ == nullptr ? id : result_id_map_->MapInToOut(id);
+    }
+
     std::function<std::vector<DistId>()> compute_dist_func_;
     const bool larger_is_closer_;
     bool use_knowhere_search_pool_ = true;
@@ -934,6 +1350,7 @@ class PrecomputedDistanceIterator : public IndexNode::iterator {
     size_t next_ = 0;
     size_t sorted_ = 0;
     size_t sort_size_ = 0;
+    const IdMap* result_id_map_ = nullptr;
 };
 
 }  // namespace knowhere

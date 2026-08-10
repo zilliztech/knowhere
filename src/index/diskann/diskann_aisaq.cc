@@ -54,6 +54,11 @@ class AisaqIndexNode : public IndexNode {
         return Status::not_implemented;
     }
 
+    bool
+    NeedBitsetExactCount() const override {
+        return true;
+    }
+
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
            milvus::OpContext* op_context) const override;
@@ -715,6 +720,7 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
     }
 
     auto res = GenResultDataSet(nq, k, std::move(p_id), std::move(p_dist));
+    MapSearchResultIdsToOutIds(res);
 
     // set visit_info json string into result dataset
     if (feder_result != nullptr) {
@@ -739,9 +745,18 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
         LOG_KNOWHERE_ERROR_ << "Failed to load AiSAQ.";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
+    if (dataset == nullptr) {
+        return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds dataset is null");
+    }
     auto dim = Dim();
     auto rows = dataset->GetRows();
     auto ids = dataset->GetIds();
+    std::vector<int64_t> in_ids;
+    auto storage_ids = CompactOutToIn(ids, rows, in_ids, static_cast<size_t>(Count()));
+    if (!storage_ids.has_value()) {
+        return expected<DataSetPtr>::Err(storage_ids.error(), storage_ids.what());
+    }
+    ids = storage_ids.value();
     auto* data = new DataType[dim * rows];
     if (data == nullptr) {
         LOG_KNOWHERE_ERROR_ << "Failed to allocate memory for data.";

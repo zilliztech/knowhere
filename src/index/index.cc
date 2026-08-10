@@ -11,7 +11,8 @@
 
 #include "knowhere/index/index.h"
 
-#include "fmt/format.h"
+#include <string>
+
 #include "folly/futures/Future.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/dataset.h"
@@ -38,6 +39,69 @@ LoadConfig(BaseConfig* cfg, const Json& json, knowhere::PARAM_TYPE param_type, c
     return Config::Load(*cfg, json_, param_type, msg);
 }
 
+inline void
+ThrowInvalidIdMapData(const std::string& msg) {
+    throw StatusException(Status::invalid_args, msg);
+}
+
+inline bool
+AddDatasetIdMapData(const DataSetPtr& dataset, IdMap& id_map, int64_t indexed_count) {
+    const auto has_id_map_data = dataset != nullptr && dataset->HasIdMapData();
+    if (!has_id_map_data) {
+        if (id_map.IsEnabled()) {
+            ThrowInvalidIdMapData("mapped id map requires id map data for every build/add batch");
+        }
+        return false;
+    }
+    if (!id_map.IsEnabled()) {
+        ThrowInvalidIdMapData("id map data requires enabled id map storage");
+    }
+    if (indexed_count > 0 && !id_map.HasVectorMap()) {
+        ThrowInvalidIdMapData("cannot append id map data to a plain index");
+    }
+
+    try {
+        // Consume nullable id-map input into index-owned state.
+        id_map.AddFromData(dataset->GetIdMapData());
+    } catch (const std::exception& e) {
+        ThrowInvalidIdMapData(e.what());
+    }
+    return true;
+}
+
+// Owns prepared filter state for lazy iterator calls.
+class PreparedBitsetIterator : public IndexNode::iterator {
+ public:
+    PreparedBitsetIterator(IndexNode::IteratorPtr iterator, std::shared_ptr<const IndexNode::PreparedBitset> bitset)
+        : iterator_(std::move(iterator)), bitset_(std::move(bitset)) {
+    }
+
+    expected<std::pair<int64_t, float>>
+    Next() override {
+        return iterator_->Next();
+    }
+
+    [[nodiscard]] expected<bool>
+    HasNext() override {
+        return iterator_->HasNext();
+    }
+
+ private:
+    IndexNode::IteratorPtr iterator_;
+    std::shared_ptr<const IndexNode::PreparedBitset> bitset_;
+};
+
+inline void
+WrapIteratorsWithPreparedBitset(std::vector<IndexNode::IteratorPtr>& iterators,
+                                const std::shared_ptr<const IndexNode::PreparedBitset>& bitset) {
+    if (bitset == nullptr || !bitset->bitset.has_out_ids()) {
+        return;
+    }
+    for (auto& iterator : iterators) {
+        iterator = std::make_shared<PreparedBitsetIterator>(std::move(iterator), bitset);
+    }
+}
+
 #ifdef KNOWHERE_WITH_CARDINAL
 template <typename T>
 inline const std::shared_ptr<Interrupt>
@@ -49,15 +113,27 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chro
             return GuardedCall([&]() -> Status {
                 auto cfg = this->node->CreateConfig();
                 RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
+                auto& id_map = this->node->GetIdMap();
+                const auto has_id_map = AddDatasetIdMapData(dataset, id_map, 0);
+                if (has_id_map && dataset != nullptr && dataset->GetRows() == 0) {
+                    // All-null nullable build produces id-map metadata only.
+                    return this->node->FinalizeIdMap();
+                }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
                 TimeRecorder rc("BuildAsync index ", 2);
                 auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt.get());
+                if (res == Status::success) {
+                    res = this->node->FinalizeIdMap();
+                }
                 auto time = rc.ElapseFromBegin("done");
                 time *= 0.000001;  // convert to s
                 this->node->GetBuildLatencyMetric().Observe(time);
 #else
-                auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), Interrupt.get());
+                auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt.get());
+                if (res == Status::success) {
+                    res = this->node->FinalizeIdMap();
+                }
 #endif
                 return res;
             });
@@ -86,15 +162,27 @@ Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_bu
     return GuardedCall([&]() -> Status {
         auto cfg = this->node->CreateConfig();
         RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
+        auto& id_map = this->node->GetIdMap();
+        const auto has_id_map = AddDatasetIdMapData(dataset, id_map, 0);
+        if (has_id_map && dataset != nullptr && dataset->GetRows() == 0) {
+            // All-null nullable build produces id-map metadata only.
+            return this->node->FinalizeIdMap();
+        }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         TimeRecorder rc("Build index", 2);
         auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        if (res == Status::success) {
+            res = this->node->FinalizeIdMap();
+        }
         auto time = rc.ElapseFromBegin("done");
         time *= 0.000001;  // convert to s
         this->node->GetBuildLatencyMetric().Observe(time);
 #else
         auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        if (res == Status::success) {
+            res = this->node->FinalizeIdMap();
+        }
 #endif
         return res;
     });
@@ -124,6 +212,13 @@ Index<T>::Add(const DataSetPtr dataset, const Json& json, bool use_knowhere_buil
         auto cfg = this->node->CreateConfig();
         std::string msg;
         RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Add", &msg));
+        auto& id_map = this->node->GetIdMap();
+        AddDatasetIdMapData(dataset, id_map, this->node->Count());
+        const auto is_emb_list =
+            dataset != nullptr && dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
+        if (dataset != nullptr && dataset->GetRows() == 0 && !is_emb_list) {
+            return Status::success;
+        }
         return this->node->AddEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
     });
 }
@@ -139,26 +234,11 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
         if (load_status != Status::success) {
             return expected<DataSetPtr>::Err(load_status, msg);
         }
-        // when index is immutable, bitset size should always equal to data count in index
-        // when index is mutable, it could happen that data count larger than bitset size, see
-        // https://github.com/zilliztech/knowhere/issues/70
-        // so something must be wrong at caller side when passed bitset size larger than data count
-        if (bitset_.size() > static_cast<size_t>(this->Count())) {
-            msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
-                              bitset_.size(), this->Count());
-            LOG_KNOWHERE_ERROR_ << msg;
-            return expected<DataSetPtr>::Err(Status::invalid_args, msg);
+        auto bitset_or = this->node->PrepareBitset(bitset_);
+        if (!bitset_or.has_value()) {
+            return expected<DataSetPtr>::Err(bitset_or.error(), bitset_or.what());
         }
-
-        BitsetView bitset;
-        if (bitset_.count() == 0) {
-            // traverse bitset to get the filtered out num
-            auto filtered_out_num = bitset_.get_filtered_out_num_();
-            bitset = BitsetView(bitset_.data(), bitset_.size(), filtered_out_num);
-        } else {
-            // if bitset has filtered out num, use it
-            bitset = bitset_;
-        }
+        auto prepared_bitset = std::move(bitset_or.value());
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
@@ -178,13 +258,13 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
 
         TimeRecorder rc("Search");
         auto k = cfg->k.value();
-        auto res = this->node->SearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
+        auto res = this->node->SearchEmbListIfNeed(dataset, std::move(cfg), prepared_bitset.bitset, op_context);
         auto time = rc.ElapseFromBegin("done");
         time *= 0.001;  // convert to ms
         this->node->GetSearchLatencyMetric().Observe(time);
         knowhere_search_topk.Observe(k);
 #else
-        auto res = this->node->SearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
+        auto res = this->node->SearchEmbListIfNeed(dataset, std::move(cfg), prepared_bitset.bitset, op_context);
 #endif
         return res;
     });
@@ -201,31 +281,28 @@ Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetVi
         if (status != Status::success) {
             return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(status, msg);
         }
-        // when index is immutable, bitset size should always equal to data count in index
-        // when index is mutable, it could happen that data count larger than bitset size, see
-        // https://github.com/zilliztech/knowhere/issues/70
-        // so something must be wrong at caller side when passed bitset size larger than data count
-        if (bitset_.size() > static_cast<size_t>(this->Count())) {
-            msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
-                              bitset_.size(), this->Count());
-            LOG_KNOWHERE_ERROR_ << msg;
-            return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::invalid_args, msg);
+        auto bitset_or = this->node->PrepareBitset(bitset_);
+        if (!bitset_or.has_value()) {
+            return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(bitset_or.error(),
+                                                                                    bitset_or.what());
         }
-
-        const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
+        auto prepared_bitset = std::make_shared<IndexNode::PreparedBitset>(std::move(bitset_or.value()));
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         // note that this time includes only the initial search phase of iterator.
         TimeRecorder rc("AnnIterator");
-        auto res =
-            this->node->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
+        auto res = this->node->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), prepared_bitset->bitset,
+                                                        use_knowhere_search_pool, op_context);
         auto time = rc.ElapseFromBegin("done");
         time *= 0.001;  // convert to ms
         this->node->GetSearchLatencyMetric().Observe(time);
 #else
-        auto res =
-            this->node->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), bitset, use_knowhere_search_pool, op_context);
+        auto res = this->node->AnnIteratorEmbListIfNeed(dataset, std::move(cfg), prepared_bitset->bitset,
+                                                        use_knowhere_search_pool, op_context);
 #endif
+        if (res.has_value()) {
+            WrapIteratorsWithPreparedBitset(res.value(), prepared_bitset);
+        }
         return res;
     });
 }
@@ -241,18 +318,11 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
         if (status != Status::success) {
             return expected<DataSetPtr>::Err(status, std::move(msg));
         }
-        // when index is immutable, bitset size should always equal to data count in index
-        // when index is mutable, it could happen that data count larger than bitset size, see
-        // https://github.com/zilliztech/knowhere/issues/70
-        // so something must be wrong at caller side when passed bitset size larger than data count
-        if (bitset_.size() > static_cast<size_t>(this->Count())) {
-            msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
-                              bitset_.size(), this->Count());
-            LOG_KNOWHERE_ERROR_ << msg;
-            return expected<DataSetPtr>::Err(Status::invalid_args, msg);
+        auto bitset_or = this->node->PrepareBitset(bitset_);
+        if (!bitset_or.has_value()) {
+            return expected<DataSetPtr>::Err(bitset_or.error(), bitset_or.what());
         }
-
-        const auto bitset = BitsetView(bitset_.data(), bitset_.size(), bitset_.get_filtered_out_num_());
+        auto prepared_bitset = std::move(bitset_or.value());
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         const BaseConfig& b_cfg = static_cast<const BaseConfig&>(*cfg);
@@ -274,12 +344,12 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
         // LCOV_EXCL_STOP
 
         TimeRecorder rc("Range Search");
-        auto res = this->node->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
+        auto res = this->node->RangeSearchEmbListIfNeed(dataset, std::move(cfg), prepared_bitset.bitset, op_context);
         auto time = rc.ElapseFromBegin("done");
         time *= 0.001;  // convert to ms
         this->node->GetRangeSearchLatencyMetric().Observe(time);
 #else
-        auto res = this->node->RangeSearchEmbListIfNeed(dataset, std::move(cfg), bitset, op_context);
+        auto res = this->node->RangeSearchEmbListIfNeed(dataset, std::move(cfg), prepared_bitset.bitset, op_context);
 #endif
         return res;
     });
@@ -302,8 +372,14 @@ template <typename T>
 inline expected<DataSetPtr>
 Index<T>::CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const noexcept {
-    return GuardedCall(
-        [&]() { return this->node->CalcDistByIDs(dataset, bitset, labels, labels_len, is_cosine, op_context); });
+    return GuardedCall([&]() -> expected<DataSetPtr> {
+        auto bitset_or = this->node->PrepareBitset(bitset);
+        if (!bitset_or.has_value()) {
+            return expected<DataSetPtr>::Err(bitset_or.error(), bitset_or.what());
+        }
+        auto prepared_bitset = std::move(bitset_or.value());
+        return this->node->CalcDistByIDs(dataset, prepared_bitset.bitset, labels, labels_len, is_cosine, op_context);
+    });
 }
 
 template <typename T>
@@ -365,11 +441,17 @@ Index<T>::Deserialize(const BinarySet& binset, const Json& json) noexcept {
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         TimeRecorder rc("Load index", 2);
         res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
+        if (res == Status::success) {
+            res = this->node->FinalizeIdMap();
+        }
         auto time = rc.ElapseFromBegin("done");
         time *= 0.001;  // convert to ms
         this->node->GetLoadLatencyMetric().Observe(time);
 #else
         res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
+        if (res == Status::success) {
+            res = this->node->FinalizeIdMap();
+        }
 #endif
         return res;
     });
@@ -396,11 +478,17 @@ Index<T>::DeserializeFromFile(const std::string& filename, const Json& json) noe
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         TimeRecorder rc("Load index from file", 2);
         res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
+        if (res == Status::success) {
+            res = this->node->FinalizeIdMap();
+        }
         auto time = rc.ElapseFromBegin("done");
         time *= 0.001;  // convert to ms
         this->node->GetLoadLatencyMetric().Observe(time);
 #else
         res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
+        if (res == Status::success) {
+            res = this->node->FinalizeIdMap();
+        }
 #endif
         return res;
     });

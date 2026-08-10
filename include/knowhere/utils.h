@@ -220,6 +220,7 @@ data_type_conversion(const DataSet& src, const std::optional<int64_t> start = st
         }
         const size_t* lims_data_const = lims_data.release();
         des->Set(knowhere::meta::EMB_LIST_OFFSET, lims_data_const);
+        des->Set(knowhere::meta::NQ, static_cast<int64_t>(lims_size));
     }
     return des;
 }

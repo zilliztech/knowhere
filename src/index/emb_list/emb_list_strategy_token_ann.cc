@@ -28,7 +28,7 @@
 
 namespace knowhere {
 
-// TokenANNEmbListStrategy indexes all vectors and aggregates scores at search time.
+// TokenANN indexes vectors and aggregates scores by embedding list.
 class TokenANNEmbListStrategy : public EmbListStrategy {
  public:
     [[nodiscard]] std::string
@@ -42,9 +42,10 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
         return std::optional<DataSetPtr>(dataset);
     }
 
+    // Base ANN searches vector ids; filters are public list-id based.
     [[nodiscard]] bool
     NeedsBaseIndexIDMap() const override {
-        return true;  // needs vector_id -> doc_id mapping for bitset filtering
+        return true;
     }
 
     expected<DataSetPtr>
@@ -54,7 +55,6 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "emb_list_offset not initialized");
         }
 
-        // Parse config and metric
         auto& config = static_cast<BaseConfig&>(*cfg);
         auto k = config.k.value();
         auto metric_or = ParseEmbListMetric(config);
@@ -74,7 +74,6 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
         }
         auto query_code_size = query_code_size_opt.value();
 
-        // Stage 1: Batch ANN search to retrieve top k' vectors per query vector
         auto retrieval_ann_ratio = config.retrieval_ann_ratio.value();
         if (retrieval_ann_ratio <= 0.0f) {
             auto err_msg = "retrieval_ann_ratio could not be less than or equal to 0";
@@ -91,6 +90,7 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
 
         config.k = vec_topk;
         config.metric_type = mi.sub_metric_type;
+        // Base search returns compact vector ids for list candidate lookup.
         auto ann_search_res = index->Search(query_dataset, std::move(cfg), bitset, op_context);
         if (!ann_search_res.has_value()) {
             LOG_KNOWHERE_ERROR_ << "Failed ANN search: " << ann_search_res.what();
@@ -112,7 +112,6 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
         auto ids = std::make_unique<int64_t[]>(num_q_el * k);
         auto dists = std::make_unique<float[]>(num_q_el * k);
 
-        // Stage 2: For each query doc, collect unique docs from stage 1, then rerank
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         TimeRecorder rc2("Emb List Search - 2nd round bf and agg");
 #endif
@@ -127,7 +126,6 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
             auto end_offset = query_offset.offset[i + 1];
             auto nq = end_offset - start_offset;
 
-            // Collect unique doc IDs from stage 1 results
             el_ids_set.clear();
             for (size_t j = start_offset * vec_topk; j < end_offset * vec_topk; j++) {
                 if (stage1_ids[j] < 0) {
@@ -136,7 +134,6 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
                 el_ids_set.emplace(emb_list_offset_->get_el_id(static_cast<size_t>(stage1_ids[j])));
             }
 
-            // Convert to vector for RerankByCalcDistByIDs
             candidate_docs.clear();
             for (const auto& el_id : el_ids_set) {
                 if (el_id >= emb_list_offset_->num_el()) {
@@ -147,7 +144,6 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
             }
             total_candidates += candidate_docs.size();
 
-            // Compute aggregated score for each candidate
             auto tensor = static_cast<const char*>(query_dataset->GetTensor());
             size_t tensor_offset = start_offset * query_code_size;
             auto bf_query_dataset = GenDataSet(nq, dim, tensor + tensor_offset);

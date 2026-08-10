@@ -64,8 +64,8 @@ IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss:
         dis->set_query(x + i * index->d);
 
         // allocate heap
-        idx_t* const __restrict local_ids = labels + i * index->d;
-        float* const __restrict local_distances = distances + i * index->d;
+        idx_t* const __restrict local_ids = labels + i * k;
+        float* const __restrict local_distances = distances + i * k;
 
         // set up a filter
         faiss::IDSelector* sel = (params == nullptr) ? nullptr : params->sel;

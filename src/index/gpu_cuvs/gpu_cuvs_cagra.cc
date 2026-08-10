@@ -81,7 +81,7 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
         }
 
         auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
-
+        this->MapSearchResultIdsToOutIds(res);
         return res;
     }
     Status
