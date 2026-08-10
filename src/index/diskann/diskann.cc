@@ -561,7 +561,8 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
     LOG_KNOWHERE_INFO_ << "Read emb_list offset from file: " << input_file_path << ", size: " << offset.size()
                        << ", first offset: " << offset.front() << ", last offset: " << offset.back();
 
-    auto build_status = BuildEmbList(dataset, std::move(cfg), offset.data(), offset.back(), use_knowhere_build_pool);
+    auto build_status =
+        BuildEmbList(dataset, std::move(cfg), offset.data(), offset.back(), offset.size() - 1, use_knowhere_build_pool);
     if (build_status != Status::success) {
         LOG_KNOWHERE_ERROR_ << "Failed to build base index.";
         return build_status;
@@ -946,14 +947,6 @@ DiskANNIndexNode<DataType>::CalcDistByIDs(const DataSetPtr dataset, const Bitset
                                           milvus::OpContext* op_context) const {
     (void)bitset;
     (void)is_cosine;
-    if (!is_prepared_.load() || !pq_flash_index_) {
-        LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
-        return expected<DataSetPtr>::Err(Status::empty_index, "DiskANN not loaded");
-    }
-    if (!search_pool_) {
-        LOG_KNOWHERE_ERROR_ << "Search thread pool is not initialized.";
-        return expected<DataSetPtr>::Err(Status::internal_error, "search pool not initialized");
-    }
     if (dataset == nullptr || dataset->GetTensor() == nullptr) {
         return expected<DataSetPtr>::Err(Status::invalid_args, "empty query dataset");
     }
@@ -972,7 +965,22 @@ DiskANNIndexNode<DataType>::CalcDistByIDs(const DataSetPtr dataset, const Bitset
                                     this->emb_list_strategy_->NeedsBaseIndexIDMap();
     std::vector<int64_t> in_labels;
     // Public APIs pass public ids. EmbList rerank passes compact list ids.
-    const auto* labels_to_calc = is_emb_list_rerank ? labels : this->MapOutToIn(labels, labels_len, in_labels);
+    const int64_t* labels_to_calc = labels;
+    if (!is_emb_list_rerank) {
+        auto storage_labels = this->CompactOutToIn(labels, labels_len, in_labels, static_cast<size_t>(Count()));
+        if (!storage_labels.has_value()) {
+            return expected<DataSetPtr>::Err(storage_labels.error(), storage_labels.what());
+        }
+        labels_to_calc = storage_labels.value();
+    }
+    if (!is_prepared_.load() || !pq_flash_index_) {
+        LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
+        return expected<DataSetPtr>::Err(Status::empty_index, "DiskANN not loaded");
+    }
+    if (!search_pool_) {
+        LOG_KNOWHERE_ERROR_ << "Search thread pool is not initialized.";
+        return expected<DataSetPtr>::Err(Status::internal_error, "search pool not initialized");
+    }
 
     std::vector<folly::Future<folly::Unit>> futures;
     futures.reserve(nq);
@@ -999,10 +1007,17 @@ DiskANNIndexNode<DataType>::CalcDistByIDs(const DataSetPtr dataset, const Bitset
 template <typename DataType>
 expected<DataSetPtr>
 DiskANNIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
+    if (dataset == nullptr) {
+        return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds dataset is null");
+    }
     auto rows = dataset->GetRows();
     auto ids = dataset->GetIds();
     std::vector<int64_t> in_ids;
-    ids = this->MapOutToIn(ids, rows, in_ids);
+    auto storage_ids = this->CompactOutToIn(ids, rows, in_ids, static_cast<size_t>(Count()));
+    if (!storage_ids.has_value()) {
+        return expected<DataSetPtr>::Err(storage_ids.error(), storage_ids.what());
+    }
+    ids = storage_ids.value();
     auto storage_ds = GenIdsDataSet(rows, ids);
     return GetVectorByStorageIds(storage_ds, op_context);
 }

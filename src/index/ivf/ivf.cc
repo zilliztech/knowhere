@@ -92,10 +92,10 @@ class IvfIndexNode : public IndexNode {
 
     Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                 bool use_knowhere_build_pool) override {
+                 size_t num_el, bool use_knowhere_build_pool) override {
         if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlat> ||
                       std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlatCC>) {
-            return IndexNode::BuildEmbList(dataset, std::move(cfg), lims, num_rows, use_knowhere_build_pool);
+            return IndexNode::BuildEmbList(dataset, std::move(cfg), lims, num_rows, num_el, use_knowhere_build_pool);
         }
 
         LOG_KNOWHERE_ERROR_ << "BuildEmbList not implemented for current index type";
@@ -875,9 +875,12 @@ IvfIndexNode<DataType, IndexType>::AddEmbList(const DataSetPtr dataset, std::sha
 
     {
         FairWriteLockGuard guard(*this->base_index_lock_);
-        RETURN_IF_ERROR(this->AppendEmbListOffsetAndIdMap(lims, num_rows));
+        RETURN_IF_ERROR(this->AppendEmbListOffsetAndIdMap(lims, num_rows, this->EmbListCount(dataset, lims, num_rows)));
     }
 
+    if (num_rows == 0) {
+        return Status::success;
+    }
     return Add(dataset, std::move(cfg), use_knowhere_build_pool);
 }
 
@@ -1193,7 +1196,14 @@ IvfIndexNode<DataType, IndexType>::CalcDistByIDs(const DataSetPtr dataset, const
                                         this->emb_list_strategy_->NeedsBaseIndexIDMap();
         std::vector<int64_t> in_labels;
         // Public APIs pass public ids. EmbList rerank passes compact list ids.
-        const auto* labels_to_calc = is_emb_list_rerank ? labels : this->MapOutToIn(labels, labels_len, in_labels);
+        const int64_t* labels_to_calc = labels;
+        if (!is_emb_list_rerank) {
+            auto storage_labels = this->CompactOutToIn(labels, labels_len, in_labels, static_cast<size_t>(Count()));
+            if (!storage_labels.has_value()) {
+                return expected<DataSetPtr>::Err(storage_labels.error(), storage_labels.what());
+            }
+            labels_to_calc = storage_labels.value();
+        }
 
         try {
             std::vector<folly::Future<folly::Unit>> futs;
@@ -1573,10 +1583,17 @@ IvfIndexNode<DataType, IndexType>::AnnIterator(const DataSetPtr dataset, std::un
 template <typename DataType, typename IndexType>
 expected<DataSetPtr>
 IvfIndexNode<DataType, IndexType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
+    if (dataset == nullptr) {
+        return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds dataset is null");
+    }
     auto rows = dataset->GetRows();
     auto ids = dataset->GetIds();
     std::vector<int64_t> in_ids;
-    ids = this->MapOutToIn(ids, rows, in_ids);
+    auto storage_ids = this->CompactOutToIn(ids, rows, in_ids, static_cast<size_t>(Count()));
+    if (!storage_ids.has_value()) {
+        return expected<DataSetPtr>::Err(storage_ids.error(), storage_ids.what());
+    }
+    ids = storage_ids.value();
     auto storage_ds = GenIdsDataSet(rows, ids);
     return GetVectorByStorageIds(storage_ds, op_context);
 }

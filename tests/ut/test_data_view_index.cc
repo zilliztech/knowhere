@@ -9,6 +9,8 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <numeric>
+
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -376,6 +378,10 @@ EmbListAddTest(const knowhere::DataSetPtr train_ds_in, const knowhere::DataSetPt
     scann_with_dv_refiner.SetIdMapType(knowhere::IdMap::Type::GROWING);
     for (size_t i = 0; i < train_ds_list.size(); i++) {
         auto& base = train_ds_list[i];
+        auto part_num_el = static_cast<size_t>(base->template Get<int64_t>(knowhere::meta::NQ));
+        std::vector<int32_t> part_ids(part_num_el);
+        std::iota(part_ids.begin(), part_ids.end(), 0);
+        base->SetIdMapData(knowhere::IdMapData::FromIds(part_ids.data(), part_ids.size(), part_ids.size()));
         if (i == 0) {
             REQUIRE(scann_with_dv_refiner.Build(base, conf, false) == knowhere::Status::success);
         } else {

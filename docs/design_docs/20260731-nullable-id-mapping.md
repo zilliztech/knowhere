@@ -186,7 +186,7 @@ Negative result ids remain negative. They represent empty result slots and are n
 
 ### 7.2 Selected-ID APIs
 
-Selected-id APIs accept public ids. `MapOutToIn()` converts them to backend ids before raw-vector retrieval, distance calculation, or backend selected-id search.
+Selected-id APIs accept public ids. `CompactOutToIn()` validates them and converts them to backend ids before raw-vector retrieval, distance calculation, or backend selected-id search.
 
 `GetVectorByStorageIds()` is the internal boundary for ids that are already backend storage ids. Code that reaches this boundary must not map the ids again.
 

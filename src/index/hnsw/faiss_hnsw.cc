@@ -1172,10 +1172,17 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
+        if (dataset == nullptr) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds dataset is null");
+        }
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
         std::vector<int64_t> in_ids;
-        ids = this->MapOutToIn(ids, rows, in_ids);
+        auto storage_ids = this->CompactOutToIn(ids, rows, in_ids, static_cast<size_t>(Count()));
+        if (!storage_ids.has_value()) {
+            return expected<DataSetPtr>::Err(storage_ids.error(), storage_ids.what());
+        }
+        ids = storage_ids.value();
         auto storage_ds = GenIdsDataSet(rows, ids);
         return GetVectorByStorageIds(storage_ds, op_context);
     }
@@ -1559,7 +1566,14 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                                         this->emb_list_strategy_->NeedsBaseIndexIDMap();
         std::vector<int64_t> in_labels;
         // Public APIs pass public ids. EmbList rerank passes compact list ids.
-        const auto* labels_to_calc = is_emb_list_rerank ? labels : this->MapOutToIn(labels, labels_len, in_labels);
+        const int64_t* labels_to_calc = labels;
+        if (!is_emb_list_rerank) {
+            auto storage_labels = this->CompactOutToIn(labels, labels_len, in_labels, static_cast<size_t>(Count()));
+            if (!storage_labels.has_value()) {
+                return expected<DataSetPtr>::Err(storage_labels.error(), storage_labels.what());
+            }
+            labels_to_calc = storage_labels.value();
+        }
 
         BitsetView bitset(bitset_);
         auto index_id = getIndexToSearchByScalarInfo(bitset);
@@ -2327,21 +2341,22 @@ class HNSWIndexNodeWithFallback : public IndexNode {
         }
     }
 
-    int64_t
-    MapOutToIn(int64_t out_id) const override {
+    expected<int64_t>
+    CompactOutToIn(int64_t out_id, size_t compact_count) const override {
         if (use_base_index) {
-            return base_index->MapOutToIn(out_id);
+            return base_index->CompactOutToIn(out_id, compact_count);
         } else {
-            return fallback_search_index->MapOutToIn(out_id);
+            return fallback_search_index->CompactOutToIn(out_id, compact_count);
         }
     }
 
-    const int64_t*
-    MapOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& in_ids) const override {
+    expected<const int64_t*>
+    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids,
+                   size_t compact_count) const override {
         if (use_base_index) {
-            return base_index->MapOutToIn(out_ids, count, in_ids);
+            return base_index->CompactOutToIn(out_ids, count, compact_ids, compact_count);
         } else {
-            return fallback_search_index->MapOutToIn(out_ids, count, in_ids);
+            return fallback_search_index->CompactOutToIn(out_ids, count, compact_ids, compact_count);
         }
     }
 

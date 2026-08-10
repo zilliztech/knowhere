@@ -235,11 +235,18 @@ class FlatIndexNode : public IndexNode {
 
     expected<DataSetPtr>
     GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override {
+        if (dataset == nullptr) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds dataset is null");
+        }
         auto dim = Dim();
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
         std::vector<int64_t> in_ids;
-        ids = this->MapOutToIn(ids, rows, in_ids);
+        auto storage_ids = this->CompactOutToIn(ids, rows, in_ids, static_cast<size_t>(index_->ntotal));
+        if (!storage_ids.has_value()) {
+            return expected<DataSetPtr>::Err(storage_ids.error(), storage_ids.what());
+        }
+        ids = storage_ids.value();
         if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexFlat>) {
             DataType* data = nullptr;
             try {

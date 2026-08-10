@@ -343,22 +343,23 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
             "GetEmbListByIds requires raw data support, but the index does not store raw vectors");
     }
 
+    if (dataset == nullptr) {
+        return expected<DataSetPtr>::Err(Status::invalid_args, "GetEmbListByIds dataset is null");
+    }
     auto num_el_ids = dataset->GetRows();
     auto el_ids = dataset->GetIds();
     auto dim = use_raw_index ? emb_list_raw_index_->d : Dim();
     std::vector<int64_t> in_el_ids;
-    // emb_list_offset_ is indexed by compact list id.
-    const auto* ids_to_retrieve = MapOutToIn(el_ids, num_el_ids, in_el_ids);
+    auto storage_ids = CompactOutToIn(el_ids, num_el_ids, in_el_ids, emb_list_offset_->num_el());
+    if (!storage_ids.has_value()) {
+        return expected<DataSetPtr>::Err(storage_ids.error(), storage_ids.what());
+    }
+    const auto* ids_to_retrieve = storage_ids.value();
 
     std::vector<size_t> out_offsets(num_el_ids + 1);
     out_offsets[0] = 0;
     for (int64_t i = 0; i < num_el_ids; i++) {
         auto el_id = ids_to_retrieve[i];
-        if (el_id < 0 || static_cast<size_t>(el_id) >= emb_list_offset_->num_el()) {
-            return expected<DataSetPtr>::Err(Status::invalid_args,
-                                             "GetEmbListByIds: el_id " + std::to_string(el_id) + " out of range [0, " +
-                                                 std::to_string(emb_list_offset_->num_el()) + ")");
-        }
         out_offsets[i + 1] = out_offsets[i] + emb_list_offset_->get_el_len(el_id);
     }
 
@@ -422,7 +423,7 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
 
 Status
 IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                        bool use_knowhere_build_pool) {
+                        size_t num_el, bool use_knowhere_build_pool) {
     auto& config = static_cast<BaseConfig&>(*cfg);
 
     auto metric_info_or = ParseEmbListMetric(config);
@@ -432,7 +433,7 @@ IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, c
     el_metric_type_ = metric_info_or.value().el_metric_type;
     auto sub_metric_type = metric_info_or.value().sub_metric_type;
 
-    EmbListOffset doc_offset(lims, num_rows);
+    EmbListOffset doc_offset(lims, num_rows, num_el);
 
     auto strategy_type = config.emb_list_strategy.value_or(meta::EMB_LIST_STRATEGY_TOKENANN);
     auto strategy_or = CreateEmbListStrategy(strategy_type, config);

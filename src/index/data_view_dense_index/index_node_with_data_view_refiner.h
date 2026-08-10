@@ -464,9 +464,12 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AddEmbList(const DataSetP
 
     {
         FairWriteLockGuard guard(*this->base_index_lock_);
-        RETURN_IF_ERROR(this->AppendEmbListOffsetAndIdMap(lims, num_rows));
+        RETURN_IF_ERROR(this->AppendEmbListOffsetAndIdMap(lims, num_rows, this->EmbListCount(dataset, lims, num_rows)));
     }
 
+    if (num_rows == 0) {
+        return Status::success;
+    }
     return Add(dataset, std::move(cfg), use_knowhere_build_pool);
 }
 
@@ -548,7 +551,14 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::CalcDistByIDs(const DataS
                                     this->emb_list_strategy_->NeedsBaseIndexIDMap();
     std::vector<int64_t> in_labels;
     // Public APIs pass public ids. EmbList rerank passes compact list ids.
-    const auto* labels_to_calc = is_emb_list_rerank ? labels : this->MapOutToIn(labels, labels_len, in_labels);
+    const int64_t* labels_to_calc = labels;
+    if (!is_emb_list_rerank) {
+        auto storage_labels = this->CompactOutToIn(labels, labels_len, in_labels, static_cast<size_t>(Count()));
+        if (!storage_labels.has_value()) {
+            return expected<DataSetPtr>::Err(storage_labels.error(), storage_labels.what());
+        }
+        labels_to_calc = storage_labels.value();
+    }
 
     auto num_queries = dataset->GetRows();
     auto query_data = dataset->GetTensor();

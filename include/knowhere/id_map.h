@@ -27,6 +27,7 @@
 #include "knowhere/adaptive_store.h"
 #include "knowhere/array_store.h"
 #include "knowhere/dataset.h"
+#include "knowhere/expected.h"
 #include "knowhere/mmap.h"
 
 namespace knowhere {
@@ -50,6 +51,7 @@ struct IdMapMmapOptions {
 class IdMap {
  public:
     enum class Type {
+        DISABLED,
         SEALED,
         GROWING,
     };
@@ -61,16 +63,37 @@ class IdMap {
     };
 
     IdMap() {
-        SetType(Type::SEALED);
+        SetType(Type::DISABLED);
     }
 
     void
     SetType(Type type) {
+        if (type_ == type) {
+            return;
+        }
+        if (HasData()) {
+            throw std::runtime_error("id map type cannot change after data is written");
+        }
         type_ = type;
         in_to_out_ids_.SetType(IdArrayTypeFor(type_));
         in_to_out_ebl_ids_.SetType(IdArrayTypeFor(type_));
         out_to_in_ids_.SetType(IdArrayTypeFor(type_));
         valid_bitmap_.SetType(BitmapTypeFor(type_));
+    }
+
+    Type
+    type() const {
+        return type_;
+    }
+
+    bool
+    IsEnabled() const {
+        return type_ != Type::DISABLED;
+    }
+
+    bool
+    HasVectorMap() const {
+        return OutCount() != 0 || InCount() != 0 || !in_to_out_ids_.empty() || !valid_bitmap_.empty();
     }
 
     IdMap(const IdMap&) = delete;
@@ -121,20 +144,39 @@ class IdMap {
 
     void
     AddFromData(const IdMapData& data) {
+        if (!IsEnabled()) {
+            throw std::runtime_error("id map data requires enabled id map storage");
+        }
         switch (data.format) {
             case IdMapData::Format::IDS: {
                 if (data.out_count == 0) {
+                    if (data.in_count != 0) {
+                        throw std::runtime_error("id map ids have empty public domain");
+                    }
                     return;
+                }
+                if (data.in_count != 0 && data.out_ids == nullptr) {
+                    throw std::runtime_error("id map ids are null");
                 }
 
                 const auto old_out_count = type_ == Type::GROWING ? OutCount() : 0;
                 const auto old_valid_count = type_ == Type::GROWING ? InCount() : 0;
                 const auto in_id_begin = type_ == Type::GROWING ? old_valid_count : 0;
+                CheckPublicDomain(old_out_count, data.out_count);
 
                 std::vector<int32_t> ids(data.in_count);
                 std::vector<uint8_t> bitmap(BitmapByteSize(data.out_count), 0);
                 for (size_t i = 0; i < data.in_count; ++i) {
+                    if (data.out_ids[i] < 0) {
+                        throw std::runtime_error("id map id is negative");
+                    }
                     const auto local_out_id = static_cast<size_t>(data.out_ids[i]);
+                    if (local_out_id >= data.out_count) {
+                        throw std::runtime_error("id map id is out of range");
+                    }
+                    if (PackedBit(bitmap.data(), local_out_id)) {
+                        throw std::runtime_error("id map ids contain duplicate public id");
+                    }
                     ids[i] = static_cast<int32_t>(old_out_count + local_out_id);
                     SetPackedBit(bitmap, local_out_id);
                 }
@@ -159,8 +201,12 @@ class IdMap {
                 if (data.out_count == 0) {
                     return;
                 }
+                if (data.valid_bitmap == nullptr) {
+                    throw std::runtime_error("id map bitmap is null");
+                }
 
                 if (type_ == Type::SEALED) {
+                    CheckPublicDomain(0, data.out_count);
                     valid_bitmap_.Set(data.valid_bitmap, data.out_count);
                     PublishCounts(data.out_count, CountPackedBitmap(data.valid_bitmap, data.out_count));
                     return;
@@ -169,6 +215,7 @@ class IdMap {
                 const auto old_out_count = OutCount();
                 const auto old_valid_count = InCount();
                 const auto in_id_begin = old_valid_count;
+                CheckPublicDomain(old_out_count, data.out_count);
 
                 std::vector<int32_t> ids;
                 ids.reserve(data.out_count);
@@ -188,9 +235,13 @@ class IdMap {
                 if (data.out_count == 0) {
                     return;
                 }
+                if (data.valid_data == nullptr) {
+                    throw std::runtime_error("id map valid data is null");
+                }
 
                 auto bitmap = PackBoolArray(data.valid_data, data.out_count);
                 if (type_ == Type::SEALED) {
+                    CheckPublicDomain(0, data.out_count);
                     valid_bitmap_.Set(bitmap.data(), data.out_count);
                     PublishCounts(data.out_count, CountPackedBitmap(bitmap.data(), data.out_count));
                     return;
@@ -199,6 +250,7 @@ class IdMap {
                 const auto old_out_count = OutCount();
                 const auto old_valid_count = InCount();
                 const auto in_id_begin = old_valid_count;
+                CheckPublicDomain(old_out_count, data.out_count);
 
                 std::vector<int32_t> ids;
                 ids.reserve(data.out_count);
@@ -222,6 +274,9 @@ class IdMap {
     void
     FinalizeVectorIds() {
         // Derives vector maps from public-id validity input.
+        if (!IsEnabled()) {
+            return;
+        }
         const auto out_count = OutCount();
         if (out_count == 0 || valid_bitmap_.empty()) {
             valid_count_.store(0, std::memory_order_release);
@@ -233,6 +288,7 @@ class IdMap {
 
         std::vector<int32_t> ids;
         ids.reserve(InCount());
+        CheckPublicDomain(0, out_count);
         for (size_t out_id = 0; out_id < out_count; ++out_id) {
             if (PackedBit(valid_bitmap_, out_id)) {
                 ids.push_back(static_cast<int32_t>(out_id));
@@ -256,12 +312,18 @@ class IdMap {
         if (ebl_count == 0) {
             return;
         }
+        if (ebl_offsets == nullptr) {
+            throw std::runtime_error("emb_list offsets are null");
+        }
 
         const auto in_count = ebl_offsets[ebl_count];
 
         std::vector<int32_t> ids(in_count, kInvalidId);
         for (size_t ebl_id = 0; ebl_id < ebl_count; ++ebl_id) {
-            const auto out_id = in_to_out_ids_.empty() ? static_cast<int32_t>(ebl_id) : in_to_out_ids_[ebl_id];
+            if (ebl_offsets[ebl_id + 1] < ebl_offsets[ebl_id] || ebl_offsets[ebl_id + 1] > in_count) {
+                throw std::runtime_error("emb_list offsets are inconsistent");
+            }
+            const auto out_id = ListOutId(ebl_id);
             std::fill(ids.begin() + ebl_offsets[ebl_id], ids.begin() + ebl_offsets[ebl_id + 1], out_id);
         }
         if (type_ == Type::GROWING) {
@@ -278,12 +340,22 @@ class IdMap {
         if (list_count == 0) {
             return;
         }
+        if (ebl_id_begin < 0) {
+            throw std::runtime_error("emb_list id begin is negative");
+        }
+        if (ebl_offsets == nullptr) {
+            throw std::runtime_error("emb_list offsets are null");
+        }
 
         const auto append_count = ebl_offsets[list_count];
 
         std::vector<int32_t> ids(append_count, kInvalidId);
+        const auto list_id_begin = static_cast<size_t>(ebl_id_begin);
         for (size_t ebl_id = 0; ebl_id < list_count; ++ebl_id) {
-            const auto out_id = static_cast<int32_t>(ebl_id_begin + static_cast<int64_t>(ebl_id));
+            if (ebl_offsets[ebl_id + 1] < ebl_offsets[ebl_id] || ebl_offsets[ebl_id + 1] > append_count) {
+                throw std::runtime_error("emb_list append offsets are inconsistent");
+            }
+            const auto out_id = ListOutId(list_id_begin + ebl_id);
             std::fill(ids.begin() + ebl_offsets[ebl_id], ids.begin() + ebl_offsets[ebl_id + 1], out_id);
         }
         in_to_out_ebl_ids_.Append(ids.data(), ids.size());
@@ -353,21 +425,41 @@ class IdMap {
         }
     }
 
-    int64_t
-    MapOutToIn(int64_t out_id) const {
-        return OutCount() == 0 ? out_id : static_cast<int64_t>(GetOutToInId(out_id));
+    expected<int64_t>
+    CompactOutToIn(int64_t out_id, size_t compact_count) const {
+        const auto compact_id = OutCount() == 0 ? out_id : static_cast<int64_t>(GetOutToInId(out_id));
+        if (compact_id < 0 || static_cast<size_t>(compact_id) >= compact_count) {
+            return expected<int64_t>::Err(Status::invalid_args,
+                                          "selected id maps outside compact storage: " + std::to_string(out_id));
+        }
+        return compact_id;
     }
 
-    const int64_t*
-    MapOutToIn(const int64_t* ids, size_t count, std::vector<int64_t>& in_ids) const {
+    expected<const int64_t*>
+    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids,
+                   size_t compact_count) const {
+        if (count != 0 && out_ids == nullptr) {
+            return expected<const int64_t*>::Err(Status::invalid_args, "selected ids are null");
+        }
         if (OutCount() == 0) {
-            return ids;
+            for (size_t i = 0; i < count; ++i) {
+                auto compact_id = CompactOutToIn(out_ids[i], compact_count);
+                if (!compact_id.has_value()) {
+                    return expected<const int64_t*>::Err(compact_id.error(), compact_id.what());
+                }
+            }
+            return out_ids;
         }
-        in_ids.resize(count);
+
+        compact_ids.resize(count);
         for (size_t i = 0; i < count; ++i) {
-            in_ids[i] = GetOutToInId(ids[i]);
+            auto compact_id = CompactOutToIn(out_ids[i], compact_count);
+            if (!compact_id.has_value()) {
+                return expected<const int64_t*>::Err(compact_id.error(), compact_id.what());
+            }
+            compact_ids[i] = compact_id.value();
         }
-        return in_ids.data();
+        return compact_ids.data();
     }
 
  private:
@@ -393,12 +485,26 @@ class IdMap {
         bitmap[bit >> 3] |= static_cast<uint8_t>(1U << (bit & 7));
     }
 
+    static void
+    CheckPublicDomain(size_t old_out_count, size_t append_out_count) {
+        if (append_out_count == 0) {
+            return;
+        }
+        constexpr auto max_id = static_cast<size_t>(std::numeric_limits<int32_t>::max());
+        if (old_out_count > max_id || append_out_count - 1 > max_id - old_out_count) {
+            throw std::runtime_error("id map public id overflows int32");
+        }
+    }
+
     static size_t
     CountPackedBitmap(const uint8_t* valid_bitmap, size_t out_count) {
         // Count only the logical public-id range. Padding bits in the final
         // byte/word are ignored even if the caller's buffer contains garbage.
         if (out_count == 0) {
             return 0;
+        }
+        if (valid_bitmap == nullptr) {
+            throw std::runtime_error("id map bitmap is null");
         }
         size_t count = 0;
         const auto full_words = out_count / 64;
@@ -420,6 +526,9 @@ class IdMap {
 
     static std::vector<uint8_t>
     PackBoolArray(const bool* valid_data, size_t out_count) {
+        if (out_count != 0 && valid_data == nullptr) {
+            throw std::runtime_error("id map valid data is null");
+        }
         std::vector<uint8_t> bitmap(BitmapByteSize(out_count), 0);
         for (size_t out_id = 0; out_id < out_count; ++out_id) {
             if (valid_data[out_id]) {
@@ -439,6 +548,20 @@ class IdMap {
             return kInvalidId;
         }
         return out_to_in_ids_.Get(static_cast<int32_t>(out_id));
+    }
+
+    int32_t
+    ListOutId(size_t list_id) const {
+        if (in_to_out_ids_.empty()) {
+            if (list_id > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+                throw std::runtime_error("emb_list public id overflows int32");
+            }
+            return static_cast<int32_t>(list_id);
+        }
+        if (list_id >= InCount()) {
+            throw std::runtime_error("emb_list id exceeds list id map size");
+        }
+        return in_to_out_ids_[list_id];
     }
 
     static ArrayStore<int32_t>::Type
@@ -482,7 +605,7 @@ class IdMap {
         mmap_configured_ = other.mmap_configured_;
     }
 
-    Type type_ = Type::SEALED;
+    Type type_ = Type::DISABLED;
     // Compact vector internal id -> public row id.
     IdArray in_to_out_ids_;
     // Compact base-vector internal id -> public embedding-list id. Only

@@ -982,11 +982,18 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
         if (raw_data_.empty()) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds failed: raw data is empty");
         }
+        if (dataset == nullptr) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds dataset is null");
+        }
 
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
         std::vector<int64_t> in_ids;
-        ids = this->MapOutToIn(ids, rows, in_ids);
+        auto storage_ids = this->CompactOutToIn(ids, rows, in_ids, raw_data_.size());
+        if (!storage_ids.has_value()) {
+            return expected<DataSetPtr>::Err(storage_ids.error(), storage_ids.what());
+        }
+        ids = storage_ids.value();
         auto data = std::make_unique<sparse::SparseRow<value_type>[]>(rows);
         int64_t dim = 0;
 

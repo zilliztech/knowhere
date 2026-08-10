@@ -45,9 +45,19 @@ ThrowInvalidIdMapData(const std::string& msg) {
 }
 
 inline bool
-AddDatasetIdMapData(const DataSetPtr& dataset, IdMap& id_map) {
-    if (dataset == nullptr || !dataset->HasIdMapData()) {
+AddDatasetIdMapData(const DataSetPtr& dataset, IdMap& id_map, int64_t indexed_count) {
+    const auto has_id_map_data = dataset != nullptr && dataset->HasIdMapData();
+    if (!has_id_map_data) {
+        if (id_map.IsEnabled()) {
+            ThrowInvalidIdMapData("mapped id map requires id map data for every build/add batch");
+        }
         return false;
+    }
+    if (!id_map.IsEnabled()) {
+        ThrowInvalidIdMapData("id map data requires enabled id map storage");
+    }
+    if (indexed_count > 0 && !id_map.HasVectorMap()) {
+        ThrowInvalidIdMapData("cannot append id map data to a plain index");
     }
 
     try {
@@ -104,7 +114,7 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chro
                 auto cfg = this->node->CreateConfig();
                 RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
                 auto& id_map = this->node->GetIdMap();
-                const auto has_id_map = AddDatasetIdMapData(dataset, id_map);
+                const auto has_id_map = AddDatasetIdMapData(dataset, id_map, 0);
                 if (has_id_map && dataset != nullptr && dataset->GetRows() == 0) {
                     // All-null nullable build produces id-map metadata only.
                     return this->node->FinalizeIdMap();
@@ -153,7 +163,7 @@ Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_bu
         auto cfg = this->node->CreateConfig();
         RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
         auto& id_map = this->node->GetIdMap();
-        const auto has_id_map = AddDatasetIdMapData(dataset, id_map);
+        const auto has_id_map = AddDatasetIdMapData(dataset, id_map, 0);
         if (has_id_map && dataset != nullptr && dataset->GetRows() == 0) {
             // All-null nullable build produces id-map metadata only.
             return this->node->FinalizeIdMap();
@@ -203,8 +213,10 @@ Index<T>::Add(const DataSetPtr dataset, const Json& json, bool use_knowhere_buil
         std::string msg;
         RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Add", &msg));
         auto& id_map = this->node->GetIdMap();
-        AddDatasetIdMapData(dataset, id_map);
-        if (dataset != nullptr && dataset->GetRows() == 0) {
+        AddDatasetIdMapData(dataset, id_map, this->node->Count());
+        const auto is_emb_list =
+            dataset != nullptr && dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
+        if (dataset != nullptr && dataset->GetRows() == 0 && !is_emb_list) {
             return Status::success;
         }
         return this->node->AddEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);

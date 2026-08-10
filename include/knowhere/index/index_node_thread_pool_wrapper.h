@@ -117,14 +117,15 @@ class IndexNodeThreadPoolWrapper : public IndexNode {
         index_node_->SetIdMapType(type);
     }
 
-    int64_t
-    MapOutToIn(int64_t out_id) const override {
-        return index_node_->MapOutToIn(out_id);
+    expected<int64_t>
+    CompactOutToIn(int64_t out_id, size_t compact_count) const override {
+        return index_node_->CompactOutToIn(out_id, compact_count);
     }
 
-    const int64_t*
-    MapOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& in_ids) const override {
-        return index_node_->MapOutToIn(out_ids, count, in_ids);
+    expected<const int64_t*>
+    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids,
+                   size_t compact_count) const override {
+        return index_node_->CompactOutToIn(out_ids, count, compact_ids, compact_count);
     }
 
     expected<PreparedBitset>

@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -1994,6 +1995,10 @@ EmbListAddTest(const knowhere::DataSetPtr train_ds_in, const knowhere::DataSetPt
     index.SetIdMapType(knowhere::IdMap::Type::GROWING);
     for (size_t i = 0; i < train_ds_list.size(); i++) {
         auto& base = train_ds_list[i];
+        auto part_num_el = static_cast<size_t>(base->template Get<int64_t>(knowhere::meta::NQ));
+        std::vector<int32_t> part_ids(part_num_el);
+        std::iota(part_ids.begin(), part_ids.end(), 0);
+        base->SetIdMapData(knowhere::IdMapData::FromIds(part_ids.data(), part_ids.size(), part_ids.size()));
         if (i == 0) {
             REQUIRE(index.Build(base, conf, false) == knowhere::Status::success);
         } else {

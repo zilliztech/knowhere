@@ -390,14 +390,15 @@ class IndexNode : public Object {
         GetIdMap().SetType(type);
     }
 
-    virtual int64_t
-    MapOutToIn(int64_t out_id) const {
-        return GetIdMap().MapOutToIn(out_id);
+    virtual expected<int64_t>
+    CompactOutToIn(int64_t out_id, size_t compact_count) const {
+        return GetIdMap().CompactOutToIn(out_id, compact_count);
     }
 
-    virtual const int64_t*
-    MapOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& in_ids) const {
-        return GetIdMap().MapOutToIn(out_ids, count, in_ids);
+    virtual expected<const int64_t*>
+    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids,
+                   size_t compact_count) const {
+        return GetIdMap().CompactOutToIn(out_ids, count, compact_ids, compact_count);
     }
 
     /**
@@ -427,7 +428,7 @@ class IndexNode : public Object {
     }
 
     Status
-    AppendEmbListOffsetAndIdMap(const size_t* lims, size_t append_row_count) {
+    AppendEmbListOffsetAndIdMap(const size_t* lims, size_t append_row_count, size_t append_el_count_hint = 0) {
         // lims is absolute in the whole index; AppendEmbListIds consumes the
         // appended local offset window.
         const auto old_el_count = emb_list_offset_->num_el();
@@ -439,12 +440,22 @@ class IndexNode : public Object {
         }
 
         size_t append_el_count = 1;
-        while (lims[append_el_count] < new_vector_count) {
-            if (lims[append_el_count] < lims[append_el_count - 1]) {
-                LOG_KNOWHERE_WARNING_ << "emb list offset is not increasing";
-                return Status::emb_list_inner_error;
+        if (append_el_count_hint != 0) {
+            append_el_count = append_el_count_hint;
+            for (size_t i = 1; i <= append_el_count; ++i) {
+                if (lims[i] < lims[i - 1]) {
+                    LOG_KNOWHERE_WARNING_ << "emb list offset is not increasing";
+                    return Status::emb_list_inner_error;
+                }
             }
-            ++append_el_count;
+        } else {
+            while (lims[append_el_count] < new_vector_count) {
+                if (lims[append_el_count] < lims[append_el_count - 1]) {
+                    LOG_KNOWHERE_WARNING_ << "emb list offset is not increasing";
+                    return Status::emb_list_inner_error;
+                }
+                ++append_el_count;
+            }
         }
         if (lims[append_el_count] != new_vector_count) {
             LOG_KNOWHERE_WARNING_ << "emb list offset should end with the total_cnt of the whole index";
@@ -815,7 +826,9 @@ class IndexNode : public Object {
             return Status::emb_list_inner_error;
         }
 
-        return BuildEmbList(dataset, std::move(cfg), lims, dataset->GetRows(), use_knowhere_build_pool);
+        return BuildEmbList(dataset, std::move(cfg), lims, dataset->GetRows(),
+                            EmbListCount(dataset, lims, static_cast<size_t>(dataset->GetRows())),
+                            use_knowhere_build_pool);
     }
 
     virtual Status
@@ -958,7 +971,7 @@ class IndexNode : public Object {
 
     virtual Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                 bool use_knowhere_build_pool);
+                 size_t num_el, bool use_knowhere_build_pool);
 
     /**
      * @brief Serialize emb_list: strategy meta, raw index, and base index to BinarySet.
@@ -1005,6 +1018,21 @@ class IndexNode : public Object {
     expected<DataSetPtr>
     CalcDistByRawIndex(const DataSetPtr dataset, const int64_t* labels, size_t labels_len, bool is_cosine,
                        std::shared_ptr<ThreadPool> pool, milvus::OpContext* op_context = nullptr) const;
+
+    static size_t
+    EmbListCount(const DataSetPtr& dataset, const size_t* lims, size_t num_rows) {
+        if (dataset != nullptr) {
+            const auto nq = dataset->Get<int64_t>(meta::NQ);
+            if (nq > 0) {
+                return static_cast<size_t>(nq);
+            }
+        }
+        size_t count = 0;
+        while (lims[count] < num_rows) {
+            ++count;
+        }
+        return count;
+    }
 
     Version version_;
     std::shared_ptr<EmbListOffset> emb_list_offset_;  // emb_list group offset structure (shared with strategy)

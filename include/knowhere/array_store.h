@@ -233,11 +233,9 @@ class ArrayStore {
         if (count == 0) {
             return;
         }
-        type_ = Type::APPEND_ARRAY;
-        if (append_array_ == nullptr) {
-            append_array_ = std::make_shared<AppendArrayData<T>>();
+        if (type_ != Type::APPEND_ARRAY || append_array_ == nullptr || visible_count_ != kDynamicCount) {
+            throw std::runtime_error("array store append requires append storage");
         }
-        visible_count_ = kDynamicCount;
         append_array_->Append(data, count);
     }
 
@@ -506,11 +504,9 @@ class BitmapArray {
         if (data == nullptr) {
             throw std::runtime_error("bitmap array data is null");
         }
-        type_ = Type::APPEND_ARRAY;
-        if (append_data_ == nullptr) {
-            append_data_ = std::make_shared<AppendBitmapData>();
+        if (type_ != Type::APPEND_ARRAY || append_data_ == nullptr || bit_count_ != kDynamicBitCount) {
+            throw std::runtime_error("bitmap array append requires append storage");
         }
-        bit_count_ = kDynamicBitCount;
         append_data_->Append(data, bit_count);
     }
 

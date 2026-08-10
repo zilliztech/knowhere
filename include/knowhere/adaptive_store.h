@@ -13,6 +13,7 @@
 #define ADAPTIVE_STORE_H
 
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -50,7 +51,11 @@ class AdaptiveStore {
 
     void
     Set(const T* keys, size_t value_count, size_t key_count) {
+        if (value_count != 0 && keys == nullptr) {
+            throw std::runtime_error("adaptive store keys are null");
+        }
         Clear();
+        dense_values_.SetType(type_);
         // keys[value] is the lookup key for dense value "value".
         use_sparse_ = type_ == ArrayType::ARRAY && mmap_file_paths_.empty() && value_count != 0 && key_count != 0 &&
                       static_cast<double>(value_count) / static_cast<double>(key_count) <= kSparseMaxFillRatio;
@@ -59,6 +64,8 @@ class AdaptiveStore {
             sparse_values_.reserve(value_count);
             for (size_t value = 0; value < value_count; ++value) {
                 const auto key = keys[value];
+                CheckKey(key, 0, key_count);
+                CheckValue(value);
                 const auto mapped_value = static_cast<T>(value);
                 auto insert_result = sparse_values_.emplace(key, mapped_value);
                 if (!insert_result.second) {
@@ -92,6 +99,9 @@ class AdaptiveStore {
 
     void
     Append(const T* keys, size_t value_count, size_t key_begin, size_t key_count, size_t value_begin) {
+        if (value_count != 0 && keys == nullptr) {
+            throw std::runtime_error("adaptive store keys are null");
+        }
         if (type_ != ArrayType::APPEND_ARRAY || use_sparse_) {
             throw std::runtime_error("adaptive store append is only supported by append dense storage");
         }
@@ -118,10 +128,30 @@ class AdaptiveStore {
     static constexpr double kSparseMaxFillRatio = 0.10;
 
     static void
+    CheckKey(T key, size_t key_begin, size_t key_end) {
+        if (key < 0) {
+            throw std::runtime_error("adaptive store key is negative");
+        }
+        const auto key_offset = static_cast<size_t>(key);
+        if (key_offset < key_begin || key_offset >= key_end) {
+            throw std::runtime_error("adaptive store key is out of range");
+        }
+    }
+
+    static void
+    CheckValue(size_t value) {
+        if (value > static_cast<size_t>(std::numeric_limits<T>::max())) {
+            throw std::runtime_error("adaptive store value overflows");
+        }
+    }
+
+    static void
     FillValues(const T* keys, size_t value_count, size_t key_begin, size_t key_end, size_t value_begin,
                std::vector<T>& values) {
         for (size_t value = 0; value < value_count; ++value) {
             const auto key = keys[value];
+            CheckKey(key, key_begin, key_end);
+            CheckValue(value_begin + value);
             const auto key_offset = static_cast<size_t>(key);
             const auto local_offset = key_offset - key_begin;
             if (values[local_offset] != kInvalidValue) {

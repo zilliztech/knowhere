@@ -370,11 +370,11 @@ class LemurEmbListStrategy : public EmbListStrategy {
         // Encoded-list ANN search crosses the normal IndexNode boundary and returns
         // public list out ids. Map them back to compact list ids before using
         // emb_list_offset_ and rerank state.
-        auto to_in_list_id = [&](int64_t out_id) -> int64_t {
+        auto to_in_list_id = [&](int64_t out_id) -> expected<int64_t> {
             if (out_id < 0) {
                 return -1;
             }
-            return index->MapOutToIn(out_id);
+            return index->CompactOutToIn(out_id, static_cast<size_t>(num_docs_));
         };
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
@@ -394,7 +394,11 @@ class LemurEmbListStrategy : public EmbListStrategy {
             for (size_t q = 0; q < num_query_docs; ++q) {
                 for (int32_t i = 0; i < k; ++i) {
                     if (i < ann_k) {
-                        ids[q * k + i] = to_in_list_id(ann_ids[q * ann_k + i]);
+                        auto list_id = to_in_list_id(ann_ids[q * ann_k + i]);
+                        if (!list_id.has_value()) {
+                            return expected<DataSetPtr>::Err(list_id.error(), list_id.what());
+                        }
+                        ids[q * k + i] = list_id.value();
                         dists[q * k + i] = ann_dists[q * ann_k + i];
                     } else {
                         ids[q * k + i] = -1;
@@ -432,7 +436,11 @@ class LemurEmbListStrategy : public EmbListStrategy {
             // Convert stage1 list/doc out ids to list/doc in ids for rerank.
             candidate_docs.clear();
             for (int32_t i = 0; i < ann_k; ++i) {
-                int64_t doc_id = to_in_list_id(ann_ids[q * ann_k + i]);
+                auto doc_id_or = to_in_list_id(ann_ids[q * ann_k + i]);
+                if (!doc_id_or.has_value()) {
+                    return expected<DataSetPtr>::Err(doc_id_or.error(), doc_id_or.what());
+                }
+                int64_t doc_id = doc_id_or.value();
                 if (doc_id >= 0 && doc_id < num_docs_) {
                     candidate_docs.push_back(doc_id);
                 }
