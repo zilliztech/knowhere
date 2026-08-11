@@ -447,7 +447,7 @@ TEST_CASE("Test DiskANN CalcDistByIDs with all vectors cached", "[diskann]") {
 
     const int64_t cached_id = cached_ids[0];
     auto query_ds = knowhere::GenDataSet(1, kDim, base_ptr + cached_id * kDim);
-    auto result = loaded_diskann.CalcDistByIDs(query_ds, nullptr, &cached_id, 1, true);
+    auto result = loaded_diskann.Node()->CalcDistByIDs(query_ds, knowhere::BitsetView(), &cached_id, 1, true);
     REQUIRE(result.has_value());
     REQUIRE(result.value()->GetDistance()[0] == Catch::Approx(1.0f).margin(0.001f));
 
