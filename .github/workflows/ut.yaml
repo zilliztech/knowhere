@@ -107,7 +107,7 @@ jobs:
       - name: Install Dependency
         run: |
           bash scripts/install_deps.sh
-          python -m pip install wheel pytest 'numpy>=2,<3' ml-dtypes faiss-cpu
+          python -m pip install pytest 'numpy>=2,<3' ml-dtypes faiss-cpu
       - name: Install GCC 12
         # GCC 11 (ubuntu-22.04 default) has incomplete C++20 support:
         # std::partial_ordering, std::strong_ordering, std::weak_ordering

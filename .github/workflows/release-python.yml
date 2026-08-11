@@ -43,12 +43,12 @@ jobs:
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
           CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
           CIBW_BEFORE_ALL_LINUX: "bash scripts/install_deps.sh && make"
-          CIBW_BEFORE_BUILD: "python -m pip install wheel pytest 'numpy>=2,<3' ml-dtypes faiss-cpu auditwheel"
+          CIBW_BEFORE_BUILD: "python -m pip install -r {project}/python/requirements-wheel-build.txt pytest 'numpy>=2,<3' ml-dtypes faiss-cpu"
           # Custom build command using our portable wheel builder
           CIBW_BUILD_FRONTEND: "build"
           # Note: cibuildwheel will use our build_portable_wheel.sh via setup.py
           # The script automatically handles auditwheel repair
-          CIBW_TEST_REQUIRES: "wheel pytest numpy>=2,<3 ml-dtypes faiss-cpu"
+          CIBW_TEST_REQUIRES: "pytest numpy>=2,<3 ml-dtypes faiss-cpu"
           CIBW_TEST_COMMAND: "python -m pytest {project}/tests/python/test_index_with_random.py"
           CIBW_ENVIRONMENT: "SETUPTOOLS_SCM_PRETEND_VERSION=${{ github.event.inputs.tag }}"
         with:

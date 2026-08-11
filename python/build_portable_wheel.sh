@@ -8,6 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/../build/Release"
 VENV_DIR="${KNOWHERE_PYTHON_VENV:-${SCRIPT_DIR}/.venv}"
+WHEEL_BUILD_REQUIREMENTS="${SCRIPT_DIR}/requirements-wheel-build.txt"
 
 # Prefer the project-local uv venv for standalone builds, but still honor an
 # explicit PYTHON from cibuildwheel or a workflow-specific interpreter.
@@ -79,17 +80,28 @@ check_deps() {
     done
 
     command -v "$PYTHON" >/dev/null || { log_error "Python not found: $PYTHON"; exit 1; }
+    [ -f "$WHEEL_BUILD_REQUIREMENTS" ] || {
+        log_error "Wheel build requirements not found: $WHEEL_BUILD_REQUIREMENTS"
+        exit 1
+    }
 
-    if ! command -v auditwheel >/dev/null; then
-        if command -v uv >/dev/null; then
-            log_warn "auditwheel not found, installing into $PYTHON environment with uv..."
-            uv pip install --python "$PYTHON" auditwheel
-            export PATH="$(dirname "$PYTHON"):${PATH}"
-        else
-            log_error "auditwheel not found. Run scripts/install_deps.sh to create the uv-managed Python environment."
-            exit 1
-        fi
+    if command -v uv >/dev/null; then
+        uv pip install --python "$PYTHON" -r "$WHEEL_BUILD_REQUIREMENTS"
+    elif "$PYTHON" -m pip --version >/dev/null 2>&1; then
+        "$PYTHON" -m pip install -r "$WHEEL_BUILD_REQUIREMENTS"
+    else
+        log_error "Neither uv nor pip is available for $PYTHON"
+        exit 1
     fi
+    export PATH="$(dirname "$PYTHON"):${PATH}"
+
+    "$PYTHON" - <<'PY'
+from importlib.metadata import version
+
+packages = ("auditwheel", "setuptools", "wheel", "packaging", "pyelftools")
+print("Wheel toolchain: " + ", ".join(f"{package}={version(package)}" for package in packages))
+PY
+    patchelf --version | head -1
 
     $PYTHON -c "import numpy" 2>/dev/null || {
         log_error "numpy not found. Install with: uv pip install --python '$PYTHON' 'numpy>=2,<3'"
@@ -182,7 +194,7 @@ repair_wheel() {
     export LD_LIBRARY_PATH="${lib_paths}:${system_lib_paths}:${LD_LIBRARY_PATH:-}"
 
     # Run auditwheel repair (all output to stderr so it doesn't leak into command substitution)
-    if ! auditwheel repair "$wheel" -w dist/ --plat "$platform" >&2; then
+    if ! "$PYTHON" -m auditwheel repair "$wheel" -w dist/ --plat "$platform" >&2; then
         log_error "auditwheel repair failed" >&2
         exit 1
     fi
@@ -204,47 +216,64 @@ repair_wheel() {
 # Verify wheel
 verify_wheel() {
     local wheel="$1"
+    local tag
+    local lib_count
+    local tmpdir
+    local so_file
+    local libs_dir
+    local expected_rpath
+    local rpath
+    local unresolved
+    local size
 
     echo ""
     log_info "Verifying wheel: $(basename "$wheel")"
 
-    # Disable exit on error for verification
-    set +e
-
     # Check platform tag
-    local tag=$(unzip -p "$wheel" '*.dist-info/WHEEL' 2>/dev/null | grep "Tag:" | cut -d: -f2 | tr -d ' ')
+    tag=$(unzip -p "$wheel" '*.dist-info/WHEEL' 2>/dev/null | grep "Tag:" | cut -d: -f2 | tr -d ' ' || true)
     [ -z "$tag" ] && tag="unknown"
     echo "  Platform: $tag"
 
-    # Count bundled libraries
-    local lib_count=$(unzip -l "$wheel" 2>/dev/null | grep "\.libs/.*\.so" | wc -l)
-    echo "  Bundled libs: $lib_count"
-
-    # Check RPATH
-    local tmpdir=$(mktemp -d)
-    if unzip -q "$wheel" -d "$tmpdir" 2>/dev/null; then
-        local so_file=$(find "$tmpdir" -name "_swigknowhere*.so" 2>/dev/null | head -1)
-
-        if [ -n "$so_file" ] && [ -f "$so_file" ]; then
-            local rpath=$(readelf -d "$so_file" 2>/dev/null | grep -E "RPATH|RUNPATH" | sed 's/.*\[\(.*\)\]/\1/')
-            if [ -n "$rpath" ]; then
-                if [[ "$rpath" == *'$ORIGIN'* ]]; then
-                    echo "  RPATH: $rpath (portable)"
-                else
-                    echo "  RPATH: $rpath (WARNING: not portable)"
-                fi
-            fi
-        fi
+    tmpdir=$(mktemp -d)
+    if ! unzip -q "$wheel" -d "$tmpdir"; then
+        log_error "Unable to extract repaired wheel"
+        rm -rf "$tmpdir"
+        return 1
     fi
 
-    rm -rf "$tmpdir" 2>/dev/null || true
+    lib_count=$(find "$tmpdir" -path '*.libs/*' -type f -name '*.so*' | wc -l | tr -d ' ')
+    echo "  Bundled libs: $lib_count"
+
+    so_file=$(find "$tmpdir" -type f -name '_swigknowhere*.so' | head -1)
+    libs_dir=$(find "$tmpdir" -maxdepth 1 -type d -name '*.libs' | head -1)
+    if [ -z "$so_file" ] || [ -z "$libs_dir" ]; then
+        log_error "Repaired wheel is missing its extension or bundled library directory"
+        rm -rf "$tmpdir"
+        return 1
+    fi
+
+    expected_rpath="\$ORIGIN/../$(basename "$libs_dir")"
+    rpath=$(readelf -d "$so_file" 2>/dev/null | grep -E 'RPATH|RUNPATH' | sed 's/.*\[\(.*\)\]/\1/' || true)
+    if [[ ":${rpath}:" != *":${expected_rpath}:"* ]]; then
+        log_error "Unexpected extension RPATH: ${rpath:-missing}; expected ${expected_rpath}"
+        rm -rf "$tmpdir"
+        return 1
+    fi
+    echo "  RPATH: $rpath (portable)"
+
+    unresolved=$(ldd "$so_file" 2>&1 | awk '/not found/ { print $1 }' | sort -u || true)
+    if [ -n "$unresolved" ]; then
+        log_error "Repaired wheel has unresolved ELF dependencies:"
+        printf '%s\n' "$unresolved" >&2
+        rm -rf "$tmpdir"
+        return 1
+    fi
+
+    rm -rf "$tmpdir"
 
     # Show file size
-    local size=$(du -h "$wheel" 2>/dev/null | cut -f1)
+    size=$(du -h "$wheel" 2>/dev/null | cut -f1 || true)
     [ -n "$size" ] && echo "  Size: $size"
-
-    # Re-enable exit on error
-    set -e
 }
 
 # Main
