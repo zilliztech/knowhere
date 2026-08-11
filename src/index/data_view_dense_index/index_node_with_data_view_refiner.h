@@ -547,18 +547,9 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::CalcDistByIDs(const DataS
                                   op_context);
     }
 
-    const bool is_emb_list_rerank = this->emb_list_offset_ != nullptr && this->emb_list_strategy_ != nullptr &&
-                                    this->emb_list_strategy_->NeedsBaseIndexIDMap();
-    std::vector<int64_t> in_labels;
-    // Public APIs pass public ids. EmbList rerank passes compact list ids.
+    // CalcDistByIDs is a refine/rerank primitive: labels are already in the
+    // backend compact id domain. Do not apply nullable public-id mapping here.
     const int64_t* labels_to_calc = labels;
-    if (!is_emb_list_rerank) {
-        auto storage_labels = this->CompactOutToIn(labels, labels_len, in_labels, static_cast<size_t>(Count()));
-        if (!storage_labels.has_value()) {
-            return expected<DataSetPtr>::Err(storage_labels.error(), storage_labels.what());
-        }
-        labels_to_calc = storage_labels.value();
-    }
 
     auto num_queries = dataset->GetRows();
     auto query_data = dataset->GetTensor();

@@ -165,15 +165,16 @@ class IndexNode : public Object {
            milvus::OpContext* op_context = nullptr) const = 0;
 
     /**
-     * @brief Performs a brute-force search operation on the index for given labels.
+     * @brief Computes exact distances for known compact/internal vector ids.
      *
      * @param dataset Query vectors.
-     * @param labels
+     * @param labels Compact/internal ids in the backend payload domain.
      * @param labels_len
      * @param is_cosine
      * @return An expected<> object containing the search results or an error.
      *
      * @note emb-list index search will use this method to perform brute-force distance calculation.
+     * @note Public-id retrieve compaction belongs to GetVectorByIds/GetEmbListByIds, not this API.
      * @note Any index_node that supports emb list search must implement this method.
      */
     virtual expected<DataSetPtr>
@@ -390,15 +391,14 @@ class IndexNode : public Object {
         GetIdMap().SetType(type);
     }
 
-    virtual expected<int64_t>
-    CompactOutToIn(int64_t out_id, size_t compact_count) const {
-        return GetIdMap().CompactOutToIn(out_id, compact_count);
+    virtual int64_t
+    MapOutToIn(int64_t out_id) const {
+        return GetIdMap().MapOutToIn(out_id);
     }
 
-    virtual expected<const int64_t*>
-    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids,
-                   size_t compact_count) const {
-        return GetIdMap().CompactOutToIn(out_ids, count, compact_ids, compact_count);
+    virtual Status
+    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids) const {
+        return GetIdMap().CompactOutToIn(out_ids, count, compact_ids);
     }
 
     /**

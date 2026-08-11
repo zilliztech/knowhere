@@ -350,11 +350,12 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
     auto el_ids = dataset->GetIds();
     auto dim = use_raw_index ? emb_list_raw_index_->d : Dim();
     std::vector<int64_t> in_el_ids;
-    auto storage_ids = CompactOutToIn(el_ids, num_el_ids, in_el_ids, emb_list_offset_->num_el());
-    if (!storage_ids.has_value()) {
-        return expected<DataSetPtr>::Err(storage_ids.error(), storage_ids.what());
+    auto status = CompactOutToIn(el_ids, num_el_ids, in_el_ids);
+    if (status != Status::success) {
+        return expected<DataSetPtr>::Err(status, "GetEmbListByIds failed to map ids");
     }
-    const auto* ids_to_retrieve = storage_ids.value();
+    const auto* ids_to_retrieve = in_el_ids.data();
+    num_el_ids = static_cast<int64_t>(in_el_ids.size());
 
     std::vector<size_t> out_offsets(num_el_ids + 1);
     out_offsets[0] = 0;

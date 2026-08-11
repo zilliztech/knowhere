@@ -989,11 +989,20 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
         std::vector<int64_t> in_ids;
-        auto storage_ids = this->CompactOutToIn(ids, rows, in_ids, raw_data_.size());
-        if (!storage_ids.has_value()) {
-            return expected<DataSetPtr>::Err(storage_ids.error(), storage_ids.what());
+        auto status = this->CompactOutToIn(ids, rows, in_ids);
+        if (status != Status::success) {
+            return expected<DataSetPtr>::Err(status, "GetVectorByIds failed to map ids");
         }
-        ids = storage_ids.value();
+        ids = in_ids.data();
+        rows = static_cast<int64_t>(in_ids.size());
+        if (rows == 0) {
+            // Public-id retrieve may compact missing nullable ids to an empty
+            // storage-id set. Return an empty sparse result without touching
+            // backend storage.
+            auto res = GenResultDataSet(0, 0, static_cast<const sparse::SparseRow<value_type>*>(nullptr));
+            res->SetIsSparse(true);
+            return res;
+        }
         auto data = std::make_unique<sparse::SparseRow<value_type>[]>(rows);
         int64_t dim = 0;
 

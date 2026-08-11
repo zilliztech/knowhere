@@ -374,7 +374,11 @@ class LemurEmbListStrategy : public EmbListStrategy {
             if (out_id < 0) {
                 return -1;
             }
-            return index->CompactOutToIn(out_id, static_cast<size_t>(num_docs_));
+            const auto in_id = index->MapOutToIn(out_id);
+            if (in_id < 0) {
+                return expected<int64_t>::Err(Status::invalid_args, "list id maps outside compact storage");
+            }
+            return in_id;
         };
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
