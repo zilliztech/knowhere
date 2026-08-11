@@ -1,0 +1,18 @@
+# These tools create or rewrite wheel artifacts. Keep them exact so a new
+# upstream release cannot change an existing commit's CI output.
+# auditwheel 6.8.0 produces invalid ELF metadata with Ubuntu 22.04's
+# patchelf 0.14.3, so retain the last known-good release.
+#
+# The 2.6 release workflow still lists Python 3.8 and 3.9, so use the latest
+# known-compatible auditwheel toolchain for each supported interpreter.
+auditwheel==6.1.0; python_version < "3.9"
+auditwheel==6.4.2; python_version == "3.9"
+auditwheel==6.7.0; python_version >= "3.10"
+packaging==26.2; python_version < "3.9"
+packaging==26.3; python_version >= "3.9"
+pyelftools==0.32; python_version < "3.10"
+pyelftools==0.33; python_version >= "3.10"
+setuptools==75.3.2; python_version < "3.10"
+setuptools==83.0.0; python_version >= "3.10"
+wheel==0.45.1; python_version < "3.9"
+wheel==0.47.0; python_version >= "3.9"
