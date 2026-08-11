@@ -1752,6 +1752,13 @@ RequireInvalidCompactOutToIn(const knowhere::IdMap& map, int64_t out_id, size_t 
     REQUIRE(compact_id.error() == knowhere::Status::invalid_args);
 }
 
+void
+RequireInvalidCompactOutToIn(const knowhere::IndexNode& index_node, int64_t out_id, size_t compact_count) {
+    auto compact_id = index_node.CompactOutToIn(out_id, compact_count);
+    REQUIRE_FALSE(compact_id.has_value());
+    REQUIRE(compact_id.error() == knowhere::Status::invalid_args);
+}
+
 knowhere::IdArray
 RequireIdMapArrayContent(const knowhere::Index<knowhere::IndexNode>& index, const std::vector<int32_t>& valid_ids,
                          int64_t count) {
@@ -1789,15 +1796,27 @@ RequireIdMapBitmap(const knowhere::Index<knowhere::IndexNode>& index, int64_t co
 }
 
 void
-RequireVectorIdMapCompacted(const knowhere::Index<knowhere::IndexNode>& index, int64_t count) {
+RequireVectorIdMapCompacted(const knowhere::Index<knowhere::IndexNode>& index, const std::vector<int32_t>& valid_ids,
+                            int64_t count) {
     REQUIRE(index.Node() != nullptr);
     const auto& map = index.Node()->GetIdMap();
     REQUIRE(map.OutCount() == static_cast<size_t>(count));
+    REQUIRE(map.InCount() == valid_ids.size());
     auto valid = map.ValidBitmap();
     REQUIRE(valid.size() == static_cast<size_t>(count));
     REQUIRE(valid.data() != nullptr);
     REQUIRE(map.InToOutIds().empty());
     REQUIRE(map.InToOutIds(knowhere::IdMap::Domain::EMB_LIST).empty());
+    for (size_t i = 0; i < valid_ids.size(); ++i) {
+        CAPTURE(i, valid_ids[i]);
+        RequireInvalidCompactOutToIn(map, valid_ids[i], valid_ids.size());
+        REQUIRE(RequireCompactOutToIn(*index.Node(), valid_ids[i], valid_ids.size()) == static_cast<int64_t>(i));
+    }
+    const auto missing_id = FirstMissingOutId(valid_ids, count);
+    if (missing_id < count) {
+        RequireInvalidCompactOutToIn(map, missing_id, valid_ids.size());
+        RequireInvalidCompactOutToIn(*index.Node(), missing_id, valid_ids.size());
+    }
 }
 
 void
@@ -1806,6 +1825,7 @@ RequireEmbListIdMapCompacted(const knowhere::Index<knowhere::IndexNode>& index, 
     REQUIRE(index.Node() != nullptr);
     const auto& map = index.Node()->GetIdMap();
     REQUIRE(map.OutCount() == static_cast<size_t>(count));
+    REQUIRE(map.InCount() == valid_ids.size());
     auto valid = map.ValidBitmap();
     REQUIRE(valid.size() == static_cast<size_t>(count));
     REQUIRE(valid.data() != nullptr);
@@ -1816,6 +1836,11 @@ RequireEmbListIdMapCompacted(const knowhere::Index<knowhere::IndexNode>& index, 
         REQUIRE(RequireCompactOutToIn(index.Node()->GetIdMap(), valid_ids[i], valid_ids.size()) ==
                 static_cast<int64_t>(i));
         REQUIRE(RequireCompactOutToIn(*index.Node(), valid_ids[i], valid_ids.size()) == static_cast<int64_t>(i));
+    }
+    const auto missing_id = FirstMissingOutId(valid_ids, count);
+    if (missing_id < count) {
+        RequireInvalidCompactOutToIn(map, missing_id, valid_ids.size());
+        RequireInvalidCompactOutToIn(*index.Node(), missing_id, valid_ids.size());
     }
 }
 
@@ -3325,6 +3350,39 @@ TEST_CASE("Nullable IdMap primitives", "[nullable][id_map]") {
         REQUIRE((valid_after_noop.data()[9 >> 3] & (1U << (9 & 7))) != 0);
     }
 
+    SECTION("IdMap clears handed-off vector-domain maps in both directions") {
+        auto bitmap = MakeValidBitmap(10, {1, 4, 9});
+        knowhere::IdMap map;
+        map.SetType(knowhere::IdMap::Type::SEALED);
+        map.AddFromData(knowhere::IdMapData::FromValidBitmap(bitmap.data(), 10));
+        map.FinalizeVectorIds();
+
+        const size_t offsets[] = {0, 2, 3, 6};
+        map.FinalizeEmbListIds(offsets, 3);
+        RequireIdArrayEquals(map.InToOutIds(), {1, 4, 9});
+        RequireIdArrayEquals(map.InToOutIds(knowhere::IdMap::Domain::EMB_LIST), {1, 1, 4, 9, 9, 9});
+        REQUIRE(map.OutCount() == 10);
+        REQUIRE(map.InCount() == 3);
+        REQUIRE(RequireCompactOutToIn(map, 9, map.InCount()) == 2);
+
+        map.ClearEblIds();
+        RequireIdArrayEquals(map.InToOutIds(), {1, 4, 9});
+        REQUIRE(map.InToOutIds(knowhere::IdMap::Domain::EMB_LIST).empty());
+        REQUIRE(map.OutCount() == 10);
+        REQUIRE(map.InCount() == 3);
+        REQUIRE(RequireCompactOutToIn(map, 4, map.InCount()) == 1);
+
+        map.ClearIds();
+        REQUIRE(map.InToOutIds().empty());
+        REQUIRE(map.InToOutIds(knowhere::IdMap::Domain::EMB_LIST).empty());
+        REQUIRE(map.OutCount() == 10);
+        REQUIRE(map.InCount() == 3);
+        REQUIRE(!map.ValidBitmap().empty());
+        RequireInvalidCompactOutToIn(map, 1, map.InCount());
+        RequireInvalidCompactOutToIn(map, 4, map.InCount());
+        RequireInvalidCompactOutToIn(map, 9, map.InCount());
+    }
+
     SECTION("IdMap supports mmap-backed id arrays") {
         auto work_dir = NullableIdMapWorkDir("id_map_mmap");
         RemoveAllNoThrow(work_dir);
@@ -4787,15 +4845,15 @@ TEST_CASE("Nullable raw-data vector APIs map compact serialized ids after reload
     REQUIRE(artifact->create_ok);
     REQUIRE(artifact->build_status == knowhere::Status::success);
 
-    RequireVectorIdMapCompacted(artifact->index, artifact->data.total_count);
+    RequireVectorIdMapCompacted(artifact->index, artifact->data.valid_ids, artifact->data.total_count);
     RequireDenseVectorPublicApisUseOutIds(artifact->index, artifact->data, artifact->json, false);
 
     REQUIRE(EnsureBinaryLoaded(*artifact) == knowhere::Status::success);
-    RequireVectorIdMapCompacted(artifact->binary_loaded, artifact->data.total_count);
+    RequireVectorIdMapCompacted(artifact->binary_loaded, artifact->data.valid_ids, artifact->data.total_count);
     RequireDenseVectorPublicApisUseOutIds(artifact->binary_loaded, artifact->data, artifact->json, false);
 
     REQUIRE(EnsureFileLoaded(*artifact) == knowhere::Status::success);
-    RequireVectorIdMapCompacted(artifact->file_loaded, artifact->data.total_count);
+    RequireVectorIdMapCompacted(artifact->file_loaded, artifact->data.valid_ids, artifact->data.total_count);
     RequireDenseVectorPublicApisUseOutIds(artifact->file_loaded, artifact->data, artifact->json, false);
 }
 

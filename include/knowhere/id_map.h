@@ -334,6 +334,17 @@ class IdMap {
     }
 
     void
+    ClearIds() {
+        in_to_out_ids_.Clear();
+        out_to_in_ids_.Clear();
+    }
+
+    void
+    ClearEblIds() {
+        in_to_out_ebl_ids_.Clear();
+    }
+
+    void
     AppendEmbListIds(int64_t ebl_id_begin, const size_t* ebl_offsets, int64_t ebl_count) {
         // Appends base-vector ids for a growing EmbList batch.
         const auto list_count = static_cast<size_t>(ebl_count);
