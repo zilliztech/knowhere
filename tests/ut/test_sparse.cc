@@ -362,6 +362,109 @@ TEST_CASE("Test Mem Sparse Index With Float Vector", "[float metrics]") {
     }
 }
 
+TEST_CASE("Sparse long-query bulk windows match brute force", "[sparse][bulk]") {
+    constexpr int64_t window_size = 1 << 12;
+    constexpr int64_t tail_size = 907;
+    constexpr int64_t nb = window_size + tail_size;
+    constexpr int64_t nq = 2;
+    constexpr int64_t dim = 64;
+    constexpr int64_t topk = 3;
+    constexpr int64_t boundary_doc_ids[] = {window_size - 1, window_size, nb - 1};
+    static_assert(nb > window_size);
+    static_assert(tail_size > 0 && tail_size < window_size);
+
+    const auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
+    const auto filter_ratio = GENERATE(0.0f, 0.5f, 0.9f);
+    CAPTURE(metric, filter_ratio);
+
+    // Every document occurs on two high-impact posting lists. The remaining terms rotate across documents, keeping
+    // the query long while still exercising essential-partition shrink. The three dense documents make both sides
+    // of the 4096 boundary and the final document mandatory top-k hits.
+    std::vector<std::map<int32_t, float>> train_data(nb);
+    for (int64_t doc_id = 0; doc_id < nb; ++doc_id) {
+        train_data[doc_id][0] = 2.0f;
+        train_data[doc_id][1] = 1.0f;
+        train_data[doc_id][2 + doc_id % (dim - 2)] = 1.0f;
+    }
+    for (const auto doc_id : boundary_doc_ids) {
+        for (int32_t d = 2; d < dim; ++d) {
+            train_data[doc_id][d] = 1.0f;
+        }
+    }
+
+    std::vector<std::map<int32_t, float>> query_data(nq);
+    for (int32_t d = 0; d < dim; ++d) {
+        query_data[0][d] = 1.0f;
+        query_data[1][d] = d % 2 == 0 ? 1.1f : 0.9f;
+    }
+
+    auto train_ds = GenSparseDataSet(train_data, dim);
+    auto query_ds = GenSparseDataSet(query_data, dim);
+    const auto* queries = static_cast<const knowhere::sparse::SparseRow<float>*>(query_ds->GetTensor());
+    for (int64_t i = 0; i < nq; ++i) {
+        REQUIRE(queries[i].size() >= 32);
+    }
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = metric;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "BLOCK_MAX_MAXSCORE";
+    build_json["inverted_index_codec"] = "block_streamvbyte";
+    build_json["block_max_block_size"] = 64;
+    build_json[knowhere::meta::BM25_K1] = 1.2;
+    build_json[knowhere::meta::BM25_B] = 0.75;
+    build_json[knowhere::meta::BM25_AVGDL] = 100;
+
+    knowhere::Json search_json = build_json;
+    search_json[knowhere::meta::TOPK] = topk;
+    search_json[knowhere::indexparam::SEARCH_ALGO] = "DAAT_MAXSCORE";
+    search_json[knowhere::meta::DIM_MAX_SCORE_RATIO] = 1.05;
+
+    std::vector<uint8_t> bitset_data;
+    knowhere::BitsetView bitset;
+    if (filter_ratio > 0) {
+        bitset_data = GenerateBitsetWithRandomTbitsSet(nb, static_cast<size_t>(filter_ratio * nb));
+        // Keep the targeted boundary documents visible at every filter ratio.
+        for (const auto doc_id : boundary_doc_ids) {
+            bitset_data[doc_id / 8] &= static_cast<uint8_t>(~(uint8_t{1} << (doc_id % 8)));
+        }
+        bitset = knowhere::BitsetView(bitset_data.data(), nb);
+    }
+
+    auto expected = knowhere::BruteForce::SearchSparse(train_ds, query_ds, search_json, bitset);
+    REQUIRE(expected.has_value());
+    auto contains_doc = [&](const knowhere::DataSet& result, int64_t query_id, int64_t doc_id) {
+        const auto* ids = result.GetIds() + query_id * topk;
+        return std::find(ids, ids + topk, doc_id) != ids + topk;
+    };
+    for (int64_t query_id = 0; query_id < nq; ++query_id) {
+        for (const auto doc_id : boundary_doc_ids) {
+            REQUIRE(contains_doc(*expected.value(), query_id, doc_id));
+        }
+    }
+
+    const auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                     .value();
+    REQUIRE(index.Build(train_ds, build_json) == knowhere::Status::success);
+    for (const std::string search_algo : {"DAAT_MAXSCORE", "BLOCK_MAX_MAXSCORE"}) {
+        for (const int32_t bulk_query_nnz_threshold : {0, static_cast<int32_t>(dim + 1)}) {
+            CAPTURE(search_algo, bulk_query_nnz_threshold);
+            search_json[knowhere::indexparam::SEARCH_ALGO] = search_algo;
+            search_json[knowhere::indexparam::BULK_QUERY_NNZ_THRESHOLD] = bulk_query_nnz_threshold;
+            auto actual = index.Search(query_ds, search_json, bitset);
+            REQUIRE(actual.has_value());
+            REQUIRE(GetKNNRecall(*expected.value(), *actual.value()) >= 0.99f);
+            for (int64_t query_id = 0; query_id < nq; ++query_id) {
+                for (const auto doc_id : boundary_doc_ids) {
+                    REQUIRE(contains_doc(*actual.value(), query_id, doc_id));
+                }
+            }
+        }
+    }
+}
+
 TEST_CASE("Test Mem Sparse Index Handle Empty Vector", "[float metrics]") {
     auto [base_data, has_first_result] = GENERATE(table<std::vector<std::map<int32_t, float>>, bool>(
         {{std::vector<std::map<int32_t, float>>{
