@@ -11,8 +11,6 @@ namespace knowhere::sparse::inverted {
 
 inline constexpr uint32_t kBulkWindowSize = 1U << 12;
 
-static_assert(kBulkWindowSize >= 64 && kBulkWindowSize <= 4096 && kBulkWindowSize % 64 == 0);
-
 using SparseHeap = knowhere::ResultMinHeap<float, uint32_t>;
 
 struct FilterBounds {
