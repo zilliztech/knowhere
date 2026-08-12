@@ -464,16 +464,16 @@ if(__X86_64)
     # The tarball ships libsvs_runtime.so with all deps (fmt, spdlog) baked in,
     # plus CMake config files and runtime API headers.
     # Override: set svs_runtime_DIR to a local unpacked tarball to skip download.
-    find_package(svs_runtime 0.3.0 QUIET)
+    find_package(svs_runtime 0.4.0 QUIET)
     if(NOT svs_runtime_FOUND)
       include(FetchContent)
       set(SVS_TARBALL_URL
-          "https://github.com/intel/ScalableVectorSearch/releases/download/nightly/svs-cpp-runtime-bindings-nightly-2026-05-18-1299.tar.gz"
+          "https://github.com/intel/ScalableVectorSearch/releases/download/v0.4.0/svs-cpp-runtime-bindings.tar.gz"
           CACHE STRING "URL for pre-built SVS runtime bindings tarball")
       FetchContent_Declare(svs URL "${SVS_TARBALL_URL}" DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
       FetchContent_MakeAvailable(svs)
       set(svs_runtime_DIR "${svs_SOURCE_DIR}/lib/cmake/svs_runtime")
-      find_package(svs_runtime 0.3.0 REQUIRED)
+      find_package(svs_runtime 0.4.0 REQUIRED)
     endif()
 
     target_link_libraries(faiss PUBLIC svs::svs_runtime)

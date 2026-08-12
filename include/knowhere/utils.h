@@ -222,6 +222,14 @@ data_type_conversion(const DataSet& src, const std::optional<int64_t> start = st
         des->Set(knowhere::meta::EMB_LIST_OFFSET, lims_data_const);
         des->Set(knowhere::meta::NQ, static_cast<int64_t>(lims_size));
     }
+
+    // The OOD query-training sample is always fp32 and is not owned by the DataSet, so it is forwarded as-is
+    // rather than converted alongside the tensor. See knowhere::meta::TRAIN_QUERY_TENSOR.
+    auto train_queries = src.Get<const float*>(knowhere::meta::TRAIN_QUERY_TENSOR);
+    if (train_queries != nullptr) {
+        des->Set(knowhere::meta::TRAIN_QUERY_TENSOR, train_queries);
+        des->Set(knowhere::meta::TRAIN_QUERY_ROWS, src.Get<int64_t>(knowhere::meta::TRAIN_QUERY_ROWS));
+    }
     return des;
 }
 

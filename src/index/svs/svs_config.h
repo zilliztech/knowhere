@@ -31,6 +31,8 @@ class SvsVamanaConfig : public BaseConfig {
     CFG_FLOAT svs_alpha;
     // Data storage format: "fp32", "fp16", "sqi8".
     CFG_STRING svs_storage_kind;
+    // Build an immutable static Vamana index (no incremental add/remove) instead of the dynamic variant.
+    CFG_BOOL svs_is_static;
     KNOWHERE_DECLARE_CONFIG(SvsVamanaConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_graph_max_degree)
             .description("maximum degree of the Vamana graph.")
@@ -65,6 +67,10 @@ class SvsVamanaConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_storage_kind)
             .description("data storage format: fp32, fp16, sqi8.")
             .set_default("fp32")
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(svs_is_static)
+            .description("build an immutable static Vamana index instead of the dynamic variant.")
+            .set_default(true)
             .for_train();
     }
 };
@@ -113,6 +119,8 @@ class SvsVamanaLeanVecConfig : public SvsVamanaConfig {
  public:
     // Dimensionality for LeanVec compression. Default is d/2 (set to 0 to use default).
     CFG_INT svs_leanvec_dim;
+    // Train the LeanVec projection for out-of-distribution queries (arXiv:2312.16335).
+    CFG_BOOL svs_leanvec_ood;
     KNOWHERE_DECLARE_CONFIG(SvsVamanaLeanVecConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(svs_graph_max_degree)
             .description("maximum degree of the Vamana graph.")
@@ -152,6 +160,80 @@ class SvsVamanaLeanVecConfig : public SvsVamanaConfig {
             .description("dimensionality for LeanVec compression. 0 means d/2.")
             .set_default(0)
             .set_range(0, 65536)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(svs_leanvec_ood)
+            .description("train the LeanVec projection for out-of-distribution queries.")
+            .set_default(true)
+            .for_train();
+    }
+};
+
+class SvsIvfConfig : public BaseConfig {
+ public:
+    // Number of inverted-list centroids / clusters.
+    CFG_INT svs_ivf_nlist;
+    // Number of clusters probed. Larger values improve recall at the cost of latency. Applies at both build time
+    // (as the index default) and search time.
+    CFG_INT svs_ivf_nprobe;
+    // Reranking multiplier for compressed datasets. Applies at both build time (as the index default) and search
+    // time. Leave unset, or pass 0, to keep the SVS default of 1.0.
+    CFG_FLOAT svs_ivf_k_reorder;
+    // Data storage format: "fp32", "fp16", "sqi8".
+    CFG_STRING svs_storage_kind;
+    // Build an immutable static IVF index instead of the dynamic variant.
+    CFG_BOOL svs_is_static;
+    KNOWHERE_DECLARE_CONFIG(SvsIvfConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(svs_ivf_nlist)
+            .description("number of inverted-list centroids.")
+            .set_default(1000)
+            .set_range(1, 1000000)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(svs_ivf_nprobe)
+            .description("number of clusters probed during search.")
+            .set_default(10)
+            .set_range(1, 1000000)
+            .for_train()
+            .for_search()
+            .for_range_search()
+            .for_iterator();
+        KNOWHERE_CONFIG_DECLARE_FIELD(svs_ivf_k_reorder)
+            .description("reranking multiplier for compressed datasets. 0 keeps the SVS default.")
+            .allow_empty_without_default()
+            .set_range(0.0f, 1000.0f)
+            .for_train()
+            .for_search()
+            .for_range_search()
+            .for_iterator();
+        KNOWHERE_CONFIG_DECLARE_FIELD(svs_storage_kind)
+            .description("data storage format: fp32, fp16, sqi8.")
+            .set_default("fp32")
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(svs_is_static)
+            .description("build an immutable static IVF index instead of the dynamic variant.")
+            .set_default(true)
+            .for_train();
+    }
+};
+
+class SvsIvfLeanVecConfig : public SvsIvfConfig {
+ public:
+    // Dimensionality for LeanVec compression. Default is d/2 (set to 0 to use default).
+    CFG_INT svs_leanvec_dim;
+    // Train the LeanVec projection for out-of-distribution queries (arXiv:2312.16335).
+    CFG_BOOL svs_leanvec_ood;
+    KNOWHERE_DECLARE_CONFIG(SvsIvfLeanVecConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(svs_storage_kind)
+            .description("LeanVec storage format: leanvec4x4, leanvec4x8, leanvec8x8.")
+            .set_default("leanvec4x4")
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(svs_leanvec_dim)
+            .description("dimensionality for LeanVec compression. 0 means d/2.")
+            .set_default(0)
+            .set_range(0, 65536)
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(svs_leanvec_ood)
+            .description("train the LeanVec projection for out-of-distribution queries.")
+            .set_default(true)
             .for_train();
     }
 };
