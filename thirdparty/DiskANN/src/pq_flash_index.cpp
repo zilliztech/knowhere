@@ -1539,6 +1539,28 @@ namespace diskann {
     auto     query_scratch = &(data.scratch);
     const T *query = data.scratch.aligned_query_T;
 
+    auto finalize = [&]() {
+      // dist_cmp_wrap returns DiskANN's internal distance representation.
+      // Convert it before returning, regardless of whether vectors came from
+      // the coordinate cache or disk.
+      if (metric == diskann::Metric::INNER_PRODUCT) {
+        for (int64_t i = 0; i < n; ++i) {
+          output_dists[i] = 1.0 - output_dists[i] / 2.0;
+          if (max_base_norm != 0) {
+            output_dists[i] *= (max_base_norm * query_norm);
+          }
+        }
+      } else if (metric == diskann::Metric::COSINE) {
+        for (int64_t i = 0; i < n; ++i) {
+          output_dists[i] = -output_dists[i];
+        }
+      }
+
+      this->reader->put_ctx(ctx);
+      this->thread_data.push(data);
+      this->thread_data.push_notify_all();
+    };
+
     // First, check cache for vectors and calculate distances
     std::vector<_u64> uncached_ids;
     uncached_ids.reserve(n);
@@ -1565,9 +1587,7 @@ namespace diskann {
 
     // If all vectors are cached, we're done
     if (uncached_ids.empty()) {
-      this->reader->put_ctx(ctx);
-      this->thread_data.push(data);
-      this->thread_data.push_notify_all();
+      finalize();
       return;
     }
 
@@ -1632,23 +1652,7 @@ namespace diskann {
       }
     }
 
-    // transform l2-dist to ip-dist / cosine-dist
-    if (metric == diskann::Metric::INNER_PRODUCT) {
-      for (int64_t i = 0; i < n; ++i) {
-        output_dists[i] = 1.0 - output_dists[i] / 2.0;
-        if (max_base_norm != 0) {
-          output_dists[i] *= (max_base_norm * query_norm);
-        }
-      }
-    } else if (metric == diskann::Metric::COSINE) {
-      for (int64_t i = 0; i < n; ++i) {
-        output_dists[i] = -output_dists[i];
-      }
-    }
-
-    this->reader->put_ctx(ctx);
-    this->thread_data.push(data);
-    this->thread_data.push_notify_all();
+    finalize();
   }
 
   template<typename T>
