@@ -95,11 +95,11 @@ IndexNodeDataMockWrapper<DataType>::GetVectorByIds(const DataSetPtr dataset, mil
 
 template <typename DataType>
 expected<DataSetPtr>
-IndexNodeDataMockWrapper<DataType>::CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset,
-                                                  const int64_t* labels, const size_t labels_len, const bool is_cosine,
-                                                  milvus::OpContext* op_context) const {
+IndexNodeDataMockWrapper<DataType>::CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset,
+                                                         const int64_t* labels, const size_t labels_len,
+                                                         const bool is_cosine, milvus::OpContext* op_context) const {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->CalcDistByIDs(ds_ptr, bitset, labels, labels_len, is_cosine, op_context);
+    return index_node_->CalcDistByStorageIds(ds_ptr, bitset, labels, labels_len, is_cosine, op_context);
 }
 
 template class knowhere::IndexNodeDataMockWrapper<knowhere::fp16>;

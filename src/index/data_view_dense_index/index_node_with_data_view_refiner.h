@@ -74,8 +74,8 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
     }
 
     expected<DataSetPtr>
-    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
-                  const bool is_cosine, milvus::OpContext* op_context) const override;
+    CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const override;
 
     expected<DataSetPtr>
     SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
@@ -537,17 +537,15 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::SearchEmbList(const DataS
 
 template <typename DataType, typename BaseIndexNode>
 expected<DataSetPtr>
-IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::CalcDistByIDs(const DataSetPtr dataset,
-                                                                     const BitsetView& /*bitset*/,
-                                                                     const int64_t* labels, const size_t labels_len,
-                                                                     const bool is_cosine,
-                                                                     milvus::OpContext* op_context) const {
+IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::CalcDistByStorageIds(
+    const DataSetPtr dataset, const BitsetView& /*bitset*/, const int64_t* labels, const size_t labels_len,
+    const bool is_cosine, milvus::OpContext* op_context) const {
     if (this->emb_list_raw_index_) {
         return CalcDistByRawIndex(dataset, labels, labels_len, is_cosine, ThreadPool::GetGlobalSearchThreadPool(),
                                   op_context);
     }
 
-    // CalcDistByIDs is a refine/rerank primitive: labels are already in the
+    // CalcDistByStorageIds is a refine/rerank primitive: labels are already in the
     // backend compact id domain. Do not apply nullable public-id mapping here.
     const int64_t* labels_to_calc = labels;
 

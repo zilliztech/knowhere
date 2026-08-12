@@ -1885,13 +1885,32 @@ RequireDenseVectorsMatchLogicalIds(const knowhere::DataSet& vectors, const std::
 }
 
 void
-RequireDenseCalcDistByIds(const knowhere::Index<knowhere::IndexNode>& index, const MatrixData& data) {
+RequireDenseCalcDistByPublicIds(const knowhere::Index<knowhere::IndexNode>& index, const MatrixData& data) {
+    std::vector<int64_t> labels(data.query_ids.begin(), data.query_ids.end());
+    auto result = index.CalcDistByIDs(data.query_ds, knowhere::BitsetView{}, labels.data(), labels.size(), false);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetRows() == data.query_ds->GetRows());
+    REQUIRE(result.value()->GetDim() == static_cast<int64_t>(labels.size()));
+    const auto* distances = result.value()->GetDistance();
+    REQUIRE(distances != nullptr);
+    for (size_t i = 0; i < data.query_ids.size(); ++i) {
+        for (size_t j = 0; j < labels.size(); ++j) {
+            const auto label_logical_id = labels[j];
+            const auto expected = DenseL2ForLogicalIds(data.query_ids[i], label_logical_id, data.dim);
+            CAPTURE(i, j, data.query_ids[i], labels[j]);
+            REQUIRE(distances[i * labels.size() + j] == Catch::Approx(expected));
+        }
+    }
+}
+
+void
+RequireDenseCalcDistByStorageIds(const knowhere::IndexNode& node, const MatrixData& data) {
     std::vector<int64_t> labels;
     labels.reserve(data.query_ids.size());
     for (auto logical_id : data.query_ids) {
         labels.push_back(CompactIdForLogicalId(data.valid_ids, logical_id));
     }
-    auto result = index.CalcDistByIDs(data.query_ds, knowhere::BitsetView{}, labels.data(), labels.size(), false);
+    auto result = node.CalcDistByStorageIds(data.query_ds, knowhere::BitsetView{}, labels.data(), labels.size(), false);
     REQUIRE(result.has_value());
     REQUIRE(result.value()->GetRows() == data.query_ds->GetRows());
     REQUIRE(result.value()->GetDim() == static_cast<int64_t>(labels.size()));
@@ -1910,10 +1929,7 @@ RequireDenseCalcDistByIds(const knowhere::Index<knowhere::IndexNode>& index, con
 void
 RequireDenseRetrieveCompactsMissingOutIds(const knowhere::Index<knowhere::IndexNode>& index, const MatrixData& data) {
     const auto missing_id = FirstMissingOutId(data.valid_ids, data.total_count);
-    std::vector<int64_t> rejected_ids = {-1, data.total_count};
-    if (missing_id < data.total_count) {
-        rejected_ids.push_back(missing_id);
-    }
+    const std::vector<int64_t> rejected_ids = {-1, data.total_count};
 
     for (auto rejected_id : rejected_ids) {
         CAPTURE(rejected_id);
@@ -1926,6 +1942,12 @@ RequireDenseRetrieveCompactsMissingOutIds(const knowhere::Index<knowhere::IndexN
     auto null_retrieve = index.GetVectorByIds(knowhere::GenIdsDataSet(1, static_cast<const int64_t*>(nullptr)));
     REQUIRE_FALSE(null_retrieve.has_value());
     REQUIRE(null_retrieve.error() == knowhere::Status::invalid_args);
+
+    if (missing_id < data.total_count) {
+        auto retrieve = index.GetVectorByIds(knowhere::GenIdsDataSet(1, &missing_id));
+        REQUIRE(retrieve.has_value());
+        RequireDenseVectorsMatchLogicalIds(*retrieve.value(), {}, data.dim);
+    }
 
     if (missing_id < data.total_count && data.query_ids.size() >= 2) {
         std::vector<int32_t> expected_ids = {data.query_ids[0], data.query_ids[1]};
@@ -1952,7 +1974,7 @@ RequireDenseVectorPublicApisUseOutIds(const knowhere::Index<knowhere::IndexNode>
     REQUIRE(retrieve.has_value());
     RequireDenseVectorsMatchLogicalIds(*retrieve.value(), data.query_ids, data.dim);
 
-    RequireDenseCalcDistByIds(index, data);
+    RequireDenseCalcDistByPublicIds(index, data);
     RequireDenseRetrieveCompactsMissingOutIds(index, data);
 }
 
@@ -2022,10 +2044,7 @@ RequireEmbListRetrieveUsesOutIds(const knowhere::Index<knowhere::IndexNode>& ind
 void
 RequireEmbListRetrieveCompactsMissingOutId(const knowhere::Index<knowhere::IndexNode>& index, const MatrixData& data) {
     const auto missing_id = FirstMissingOutId(data.valid_ids, data.total_count);
-    std::vector<int64_t> rejected_ids = {-1, data.total_count};
-    if (missing_id < data.total_count) {
-        rejected_ids.push_back(missing_id);
-    }
+    const std::vector<int64_t> rejected_ids = {-1, data.total_count};
 
     for (auto rejected_id : rejected_ids) {
         CAPTURE(rejected_id);
@@ -2039,6 +2058,12 @@ RequireEmbListRetrieveCompactsMissingOutId(const knowhere::Index<knowhere::Index
         index.GetEmbListByIds(knowhere::GenIdsDataSet(1, static_cast<const int64_t*>(nullptr)), "MAX_SIM_L2");
     REQUIRE_FALSE(null_retrieve.has_value());
     REQUIRE(null_retrieve.error() == knowhere::Status::invalid_args);
+
+    if (missing_id < data.total_count) {
+        auto retrieve = index.GetEmbListByIds(knowhere::GenIdsDataSet(1, &missing_id), "MAX_SIM_L2");
+        REQUIRE(retrieve.has_value());
+        RequireEmbListVectorsMatchLogicalIds(*retrieve.value(), {}, data.dim, kEmbVectorsPerDoc);
+    }
 
     if (missing_id < data.total_count && data.query_ids.size() >= 2) {
         std::vector<int32_t> logical_ids = {data.query_ids[0], data.query_ids[1]};
@@ -2868,8 +2893,8 @@ void
 RequireReadApisReturnError(knowhere::IndexNode& node) {
     auto dataset = GenNullableDenseDataSet(4, {0, 2}, kDenseDim);
     auto query = GenDenseQueryDataSet({0}, kDenseDim);
-    int64_t id = 0;
-    auto ids = knowhere::GenIdsDataSet(1, &id);
+    int64_t storage_id = 0;
+    auto ids = knowhere::GenIdsDataSet(1, &storage_id);
     auto new_config = [] { return std::make_unique<knowhere::BaseConfig>(); };
 
     auto search = node.Search(query, new_config(), knowhere::BitsetView{});
@@ -2888,7 +2913,8 @@ RequireReadApisReturnError(knowhere::IndexNode& node) {
     REQUIRE(!vector.has_value());
     REQUIRE(vector.error() == Status::not_implemented);
 
-    auto calc_dist = node.CalcDistByIDs(dataset, knowhere::BitsetView{}, &id, 1, false);
+    // Storage-id APIs should surface the default not_implemented boundary directly.
+    auto calc_dist = node.CalcDistByStorageIds(dataset, knowhere::BitsetView{}, &storage_id, 1, false);
     REQUIRE(!calc_dist.has_value());
     REQUIRE(calc_dist.error() == Status::not_implemented);
 
@@ -4041,9 +4067,9 @@ TEST_CASE("Nullable vector Build plus Add matches full Build", "[nullable][ivf][
     RequireDenseVectorsMatchLogicalIds(*full_vectors.value(), {1, 9}, kDenseDim);
     RequireDenseVectorsMatchLogicalIds(*split_vectors.value(), {1, 9}, kDenseDim);
 
-    int64_t selected_compact_ids[] = {CompactIdForLogicalId(full_ids, 1), CompactIdForLogicalId(full_ids, 9)};
-    auto full_dist = full_index.CalcDistByIDs(query, knowhere::BitsetView{}, selected_compact_ids, 2, false);
-    auto split_dist = split_index.CalcDistByIDs(query, knowhere::BitsetView{}, selected_compact_ids, 2, false);
+    int64_t selected_public_ids[] = {1, 9};
+    auto full_dist = full_index.CalcDistByIDs(query, knowhere::BitsetView{}, selected_public_ids, 2, false);
+    auto split_dist = split_index.CalcDistByIDs(query, knowhere::BitsetView{}, selected_public_ids, 2, false);
     REQUIRE(full_dist.has_value());
     REQUIRE(split_dist.has_value());
     RequireDatasetsEqual(*full_dist.value(), *split_dist.value());
@@ -4426,7 +4452,7 @@ TEST_CASE("Nullable SCANN_DVR emb-list cosine rerank maps calc-dist ids", "[null
     for (int64_t i = 0; i < rows * k; ++i) {
         if (ids[i] >= 0) {
             REQUIRE(ContainsId(data.valid_ids, ids[i]));
-            labels.push_back(CompactIdForLogicalId(data.valid_ids, ids[i]));
+            labels.push_back(ids[i]);
         }
     }
     REQUIRE_FALSE(labels.empty());
@@ -4447,9 +4473,19 @@ TEST_CASE("Nullable SCANN_DVR emb-list cosine rerank maps calc-dist ids", "[null
             ++label_pos;
         }
     }
+
+    std::vector<int64_t> storage_labels;
+    storage_labels.reserve(labels.size());
+    for (auto public_id : labels) {
+        storage_labels.push_back(CompactIdForLogicalId(data.valid_ids, public_id));
+    }
+    REQUIRE(created.index.Node() != nullptr);
+    auto storage_calc = created.index.Node()->CalcDistByStorageIds(data.query_ds, knowhere::BitsetView{},
+                                                                   storage_labels.data(), storage_labels.size(), true);
+    REQUIRE(storage_calc.has_value());
 }
 
-TEST_CASE("Nullable SCANN_DVR CalcDistByIDs uses compact ids", "[nullable][scann_dvr][api]") {
+TEST_CASE("Nullable SCANN_DVR calc-dist APIs keep public and storage ids separate", "[nullable][scann_dvr][api]") {
     IndexRow row{"SCANN_DVR", knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, DataKind::DenseFp32};
     Scenario scenario;
     scenario.mode = Mode::Vector;
@@ -4458,7 +4494,9 @@ TEST_CASE("Nullable SCANN_DVR CalcDistByIDs uses compact ids", "[nullable][scann
     auto artifact = BuildArtifactForScenario(row, scenario);
     REQUIRE(artifact->create_ok);
     REQUIRE(artifact->build_status == knowhere::Status::success);
-    RequireDenseCalcDistByIds(artifact->index, artifact->data);
+    RequireDenseCalcDistByPublicIds(artifact->index, artifact->data);
+    REQUIRE(artifact->index.Node() != nullptr);
+    RequireDenseCalcDistByStorageIds(*artifact->index.Node(), artifact->data);
 }
 
 TEST_CASE("Nullable IVF_FLAT vector APIs use restored logical-id map after reload", "[nullable][ivf][api]") {
@@ -4502,7 +4540,7 @@ TEST_CASE("Nullable FAISS HNSW vector APIs use restored logical-id map after rel
         REQUIRE(retrieve.has_value());
         RequireDenseVectorsMatchLogicalIds(*retrieve.value(), artifact->data.query_ids, artifact->data.dim);
 
-        RequireDenseCalcDistByIds(index, artifact->data);
+        RequireDenseCalcDistByPublicIds(index, artifact->data);
     };
 
     require_vector_apis(artifact->index, true);

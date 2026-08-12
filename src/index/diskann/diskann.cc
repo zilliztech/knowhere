@@ -98,8 +98,8 @@ class DiskANNIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
-                  const bool is_cosine, milvus::OpContext* op_context) const override;
+    CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const override;
 
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
@@ -942,9 +942,9 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
 
 template <typename DataType>
 expected<DataSetPtr>
-DiskANNIndexNode<DataType>::CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
-                                          const size_t labels_len, const bool is_cosine,
-                                          milvus::OpContext* op_context) const {
+DiskANNIndexNode<DataType>::CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset,
+                                                 const int64_t* labels, const size_t labels_len, const bool is_cosine,
+                                                 milvus::OpContext* op_context) const {
     (void)bitset;
     (void)is_cosine;
     if (dataset == nullptr || dataset->GetTensor() == nullptr) {
@@ -961,7 +961,7 @@ DiskANNIndexNode<DataType>::CalcDistByIDs(const DataSetPtr dataset, const Bitset
     auto dim = dataset->GetDim();
     auto xq = static_cast<const DataType*>(dataset->GetTensor());
     auto p_dist = std::make_unique<DistType[]>(nq * labels_len);
-    // CalcDistByIDs is a refine/rerank primitive: labels are already in the
+    // CalcDistByStorageIds is a refine/rerank primitive: labels are already in the
     // backend compact id domain. Do not apply nullable public-id mapping here.
     const int64_t* labels_to_calc = labels;
     if (!is_prepared_.load() || !pq_flash_index_) {

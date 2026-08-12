@@ -148,10 +148,10 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
             size_t tensor_offset = start_offset * query_code_size;
             auto bf_query_dataset = GenDataSet(nq, dim, tensor + tensor_offset);
 
-            auto status =
-                RerankByCalcDistByIDs(candidate_docs, bf_query_dataset, nq, k, mi.larger_is_closer, mi.is_cosine,
-                                      emb_list_offset_, index, bitset, op_context, mi.agg_func, ids.get() + i * k,
-                                      dists.get() + i * k, total_doc_vecs, total_distance_computations);
+            auto status = RerankByCalcDistByStorageIds(candidate_docs, bf_query_dataset, nq, k, mi.larger_is_closer,
+                                                       mi.is_cosine, emb_list_offset_, index, bitset, op_context,
+                                                       mi.agg_func, ids.get() + i * k, dists.get() + i * k,
+                                                       total_doc_vecs, total_distance_computations);
 
             if (status != Status::success) {
                 return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "rerank distance computation error");

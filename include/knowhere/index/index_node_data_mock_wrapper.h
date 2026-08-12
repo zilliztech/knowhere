@@ -55,8 +55,8 @@ class IndexNodeDataMockWrapper : public IndexNode {
     GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override;
 
     expected<DataSetPtr>
-    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
-                  const bool is_cosine, milvus::OpContext* op_context) const override;
+    CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const override;
     std::optional<size_t>
     GetQueryCodeSize(const DataSetPtr dataset) const override {
         auto dim = dataset->GetDim();

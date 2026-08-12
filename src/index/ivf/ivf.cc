@@ -137,8 +137,8 @@ class IvfIndexNode : public IndexNode {
         return 4 * dataset->GetDim();
     }
     expected<DataSetPtr>
-    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
-                  const bool is_cosine, milvus::OpContext* op_context) const override;
+    CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const override;
     static Status
     StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
         auto ivf_cfg = static_cast<const IvfConfig&>(cfg);
@@ -1177,9 +1177,9 @@ IvfIndexNode<DataType, IndexType>::SearchEmbList(const DataSetPtr dataset, std::
 
 template <typename DataType, typename IndexType>
 expected<DataSetPtr>
-IvfIndexNode<DataType, IndexType>::CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset,
-                                                 const int64_t* labels, const size_t labels_len, const bool is_cosine,
-                                                 milvus::OpContext* op_context) const {
+IvfIndexNode<DataType, IndexType>::CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset,
+                                                        const int64_t* labels, const size_t labels_len,
+                                                        const bool is_cosine, milvus::OpContext* op_context) const {
     // When emb_list_raw_index_ exists (MUVERA/LEMUR), base index holds encoded vectors,
     // so use the raw index for exact distance computation during reranking.
     if (emb_list_raw_index_) {
@@ -1192,7 +1192,7 @@ IvfIndexNode<DataType, IndexType>::CalcDistByIDs(const DataSetPtr dataset, const
         auto query_data = dataset->GetTensor();
         auto dim = dataset->GetDim();
         auto distances = std::make_unique<float[]>(num_queries * labels_len);
-        // CalcDistByIDs is a refine/rerank primitive: labels are already in the
+        // CalcDistByStorageIds is a refine/rerank primitive: labels are already in the
         // backend compact id domain. Do not apply nullable public-id mapping here.
         const int64_t* labels_to_calc = labels;
 
@@ -1222,7 +1222,8 @@ IvfIndexNode<DataType, IndexType>::CalcDistByIDs(const DataSetPtr dataset, const
     }
 
     // only support IndexIVFFlat and IndexIVFFlatCC
-    return expected<DataSetPtr>::Err(Status::not_implemented, "CalcDistByIDs not implemented for current index type");
+    return expected<DataSetPtr>::Err(Status::not_implemented,
+                                     "CalcDistByStorageIds not implemented for current index type");
 }
 
 template <typename DataType, typename IndexType>

@@ -85,20 +85,21 @@ ParseEmbListMetric(const BaseConfig& config) {
 }
 
 /**
- * @brief Rerank candidate documents by computing exact distances via IndexNode::CalcDistByIDs.
+ * @brief Rerank candidate documents by computing exact distances via IndexNode::CalcDistByStorageIds.
  *
  * Shared rerank logic used by all EmbList strategies (TokenANN, MUVERA, LEMUR).
- * For each candidate document, retrieves its vector IDs, computes distances to
- * query vectors, and aggregates scores using agg_func.
+ * For each candidate document, retrieves its storage ids, computes distances
+ * to query vectors, and aggregates scores using agg_func.
  *
  * @return Status::success or Status::emb_list_inner_error on failure
  */
 Status
-RerankByCalcDistByIDs(const std::vector<int64_t>& candidate_docs, const DataSetPtr& query_dataset, size_t nq, int32_t k,
-                      bool larger_is_closer, bool is_cosine, const std::shared_ptr<EmbListOffset>& emb_list_offset,
-                      const IndexNode* index, const BitsetView& bitset, milvus::OpContext* op_context,
-                      const EmbListAggFunc& agg_func, int64_t* out_ids, float* out_dists, size_t& out_doc_vecs,
-                      size_t& out_distance_computations);
+RerankByCalcDistByStorageIds(const std::vector<int64_t>& candidate_docs, const DataSetPtr& query_dataset, size_t nq,
+                             int32_t k, bool larger_is_closer, bool is_cosine,
+                             const std::shared_ptr<EmbListOffset>& emb_list_offset, const IndexNode* index,
+                             const BitsetView& bitset, milvus::OpContext* op_context, const EmbListAggFunc& agg_func,
+                             int64_t* out_ids, float* out_dists, size_t& out_doc_vecs,
+                             size_t& out_distance_computations);
 
 /**
  * @brief Serialize EmbListOffset to raw bytes: [size_t count][size_t[count] offsets]
@@ -198,7 +199,7 @@ class EmbListStrategy {
      *
      * MUVERA/LEMUR encode documents into different representations for ANN search,
      * so the base index doesn't hold raw vectors. They need a separate raw vector
-     * store for reranking via CalcDistByIDs.
+     * store for reranking via CalcDistByStorageIds.
      * TokenANN indexes raw vectors directly, so it doesn't need this.
      */
     [[nodiscard]] virtual bool
@@ -210,11 +211,11 @@ class EmbListStrategy {
      * @brief Execute search with full control over the search flow.
      *
      * Strategy controls the entire search pipeline and can call IndexNode methods
-     * directly (Search, CalcDistByIDs, etc.) via the provided index pointer.
+     * directly (Search, CalcDistByStorageIds, etc.) via the provided index pointer.
      *
      * @param query_dataset Original query dataset containing query vectors
      * @param query_offset Query document offsets (queries can also be multi-vector)
-     * @param index IndexNode pointer for calling Search/CalcDistByIDs
+     * @param index IndexNode pointer for calling Search/CalcDistByStorageIds
      * @param cfg Config (read before ANN search, consumed by IndexNode::Search)
      * @param bitset Filtering bitset
      * @param op_context Operation context

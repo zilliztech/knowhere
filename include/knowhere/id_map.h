@@ -452,7 +452,7 @@ class IdMap {
 
         // Retrieve-style APIs may receive arbitrary public ids. Keep only ids
         // that have a stored vector payload; distance-refine callers already
-        // pass compact/internal ids and must not use this helper.
+        // pass storage ids and must not use this helper.
         compact_ids.clear();
         compact_ids.reserve(count);
         for (size_t i = 0; i < count; ++i) {
@@ -608,9 +608,9 @@ class IdMap {
     }
 
     Type type_ = Type::DISABLED;
-    // Compact vector internal id -> public row id.
+    // Compact vector storage id -> public row id.
     IdArray in_to_out_ids_;
-    // Compact base-vector internal id -> public embedding-list id. Only
+    // Compact base-vector storage id -> public embedding-list id. Only
     // populated for EmbList strategies whose base index filters at vector level.
     IdArray in_to_out_ebl_ids_;
     // Public row/list id -> compact vector/list id for selected-id APIs.

@@ -1547,8 +1547,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     }
 
     expected<DataSetPtr>
-    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset_, const int64_t* labels, const size_t labels_len,
-                  const bool is_cosine, milvus::OpContext* op_context) const override {
+    CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset_, const int64_t* labels,
+                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const override {
         // When emb_list_raw_index_ exists (MUVERA/LEMUR), use it for exact distance computation
         if (emb_list_raw_index_) {
             return CalcDistByRawIndex(dataset, labels, labels_len, is_cosine, search_pool, op_context);
@@ -1569,7 +1569,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const auto rows = dataset->GetRows();
         const float* data = static_cast<const float*>(dataset->GetTensor());
         auto distances = std::make_unique<float[]>(rows * labels_len);
-        // CalcDistByIDs is a refine/rerank primitive: labels are already in the
+        // CalcDistByStorageIds is a refine/rerank primitive: labels are already in the
         // backend compact id domain. Do not apply nullable public-id mapping here.
         const int64_t* labels_to_calc = labels;
 
@@ -2443,12 +2443,13 @@ class HNSWIndexNodeWithFallback : public IndexNode {
     }
 
     expected<DataSetPtr>
-    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
-                  const bool is_cosine, milvus::OpContext* op_context) const override {
+    CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const override {
         if (use_base_index) {
-            return base_index->CalcDistByIDs(dataset, bitset, labels, labels_len, is_cosine, op_context);
+            return base_index->CalcDistByStorageIds(dataset, bitset, labels, labels_len, is_cosine, op_context);
         } else {
-            return fallback_search_index->CalcDistByIDs(dataset, bitset, labels, labels_len, is_cosine, op_context);
+            return fallback_search_index->CalcDistByStorageIds(dataset, bitset, labels, labels_len, is_cosine,
+                                                               op_context);
         }
     }
 
