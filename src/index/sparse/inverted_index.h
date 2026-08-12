@@ -141,6 +141,7 @@ struct InvertedIndexBuildStats {
 struct InvertedIndexSearchParams {
     InvertedIndexAlgo algo;
     IndexScorerConfig scorer_config;
+    size_t bulk_query_nnz_threshold;
 
     struct {
         float drop_ratio_search;
@@ -648,7 +649,7 @@ CRTPInvertedIndex<IndexType, DType, IsGrowable>::search(const SparseRow<DType>& 
         case InvertedIndexAlgo::DAAT_MAXSCORE: {
             DaatMaxScoreSearcher<std::remove_reference_t<IndexType>> searcher(
                 *static_cast<const IndexType*>(this), q_vec, search_scorer, k, this->nr_rows_, bitset,
-                search_params.approx.dim_max_score_ratio);
+                search_params.approx.dim_max_score_ratio, search_params.bulk_query_nnz_threshold);
             searcher.search();
             process_search_results(searcher);
             break;
@@ -663,7 +664,7 @@ CRTPInvertedIndex<IndexType, DType, IsGrowable>::search(const SparseRow<DType>& 
         case InvertedIndexAlgo::BLOCK_MAX_MAXSCORE: {
             BlockMaxMaxScoreSearcher<std::remove_reference_t<IndexType>> searcher(
                 *static_cast<const IndexType*>(this), q_vec, search_scorer, k, this->nr_rows_, bitset,
-                search_params.approx.dim_max_score_ratio);
+                search_params.approx.dim_max_score_ratio, search_params.bulk_query_nnz_threshold);
             searcher.search();
             process_search_results(searcher);
             break;

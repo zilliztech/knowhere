@@ -242,6 +242,7 @@ constexpr const char* PRQ_NUM = "nrq";      // for PRQ, number of redisual quant
 constexpr const char* INVERTED_INDEX_ALGO = "inverted_index_algo";
 constexpr const char* DROP_RATIO_BUILD = "drop_ratio_build";
 constexpr const char* DROP_RATIO_SEARCH = "drop_ratio_search";
+constexpr const char* BULK_QUERY_NNZ_THRESHOLD = "bulk_query_nnz_threshold";
 
 // RaBitQ Params
 constexpr const char* RABITQ_BITS = "rbq_bits";

@@ -60,6 +60,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_FLOAT drop_ratio_search;
     CFG_INT refine_factor;
     CFG_FLOAT dim_max_score_ratio;
+    CFG_INT bulk_query_nnz_threshold;
     CFG_INT block_max_block_size;
     CFG_STRING inverted_index_algo;
     CFG_STRING inverted_index_codec;
@@ -123,6 +124,11 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .set_range(0.5, 1.3)
             .set_default(1.05)
             .description("ratio to upscale/downscale the max score of each dimension")
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(bulk_query_nnz_threshold)
+            .description("minimum effective query nnz to use bulk-window MaxScore scoring")
+            .set_default(20)
+            .set_range(0, std::numeric_limits<CFG_INT::value_type>::max())
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_algo)
             .set_default("INHERIT")

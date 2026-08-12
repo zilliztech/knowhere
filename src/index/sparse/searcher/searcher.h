@@ -1,12 +1,15 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 
 #include "knowhere/bitsetview.h"
 #include "knowhere/heap.h"
 
 namespace knowhere::sparse::inverted {
+
+inline constexpr uint32_t kBulkWindowSize = 1U << 12;
 
 using SparseHeap = knowhere::ResultMinHeap<float, uint32_t>;
 

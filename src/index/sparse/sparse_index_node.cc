@@ -705,6 +705,7 @@ class SparseInvertedIndexNode : public IndexNode {
     expected<sparse::inverted::InvertedIndexSearchParams>
     PrepareSearchParams(const SparseInvertedIndexConfig& config) const {
         sparse::inverted::InvertedIndexSearchParams search_params = {
+            .bulk_query_nnz_threshold = static_cast<size_t>(config.bulk_query_nnz_threshold.value()),
             .approx =
                 {
                     .drop_ratio_search = config.drop_ratio_search.value_or(0.0f),

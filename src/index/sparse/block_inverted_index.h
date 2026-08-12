@@ -149,6 +149,9 @@ class BlockInvertedIndexCursor {
      */
     void
     next_geq(uint32_t lower_bound) {
+        if (lower_bound <= cur_vec_id_) {
+            return;
+        }
         if (lower_bound >= valid_upper_bound_) {
             set_invalid();
             return;
