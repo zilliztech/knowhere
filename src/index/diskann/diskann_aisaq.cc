@@ -34,7 +34,8 @@ class AisaqIndexNode : public IndexNode {
  public:
     using DistType = float;
 
-    AisaqIndexNode(const int32_t& version, const Object& object) : is_prepared_(false), dim_(-1), count_(-1) {
+    AisaqIndexNode(const int32_t& version, const Object& object)
+        : IndexNode(version), is_prepared_(false), dim_(-1), count_(-1) {
         assert(typeid(object) == typeid(Pack<std::shared_ptr<milvus::FileManager>>));
         auto diskann_index_pack = dynamic_cast<const Pack<std::shared_ptr<milvus::FileManager>>*>(&object);
         assert(diskann_index_pack != nullptr);
