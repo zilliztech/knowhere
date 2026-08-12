@@ -28,11 +28,13 @@
 set -euo pipefail
 
 CONAN_VERSION="2.28.1"
+UV_VERSION="0.12.3"
 CONAN_REMOTE_URL="https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local2"
 CMAKE_MIN_VERSION="${CMAKE_MIN_VERSION:-3.28.1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 KNOWHERE_PYTHON_VENV="${KNOWHERE_PYTHON_VENV:-${REPO_ROOT}/python/.venv}"
+WHEEL_BUILD_REQUIREMENTS="${REPO_ROOT}/python/requirements-wheel-build.txt"
 
 UNAME="$(uname -s)"
 case "${UNAME}" in
@@ -87,12 +89,17 @@ install_uv() {
     user_bin="$(python_user_bin)"
     export PATH="${user_bin:+${user_bin}:}$HOME/.local/bin:$PATH"
 
-    if ! command -v uv >/dev/null 2>&1; then
-        echo "[install_deps] Installing uv with pip3..."
+    local current_uv_version=""
+    if command -v uv >/dev/null 2>&1; then
+        current_uv_version="$(uv --version | awk '{ print $2 }')"
+    fi
+
+    if [[ "${current_uv_version}" != "${UV_VERSION}" ]]; then
+        echo "[install_deps] Installing uv ${UV_VERSION} with pip3..."
         if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-            pip3_install uv
+            pip3_install --upgrade "uv==${UV_VERSION}"
         else
-            pip3_install --user uv
+            pip3_install --user --upgrade "uv==${UV_VERSION}"
         fi
     fi
 
@@ -140,7 +147,8 @@ install_python_tools() {
         if [[ ! -x "${KNOWHERE_PYTHON_VENV}/bin/python" ]]; then
             uv venv --python python3 "${KNOWHERE_PYTHON_VENV}"
         fi
-        uv pip install --python "${KNOWHERE_PYTHON_VENV}/bin/python" -U setuptools wheel 'numpy>=2,<3' ml-dtypes auditwheel
+        uv pip install --python "${KNOWHERE_PYTHON_VENV}/bin/python" \
+            -r "${WHEEL_BUILD_REQUIREMENTS}" 'numpy>=2,<3' ml-dtypes
     fi
 
     if [[ -x "${KNOWHERE_PYTHON_VENV}/bin/python" ]]; then

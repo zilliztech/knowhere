@@ -1,0 +1,9 @@
+# These tools create or rewrite wheel artifacts. Keep them exact so a new
+# upstream release cannot change an existing commit's CI output.
+# auditwheel 6.8.0 produces invalid ELF metadata with Ubuntu 22.04's
+# patchelf 0.14.3, so retain the last known-good release.
+auditwheel==6.7.0
+packaging==26.3
+pyelftools==0.33
+setuptools==84.0.0
+wheel==0.47.0
