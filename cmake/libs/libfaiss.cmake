@@ -8,6 +8,7 @@ knowhere_file_glob(
   FAISS_SRCS
   thirdparty/faiss/faiss/*.cpp
   thirdparty/faiss/faiss/impl/*.cpp
+  thirdparty/faiss/faiss/impl/result_handler/ResultHandler.cpp
   thirdparty/faiss/faiss/impl/fast_scan/*.cpp
   thirdparty/faiss/faiss/impl/hnsw/*.cpp
   thirdparty/faiss/faiss/impl/pq_code_distance/*.cpp
@@ -48,7 +49,10 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/impl/fast_scan/impl-avx512.cpp
   thirdparty/faiss/faiss/impl/hnsw/avx512.cpp
   thirdparty/faiss/faiss/impl/pq_code_distance/avx512.cpp
+  thirdparty/faiss/faiss/impl/result_handler/avx512.cpp
+  thirdparty/faiss/faiss/impl/polysemous_training/avx512.cpp
   thirdparty/faiss/faiss/impl/binary_hamming/avx512.cpp
+  thirdparty/faiss/faiss/impl/scalar_quantizer/EDENQuantizer-avx512.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/sq-avx512-fastpath.cpp
   thirdparty/faiss/faiss/utils/distances_fused/avx512.cpp
   thirdparty/faiss/faiss/utils/hamming_distance/hamming_avx512.cpp
@@ -97,7 +101,9 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/impl/fast_scan/impl-avx2.cpp
   thirdparty/faiss/faiss/impl/hnsw/avx2.cpp
   thirdparty/faiss/faiss/impl/pq_code_distance/avx2.cpp
+  thirdparty/faiss/faiss/impl/result_handler/avx2.cpp
   thirdparty/faiss/faiss/impl/binary_hamming/avx2.cpp
+  thirdparty/faiss/faiss/impl/scalar_quantizer/EDENQuantizer-avx2.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/impl/sq-avx2-fastpath.cpp
   thirdparty/faiss/faiss/utils/distances_fused/simdlib_based.cpp
   thirdparty/faiss/faiss/utils/hamming_distance/hamming_avx2.cpp
