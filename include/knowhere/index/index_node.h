@@ -1003,6 +1003,16 @@ class IndexNode : public Object {
     SerializeEmbList(BinarySet& binset) const;
 
     /**
+     * @brief Serialize the EMB_LIST_META payload according to the target index version.
+     *
+     * Versions before kEmbListMetaV2MinVersion use the legacy TokenANN-only
+     * [size_t count][size_t[count] offsets] format.  Newer versions use the
+     * strategy-aware [magic][type_len][type][strategy_blob] format.
+     */
+    Status
+    SerializeEmbListMeta(std::shared_ptr<uint8_t[]>& data, int64_t& size) const;
+
+    /**
      * @brief Deserialize emb_list: base index, strategy, and optional raw index from BinarySet.
      */
     Status
