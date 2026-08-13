@@ -334,6 +334,17 @@ class IdMap {
     }
 
     void
+    ClearIds() {
+        in_to_out_ids_.Clear();
+        out_to_in_ids_.Clear();
+    }
+
+    void
+    ClearEblIds() {
+        in_to_out_ebl_ids_.Clear();
+    }
+
+    void
     AppendEmbListIds(int64_t ebl_id_begin, const size_t* ebl_offsets, int64_t ebl_count) {
         // Appends base-vector ids for a growing EmbList batch.
         const auto list_count = static_cast<size_t>(ebl_count);
@@ -425,41 +436,32 @@ class IdMap {
         }
     }
 
-    expected<int64_t>
-    CompactOutToIn(int64_t out_id, size_t compact_count) const {
-        const auto compact_id = OutCount() == 0 ? out_id : static_cast<int64_t>(GetOutToInId(out_id));
-        if (compact_id < 0 || static_cast<size_t>(compact_id) >= compact_count) {
-            return expected<int64_t>::Err(Status::invalid_args,
-                                          "selected id maps outside compact storage: " + std::to_string(out_id));
+    int64_t
+    MapOutToIn(int64_t out_id) const {
+        if (out_id < 0) {
+            return kInvalidId;
         }
-        return compact_id;
+        return OutCount() == 0 ? out_id : static_cast<int64_t>(GetOutToInId(out_id));
     }
 
-    expected<const int64_t*>
-    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids,
-                   size_t compact_count) const {
+    Status
+    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids) const {
         if (count != 0 && out_ids == nullptr) {
-            return expected<const int64_t*>::Err(Status::invalid_args, "selected ids are null");
-        }
-        if (OutCount() == 0) {
-            for (size_t i = 0; i < count; ++i) {
-                auto compact_id = CompactOutToIn(out_ids[i], compact_count);
-                if (!compact_id.has_value()) {
-                    return expected<const int64_t*>::Err(compact_id.error(), compact_id.what());
-                }
-            }
-            return out_ids;
+            return Status::invalid_args;
         }
 
-        compact_ids.resize(count);
+        // Retrieve-style APIs may receive arbitrary public ids. Keep only ids
+        // that have a stored vector payload; distance-refine callers already
+        // pass storage ids and must not use this helper.
+        compact_ids.clear();
+        compact_ids.reserve(count);
         for (size_t i = 0; i < count; ++i) {
-            auto compact_id = CompactOutToIn(out_ids[i], compact_count);
-            if (!compact_id.has_value()) {
-                return expected<const int64_t*>::Err(compact_id.error(), compact_id.what());
+            const auto compact_id = MapOutToIn(out_ids[i]);
+            if (compact_id >= 0) {
+                compact_ids.push_back(compact_id);
             }
-            compact_ids[i] = compact_id.value();
         }
-        return compact_ids.data();
+        return Status::success;
     }
 
  private:
@@ -606,9 +608,9 @@ class IdMap {
     }
 
     Type type_ = Type::DISABLED;
-    // Compact vector internal id -> public row id.
+    // Compact vector storage id -> public row id.
     IdArray in_to_out_ids_;
-    // Compact base-vector internal id -> public embedding-list id. Only
+    // Compact base-vector storage id -> public embedding-list id. Only
     // populated for EmbList strategies whose base index filters at vector level.
     IdArray in_to_out_ebl_ids_;
     // Public row/list id -> compact vector/list id for selected-id APIs.

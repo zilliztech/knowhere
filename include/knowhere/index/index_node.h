@@ -165,22 +165,41 @@ class IndexNode : public Object {
            milvus::OpContext* op_context = nullptr) const = 0;
 
     /**
-     * @brief Performs a brute-force search operation on the index for given labels.
+     * @brief Computes exact distances for ids already in the base-vector storage domain.
      *
-     * @param dataset Query vectors.
-     * @param labels
-     * @param labels_len
-     * @param is_cosine
-     * @return An expected<> object containing the search results or an error.
+     * Storage ids are the dense ids consumed by the backend payload after nullable rows/lists have been compacted.
+     * Public API callers should use CalcDistByIDs; emb-list rerank and backend adapters use this method after they
+     * already hold storage ids.
+     */
+    virtual expected<DataSetPtr>
+    CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context = nullptr) const {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "CalcDistByStorageIds not implemented");
+    }
+
+    /**
+     * @brief Computes exact distances for public vector ids.
      *
-     * @note emb-list index search will use this method to perform brute-force distance calculation.
-     * @note Any index_node that supports emb list search must implement this method.
+     * Public ids are row/list ids used by retrieve APIs and filter bitsets. This method compacts them to storage ids
+     * before dispatching to CalcDistByStorageIds. Missing nullable public ids are ignored, matching GetVectorByIds.
      */
     virtual expected<DataSetPtr>
     CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
                   const bool is_cosine, milvus::OpContext* op_context = nullptr) const {
-        return expected<DataSetPtr>::Err(Status::not_implemented,
-                                         "BruteForceByIDs not supported for current index type");
+        if (dataset == nullptr) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "CalcDistByIDs dataset is null");
+        }
+        std::vector<int64_t> storage_ids;
+        auto status = CompactOutToIn(labels, labels_len, storage_ids);
+        if (status != Status::success) {
+            return expected<DataSetPtr>::Err(status, "CalcDistByIDs failed to map ids");
+        }
+        if (storage_ids.empty()) {
+            return GenResultDataSet(dataset->GetRows(), 0, static_cast<const int64_t*>(nullptr),
+                                    static_cast<const float*>(nullptr));
+        }
+        return CalcDistByStorageIds(dataset, bitset, storage_ids.empty() ? nullptr : storage_ids.data(),
+                                    storage_ids.size(), is_cosine, op_context);
     };
 
     // not thread safe.
@@ -390,15 +409,14 @@ class IndexNode : public Object {
         GetIdMap().SetType(type);
     }
 
-    virtual expected<int64_t>
-    CompactOutToIn(int64_t out_id, size_t compact_count) const {
-        return GetIdMap().CompactOutToIn(out_id, compact_count);
+    virtual int64_t
+    MapOutToIn(int64_t out_id) const {
+        return GetIdMap().MapOutToIn(out_id);
     }
 
-    virtual expected<const int64_t*>
-    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids,
-                   size_t compact_count) const {
-        return GetIdMap().CompactOutToIn(out_ids, count, compact_ids, compact_count);
+    virtual Status
+    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids) const {
+        return GetIdMap().CompactOutToIn(out_ids, count, compact_ids);
     }
 
     /**
@@ -426,6 +444,11 @@ class IndexNode : public Object {
     GetVectorByStorageIds(const DataSetPtr dataset, milvus::OpContext* op_context = nullptr) const {
         return expected<DataSetPtr>::Err(Status::not_implemented, "GetVectorByStorageIds not implemented");
     }
+
+    // Retrieve embedding lists by compact ids in this node's list storage domain.
+    virtual expected<DataSetPtr>
+    GetEmbListByStorageIds(const DataSetPtr dataset, const std::string& metric_type,
+                           milvus::OpContext* op_context = nullptr) const;
 
     Status
     AppendEmbListOffsetAndIdMap(const size_t* lims, size_t append_row_count, size_t append_el_count_hint = 0) {
@@ -496,7 +519,7 @@ class IndexNode : public Object {
 
     void
     PrepareBitsetMap(PreparedBitset& prepared, const IdMap& id_map) const {
-        // Backend selectors test internal ids; bitsets use public ids.
+        // Backend selectors test storage ids; bitsets use public ids.
         const auto& ebl_out_ids = id_map.InToOutIds(IdMap::Domain::EMB_LIST);
         const auto& out_ids = ebl_out_ids.empty() ? id_map.InToOutIds() : ebl_out_ids;
         if (!out_ids.empty()) {
@@ -1008,7 +1031,7 @@ class IndexNode : public Object {
     /**
      * @brief Compute distances using emb_list_raw_index_ (raw vector storage).
      *
-     * Used by CalcDistByIDs implementations when emb_list_raw_index_ is present
+     * Used by CalcDistByStorageIds implementations when emb_list_raw_index_ is present
      * (MUVERA/LEMUR strategies). The raw index stores original vectors indexed by
      * global vector IDs, so no ID translation is needed.
      *

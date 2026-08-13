@@ -43,11 +43,12 @@ CreateEmbListStrategy(const std::string& strategy_type, const BaseConfig& config
 }
 
 Status
-RerankByCalcDistByIDs(const std::vector<int64_t>& candidate_docs, const DataSetPtr& query_dataset, size_t nq, int32_t k,
-                      bool larger_is_closer, bool is_cosine, const std::shared_ptr<EmbListOffset>& emb_list_offset,
-                      const IndexNode* index, const BitsetView& bitset, milvus::OpContext* op_context,
-                      const EmbListAggFunc& agg_func, int64_t* out_ids, float* out_dists, size_t& out_doc_vecs,
-                      size_t& out_distance_computations) {
+RerankByCalcDistByStorageIds(const std::vector<int64_t>& candidate_docs, const DataSetPtr& query_dataset, size_t nq,
+                             int32_t k, bool larger_is_closer, bool is_cosine,
+                             const std::shared_ptr<EmbListOffset>& emb_list_offset, const IndexNode* index,
+                             const BitsetView& bitset, milvus::OpContext* op_context, const EmbListAggFunc& agg_func,
+                             int64_t* out_ids, float* out_dists, size_t& out_doc_vecs,
+                             size_t& out_distance_computations) {
     std::priority_queue<DistId, std::vector<DistId>, std::greater<>> minheap;
     std::priority_queue<DistId, std::vector<DistId>, std::less<>> maxheap;
 
@@ -63,9 +64,9 @@ RerankByCalcDistByIDs(const std::vector<int64_t>& candidate_docs, const DataSetP
         out_doc_vecs += vids.size();
         out_distance_computations += nq * vids.size();
         auto bf_search_res =
-            index->CalcDistByIDs(query_dataset, bitset, vids.data(), vids.size(), is_cosine, op_context);
+            index->CalcDistByStorageIds(query_dataset, bitset, vids.data(), vids.size(), is_cosine, op_context);
         if (!bf_search_res.has_value()) {
-            LOG_KNOWHERE_ERROR_ << "CalcDistByIDs failed for doc " << doc_id << ": " << bf_search_res.what();
+            LOG_KNOWHERE_ERROR_ << "CalcDistByStorageIds failed for doc " << doc_id << ": " << bf_search_res.what();
             return Status::emb_list_inner_error;
         }
         const auto* bf_dists = bf_search_res.value()->GetDistance();

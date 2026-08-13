@@ -44,7 +44,8 @@ class DiskANNIndexNode : public IndexNode {
 
  public:
     using DistType = float;
-    DiskANNIndexNode(const int32_t& version, const Object& object) : is_prepared_(false), dim_(-1), count_(-1) {
+    DiskANNIndexNode(const int32_t& version, const Object& object)
+        : IndexNode(version), is_prepared_(false), dim_(-1), count_(-1) {
         assert(typeid(object) == typeid(Pack<std::shared_ptr<milvus::FileManager>>));
         auto diskann_index_pack = dynamic_cast<const Pack<std::shared_ptr<milvus::FileManager>>*>(&object);
         assert(diskann_index_pack != nullptr);
@@ -98,8 +99,8 @@ class DiskANNIndexNode : public IndexNode {
     }
 
     expected<DataSetPtr>
-    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
-                  const bool is_cosine, milvus::OpContext* op_context) const override;
+    CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const override;
 
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
@@ -942,9 +943,9 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
 
 template <typename DataType>
 expected<DataSetPtr>
-DiskANNIndexNode<DataType>::CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
-                                          const size_t labels_len, const bool is_cosine,
-                                          milvus::OpContext* op_context) const {
+DiskANNIndexNode<DataType>::CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset,
+                                                 const int64_t* labels, const size_t labels_len, const bool is_cosine,
+                                                 milvus::OpContext* op_context) const {
     (void)bitset;
     (void)is_cosine;
     if (dataset == nullptr || dataset->GetTensor() == nullptr) {
@@ -961,18 +962,9 @@ DiskANNIndexNode<DataType>::CalcDistByIDs(const DataSetPtr dataset, const Bitset
     auto dim = dataset->GetDim();
     auto xq = static_cast<const DataType*>(dataset->GetTensor());
     auto p_dist = std::make_unique<DistType[]>(nq * labels_len);
-    const bool is_emb_list_rerank = this->emb_list_offset_ != nullptr && this->emb_list_strategy_ != nullptr &&
-                                    this->emb_list_strategy_->NeedsBaseIndexIDMap();
-    std::vector<int64_t> in_labels;
-    // Public APIs pass public ids. EmbList rerank passes compact list ids.
+    // CalcDistByStorageIds is a refine/rerank primitive: labels are already in the
+    // backend compact id domain. Do not apply nullable public-id mapping here.
     const int64_t* labels_to_calc = labels;
-    if (!is_emb_list_rerank) {
-        auto storage_labels = this->CompactOutToIn(labels, labels_len, in_labels, static_cast<size_t>(Count()));
-        if (!storage_labels.has_value()) {
-            return expected<DataSetPtr>::Err(storage_labels.error(), storage_labels.what());
-        }
-        labels_to_calc = storage_labels.value();
-    }
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<DataSetPtr>::Err(Status::empty_index, "DiskANN not loaded");
@@ -1013,11 +1005,18 @@ DiskANNIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpC
     auto rows = dataset->GetRows();
     auto ids = dataset->GetIds();
     std::vector<int64_t> in_ids;
-    auto storage_ids = this->CompactOutToIn(ids, rows, in_ids, static_cast<size_t>(Count()));
-    if (!storage_ids.has_value()) {
-        return expected<DataSetPtr>::Err(storage_ids.error(), storage_ids.what());
+    auto status = this->CompactOutToIn(ids, rows, in_ids);
+    if (status != Status::success) {
+        return expected<DataSetPtr>::Err(status, "GetVectorByIds failed to map ids");
     }
-    ids = storage_ids.value();
+    ids = in_ids.data();
+    rows = static_cast<int64_t>(in_ids.size());
+    if (rows == 0) {
+        // Public-id retrieve may compact missing nullable ids to an empty
+        // storage-id set. Return an empty vector result without touching
+        // backend storage.
+        return GenResultDataSet(0, Dim(), nullptr);
+    }
     auto storage_ds = GenIdsDataSet(rows, ids);
     return GetVectorByStorageIds(storage_ds, op_context);
 }

@@ -1178,11 +1178,18 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         auto rows = dataset->GetRows();
         auto ids = dataset->GetIds();
         std::vector<int64_t> in_ids;
-        auto storage_ids = this->CompactOutToIn(ids, rows, in_ids, static_cast<size_t>(Count()));
-        if (!storage_ids.has_value()) {
-            return expected<DataSetPtr>::Err(storage_ids.error(), storage_ids.what());
+        auto status = this->CompactOutToIn(ids, rows, in_ids);
+        if (status != Status::success) {
+            return expected<DataSetPtr>::Err(status, "GetVectorByIds failed to map ids");
         }
-        ids = storage_ids.value();
+        ids = in_ids.data();
+        rows = static_cast<int64_t>(in_ids.size());
+        if (rows == 0) {
+            // Public-id retrieve may compact missing nullable ids to an empty
+            // storage-id set. Return an empty vector result without touching
+            // backend storage.
+            return GenResultDataSet(0, Dim(), nullptr);
+        }
         auto storage_ds = GenIdsDataSet(rows, ids);
         return GetVectorByStorageIds(storage_ds, op_context);
     }
@@ -1540,8 +1547,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
     }
 
     expected<DataSetPtr>
-    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset_, const int64_t* labels, const size_t labels_len,
-                  const bool is_cosine, milvus::OpContext* op_context) const override {
+    CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset_, const int64_t* labels,
+                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const override {
         // When emb_list_raw_index_ exists (MUVERA/LEMUR), use it for exact distance computation
         if (emb_list_raw_index_) {
             return CalcDistByRawIndex(dataset, labels, labels_len, is_cosine, search_pool, op_context);
@@ -1562,18 +1569,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const auto rows = dataset->GetRows();
         const float* data = static_cast<const float*>(dataset->GetTensor());
         auto distances = std::make_unique<float[]>(rows * labels_len);
-        const bool is_emb_list_rerank = this->emb_list_offset_ != nullptr && this->emb_list_strategy_ != nullptr &&
-                                        this->emb_list_strategy_->NeedsBaseIndexIDMap();
-        std::vector<int64_t> in_labels;
-        // Public APIs pass public ids. EmbList rerank passes compact list ids.
+        // CalcDistByStorageIds is a refine/rerank primitive: labels are already in the
+        // backend compact id domain. Do not apply nullable public-id mapping here.
         const int64_t* labels_to_calc = labels;
-        if (!is_emb_list_rerank) {
-            auto storage_labels = this->CompactOutToIn(labels, labels_len, in_labels, static_cast<size_t>(Count()));
-            if (!storage_labels.has_value()) {
-                return expected<DataSetPtr>::Err(storage_labels.error(), storage_labels.what());
-            }
-            labels_to_calc = storage_labels.value();
-        }
 
         BitsetView bitset(bitset_);
         auto index_id = getIndexToSearchByScalarInfo(bitset);
@@ -2341,22 +2339,21 @@ class HNSWIndexNodeWithFallback : public IndexNode {
         }
     }
 
-    expected<int64_t>
-    CompactOutToIn(int64_t out_id, size_t compact_count) const override {
+    int64_t
+    MapOutToIn(int64_t out_id) const override {
         if (use_base_index) {
-            return base_index->CompactOutToIn(out_id, compact_count);
+            return base_index->MapOutToIn(out_id);
         } else {
-            return fallback_search_index->CompactOutToIn(out_id, compact_count);
+            return fallback_search_index->MapOutToIn(out_id);
         }
     }
 
-    expected<const int64_t*>
-    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids,
-                   size_t compact_count) const override {
+    Status
+    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids) const override {
         if (use_base_index) {
-            return base_index->CompactOutToIn(out_ids, count, compact_ids, compact_count);
+            return base_index->CompactOutToIn(out_ids, count, compact_ids);
         } else {
-            return fallback_search_index->CompactOutToIn(out_ids, count, compact_ids, compact_count);
+            return fallback_search_index->CompactOutToIn(out_ids, count, compact_ids);
         }
     }
 
@@ -2446,12 +2443,13 @@ class HNSWIndexNodeWithFallback : public IndexNode {
     }
 
     expected<DataSetPtr>
-    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
-                  const bool is_cosine, milvus::OpContext* op_context) const override {
+    CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const override {
         if (use_base_index) {
-            return base_index->CalcDistByIDs(dataset, bitset, labels, labels_len, is_cosine, op_context);
+            return base_index->CalcDistByStorageIds(dataset, bitset, labels, labels_len, is_cosine, op_context);
         } else {
-            return fallback_search_index->CalcDistByIDs(dataset, bitset, labels, labels_len, is_cosine, op_context);
+            return fallback_search_index->CalcDistByStorageIds(dataset, bitset, labels, labels_len, is_cosine,
+                                                               op_context);
         }
     }
 

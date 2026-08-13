@@ -216,7 +216,11 @@ class MuveraEmbListStrategy : public EmbListStrategy {
             if (out_id < 0) {
                 return -1;
             }
-            return index->CompactOutToIn(out_id, static_cast<size_t>(num_docs_));
+            const auto in_id = index->MapOutToIn(out_id);
+            if (in_id < 0) {
+                return expected<int64_t>::Err(Status::invalid_args, "list id maps outside compact storage");
+            }
+            return in_id;
         };
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
@@ -292,10 +296,10 @@ class MuveraEmbListStrategy : public EmbListStrategy {
             // Build query dataset for this query document
             auto bf_query_dataset = GenDataSet(nq, original_dim_, query_data + q_vec_start * original_dim_);
 
-            auto status =
-                RerankByCalcDistByIDs(candidate_docs, bf_query_dataset, nq, k, mi.larger_is_closer, mi.is_cosine,
-                                      emb_list_offset_, index, bitset, op_context, mi.agg_func, ids.get() + q * k,
-                                      dists.get() + q * k, total_doc_vecs, total_distance_computations);
+            auto status = RerankByCalcDistByStorageIds(candidate_docs, bf_query_dataset, nq, k, mi.larger_is_closer,
+                                                       mi.is_cosine, emb_list_offset_, index, bitset, op_context,
+                                                       mi.agg_func, ids.get() + q * k, dists.get() + q * k,
+                                                       total_doc_vecs, total_distance_computations);
 
             if (status != Status::success) {
                 return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "rerank distance computation error");

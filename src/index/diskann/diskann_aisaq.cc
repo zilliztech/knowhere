@@ -34,7 +34,8 @@ class AisaqIndexNode : public IndexNode {
  public:
     using DistType = float;
 
-    AisaqIndexNode(const int32_t& version, const Object& object) : is_prepared_(false), dim_(-1), count_(-1) {
+    AisaqIndexNode(const int32_t& version, const Object& object)
+        : IndexNode(version), is_prepared_(false), dim_(-1), count_(-1) {
         assert(typeid(object) == typeid(Pack<std::shared_ptr<milvus::FileManager>>));
         auto diskann_index_pack = dynamic_cast<const Pack<std::shared_ptr<milvus::FileManager>>*>(&object);
         assert(diskann_index_pack != nullptr);
@@ -741,10 +742,6 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
 template <typename DataType>
 expected<DataSetPtr>
 AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const {
-    if (!is_prepared_.load() || !pq_flash_index_) {
-        LOG_KNOWHERE_ERROR_ << "Failed to load AiSAQ.";
-        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
-    }
     if (dataset == nullptr) {
         return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds dataset is null");
     }
@@ -752,11 +749,22 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
     auto rows = dataset->GetRows();
     auto ids = dataset->GetIds();
     std::vector<int64_t> in_ids;
-    auto storage_ids = CompactOutToIn(ids, rows, in_ids, static_cast<size_t>(Count()));
-    if (!storage_ids.has_value()) {
-        return expected<DataSetPtr>::Err(storage_ids.error(), storage_ids.what());
+    auto status = CompactOutToIn(ids, rows, in_ids);
+    if (status != Status::success) {
+        return expected<DataSetPtr>::Err(status, "GetVectorByIds failed to map ids");
     }
-    ids = storage_ids.value();
+    ids = in_ids.data();
+    rows = static_cast<int64_t>(in_ids.size());
+    if (rows == 0) {
+        // Public-id retrieve may compact missing nullable ids to an empty
+        // storage-id set. Return an empty vector result without touching
+        // backend storage.
+        return GenResultDataSet(0, dim, nullptr);
+    }
+    if (!is_prepared_.load() || !pq_flash_index_) {
+        LOG_KNOWHERE_ERROR_ << "Failed to load AiSAQ.";
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+    }
     auto* data = new DataType[dim * rows];
     if (data == nullptr) {
         LOG_KNOWHERE_ERROR_ << "Failed to allocate memory for data.";

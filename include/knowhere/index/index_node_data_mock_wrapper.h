@@ -55,8 +55,8 @@ class IndexNodeDataMockWrapper : public IndexNode {
     GetVectorByIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override;
 
     expected<DataSetPtr>
-    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
-                  const bool is_cosine, milvus::OpContext* op_context) const override;
+    CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const override;
     std::optional<size_t>
     GetQueryCodeSize(const DataSetPtr dataset) const override {
         auto dim = dataset->GetDim();
@@ -136,15 +136,14 @@ class IndexNodeDataMockWrapper : public IndexNode {
         index_node_->SetIdMapType(type);
     }
 
-    expected<int64_t>
-    CompactOutToIn(int64_t out_id, size_t compact_count) const override {
-        return index_node_->CompactOutToIn(out_id, compact_count);
+    int64_t
+    MapOutToIn(int64_t out_id) const override {
+        return index_node_->MapOutToIn(out_id);
     }
 
-    expected<const int64_t*>
-    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids,
-                   size_t compact_count) const override {
-        return index_node_->CompactOutToIn(out_ids, count, compact_ids, compact_count);
+    Status
+    CompactOutToIn(const int64_t* out_ids, size_t count, std::vector<int64_t>& compact_ids) const override {
+        return index_node_->CompactOutToIn(out_ids, count, compact_ids);
     }
 
     expected<PreparedBitset>

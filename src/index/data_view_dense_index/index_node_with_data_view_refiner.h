@@ -74,8 +74,8 @@ class IndexNodeWithDataViewRefiner : public IndexNode {
     }
 
     expected<DataSetPtr>
-    CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels, const size_t labels_len,
-                  const bool is_cosine, milvus::OpContext* op_context) const override;
+    CalcDistByStorageIds(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
+                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const override;
 
     expected<DataSetPtr>
     SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
@@ -537,28 +537,17 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::SearchEmbList(const DataS
 
 template <typename DataType, typename BaseIndexNode>
 expected<DataSetPtr>
-IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::CalcDistByIDs(const DataSetPtr dataset,
-                                                                     const BitsetView& /*bitset*/,
-                                                                     const int64_t* labels, const size_t labels_len,
-                                                                     const bool is_cosine,
-                                                                     milvus::OpContext* op_context) const {
+IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::CalcDistByStorageIds(
+    const DataSetPtr dataset, const BitsetView& /*bitset*/, const int64_t* labels, const size_t labels_len,
+    const bool is_cosine, milvus::OpContext* op_context) const {
     if (this->emb_list_raw_index_) {
         return CalcDistByRawIndex(dataset, labels, labels_len, is_cosine, ThreadPool::GetGlobalSearchThreadPool(),
                                   op_context);
     }
 
-    const bool is_emb_list_rerank = this->emb_list_offset_ != nullptr && this->emb_list_strategy_ != nullptr &&
-                                    this->emb_list_strategy_->NeedsBaseIndexIDMap();
-    std::vector<int64_t> in_labels;
-    // Public APIs pass public ids. EmbList rerank passes compact list ids.
+    // CalcDistByStorageIds is a refine/rerank primitive: labels are already in the
+    // backend compact id domain. Do not apply nullable public-id mapping here.
     const int64_t* labels_to_calc = labels;
-    if (!is_emb_list_rerank) {
-        auto storage_labels = this->CompactOutToIn(labels, labels_len, in_labels, static_cast<size_t>(Count()));
-        if (!storage_labels.has_value()) {
-            return expected<DataSetPtr>::Err(storage_labels.error(), storage_labels.what());
-        }
-        labels_to_calc = storage_labels.value();
-    }
 
     auto num_queries = dataset->GetRows();
     auto query_data = dataset->GetTensor();

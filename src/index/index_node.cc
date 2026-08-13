@@ -11,6 +11,7 @@
 
 #include "knowhere/index/index_node.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <queue>
@@ -325,14 +326,39 @@ IndexNode::AnnIteratorEmbListIfNeed(const DataSetPtr dataset, std::unique_ptr<Co
 expected<DataSetPtr>
 IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_type,
                            milvus::OpContext* op_context) const {
+    if (dataset == nullptr) {
+        return expected<DataSetPtr>::Err(Status::invalid_args, "GetEmbListByIds dataset is null");
+    }
     if (emb_list_offset_ == nullptr) {
         return expected<DataSetPtr>::Err(Status::emb_list_inner_error,
                                          "GetEmbListByIds requires emb_list_offset, but it is not available");
     }
+
+    std::vector<int64_t> storage_ids;
+    auto status = CompactOutToIn(dataset->GetIds(), dataset->GetRows(), storage_ids);
+    if (status != Status::success) {
+        return expected<DataSetPtr>::Err(status, "GetEmbListByIds failed to map ids");
+    }
+    storage_ids.erase(
+        std::remove_if(storage_ids.begin(), storage_ids.end(),
+                       [this](int64_t id) { return id < 0 || static_cast<size_t>(id) >= emb_list_offset_->num_el(); }),
+        storage_ids.end());
+
+    auto storage_dataset = GenIdsDataSet(storage_ids.size(), storage_ids.data());
+    return GetEmbListByStorageIds(storage_dataset, metric_type, op_context);
+}
+
+expected<DataSetPtr>
+IndexNode::GetEmbListByStorageIds(const DataSetPtr dataset, const std::string& metric_type,
+                                  milvus::OpContext* op_context) const {
+    if (emb_list_offset_ == nullptr) {
+        return expected<DataSetPtr>::Err(Status::emb_list_inner_error,
+                                         "GetEmbListByStorageIds requires emb_list_offset, but it is not available");
+    }
     auto sub_metric = get_sub_metric_type(metric_type);
     if (!sub_metric.has_value()) {
         return expected<DataSetPtr>::Err(Status::not_implemented,
-                                         "GetEmbListByIds: invalid metric type " + metric_type);
+                                         "GetEmbListByStorageIds: invalid metric type " + metric_type);
     }
 
     // Raw vectors come from strategy-owned storage or the base index.
@@ -340,21 +366,23 @@ IndexNode::GetEmbListByIds(const DataSetPtr dataset, const std::string& metric_t
     if (!use_raw_index && !HasRawData(sub_metric.value())) {
         return expected<DataSetPtr>::Err(
             Status::not_implemented,
-            "GetEmbListByIds requires raw data support, but the index does not store raw vectors");
+            "GetEmbListByStorageIds requires raw data support, but the index does not store raw vectors");
     }
 
     if (dataset == nullptr) {
-        return expected<DataSetPtr>::Err(Status::invalid_args, "GetEmbListByIds dataset is null");
+        return expected<DataSetPtr>::Err(Status::invalid_args, "GetEmbListByStorageIds dataset is null");
     }
     auto num_el_ids = dataset->GetRows();
-    auto el_ids = dataset->GetIds();
-    auto dim = use_raw_index ? emb_list_raw_index_->d : Dim();
-    std::vector<int64_t> in_el_ids;
-    auto storage_ids = CompactOutToIn(el_ids, num_el_ids, in_el_ids, emb_list_offset_->num_el());
-    if (!storage_ids.has_value()) {
-        return expected<DataSetPtr>::Err(storage_ids.error(), storage_ids.what());
+    const auto* ids_to_retrieve = dataset->GetIds();
+    if (num_el_ids != 0 && ids_to_retrieve == nullptr) {
+        return expected<DataSetPtr>::Err(Status::invalid_args, "GetEmbListByStorageIds ids are null");
     }
-    const auto* ids_to_retrieve = storage_ids.value();
+    for (int64_t i = 0; i < num_el_ids; ++i) {
+        if (ids_to_retrieve[i] < 0 || static_cast<size_t>(ids_to_retrieve[i]) >= emb_list_offset_->num_el()) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "GetEmbListByStorageIds id is out of range");
+        }
+    }
+    auto dim = use_raw_index ? emb_list_raw_index_->d : Dim();
 
     std::vector<size_t> out_offsets(num_el_ids + 1);
     out_offsets[0] = 0;

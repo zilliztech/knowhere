@@ -699,6 +699,13 @@ ContainsId(const std::vector<int32_t>& ids, int64_t id) {
 }
 
 int64_t
+CompactIdForLogicalId(const std::vector<int32_t>& valid_ids, int64_t logical_id) {
+    auto it = std::find(valid_ids.begin(), valid_ids.end(), static_cast<int32_t>(logical_id));
+    REQUIRE(it != valid_ids.end());
+    return static_cast<int64_t>(std::distance(valid_ids.begin(), it));
+}
+
+int64_t
 FirstMissingOutId(const std::vector<int32_t>& valid_ids, int64_t total_count) {
     for (int64_t id = 0; id < total_count; ++id) {
         if (!ContainsId(valid_ids, id)) {
@@ -1732,24 +1739,27 @@ RequireIdArrayEquals(const knowhere::IdArray& view, const std::vector<int32_t>& 
 }
 
 int64_t
-RequireCompactOutToIn(const knowhere::IdMap& map, int64_t out_id, size_t compact_count) {
-    auto compact_id = map.CompactOutToIn(out_id, compact_count);
-    REQUIRE(compact_id.has_value());
-    return compact_id.value();
+RequireCompactOutToIn(const knowhere::IdMap& map, int64_t out_id) {
+    auto compact_id = map.MapOutToIn(out_id);
+    REQUIRE(compact_id >= 0);
+    return compact_id;
 }
 
 int64_t
-RequireCompactOutToIn(const knowhere::IndexNode& index_node, int64_t out_id, size_t compact_count) {
-    auto compact_id = index_node.CompactOutToIn(out_id, compact_count);
-    REQUIRE(compact_id.has_value());
-    return compact_id.value();
+RequireCompactOutToIn(const knowhere::IndexNode& index_node, int64_t out_id) {
+    auto compact_id = index_node.MapOutToIn(out_id);
+    REQUIRE(compact_id >= 0);
+    return compact_id;
 }
 
 void
-RequireInvalidCompactOutToIn(const knowhere::IdMap& map, int64_t out_id, size_t compact_count) {
-    auto compact_id = map.CompactOutToIn(out_id, compact_count);
-    REQUIRE_FALSE(compact_id.has_value());
-    REQUIRE(compact_id.error() == knowhere::Status::invalid_args);
+RequireInvalidCompactOutToIn(const knowhere::IdMap& map, int64_t out_id) {
+    REQUIRE(map.MapOutToIn(out_id) < 0);
+}
+
+void
+RequireInvalidCompactOutToIn(const knowhere::IndexNode& index_node, int64_t out_id) {
+    REQUIRE(index_node.MapOutToIn(out_id) < 0);
 }
 
 knowhere::IdArray
@@ -1774,7 +1784,7 @@ RequireIdMapContent(const knowhere::Index<knowhere::IndexNode>& index, const std
     for (size_t i = 0; i < valid_ids.size(); ++i) {
         CAPTURE(i, valid_ids[i]);
         REQUIRE(map.MapInToOut(static_cast<int64_t>(i)) == valid_ids[i]);
-        REQUIRE(RequireCompactOutToIn(*index.Node(), valid_ids[i], valid_ids.size()) == static_cast<int64_t>(i));
+        REQUIRE(RequireCompactOutToIn(*index.Node(), valid_ids[i]) == static_cast<int64_t>(i));
     }
 }
 
@@ -1789,15 +1799,27 @@ RequireIdMapBitmap(const knowhere::Index<knowhere::IndexNode>& index, int64_t co
 }
 
 void
-RequireVectorIdMapCompacted(const knowhere::Index<knowhere::IndexNode>& index, int64_t count) {
+RequireVectorIdMapCompacted(const knowhere::Index<knowhere::IndexNode>& index, const std::vector<int32_t>& valid_ids,
+                            int64_t count) {
     REQUIRE(index.Node() != nullptr);
     const auto& map = index.Node()->GetIdMap();
     REQUIRE(map.OutCount() == static_cast<size_t>(count));
+    REQUIRE(map.InCount() == valid_ids.size());
     auto valid = map.ValidBitmap();
     REQUIRE(valid.size() == static_cast<size_t>(count));
     REQUIRE(valid.data() != nullptr);
     REQUIRE(map.InToOutIds().empty());
     REQUIRE(map.InToOutIds(knowhere::IdMap::Domain::EMB_LIST).empty());
+    for (size_t i = 0; i < valid_ids.size(); ++i) {
+        CAPTURE(i, valid_ids[i]);
+        RequireInvalidCompactOutToIn(map, valid_ids[i]);
+        REQUIRE(RequireCompactOutToIn(*index.Node(), valid_ids[i]) == static_cast<int64_t>(i));
+    }
+    const auto missing_id = FirstMissingOutId(valid_ids, count);
+    if (missing_id < count) {
+        RequireInvalidCompactOutToIn(map, missing_id);
+        RequireInvalidCompactOutToIn(*index.Node(), missing_id);
+    }
 }
 
 void
@@ -1806,6 +1828,7 @@ RequireEmbListIdMapCompacted(const knowhere::Index<knowhere::IndexNode>& index, 
     REQUIRE(index.Node() != nullptr);
     const auto& map = index.Node()->GetIdMap();
     REQUIRE(map.OutCount() == static_cast<size_t>(count));
+    REQUIRE(map.InCount() == valid_ids.size());
     auto valid = map.ValidBitmap();
     REQUIRE(valid.size() == static_cast<size_t>(count));
     REQUIRE(valid.data() != nullptr);
@@ -1813,9 +1836,13 @@ RequireEmbListIdMapCompacted(const knowhere::Index<knowhere::IndexNode>& index, 
     REQUIRE(map.InToOutIds(knowhere::IdMap::Domain::EMB_LIST).empty());
     for (size_t i = 0; i < valid_ids.size(); ++i) {
         CAPTURE(i, valid_ids[i]);
-        REQUIRE(RequireCompactOutToIn(index.Node()->GetIdMap(), valid_ids[i], valid_ids.size()) ==
-                static_cast<int64_t>(i));
-        REQUIRE(RequireCompactOutToIn(*index.Node(), valid_ids[i], valid_ids.size()) == static_cast<int64_t>(i));
+        REQUIRE(RequireCompactOutToIn(index.Node()->GetIdMap(), valid_ids[i]) == static_cast<int64_t>(i));
+        REQUIRE(RequireCompactOutToIn(*index.Node(), valid_ids[i]) == static_cast<int64_t>(i));
+    }
+    const auto missing_id = FirstMissingOutId(valid_ids, count);
+    if (missing_id < count) {
+        RequireInvalidCompactOutToIn(map, missing_id);
+        RequireInvalidCompactOutToIn(*index.Node(), missing_id);
     }
 }
 
@@ -1843,6 +1870,9 @@ RequireDenseVectorsMatchLogicalIds(const knowhere::DataSet& vectors, const std::
                                    int64_t dim) {
     REQUIRE(vectors.GetRows() == static_cast<int64_t>(logical_ids.size()));
     REQUIRE(vectors.GetDim() == dim);
+    if (logical_ids.empty()) {
+        return;
+    }
     const auto* tensor = static_cast<const float*>(vectors.GetTensor());
     REQUIRE(tensor != nullptr);
     for (size_t i = 0; i < logical_ids.size(); ++i) {
@@ -1855,7 +1885,7 @@ RequireDenseVectorsMatchLogicalIds(const knowhere::DataSet& vectors, const std::
 }
 
 void
-RequireDenseCalcDistByIds(const knowhere::Index<knowhere::IndexNode>& index, const MatrixData& data) {
+RequireDenseCalcDistByPublicIds(const knowhere::Index<knowhere::IndexNode>& index, const MatrixData& data) {
     std::vector<int64_t> labels(data.query_ids.begin(), data.query_ids.end());
     auto result = index.CalcDistByIDs(data.query_ds, knowhere::BitsetView{}, labels.data(), labels.size(), false);
     REQUIRE(result.has_value());
@@ -1865,7 +1895,8 @@ RequireDenseCalcDistByIds(const knowhere::Index<knowhere::IndexNode>& index, con
     REQUIRE(distances != nullptr);
     for (size_t i = 0; i < data.query_ids.size(); ++i) {
         for (size_t j = 0; j < labels.size(); ++j) {
-            const auto expected = DenseL2ForLogicalIds(data.query_ids[i], static_cast<int32_t>(labels[j]), data.dim);
+            const auto label_logical_id = labels[j];
+            const auto expected = DenseL2ForLogicalIds(data.query_ids[i], label_logical_id, data.dim);
             CAPTURE(i, j, data.query_ids[i], labels[j]);
             REQUIRE(distances[i * labels.size() + j] == Catch::Approx(expected));
         }
@@ -1873,34 +1904,58 @@ RequireDenseCalcDistByIds(const knowhere::Index<knowhere::IndexNode>& index, con
 }
 
 void
-RequireDenseSelectedIdsRejectMissingOutId(const knowhere::Index<knowhere::IndexNode>& index, const MatrixData& data) {
-    const auto missing_id = FirstMissingOutId(data.valid_ids, data.total_count);
-    std::vector<int64_t> rejected_ids = {-1, data.total_count};
-    if (missing_id < data.total_count) {
-        rejected_ids.push_back(missing_id);
+RequireDenseCalcDistByStorageIds(const knowhere::IndexNode& node, const MatrixData& data) {
+    std::vector<int64_t> labels;
+    labels.reserve(data.query_ids.size());
+    for (auto logical_id : data.query_ids) {
+        labels.push_back(CompactIdForLogicalId(data.valid_ids, logical_id));
     }
+    auto result = node.CalcDistByStorageIds(data.query_ds, knowhere::BitsetView{}, labels.data(), labels.size(), false);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetRows() == data.query_ds->GetRows());
+    REQUIRE(result.value()->GetDim() == static_cast<int64_t>(labels.size()));
+    const auto* distances = result.value()->GetDistance();
+    REQUIRE(distances != nullptr);
+    for (size_t i = 0; i < data.query_ids.size(); ++i) {
+        for (size_t j = 0; j < labels.size(); ++j) {
+            const auto label_logical_id = data.valid_ids[static_cast<size_t>(labels[j])];
+            const auto expected = DenseL2ForLogicalIds(data.query_ids[i], label_logical_id, data.dim);
+            CAPTURE(i, j, data.query_ids[i], labels[j]);
+            REQUIRE(distances[i * labels.size() + j] == Catch::Approx(expected));
+        }
+    }
+}
+
+void
+RequireDenseRetrieveCompactsMissingOutIds(const knowhere::Index<knowhere::IndexNode>& index, const MatrixData& data) {
+    const auto missing_id = FirstMissingOutId(data.valid_ids, data.total_count);
+    const std::vector<int64_t> rejected_ids = {-1, data.total_count};
 
     for (auto rejected_id : rejected_ids) {
         CAPTURE(rejected_id);
         int64_t retrieve_id = rejected_id;
         auto retrieve = index.GetVectorByIds(knowhere::GenIdsDataSet(1, &retrieve_id));
-        REQUIRE_FALSE(retrieve.has_value());
-        REQUIRE(retrieve.error() == knowhere::Status::invalid_args);
-
-        int64_t calc_dist_id = rejected_id;
-        auto calc_dist = index.CalcDistByIDs(data.query_ds, knowhere::BitsetView{}, &calc_dist_id, 1, false);
-        REQUIRE_FALSE(calc_dist.has_value());
-        REQUIRE(calc_dist.error() == knowhere::Status::invalid_args);
+        REQUIRE(retrieve.has_value());
+        RequireDenseVectorsMatchLogicalIds(*retrieve.value(), {}, data.dim);
     }
 
     auto null_retrieve = index.GetVectorByIds(knowhere::GenIdsDataSet(1, static_cast<const int64_t*>(nullptr)));
     REQUIRE_FALSE(null_retrieve.has_value());
     REQUIRE(null_retrieve.error() == knowhere::Status::invalid_args);
 
-    auto null_calc_dist =
-        index.CalcDistByIDs(data.query_ds, knowhere::BitsetView{}, static_cast<const int64_t*>(nullptr), 1, false);
-    REQUIRE_FALSE(null_calc_dist.has_value());
-    REQUIRE(null_calc_dist.error() == knowhere::Status::invalid_args);
+    if (missing_id < data.total_count) {
+        auto retrieve = index.GetVectorByIds(knowhere::GenIdsDataSet(1, &missing_id));
+        REQUIRE(retrieve.has_value());
+        RequireDenseVectorsMatchLogicalIds(*retrieve.value(), {}, data.dim);
+    }
+
+    if (missing_id < data.total_count && data.query_ids.size() >= 2) {
+        std::vector<int32_t> expected_ids = {data.query_ids[0], data.query_ids[1]};
+        std::vector<int64_t> ids = {data.query_ids[0], missing_id, data.query_ids[1]};
+        auto retrieve = index.GetVectorByIds(knowhere::GenIdsDataSet(static_cast<int64_t>(ids.size()), ids.data()));
+        REQUIRE(retrieve.has_value());
+        RequireDenseVectorsMatchLogicalIds(*retrieve.value(), expected_ids, data.dim);
+    }
 }
 
 void
@@ -1919,8 +1974,8 @@ RequireDenseVectorPublicApisUseOutIds(const knowhere::Index<knowhere::IndexNode>
     REQUIRE(retrieve.has_value());
     RequireDenseVectorsMatchLogicalIds(*retrieve.value(), data.query_ids, data.dim);
 
-    RequireDenseCalcDistByIds(index, data);
-    RequireDenseSelectedIdsRejectMissingOutId(index, data);
+    RequireDenseCalcDistByPublicIds(index, data);
+    RequireDenseRetrieveCompactsMissingOutIds(index, data);
 }
 
 void
@@ -1937,6 +1992,10 @@ RequireEmbListVectorsMatchLogicalIds(const knowhere::DataSet& vectors, const std
     REQUIRE(vectors.GetDim() == dim);
     const auto* offsets = vectors.Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
     REQUIRE(offsets != nullptr);
+    if (logical_ids.empty()) {
+        REQUIRE(offsets[0] == 0);
+        return;
+    }
     const auto* tensor = static_cast<const float*>(vectors.GetTensor());
     REQUIRE(tensor != nullptr);
     for (size_t i = 0; i < logical_ids.size(); ++i) {
@@ -1952,7 +2011,7 @@ RequireEmbListVectorsMatchLogicalIds(const knowhere::DataSet& vectors, const std
 }
 
 void
-RequireEmbListRetrieveRejectsMissingOutId(const knowhere::Index<knowhere::IndexNode>& index, const MatrixData& data);
+RequireEmbListRetrieveCompactsMissingOutId(const knowhere::Index<knowhere::IndexNode>& index, const MatrixData& data);
 
 void
 RequireEmbListApisUseOutIds(const knowhere::Index<knowhere::IndexNode>& index, const MatrixData& data,
@@ -1979,29 +2038,41 @@ RequireEmbListRetrieveUsesOutIds(const knowhere::Index<knowhere::IndexNode>& ind
         index.GetEmbListByIds(knowhere::GenIdsDataSet(static_cast<int64_t>(ids.size()), ids.data()), "MAX_SIM_L2");
     REQUIRE(retrieve.has_value());
     RequireEmbListVectorsMatchLogicalIds(*retrieve.value(), logical_ids, data.dim, kEmbVectorsPerDoc);
-    RequireEmbListRetrieveRejectsMissingOutId(index, data);
+    RequireEmbListRetrieveCompactsMissingOutId(index, data);
 }
 
 void
-RequireEmbListRetrieveRejectsMissingOutId(const knowhere::Index<knowhere::IndexNode>& index, const MatrixData& data) {
+RequireEmbListRetrieveCompactsMissingOutId(const knowhere::Index<knowhere::IndexNode>& index, const MatrixData& data) {
     const auto missing_id = FirstMissingOutId(data.valid_ids, data.total_count);
-    std::vector<int64_t> rejected_ids = {-1, data.total_count};
-    if (missing_id < data.total_count) {
-        rejected_ids.push_back(missing_id);
-    }
+    const std::vector<int64_t> rejected_ids = {-1, data.total_count};
 
     for (auto rejected_id : rejected_ids) {
         CAPTURE(rejected_id);
         int64_t id = rejected_id;
         auto retrieve = index.GetEmbListByIds(knowhere::GenIdsDataSet(1, &id), "MAX_SIM_L2");
-        REQUIRE_FALSE(retrieve.has_value());
-        REQUIRE(retrieve.error() == knowhere::Status::invalid_args);
+        REQUIRE(retrieve.has_value());
+        RequireEmbListVectorsMatchLogicalIds(*retrieve.value(), {}, data.dim, kEmbVectorsPerDoc);
     }
 
     auto null_retrieve =
         index.GetEmbListByIds(knowhere::GenIdsDataSet(1, static_cast<const int64_t*>(nullptr)), "MAX_SIM_L2");
     REQUIRE_FALSE(null_retrieve.has_value());
     REQUIRE(null_retrieve.error() == knowhere::Status::invalid_args);
+
+    if (missing_id < data.total_count) {
+        auto retrieve = index.GetEmbListByIds(knowhere::GenIdsDataSet(1, &missing_id), "MAX_SIM_L2");
+        REQUIRE(retrieve.has_value());
+        RequireEmbListVectorsMatchLogicalIds(*retrieve.value(), {}, data.dim, kEmbVectorsPerDoc);
+    }
+
+    if (missing_id < data.total_count && data.query_ids.size() >= 2) {
+        std::vector<int32_t> logical_ids = {data.query_ids[0], data.query_ids[1]};
+        std::vector<int64_t> ids = {data.query_ids[0], missing_id, data.query_ids[1]};
+        auto retrieve =
+            index.GetEmbListByIds(knowhere::GenIdsDataSet(static_cast<int64_t>(ids.size()), ids.data()), "MAX_SIM_L2");
+        REQUIRE(retrieve.has_value());
+        RequireEmbListVectorsMatchLogicalIds(*retrieve.value(), logical_ids, data.dim, kEmbVectorsPerDoc);
+    }
 }
 
 std::vector<std::vector<float>>
@@ -2822,8 +2893,8 @@ void
 RequireReadApisReturnError(knowhere::IndexNode& node) {
     auto dataset = GenNullableDenseDataSet(4, {0, 2}, kDenseDim);
     auto query = GenDenseQueryDataSet({0}, kDenseDim);
-    int64_t id = 0;
-    auto ids = knowhere::GenIdsDataSet(1, &id);
+    int64_t storage_id = 0;
+    auto ids = knowhere::GenIdsDataSet(1, &storage_id);
     auto new_config = [] { return std::make_unique<knowhere::BaseConfig>(); };
 
     auto search = node.Search(query, new_config(), knowhere::BitsetView{});
@@ -2842,7 +2913,8 @@ RequireReadApisReturnError(knowhere::IndexNode& node) {
     REQUIRE(!vector.has_value());
     REQUIRE(vector.error() == Status::not_implemented);
 
-    auto calc_dist = node.CalcDistByIDs(dataset, knowhere::BitsetView{}, &id, 1, false);
+    // Storage-id APIs should surface the default not_implemented boundary directly.
+    auto calc_dist = node.CalcDistByStorageIds(dataset, knowhere::BitsetView{}, &storage_id, 1, false);
     REQUIRE(!calc_dist.has_value());
     REQUIRE(calc_dist.error() == Status::not_implemented);
 
@@ -2877,7 +2949,7 @@ RequireIdMapVectorState(const knowhere::IdMap& map, size_t out_count, const std:
     for (size_t in_id = 0; in_id < in_to_out_ids.size(); ++in_id) {
         CAPTURE(in_id);
         REQUIRE(map.MapInToOut(static_cast<int64_t>(in_id)) == in_to_out_ids[in_id]);
-        REQUIRE(RequireCompactOutToIn(map, in_to_out_ids[in_id], in_to_out_ids.size()) == static_cast<int64_t>(in_id));
+        REQUIRE(RequireCompactOutToIn(map, in_to_out_ids[in_id]) == static_cast<int64_t>(in_id));
     }
 }
 
@@ -3002,8 +3074,8 @@ TEST_CASE("Nullable IdMap primitives", "[nullable][id_map]") {
         REQUIRE(map.OutCount() == 8);
         REQUIRE(map.MapInToOut(2) == 4);
         REQUIRE(map.MapInToOut(static_cast<int64_t>(ids.size())) == -1);
-        REQUIRE(RequireCompactOutToIn(map, 4, map.InCount()) == 2);
-        RequireInvalidCompactOutToIn(map, 5, map.InCount());
+        REQUIRE(RequireCompactOutToIn(map, 4) == 2);
+        RequireInvalidCompactOutToIn(map, 5);
 
         std::vector<int64_t> result_ids = {0, 1, 2, 3, 4, -1};
         map.MapInToOut(result_ids.data(), result_ids.size());
@@ -3036,9 +3108,9 @@ TEST_CASE("Nullable IdMap primitives", "[nullable][id_map]") {
 
             REQUIRE_THROWS(map.AddFromData(data));
             RequireIdMapVectorStateOnly(map, 4, {1, 3});
-            RequireInvalidCompactOutToIn(map, 0, map.InCount());
-            RequireInvalidCompactOutToIn(map, 2, map.InCount());
-            RequireInvalidCompactOutToIn(map, 4, map.InCount());
+            RequireInvalidCompactOutToIn(map, 0);
+            RequireInvalidCompactOutToIn(map, 2);
+            RequireInvalidCompactOutToIn(map, 4);
         };
 
         int32_t negative_ids[] = {0, -1};
@@ -3110,10 +3182,10 @@ TEST_CASE("Nullable IdMap primitives", "[nullable][id_map]") {
         map.FinalizeVectorIds();
         REQUIRE(!map.InToOutIds().empty());
         RequireIdArrayEquals(map.InToOutIds(), {1, 4, 9});
-        REQUIRE(RequireCompactOutToIn(map, 1, map.InCount()) == 0);
-        REQUIRE(RequireCompactOutToIn(map, 4, map.InCount()) == 1);
-        REQUIRE(RequireCompactOutToIn(map, 9, map.InCount()) == 2);
-        RequireInvalidCompactOutToIn(map, 8, map.InCount());
+        REQUIRE(RequireCompactOutToIn(map, 1) == 0);
+        REQUIRE(RequireCompactOutToIn(map, 4) == 1);
+        REQUIRE(RequireCompactOutToIn(map, 9) == 2);
+        RequireInvalidCompactOutToIn(map, 8);
     }
 
     SECTION("IdMap views keep array buffers alive") {
@@ -3145,8 +3217,8 @@ TEST_CASE("Nullable IdMap primitives", "[nullable][id_map]") {
         map.AddFromData(knowhere::IdMapData::FromIds(ids, 2, 4));
         REQUIRE(map.OutCount() == 4);
         REQUIRE(map.MapInToOut(1) == 2);
-        REQUIRE(RequireCompactOutToIn(map, 2, map.InCount()) == 1);
-        RequireInvalidCompactOutToIn(map, 1, map.InCount());
+        REQUIRE(RequireCompactOutToIn(map, 2) == 1);
+        RequireInvalidCompactOutToIn(map, 1);
 
         std::vector<int64_t> result_ids = {0, 1, -1};
         map.MapInToOut(result_ids.data(), result_ids.size());
@@ -3233,7 +3305,7 @@ TEST_CASE("Nullable IdMap primitives", "[nullable][id_map]") {
         REQUIRE(map.OutCount() == 12);
         REQUIRE(map.InCount() == 6);
         RequireIdArrayEquals(map.InToOutIds(), {0, 2, 3, 5, 8, 11});
-        REQUIRE(RequireCompactOutToIn(map, 11, map.InCount()) == 5);
+        REQUIRE(RequireCompactOutToIn(map, 11) == 5);
     }
 
     SECTION("Sealed IdMap uses array storage") {
@@ -3243,13 +3315,13 @@ TEST_CASE("Nullable IdMap primitives", "[nullable][id_map]") {
         map.AddFromData(knowhere::IdMapData::FromValidData(base_valid, 4));
         map.FinalizeVectorIds();
         RequireIdArrayEquals(map.InToOutIds(), {0, 1, 2, 3});
-        REQUIRE(RequireCompactOutToIn(map, 3, map.InCount()) == 3);
+        REQUIRE(RequireCompactOutToIn(map, 3) == 3);
 
         const int32_t append_ids[] = {0, 2};
         map.AddFromData(knowhere::IdMapData::FromIds(append_ids, 2, 4));
         REQUIRE(map.OutCount() == 4);
         RequireIdArrayEquals(map.InToOutIds(), {0, 2});
-        REQUIRE(RequireCompactOutToIn(map, 2, map.InCount()) == 1);
+        REQUIRE(RequireCompactOutToIn(map, 2) == 1);
         REQUIRE(map.InToOutIds().is_array());
     }
 
@@ -3305,7 +3377,7 @@ TEST_CASE("Nullable IdMap primitives", "[nullable][id_map]") {
         map.FinalizeEmbListIds(offsets, 3);
         RequireIdArrayEquals(map.InToOutIds(), {1, 4, 9});
         RequireIdArrayEquals(map.InToOutIds(knowhere::IdMap::Domain::EMB_LIST), {1, 1, 4, 9, 9, 9});
-        REQUIRE(RequireCompactOutToIn(map, 4, map.InCount()) == 1);
+        REQUIRE(RequireCompactOutToIn(map, 4) == 1);
 
         auto valid_before_noop = map.ValidBitmap();
         REQUIRE(valid_before_noop.size() == 10);
@@ -3316,13 +3388,46 @@ TEST_CASE("Nullable IdMap primitives", "[nullable][id_map]") {
         map.FinalizeEmbListIds(nullptr, 0);
         RequireIdArrayEquals(map.InToOutIds(), {1, 4, 9});
         RequireIdArrayEquals(map.InToOutIds(knowhere::IdMap::Domain::EMB_LIST), {1, 1, 4, 9, 9, 9});
-        REQUIRE(RequireCompactOutToIn(map, 4, map.InCount()) == 1);
+        REQUIRE(RequireCompactOutToIn(map, 4) == 1);
 
         auto valid_after_noop = map.ValidBitmap();
         REQUIRE(valid_after_noop.size() == 10);
         REQUIRE((valid_after_noop.data()[1 >> 3] & (1U << (1 & 7))) != 0);
         REQUIRE((valid_after_noop.data()[4 >> 3] & (1U << (4 & 7))) != 0);
         REQUIRE((valid_after_noop.data()[9 >> 3] & (1U << (9 & 7))) != 0);
+    }
+
+    SECTION("IdMap clears handed-off vector-domain maps in both directions") {
+        auto bitmap = MakeValidBitmap(10, {1, 4, 9});
+        knowhere::IdMap map;
+        map.SetType(knowhere::IdMap::Type::SEALED);
+        map.AddFromData(knowhere::IdMapData::FromValidBitmap(bitmap.data(), 10));
+        map.FinalizeVectorIds();
+
+        const size_t offsets[] = {0, 2, 3, 6};
+        map.FinalizeEmbListIds(offsets, 3);
+        RequireIdArrayEquals(map.InToOutIds(), {1, 4, 9});
+        RequireIdArrayEquals(map.InToOutIds(knowhere::IdMap::Domain::EMB_LIST), {1, 1, 4, 9, 9, 9});
+        REQUIRE(map.OutCount() == 10);
+        REQUIRE(map.InCount() == 3);
+        REQUIRE(RequireCompactOutToIn(map, 9) == 2);
+
+        map.ClearEblIds();
+        RequireIdArrayEquals(map.InToOutIds(), {1, 4, 9});
+        REQUIRE(map.InToOutIds(knowhere::IdMap::Domain::EMB_LIST).empty());
+        REQUIRE(map.OutCount() == 10);
+        REQUIRE(map.InCount() == 3);
+        REQUIRE(RequireCompactOutToIn(map, 4) == 1);
+
+        map.ClearIds();
+        REQUIRE(map.InToOutIds().empty());
+        REQUIRE(map.InToOutIds(knowhere::IdMap::Domain::EMB_LIST).empty());
+        REQUIRE(map.OutCount() == 10);
+        REQUIRE(map.InCount() == 3);
+        REQUIRE(!map.ValidBitmap().empty());
+        RequireInvalidCompactOutToIn(map, 1);
+        RequireInvalidCompactOutToIn(map, 4);
+        RequireInvalidCompactOutToIn(map, 9);
     }
 
     SECTION("IdMap supports mmap-backed id arrays") {
@@ -3353,8 +3458,8 @@ TEST_CASE("Nullable IdMap primitives", "[nullable][id_map]") {
             valid_array = map.ValidBitmap();
             RequireIdArrayEquals(ids_array, {1, 4, 6, 9});
             RequireIdArrayEquals(ebl_ids_array, {1, 4, 4, 9});
-            REQUIRE(RequireCompactOutToIn(map, 6, map.InCount()) == 2);
-            RequireInvalidCompactOutToIn(map, 5, map.InCount());
+            REQUIRE(RequireCompactOutToIn(map, 6) == 2);
+            RequireInvalidCompactOutToIn(map, 5);
             REQUIRE(valid_array.size() == 10);
 
             size_t mmap_file_count = 0;
@@ -3403,7 +3508,7 @@ TEST_CASE("Nullable IdMap primitives", "[nullable][id_map]") {
         REQUIRE(map.OutCount() == 10);
         REQUIRE(map.InCount() == 0);
         REQUIRE(map.InToOutIds().empty());
-        RequireInvalidCompactOutToIn(map, 0, map.InCount());
+        RequireInvalidCompactOutToIn(map, 0);
         REQUIRE_FALSE(map.IsValidOutId(0));
 
         size_t mmap_file_count = 0;
@@ -3819,8 +3924,8 @@ TEST_CASE("Nullable IVF_FLAT_CC emb-list Add preserves append public list ids", 
 
     int64_t missing_id = 3;
     auto missing = index.GetEmbListByIds(knowhere::GenIdsDataSet(1, &missing_id), "MAX_SIM_L2");
-    REQUIRE_FALSE(missing.has_value());
-    REQUIRE(missing.error() == knowhere::Status::invalid_args);
+    REQUIRE(missing.has_value());
+    RequireEmbListRetrieveMatches(*missing.value(), {}, {}, kDenseDim);
 }
 
 TEST_CASE("Nullable Index rejects plain and mapped Add mixing", "[nullable][id_map][add]") {
@@ -3962,8 +4067,9 @@ TEST_CASE("Nullable vector Build plus Add matches full Build", "[nullable][ivf][
     RequireDenseVectorsMatchLogicalIds(*full_vectors.value(), {1, 9}, kDenseDim);
     RequireDenseVectorsMatchLogicalIds(*split_vectors.value(), {1, 9}, kDenseDim);
 
-    auto full_dist = full_index.CalcDistByIDs(query, knowhere::BitsetView{}, selected_ids, 2, false);
-    auto split_dist = split_index.CalcDistByIDs(query, knowhere::BitsetView{}, selected_ids, 2, false);
+    int64_t selected_public_ids[] = {1, 9};
+    auto full_dist = full_index.CalcDistByIDs(query, knowhere::BitsetView{}, selected_public_ids, 2, false);
+    auto split_dist = split_index.CalcDistByIDs(query, knowhere::BitsetView{}, selected_public_ids, 2, false);
     REQUIRE(full_dist.has_value());
     REQUIRE(split_dist.has_value());
     RequireDatasetsEqual(*full_dist.value(), *split_dist.value());
@@ -4025,11 +4131,10 @@ TEST_CASE("Nullable emb-list Build plus Add matches full Build with empty lists"
     RequireEmbListRetrieveMatches(*split_retrieve.value(), {1, 7, 9, 10}, {2, 0, 2, 0}, kDenseDim);
 }
 
-TEST_CASE("Nullable selected-id APIs reject missing public ids", "[nullable][id_map][api]") {
+TEST_CASE("Nullable retrieve compacts missing public ids", "[nullable][id_map][api]") {
     struct SelectedIdCase {
         std::string label;
         IndexRow row;
-        bool check_calc_dist = false;
         bool maybe_unavailable = false;
     };
 
@@ -4037,17 +4142,15 @@ TEST_CASE("Nullable selected-id APIs reject missing public ids", "[nullable][id_
     diskann.maybe_unavailable = true;
 
     std::vector<SelectedIdCase> cases = {
-        {"FLAT", {"FLAT", knowhere::IndexEnum::INDEX_FAISS_IDMAP, DataKind::DenseFp32}, false, false},
+        {"FLAT", {"FLAT", knowhere::IndexEnum::INDEX_FAISS_IDMAP, DataKind::DenseFp32}, false},
         {"IVF_FLAT_CC",
          {"IVF_FLAT_CC / IVFFLATCC", knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, DataKind::DenseFp32},
-         true,
          false},
-        {"HNSW", NativeFaissHnswRow(), true, true},
-        {"DISKANN", diskann, true, true},
+        {"HNSW", NativeFaissHnswRow(), true},
+        {"DISKANN", diskann, true},
         {"SPARSE_CC",
          {"SPARSE_INVERTED_INDEX_CC (Knowhere native)", knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC,
           DataKind::Sparse},
-         false,
          false},
     };
 
@@ -4073,15 +4176,8 @@ TEST_CASE("Nullable selected-id APIs reject missing public ids", "[nullable][id_
         for (auto rejected_id : rejected_ids) {
             CAPTURE(rejected_id);
             auto get_vector = artifact->index.GetVectorByIds(knowhere::GenIdsDataSet(1, &rejected_id));
-            REQUIRE_FALSE(get_vector.has_value());
-            REQUIRE(get_vector.error() == Status::invalid_args);
-
-            if (test_case.check_calc_dist) {
-                auto calc_dist = artifact->index.CalcDistByIDs(artifact->data.query_ds, knowhere::BitsetView{},
-                                                               &rejected_id, 1, false);
-                REQUIRE_FALSE(calc_dist.has_value());
-                REQUIRE(calc_dist.error() == Status::invalid_args);
-            }
+            REQUIRE(get_vector.has_value());
+            REQUIRE(get_vector.value()->GetRows() == 0);
         }
 
         auto null_get_vector =
@@ -4089,11 +4185,16 @@ TEST_CASE("Nullable selected-id APIs reject missing public ids", "[nullable][id_
         REQUIRE_FALSE(null_get_vector.has_value());
         REQUIRE(null_get_vector.error() == Status::invalid_args);
 
-        if (test_case.check_calc_dist) {
-            auto null_calc_dist = artifact->index.CalcDistByIDs(artifact->data.query_ds, knowhere::BitsetView{},
-                                                                static_cast<const int64_t*>(nullptr), 1, false);
-            REQUIRE_FALSE(null_calc_dist.has_value());
-            REQUIRE(null_calc_dist.error() == Status::invalid_args);
+        if (missing_id < artifact->data.total_count && artifact->data.query_ids.size() >= 2) {
+            std::vector<int64_t> retrieve_ids = {artifact->data.query_ids[0], missing_id, artifact->data.query_ids[1]};
+            auto get_vector = artifact->index.GetVectorByIds(
+                knowhere::GenIdsDataSet(static_cast<int64_t>(retrieve_ids.size()), retrieve_ids.data()));
+            if (!get_vector.has_value()) {
+                REQUIRE((test_case.maybe_unavailable || test_case.row.maybe_unavailable));
+                continue;
+            }
+            REQUIRE(get_vector.has_value());
+            REQUIRE(get_vector.value()->GetRows() == 2);
         }
     }
 }
@@ -4117,10 +4218,10 @@ TEST_CASE("Nullable Index Add keeps id map append when backend add fails", "[nul
 
     REQUIRE(index.GetIdMap().OutCount() == 8);
     RequireIdArrayEquals(index.GetIdMap().InToOutIds(), {1, 3, 4, 6});
-    REQUIRE(RequireCompactOutToIn(index.GetIdMap(), 1, index.GetIdMap().InCount()) == 0);
-    REQUIRE(RequireCompactOutToIn(index.GetIdMap(), 3, index.GetIdMap().InCount()) == 1);
-    REQUIRE(RequireCompactOutToIn(index.GetIdMap(), 4, index.GetIdMap().InCount()) == 2);
-    REQUIRE(RequireCompactOutToIn(index.GetIdMap(), 6, index.GetIdMap().InCount()) == 3);
+    REQUIRE(RequireCompactOutToIn(index.GetIdMap(), 1) == 0);
+    REQUIRE(RequireCompactOutToIn(index.GetIdMap(), 3) == 1);
+    REQUIRE(RequireCompactOutToIn(index.GetIdMap(), 4) == 2);
+    REQUIRE(RequireCompactOutToIn(index.GetIdMap(), 6) == 3);
 }
 
 TEST_CASE("Nullable DataView full-scan uses internal source ids", "[nullable][data_view][api]") {
@@ -4372,9 +4473,19 @@ TEST_CASE("Nullable SCANN_DVR emb-list cosine rerank maps calc-dist ids", "[null
             ++label_pos;
         }
     }
+
+    std::vector<int64_t> storage_labels;
+    storage_labels.reserve(labels.size());
+    for (auto public_id : labels) {
+        storage_labels.push_back(CompactIdForLogicalId(data.valid_ids, public_id));
+    }
+    REQUIRE(created.index.Node() != nullptr);
+    auto storage_calc = created.index.Node()->CalcDistByStorageIds(data.query_ds, knowhere::BitsetView{},
+                                                                   storage_labels.data(), storage_labels.size(), true);
+    REQUIRE(storage_calc.has_value());
 }
 
-TEST_CASE("Nullable SCANN_DVR CalcDistByIDs uses external source ids", "[nullable][scann_dvr][api]") {
+TEST_CASE("Nullable SCANN_DVR calc-dist APIs keep public and storage ids separate", "[nullable][scann_dvr][api]") {
     IndexRow row{"SCANN_DVR", knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, DataKind::DenseFp32};
     Scenario scenario;
     scenario.mode = Mode::Vector;
@@ -4383,7 +4494,9 @@ TEST_CASE("Nullable SCANN_DVR CalcDistByIDs uses external source ids", "[nullabl
     auto artifact = BuildArtifactForScenario(row, scenario);
     REQUIRE(artifact->create_ok);
     REQUIRE(artifact->build_status == knowhere::Status::success);
-    RequireDenseCalcDistByIds(artifact->index, artifact->data);
+    RequireDenseCalcDistByPublicIds(artifact->index, artifact->data);
+    REQUIRE(artifact->index.Node() != nullptr);
+    RequireDenseCalcDistByStorageIds(*artifact->index.Node(), artifact->data);
 }
 
 TEST_CASE("Nullable IVF_FLAT vector APIs use restored logical-id map after reload", "[nullable][ivf][api]") {
@@ -4427,8 +4540,7 @@ TEST_CASE("Nullable FAISS HNSW vector APIs use restored logical-id map after rel
         REQUIRE(retrieve.has_value());
         RequireDenseVectorsMatchLogicalIds(*retrieve.value(), artifact->data.query_ids, artifact->data.dim);
 
-        RequireDenseCalcDistByIds(index, artifact->data);
-        RequireDenseSelectedIdsRejectMissingOutId(index, artifact->data);
+        RequireDenseCalcDistByPublicIds(index, artifact->data);
     };
 
     require_vector_apis(artifact->index, true);
@@ -4787,15 +4899,15 @@ TEST_CASE("Nullable raw-data vector APIs map compact serialized ids after reload
     REQUIRE(artifact->create_ok);
     REQUIRE(artifact->build_status == knowhere::Status::success);
 
-    RequireVectorIdMapCompacted(artifact->index, artifact->data.total_count);
+    RequireVectorIdMapCompacted(artifact->index, artifact->data.valid_ids, artifact->data.total_count);
     RequireDenseVectorPublicApisUseOutIds(artifact->index, artifact->data, artifact->json, false);
 
     REQUIRE(EnsureBinaryLoaded(*artifact) == knowhere::Status::success);
-    RequireVectorIdMapCompacted(artifact->binary_loaded, artifact->data.total_count);
+    RequireVectorIdMapCompacted(artifact->binary_loaded, artifact->data.valid_ids, artifact->data.total_count);
     RequireDenseVectorPublicApisUseOutIds(artifact->binary_loaded, artifact->data, artifact->json, false);
 
     REQUIRE(EnsureFileLoaded(*artifact) == knowhere::Status::success);
-    RequireVectorIdMapCompacted(artifact->file_loaded, artifact->data.total_count);
+    RequireVectorIdMapCompacted(artifact->file_loaded, artifact->data.valid_ids, artifact->data.total_count);
     RequireDenseVectorPublicApisUseOutIds(artifact->file_loaded, artifact->data, artifact->json, false);
 }
 
