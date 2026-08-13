@@ -70,7 +70,7 @@ namespace knowhere {
 //
 class BaseFaissIndexNode : public IndexNode {
  public:
-    BaseFaissIndexNode(const int32_t& /*version*/, const Object& object) {
+    BaseFaissIndexNode(const int32_t& version, const Object& object) : IndexNode(version) {
         build_pool = ThreadPool::GetGlobalBuildThreadPool();
         search_pool = ThreadPool::GetGlobalSearchThreadPool();
     }
@@ -2203,7 +2203,7 @@ class BaseFaissRegularIndexHNSWFlatNodeTemplate : public BaseFaissRegularIndexHN
 //   FallbackSearchIndex properly.
 class HNSWIndexNodeWithFallback : public IndexNode {
  public:
-    HNSWIndexNodeWithFallback(const int32_t& version, const Object& object) {
+    HNSWIndexNodeWithFallback(const int32_t& version, const Object& object) : IndexNode(version) {
         constexpr int faiss_hnsw_support_version = 6;
         if (version >= faiss_hnsw_support_version) {
             use_base_index = true;
