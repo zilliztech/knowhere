@@ -38,7 +38,7 @@ template <typename DataType, QuantType quant_type = QuantType::None>
 class HnswIndexNode : public IndexNode {
  public:
     using DistType = float;
-    HnswIndexNode(const int32_t& /*version*/, const Object& object) : index_(nullptr) {
+    HnswIndexNode(const int32_t& version, const Object& object) : IndexNode(version), index_(nullptr) {
         search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
     }
 

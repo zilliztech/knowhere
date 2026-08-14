@@ -2541,6 +2541,81 @@ TEST_CASE("Test brute force anniterator on chunk", "[on_chunk]") {
     }
 }
 
+TEST_CASE("EmbList serialization format by index version", "[emb_list][serialization][version]") {
+    const int32_t DIM = 4;
+    const int32_t NB = 64;
+    const int32_t EACH_EL_LEN = 8;
+
+    auto dataset = GenEmbListDataSet(NB, DIM, 42, EACH_EL_LEN);
+
+    knowhere::Json base_conf;
+    base_conf[knowhere::indexparam::HNSW_M] = 16;
+    base_conf[knowhere::indexparam::EFCONSTRUCTION] = 96;
+    base_conf[knowhere::meta::DIM] = DIM;
+    base_conf[knowhere::meta::ROWS] = NB;
+    base_conf[knowhere::meta::INDEX_TYPE] = knowhere::IndexEnum::INDEX_HNSW;
+    base_conf[knowhere::meta::METRIC_TYPE] = "MAX_SIM_IP";
+
+    SECTION("TokenANN uses legacy meta before V2 minimum version") {
+        constexpr auto version = knowhere::kEmbListMetaV2MinVersion - 1;
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
+        REQUIRE(index.Build(dataset, base_conf) == knowhere::Status::success);
+
+        knowhere::BinarySet binset;
+        REQUIRE(index.Serialize(binset) == knowhere::Status::success);
+
+        auto meta_bin = binset.GetByName(knowhere::meta::EMB_LIST_META);
+        REQUIRE(meta_bin != nullptr);
+
+        size_t count = 0;
+        std::memcpy(&count, meta_bin->data.get(), sizeof(count));
+        REQUIRE(count == static_cast<size_t>(NB / EACH_EL_LEN + 1));
+        REQUIRE(meta_bin->size == static_cast<int64_t>(sizeof(size_t) + count * sizeof(size_t)));
+
+        int64_t first_bytes = 0;
+        std::memcpy(&first_bytes, meta_bin->data.get(), sizeof(first_bytes));
+        REQUIRE(first_bytes != knowhere::kEmbListMetaMagic);
+
+        auto loaded_index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
+        REQUIRE(loaded_index.Deserialize(binset, base_conf) == knowhere::Status::success);
+    }
+
+    SECTION("TokenANN uses V2 meta from V2 minimum version") {
+        constexpr auto version = knowhere::kEmbListMetaV2MinVersion;
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
+        REQUIRE(index.Build(dataset, base_conf) == knowhere::Status::success);
+
+        knowhere::BinarySet binset;
+        REQUIRE(index.Serialize(binset) == knowhere::Status::success);
+
+        auto meta_bin = binset.GetByName(knowhere::meta::EMB_LIST_META);
+        REQUIRE(meta_bin != nullptr);
+
+        int64_t magic = 0;
+        std::memcpy(&magic, meta_bin->data.get(), sizeof(magic));
+        REQUIRE(magic == knowhere::kEmbListMetaMagic);
+    }
+
+    SECTION("Non-TokenANN strategy is not serializable with legacy index version") {
+        constexpr auto version = knowhere::kEmbListMetaV2MinVersion - 1;
+        auto conf = base_conf;
+        conf["emb_list_strategy"] = "muvera";
+        conf["muvera_num_projections"] = 3;
+        conf["muvera_num_repeats"] = 2;
+        conf["muvera_seed"] = 42;
+
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
+        REQUIRE(index.Build(dataset, conf) == knowhere::Status::success);
+
+        knowhere::BinarySet binset;
+        REQUIRE(index.Serialize(binset) == knowhere::Status::not_implemented);
+    }
+}
+
 TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deserialization tests") {
     const int32_t DIM = 4;
     const int32_t NB = 64;

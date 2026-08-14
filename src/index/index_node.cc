@@ -513,8 +513,29 @@ IndexNode::ParseEmbListMetaHeader(const uint8_t* data, int64_t size) {
 }
 
 Status
-IndexNode::SerializeEmbList(BinarySet& binset) const {
-    LOG_KNOWHERE_INFO_ << "Serialize emb_list with strategy: " << emb_list_strategy_->Type();
+IndexNode::SerializeEmbListMeta(std::shared_ptr<uint8_t[]>& data, int64_t& size) const {
+    if (!emb_list_strategy_) {
+        return Status::emb_list_inner_error;
+    }
+
+    if (version_.VersionNumber() < kEmbListMetaV2MinVersion) {
+        if (emb_list_strategy_->Type() != meta::EMB_LIST_STRATEGY_TOKENANN) {
+            LOG_KNOWHERE_WARNING_ << "Legacy emb_list meta only supports TokenANN, got: " << emb_list_strategy_->Type()
+                                  << ", index version: " << version_.VersionNumber();
+            return Status::not_implemented;
+        }
+
+        auto emb_list_offset = emb_list_strategy_->GetEmbListOffset();
+        if (!emb_list_offset) {
+            return Status::emb_list_inner_error;
+        }
+
+        size = static_cast<int64_t>(EmbListOffsetByteSize(emb_list_offset));
+        data = std::shared_ptr<uint8_t[]>(new uint8_t[size]);
+        SerializeEmbListOffsetToBytes(emb_list_offset, data.get());
+        return Status::success;
+    }
+
     try {
         // 1. Get strategy blob
         std::shared_ptr<uint8_t[]> strategy_data;
@@ -532,8 +553,24 @@ IndexNode::SerializeEmbList(BinarySet& binset) const {
         writer(strategy_type.data(), type_len, 1);
         writer(strategy_data.get(), strategy_size, 1);
 
-        std::shared_ptr<uint8_t[]> meta_data(writer.data());
-        binset.Append(meta::EMB_LIST_META, meta_data, writer.tellg());
+        data = std::shared_ptr<uint8_t[]>(writer.data());
+        size = writer.tellg();
+        return Status::success;
+    } catch (const std::exception& e) {
+        LOG_KNOWHERE_WARNING_ << "serialize emb_list meta error: " << e.what();
+        return Status::emb_list_inner_error;
+    }
+}
+
+Status
+IndexNode::SerializeEmbList(BinarySet& binset) const {
+    LOG_KNOWHERE_INFO_ << "Serialize emb_list with strategy: " << emb_list_strategy_->Type()
+                       << ", index version: " << version_.VersionNumber();
+    try {
+        std::shared_ptr<uint8_t[]> meta_data;
+        int64_t meta_size = 0;
+        RETURN_IF_ERROR(SerializeEmbListMeta(meta_data, meta_size));
+        binset.Append(meta::EMB_LIST_META, meta_data, meta_size);
 
         // 3. Raw vector index as separate key (large, needs mmap in file path)
         if (emb_list_raw_index_) {
