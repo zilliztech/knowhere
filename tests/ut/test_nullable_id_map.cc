@@ -39,6 +39,7 @@
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/id_map.h"
+#include "knowhere/index/emb_list_strategy.h"
 #include "knowhere/index/index.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_node_data_mock_wrapper.h"
@@ -1009,6 +1010,23 @@ EmbListStrategyFor(const Scenario& scenario) {
         return knowhere::meta::EMB_LIST_STRATEGY_TOKENANN;
     }
     return scenario.emb_list_strategy;
+}
+
+bool
+RequiresEmbListMetaV2(const Scenario& scenario) {
+    if (scenario.mode != Mode::EmbList) {
+        return false;
+    }
+    const auto strategy = EmbListStrategyFor(scenario);
+    return strategy == knowhere::meta::EMB_LIST_STRATEGY_MUVERA || strategy == knowhere::meta::EMB_LIST_STRATEGY_LEMUR;
+}
+
+int32_t
+VersionForScenario(const IndexRow& row, const Scenario& scenario) {
+    if (RequiresEmbListMetaV2(scenario)) {
+        return knowhere::kEmbListMetaV2MinVersion;
+    }
+    return VersionForRow(row);
 }
 
 std::vector<std::string>
@@ -2269,7 +2287,8 @@ struct CreateResult {
 };
 
 CreateResult
-CreateIndex(const IndexRow& row, const MatrixData& data, std::shared_ptr<milvus::FileManager> file_manager = nullptr) {
+CreateIndex(const IndexRow& row, const MatrixData& data, std::shared_ptr<milvus::FileManager> file_manager = nullptr,
+            std::optional<int32_t> version_override = std::nullopt) {
     CreateResult result;
 
 #ifndef KNOWHERE_WITH_CARDINAL
@@ -2291,7 +2310,7 @@ CreateIndex(const IndexRow& row, const MatrixData& data, std::shared_ptr<milvus:
     }
 #endif
 
-    const auto version = VersionForRow(row);
+    const auto version = version_override.value_or(VersionForRow(row));
     auto create_with_object = [&](const knowhere::Object& object) {
         if (row.data_kind == DataKind::DenseBin || row.data_kind == DataKind::MinHash) {
             auto created = knowhere::IndexFactory::Instance().Create<knowhere::bin1>(row.index_type, version, object);
@@ -2393,7 +2412,7 @@ BuildArtifactForScenario(const IndexRow& row, const Scenario& scenario) {
         }
     }
 
-    auto created = CreateIndex(row, artifact->data, artifact->file_manager);
+    auto created = CreateIndex(row, artifact->data, artifact->file_manager, VersionForScenario(row, scenario));
     artifact->create_ok = created.ok;
     artifact->create_status = created.status;
     if (!created.ok) {
@@ -2513,7 +2532,8 @@ EnsureBinaryLoaded(BuiltArtifact& artifact) {
         return artifact.binary_deserialize_status;
     }
     RETURN_IF_ERROR(EnsureSerialized(artifact));
-    auto created = CreateIndex(artifact.row, artifact.data, artifact.file_manager);
+    auto created = CreateIndex(artifact.row, artifact.data, artifact.file_manager,
+                               VersionForScenario(artifact.row, artifact.scenario));
     if (!created.ok) {
         artifact.binary_deserialize_status = created.status;
         return artifact.binary_deserialize_status;
@@ -2623,7 +2643,8 @@ EnsureFileLoaded(BuiltArtifact& artifact) {
         return artifact.file_deserialize_status;
     }
     RETURN_IF_ERROR(EnsureFileSerialized(artifact));
-    auto created = CreateIndex(artifact.row, artifact.data, artifact.file_manager);
+    auto created = CreateIndex(artifact.row, artifact.data, artifact.file_manager,
+                               VersionForScenario(artifact.row, artifact.scenario));
     if (!created.ok) {
         artifact.file_deserialize_status = created.status;
         return artifact.file_deserialize_status;
