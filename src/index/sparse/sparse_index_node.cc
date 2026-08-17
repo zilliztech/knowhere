@@ -780,7 +780,9 @@ class SparseInvertedIndexNode : public IndexNode {
             search_params.scorer_config.scorer_params.bm25.b =
                 config.bm25_b.value_or(index_->get_scorer_config().scorer_params.bm25.b);
             if (search_params.algo == sparse::inverted::InvertedIndexAlgo::DAAT_WAND ||
-                search_params.algo == sparse::inverted::InvertedIndexAlgo::DAAT_MAXSCORE) {
+                search_params.algo == sparse::inverted::InvertedIndexAlgo::DAAT_MAXSCORE ||
+                search_params.algo == sparse::inverted::InvertedIndexAlgo::BLOCK_MAX_WAND ||
+                search_params.algo == sparse::inverted::InvertedIndexAlgo::BLOCK_MAX_MAXSCORE) {
                 if (search_params.scorer_config.scorer_params.bm25.k1 !=
                         index_->get_scorer_config().scorer_params.bm25.k1 ||
                     search_params.scorer_config.scorer_params.bm25.b !=
