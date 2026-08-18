@@ -558,7 +558,7 @@ VersionForRow(const IndexRow& row) {
         return knowhere::Version::GetDefaultVersion().VersionNumber();
     }
     if (row.requires_current_version) {
-        return std::max(knowhere::Version::GetCurrentVersion().VersionNumber(), 9);
+        return knowhere::Version::GetMaximumVersion().VersionNumber();
     }
 #endif
     return knowhere::Version::GetCurrentVersion().VersionNumber();
@@ -1455,10 +1455,6 @@ SupportsScenario(const IndexRow& row, const Scenario& scenario) {
         return false;
     }
 #ifdef KNOWHERE_WITH_CARDINAL
-    if (row.data_kind == DataKind::Sparse && !row.requires_current_version &&
-        scenario.nullable_ratio != NullableRatio::R0) {
-        return false;
-    }
     const bool current_version_reads_index =
         scenario.op == Operation::Search || scenario.op == Operation::Range || scenario.op == Operation::Iterator ||
         scenario.op == Operation::SearchFilter || scenario.op == Operation::RangeFilter ||
