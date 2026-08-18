@@ -280,11 +280,11 @@ class EmbListStrategy {
 
 using EmbListStrategyPtr = std::unique_ptr<EmbListStrategy>;
 
-// Index versions before 11 use the legacy TokenANN EMB_LIST_META format.  Version 11
+// Index versions before 10 use the legacy TokenANN EMB_LIST_META format.  Version 10
 // introduces the strategy-aware format below.  Keep the reader magic-based because
 // historical indexes may have been serialized with either format for the same index
 // version.
-constexpr IndexVersion kEmbListMetaV2MinVersion = 11;
+constexpr IndexVersion kEmbListMetaV2MinVersion = 10;
 
 // Magic number for EMB_LIST_META format: [magic][type_len][type][strategy_blob]
 // Use int64_t to avoid collision with legacy TokenANN format whose first 8 bytes are size_t count.
