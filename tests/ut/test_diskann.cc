@@ -402,6 +402,14 @@ TEST_CASE("Test DiskANN CalcDistByIDs with all vectors cached", "[diskann]") {
     fs::remove_all(kDir);
     REQUIRE_NOTHROW(fs::create_directories(kCOSINEIndexDir));
 
+#ifdef KNOWHERE_WITH_CARDINAL
+    // This case verifies native DiskANN's cached-node file contract.
+    // Cardinal-backed DISKANN keeps its cache inside Cardinal storage instead.
+    constexpr const char* diskann_type = "DISKANN_DEPRECATED";
+#else
+    constexpr const char* diskann_type = "DISKANN";
+#endif
+
     auto version = GenTestVersionList();
     auto base_ds = knowhere::ConvertToDataTypeIfNeeded<knowhere::fp16>(GenDataSet(kNumRows, kDim, 30));
     auto base_ptr = static_cast<const knowhere::fp16*>(base_ds->GetTensor());
@@ -421,7 +429,7 @@ TEST_CASE("Test DiskANN CalcDistByIDs with all vectors cached", "[diskann]") {
     std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
     auto diskann_index_pack = knowhere::Pack(file_manager);
     auto diskann =
-        knowhere::IndexFactory::Instance().Create<knowhere::fp16>("DISKANN", version, diskann_index_pack).value();
+        knowhere::IndexFactory::Instance().Create<knowhere::fp16>(diskann_type, version, diskann_index_pack).value();
     REQUIRE(diskann.Build(nullptr, build_json) == knowhere::Status::success);
 
     knowhere::BinarySet binset;
@@ -434,7 +442,7 @@ TEST_CASE("Test DiskANN CalcDistByIDs with all vectors cached", "[diskann]") {
     deserialize_json["search_cache_budget_gb"] = build_json["search_cache_budget_gb"];
 
     auto loaded_diskann =
-        knowhere::IndexFactory::Instance().Create<knowhere::fp16>("DISKANN", version, diskann_index_pack).value();
+        knowhere::IndexFactory::Instance().Create<knowhere::fp16>(diskann_type, version, diskann_index_pack).value();
     REQUIRE(loaded_diskann.Deserialize(binset, deserialize_json) == knowhere::Status::success);
 
     std::unique_ptr<uint32_t[]> cached_ids;
