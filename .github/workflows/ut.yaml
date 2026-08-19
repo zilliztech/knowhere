@@ -4,7 +4,7 @@ name: Unit Test
 on:
   push:
     branches:
-      - main
+      - '2.6'
   pull_request:
     # File paths to consider in the event. Optional; defaults to all.
     paths:
@@ -16,7 +16,11 @@ on:
       - "cmake/**"
       - "!cmake/libs/libcardinal.cmake"
       - ".github/workflows/ut.yaml"
+      - ".github/actions/**"
       - "CMakeLists.txt"
+      - "Makefile"
+      - "conanfile.py"
+      - "scripts/**"
       - "!**.md"
       - "tests/**"
 
@@ -41,7 +45,9 @@ jobs:
       - name: Restore Cache
         uses: ./.github/actions/cache-restore
         with:
-          os: ubuntu-22.04
+          runner-class: github-linux
+          # PRs and direct pushes use the same maintained-branch cache namespace.
+          cache-branch: ${{ github.base_ref || github.ref_name }}
       - name: Build
         run: |
           mkdir build && cd build \
@@ -51,7 +57,8 @@ jobs:
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:
-          os: ubuntu-22.04
+          runner-class: github-linux
+          cache-branch: ${{ github.base_ref || github.ref_name }}
 
   swig-build:
     name: python3 wheel
@@ -75,7 +82,9 @@ jobs:
       - name: Restore Cache
         uses: ./.github/actions/cache-restore
         with:
-          os: ubuntu-22.04
+          runner-class: github-linux
+          # Keep hosted builds branch-scoped while sharing Conan within the branch.
+          cache-branch: ${{ github.base_ref || github.ref_name }}
       - name: Build
         run: |
           mkdir build \
@@ -85,7 +94,8 @@ jobs:
       - name: Save Cache
         uses: ./.github/actions/cache-save
         with:
-          os: ubuntu-22.04
+          runner-class: github-linux
+          cache-branch: ${{ github.base_ref || github.ref_name }}
       - name: Build Portable Wheel
         run: |
           cd python && ./build_portable_wheel.sh

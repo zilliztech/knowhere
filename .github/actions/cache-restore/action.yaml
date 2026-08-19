@@ -1,23 +1,51 @@
 name: 'Knowhere Cache'
-description: ''
+description: 'Restore branch-aware Conan and hosted-runner CCache snapshots'
 inputs:
-  os:
-    description: 'OS name'
+  runner-class:
+    description: 'Stable runner class such as selfhosted-linux, github-linux, or github-macos'
     required: true
-    default: 'ubuntu22.04'
+  cache-branch:
+    description: 'Target branch used to isolate caches between maintained branches'
+    required: true
+  cache-ccache:
+    description: 'Whether to transfer CCache through GitHub Actions cache storage'
+    required: false
+    default: 'true'
+  ccache-max-size:
+    description: 'Maximum CCache size uploaded by ephemeral runners'
+    required: false
+    default: '1G'
 
 runs:
   using: 'composite'
   steps:
-    - name: Cache CCache Volumes
+    # GitHub-hosted runners are ephemeral, so persist their compiler cache.
+    # Query CCache itself because its default path differs by platform/version.
+    - name: Resolve CCache Directory
+      if: ${{ inputs.cache-ccache == 'true' }}
+      id: ccache
+      shell: bash
+      run: |
+        set -euo pipefail
+        ccache --max-size="${{ inputs.ccache-max-size }}"
+        echo "dir=$(ccache --get-config cache_dir)" >> "${GITHUB_OUTPUT}"
+
+    - name: Restore CCache
+      if: ${{ inputs.cache-ccache == 'true' }}
       uses: actions/cache/restore@v4
       with:
-        path: ~/.cache/ccache
-        key: knowhere-${{ inputs.os }}-${{ github.job }}-ccache-${{ hashFiles( '**/*.cpp', '**/*.cc', '**/*.c', '**/*.h', '**/*.hpp', '**/CMakeLists.txt') }}
-        restore-keys: knowhere-${{ inputs.os }}-${{ github.job }}-ccache-
-    - name: Cache Conan Packages
+        path: ${{ steps.ccache.outputs.dir }}
+        # Keep build jobs separate because their compiler flags differ. Source
+        # hashing rolls immutable snapshots while the prefix restores the latest.
+        key: knowhere-${{ inputs.runner-class }}-${{ inputs.cache-branch }}-${{ github.job }}-ccache-${{ hashFiles('src/**/*.cpp', 'src/**/*.cc', 'src/**/*.c', 'src/**/*.h', 'src/**/*.hpp', 'include/**/*.h', 'include/**/*.hpp', 'tests/**/*.cpp', 'tests/**/*.cc', 'tests/**/*.h', 'benchmark/**/*.cpp', 'benchmark/**/*.cc', 'benchmark/**/*.h', 'cmake/**', 'CMakeLists.txt', 'Makefile', 'conanfile.py') }}
+        restore-keys: knowhere-${{ inputs.runner-class }}-${{ inputs.cache-branch }}-${{ github.job }}-ccache-
+
+    - name: Restore Conan Packages
       uses: actions/cache/restore@v4
       with:
         path: ~/.conan
-        key: knowhere-${{ inputs.os }}-${{ github.job }}-conan-${{ hashFiles('conanfile.py') }}
-        restore-keys: knowhere-${{ inputs.os }}-${{ github.job }}-conan-
+        # Conan stores multiple package IDs/settings in one cache, so jobs can
+        # share it. Runner class and branch prevent incompatible environments
+        # and maintained branches from contaminating dependency snapshots.
+        key: knowhere-${{ inputs.runner-class }}-${{ inputs.cache-branch }}-conan1-${{ hashFiles('conanfile.py') }}
+        restore-keys: knowhere-${{ inputs.runner-class }}-${{ inputs.cache-branch }}-conan1-
