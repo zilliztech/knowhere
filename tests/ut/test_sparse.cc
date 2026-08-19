@@ -1720,9 +1720,17 @@ TEST_CASE("Test SINDI Index Search with Window Filter Skip", "[sparse][sindi]") 
     auto query_sparsity = 0.99f;
     constexpr int32_t window_size = 1024;
 
+    auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
+
     auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
-    auto train_ds = GenSparseDataSet(nb, dim, doc_sparsity);
-    auto query_ds = GenSparseDataSet(nq, dim, query_sparsity);
+    auto sparse_dataset_gen = [&](int nr, float sparsity) -> knowhere::DataSetPtr {
+        if (metric == knowhere::metric::BM25) {
+            return GenSparseDataSetWithMaxVal(nr, dim, sparsity, 256, true);
+        }
+        return GenSparseDataSet(nr, dim, sparsity);
+    };
+    auto train_ds = sparse_dataset_gen(nb, doc_sparsity);
+    auto query_ds = sparse_dataset_gen(nq, query_sparsity);
 
     // Filter out the leading `filtered_docs` documents so that one or more whole windows
     // are skipped. Skipping leading windows exercises the posting-cursor sync path.
@@ -1733,13 +1741,19 @@ TEST_CASE("Test SINDI Index Search with Window Filter Skip", "[sparse][sindi]") 
 
     knowhere::Json build_json;
     build_json[knowhere::meta::DIM] = dim;
-    build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    build_json[knowhere::meta::METRIC_TYPE] = metric;
     build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "SINDI";
     build_json["sindi_window_size"] = window_size;
+    build_json[knowhere::meta::BM25_K1] = 1.2;
+    build_json[knowhere::meta::BM25_B] = 0.75;
+    build_json[knowhere::meta::BM25_AVGDL] = 100;
 
     knowhere::Json search_json;
     search_json[knowhere::meta::TOPK] = topk;
-    search_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    search_json[knowhere::meta::METRIC_TYPE] = metric;
+    search_json[knowhere::meta::BM25_K1] = 1.2;
+    search_json[knowhere::meta::BM25_B] = 0.75;
+    search_json[knowhere::meta::BM25_AVGDL] = 100;
 
     auto expected = knowhere::BruteForce::SearchSparse(train_ds, query_ds, search_json, bitset);
     REQUIRE(expected.has_value());
