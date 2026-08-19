@@ -932,6 +932,18 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         const uint32_t wnnz_bits = 32 - __builtin_clz(window_size_);
         const uint32_t wnnz_mask = (1u << wnnz_bits) - 1;
 
+        // Skip a window when every document in it is filtered out by the bitset.
+        const auto window_all_filtered = [&bitset](size_t docid_start, size_t window_doc_count) {
+            if (bitset.empty()) {
+                return false;
+            }
+            const size_t end = docid_start + window_doc_count;
+            if (end > bitset.size()) {
+                return false;
+            }
+            return bitset.range_all_filtered(docid_start, end);
+        };
+
         // Initialize posting list cursors for each query term
         // Cursors track position in posting lists and handle window-by-window iteration
         std::vector<PostingCursor> cursors;
@@ -971,6 +983,17 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 const size_t docid_start = window_size_ * widx;
                 const uint32_t curr_window_size =
                     std::min(window_size_, static_cast<uint32_t>(this->nr_rows_ - docid_start));
+                if (window_all_filtered(docid_start, curr_window_size)) {
+                    // Keep posting cursors in sync even when the window is skipped, so the
+                    // cumulative posting offsets stay correct for subsequent windows.
+                    for (auto& cur : cursors) {
+                        if (cur.wnnz_buf == nullptr || cur.wnnz_buf_sz == 0) {
+                            continue;
+                        }
+                        cur.advance_window(widx);
+                    }
+                    continue;
+                }
                 std::fill_n(wscores_final, curr_window_size, 0);
 
                 float curr_max_score = 0.0f;
@@ -1019,6 +1042,17 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 const size_t docid_start = window_size_ * widx;
                 const uint32_t curr_window_size =
                     std::min(window_size_, static_cast<uint32_t>(this->nr_rows_ - docid_start));
+                if (window_all_filtered(docid_start, curr_window_size)) {
+                    // Keep posting cursors in sync even when the window is skipped, so the
+                    // cumulative posting offsets stay correct for subsequent windows.
+                    for (auto& cur : cursors) {
+                        if (cur.wnnz_buf == nullptr || cur.wnnz_buf_sz == 0) {
+                            continue;
+                        }
+                        cur.advance_window(widx);
+                    }
+                    continue;
+                }
                 std::fill_n(wscores_final, curr_window_size, 0);
 
                 float curr_max_score = 0.0f;
