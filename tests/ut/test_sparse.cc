@@ -1711,6 +1711,74 @@ TEST_CASE("Test SINDI Index Window Size", "[sparse][sindi]") {
     REQUIRE(recall >= 0.85);
 }
 
+TEST_CASE("Test SINDI Index Search with Window Filter Skip", "[sparse][sindi]") {
+    auto nb = 3000;
+    auto dim = 500;
+    auto topk = 10;
+    int64_t nq = 5;
+    auto doc_sparsity = 0.97f;
+    auto query_sparsity = 0.99f;
+    constexpr int32_t window_size = 1024;
+
+    auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
+
+    auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    auto sparse_dataset_gen = [&](int nr, float sparsity) -> knowhere::DataSetPtr {
+        if (metric == knowhere::metric::BM25) {
+            return GenSparseDataSetWithMaxVal(nr, dim, sparsity, 256, true);
+        }
+        return GenSparseDataSet(nr, dim, sparsity);
+    };
+    auto train_ds = sparse_dataset_gen(nb, doc_sparsity);
+    auto query_ds = sparse_dataset_gen(nq, query_sparsity);
+
+    // Filter out the leading `filtered_docs` documents so that one or more whole windows
+    // are skipped. Skipping leading windows exercises the posting-cursor sync path.
+    auto filtered_docs = GENERATE(1024, 2048);
+    CAPTURE(filtered_docs);
+    auto bitset_data = GenerateBitsetWithFirstTbitsSet(nb, filtered_docs);
+    knowhere::BitsetView bitset(bitset_data.data(), nb);
+
+    knowhere::Json build_json;
+    build_json[knowhere::meta::DIM] = dim;
+    build_json[knowhere::meta::METRIC_TYPE] = metric;
+    build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "SINDI";
+    build_json["sindi_window_size"] = window_size;
+    build_json[knowhere::meta::BM25_K1] = 1.2;
+    build_json[knowhere::meta::BM25_B] = 0.75;
+    build_json[knowhere::meta::BM25_AVGDL] = 100;
+
+    knowhere::Json search_json;
+    search_json[knowhere::meta::TOPK] = topk;
+    search_json[knowhere::meta::METRIC_TYPE] = metric;
+    search_json[knowhere::meta::BM25_K1] = 1.2;
+    search_json[knowhere::meta::BM25_B] = 0.75;
+    search_json[knowhere::meta::BM25_AVGDL] = 100;
+
+    auto expected = knowhere::BruteForce::SearchSparse(train_ds, query_ds, search_json, bitset);
+    REQUIRE(expected.has_value());
+
+    auto idx = knowhere::IndexFactory::Instance()
+                   .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                   .value();
+    REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::success);
+
+    auto results = idx.Search(query_ds, search_json, bitset);
+    REQUIRE(results.has_value());
+    REQUIRE(GetKNNRecall(*expected.value(), *results.value()) >= 0.99f);
+
+    auto* ids = results.value()->GetIds();
+    auto k = results.value()->GetDim();
+    for (int64_t i = 0; i < nq; ++i) {
+        for (int64_t j = 0; j < k; ++j) {
+            if (ids[i * k + j] == -1) {
+                break;
+            }
+            REQUIRE(!bitset.test(ids[i * k + j]));
+        }
+    }
+}
+
 TEST_CASE("Test SINDI Index Search Algo Mismatch", "[sparse][sindi]") {
     auto nb = 500;
     auto dim = 300;
