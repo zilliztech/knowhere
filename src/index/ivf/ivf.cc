@@ -19,6 +19,7 @@
 #include "faiss/IndexIVFRaBitQ.h"
 #include "faiss/IndexIVFRaBitQFastScan.h"
 #include "faiss/IndexRefine.h"
+#include "faiss/SuperKMeans.h"
 #include "faiss/VectorTransform.h"
 #include "faiss/cppcontrib/knowhere/IndexBinaryFlat.h"
 #include "faiss/cppcontrib/knowhere/IndexBinaryIVF.h"
@@ -599,6 +600,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         }
         // apply clustering config
         ApplyClusteringConfig(index->cp);
+        index->cp.use_super_kmeans = ivf_flat_cfg.use_super_kmeans.value();
         // train
         index->train(rows, static_cast<const float*>(data));
         // transfer ownership of qzr to index
@@ -621,6 +623,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         }
         // apply clustering config
         ApplyClusteringConfig(index->cp);
+        index->cp.use_super_kmeans = ivf_flat_cc_cfg.use_super_kmeans.value();
         // train
         index->train(rows, static_cast<const float*>(data));
         // transfer ownership of qzr to index
@@ -652,6 +655,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
 
         // apply clustering config
         ApplyClusteringConfig(index->get_base_ivf_index()->cp);
+        index->get_base_ivf_index()->cp.use_super_kmeans = ivf_pq_cfg.use_super_kmeans.value();
         // train
         index->train(rows, static_cast<const float*>(data));
         // transfer ownership of qzr to index
@@ -678,6 +682,14 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         }
         // apply clustering config
         ApplyClusteringConfig(base_index->cp);
+        // SuperKMeans is designed for d >= 2 * d_prime_min (default 32) and
+        // large nlist (k >= 1024). Outside that range fall back to Clustering
+        // instead of failing the build or degrading recall.
+        bool use_super_kmeans = scann_cfg.use_super_kmeans.value();
+        if (use_super_kmeans && (dim < 2 * faiss::SuperKMeansParameters{}.d_prime_min || nlist < 1024)) {
+            use_super_kmeans = false;
+        }
+        base_index->cp.use_super_kmeans = use_super_kmeans;
         // create scann index, which does not base_index by default,
         //    but owns the refine index by default omg
         if (scann_cfg.with_raw_data.value()) {
@@ -713,6 +725,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
 
         // apply clustering config
         ApplyClusteringConfig(index->get_base_ivf_index()->cp);
+        index->get_base_ivf_index()->cp.use_super_kmeans = ivf_sq_cfg.use_super_kmeans.value();
         // train
         index->train(rows, static_cast<const float*>(data));
         // transfer ownership of qzr to index
@@ -730,6 +743,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         index = std::make_unique<faiss::cppcontrib::knowhere::IndexBinaryIVF>(qzr.get(), dim, nlist, metric.value());
         // apply clustering config
         ApplyClusteringConfig(index->cp);
+        index->cp.use_super_kmeans = ivf_bin_cfg.use_super_kmeans.value();
         // train
         index->train(rows, static_cast<const uint8_t*>(data));
         // transfer ownership of qzr to index
@@ -760,6 +774,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         }
         // apply clustering config
         ApplyClusteringConfig(index->cp);
+        index->cp.use_super_kmeans = ivf_sq_cc_cfg.use_super_kmeans.value();
         // train
         index->train(rows, static_cast<const float*>(data));
         // transfer ownership of qzr to index
@@ -782,6 +797,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         index = std::move(result.value());
         // apply clustering config
         ApplyClusteringConfig(index->get_ivfrabitq_index()->cp);
+        index->get_ivfrabitq_index()->cp.use_super_kmeans = ivf_rabitq_cfg.use_super_kmeans.value();
         // train
         index->train(rows, static_cast<const float*>(data));
     }
@@ -798,6 +814,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         auto* fs_idx = index->get_fastscan_index();
         if (fs_idx) {
             ApplyClusteringConfig(fs_idx->cp);
+            fs_idx->cp.use_super_kmeans = fs_cfg.use_super_kmeans.value();
         }
         index->train(rows, static_cast<const float*>(data));
     }

@@ -187,6 +187,7 @@ knowhere_file_glob(
   FAISS_DD_SVE_SRCS
   thirdparty/faiss/faiss/impl/pq_code_distance/pq_code_distance-sve.cpp
   thirdparty/faiss/faiss/utils/simd_impl/distances_arm_sve.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/super_kmeans_kernels_sve.cpp
 )
 # combine files
 list(APPEND FAISS_SVE_SRCS ${FAISS_DD_SVE_SRCS})
@@ -548,6 +549,7 @@ if(__AARCH64)
                                      knowhere_utils)
   if(SVE_AVAILABLE)
     target_link_libraries(faiss PUBLIC faiss_sve)
+    target_compile_definitions(faiss PRIVATE COMPILE_SIMD_ARM_SVE)
   endif()
   target_compile_definitions(faiss PRIVATE FINTEGER=int FAISS_ENABLE_DD COMPILE_SIMD_ARM_NEON)
 endif()
