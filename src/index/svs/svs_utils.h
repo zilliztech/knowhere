@@ -31,7 +31,7 @@ str_to_svs_storage_kind(const std::string& s) {
     if (s == "fp16")
         return faiss::SVS_FP16;
     if (s == "sqi8")
-        return faiss::SVS_SQI8;
+        return faiss::SVS_SQ8;
     if (s == "lvq4x0")
         return faiss::SVS_LVQ4x0;
     if (s == "lvq4x4")
