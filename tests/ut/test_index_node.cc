@@ -147,6 +147,8 @@ TEST_CASE("Test index node") {
         KNOWHERE_SIMPLE_REGISTER_GLOBAL(BASE_FLAT, BaseFlatIndexNode, fp32, knowhere::feature::FLOAT32);
         auto index = IndexFactory::Instance().Create<fp32>("BASE_FLAT", version).value();
         REQUIRE(index.Build(ds, {}) == Status::success);
+        std::shared_ptr<Config> async_cfg = index.Node()->CreateConfig();
+        REQUIRE(index.Node()->BuildAsync(ds, std::move(async_cfg)) == Status::success);
         REQUIRE(index.Train(ds, {}) == Status::success);
         REQUIRE(index.Add(ds, {}) == Status::success);
         REQUIRE(index.Search(ds, {}, nullptr).error() == Status::not_implemented);

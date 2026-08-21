@@ -103,15 +103,16 @@ class IndexNode : public Object {
         return Add(dataset, std::move(cfg), use_knowhere_build_pool);
     }
 
-/*
- *@ @brief Builds the index using the provided dataset,configuration and handle.
- */
-#ifdef KNOWHERE_WITH_CARDINAL
+    /**
+     * @brief Builds the index asynchronously using the provided dataset, configuration, and interrupt handle.
+     *
+     * @note Keep this virtual function unconditionally declared. Feature macros must not change the public
+     * `IndexNode` vtable layout across library boundaries.
+     */
     virtual Status
     BuildAsync(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const Interrupt* = nullptr) {
         return Build(dataset, std::move(cfg), true);
     }
-#endif
 
     /**
      * @brief Trains the index model using the provided dataset and configuration.
