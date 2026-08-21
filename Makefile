@@ -64,12 +64,13 @@ endif
 # which requires std::partial_ordering from <compare> (a C++20 feature).
 CONAN_SETTINGS := -s compiler.libcxx=$(LIBCXX) -s build_type=$(BUILD_TYPE) -s compiler.cppstd=20 -s:b compiler.cppstd=20
 
-# DiskANN and liburing require libaio (Linux-only).
+# DiskANN is enabled for Linux builds.  CONAN_BASE_FLAGS already contains
+# --build=missing, which builds liburing when it is present in the graph and
+# lacks a binary package.  A separate --build=liburing pattern is unsafe with
+# Conan 1 because it is a hard error when a profile/option removes liburing
+# from the resolved graph.
 ifneq ($(UNAME_S),Darwin)
-    CONAN_SETTINGS += -o \&:with_diskann=True
-    ifndef WITH_GPU
-        CONAN_INSTALL_FLAGS += --build=liburing
-    endif
+    CONAN_FLAGS += -o with_diskann=True
 endif
 
 # GPU builds use cuVS.
