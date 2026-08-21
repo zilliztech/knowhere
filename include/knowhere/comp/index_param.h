@@ -145,6 +145,7 @@ namespace indexparam {
 constexpr const char* NPROBE = "nprobe";
 constexpr const char* NLIST = "nlist";
 constexpr const char* USE_ELKAN = "use_elkan";
+constexpr const char* USE_SUPER_KMEANS = "use_super_kmeans";
 constexpr const char* NBITS = "nbits";          // PQ/SQ
 constexpr const char* M = "m";                  // PQ param for IVFPQ
 constexpr const char* IVF_SQ_TYPE = "sq_type";  // SQ param for IVFSQ
