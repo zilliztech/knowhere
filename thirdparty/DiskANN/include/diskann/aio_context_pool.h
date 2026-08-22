@@ -68,7 +68,7 @@ class AioContextPool {
     if (stop_) {
       return nullptr;
     }
-    ctx_cv_.wait(lk, [this] { return ctx_q_.size(); });
+    ctx_cv_.wait(lk, [this] { return stop_ || ctx_q_.size(); });
     if (stop_) {
       return nullptr;
     }
@@ -118,7 +118,10 @@ class AioContextPool {
   }
 
   ~AioContextPool() {
-    stop_ = true;
+    {
+      std::scoped_lock lk(ctx_mtx_);
+      stop_ = true;
+    }
     for (auto ctx : ctx_bak_) {
       io_destroy(ctx);
     }
@@ -164,6 +167,13 @@ class AioContextPool {
         ctx_q_.push(ctx);
         ctx_bak_.push_back(ctx);
       }
+    }
+    if (ctx_q_.empty()) {
+      std::stringstream err;
+      err << "AioContextPool: all " << num_ctx_
+          << " io_setup() calls failed; unable to allocate any AIO context "
+             "(check fs.aio-max-nr / fs.aio-nr for available headroom)";
+      throw diskann::ANNException(err.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
     }
   }
 };
