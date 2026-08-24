@@ -179,8 +179,8 @@ class GrowableInvertedIndex : public CRTPInvertedIndex<GrowableInvertedIndex<DTy
     get_block_max_data_cursor(uint32_t dim_id) const {
         const auto& ids = block_max_ids_per_dim_[dim_id];
         const auto& scores = block_max_scores_per_dim_[dim_id];
-        return {std::span<uint32_t>(const_cast<uint32_t*>(ids.data()), ids.size()),
-                std::span<float>(const_cast<float*>(scores.data()), scores.size())};
+        return {std::span<const uint32_t>(ids.data(), ids.size()),
+                std::span<const float>(scores.data(), scores.size())};
     }
 
  private:
