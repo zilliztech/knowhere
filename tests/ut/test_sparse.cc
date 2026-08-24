@@ -610,7 +610,8 @@ TEST_CASE("Test Mem Sparse Index CC", "[float metrics]") {
 
     auto query_ds = doc_vector_gen(nq, dim);
 
-    auto inverted_index_algo = GENERATE("TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE");
+    auto inverted_index_algo =
+        GENERATE("TAAT_NAIVE", "DAAT_WAND", "DAAT_MAXSCORE", "BLOCK_MAX_MAXSCORE", "BLOCK_MAX_WAND");
 
     auto drop_ratio_search = GENERATE(0.0, 0.3);
 
