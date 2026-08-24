@@ -208,7 +208,7 @@ class MemBinaryContainer : public BinaryContainer {
 
 class BlockMaxDataCursor {
  public:
-    BlockMaxDataCursor(std::span<uint32_t> block_max_ids, std::span<float> block_max_scores)
+    BlockMaxDataCursor(std::span<const uint32_t> block_max_ids, std::span<const float> block_max_scores)
         : block_max_ids_(block_max_ids), block_max_scores_(block_max_scores) {
         cur_vec_id_ = block_max_ids_[0];
     }
@@ -234,8 +234,8 @@ class BlockMaxDataCursor {
  private:
     uint32_t cur_vec_id_{0};
     uint32_t cur_pos_{0};
-    std::span<uint32_t> block_max_ids_;
-    std::span<float> block_max_scores_;
+    std::span<const uint32_t> block_max_ids_;
+    std::span<const float> block_max_scores_;
 };
 
 struct BlockMaxData {

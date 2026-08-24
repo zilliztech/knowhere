@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "index/sparse/block_max_data.h"
 #include "index/sparse/inverted_index.h"
 #include "index/sparse/scorer.h"
 #include "knowhere/bitsetview.h"
@@ -131,7 +132,18 @@ class GrowableInvertedIndex : public CRTPInvertedIndex<GrowableInvertedIndex<DTy
         }
 
         if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_BLOCK_MAX_SCORES) {
-            res += this->meta_data_.block_max_data_.container_->size();
+            // Growable index keeps block-max data in per-dim vectors instead of the
+            // contiguous container used by the sealed indexes, so size() must account
+            // for those vectors directly rather than dereferencing block_max_data_.container_
+            // (which is never allocated here).
+            res += sizeof(typename decltype(block_max_ids_per_dim_)::value_type) * block_max_ids_per_dim_.size();
+            for (const auto& ids : block_max_ids_per_dim_) {
+                res += ids.size() * sizeof(uint32_t);
+            }
+            res += sizeof(typename decltype(block_max_scores_per_dim_)::value_type) * block_max_scores_per_dim_.size();
+            for (const auto& scores : block_max_scores_per_dim_) {
+                res += scores.size() * sizeof(float);
+            }
         }
 
         return res;
@@ -160,6 +172,17 @@ class GrowableInvertedIndex : public CRTPInvertedIndex<GrowableInvertedIndex<DTy
         return posting_list_iterator(posting_lists_ids_[dim_id], posting_lists_vals_[dim_id], this->nr_rows_, bitset);
     }
 
+    /**
+     * @brief Get a block-max data cursor for a dimension.
+     */
+    [[nodiscard]] BlockMaxDataCursor
+    get_block_max_data_cursor(uint32_t dim_id) const {
+        const auto& ids = block_max_ids_per_dim_[dim_id];
+        const auto& scores = block_max_scores_per_dim_[dim_id];
+        return {std::span<const uint32_t>(ids.data(), ids.size()),
+                std::span<const float>(scores.data(), scores.size())};
+    }
+
  private:
     /**
      * @brief Add a single sparse vector to the index
@@ -170,11 +193,48 @@ class GrowableInvertedIndex : public CRTPInvertedIndex<GrowableInvertedIndex<DTy
     void
     add_row_to_index(const SparseRow<DType>& row, std::uint32_t row_id);
 
+    /**
+     * @brief Incrementally extend the block-max data for a single dimension with one newly
+     * appended posting list entry.
+     *
+     * Blocks are defined purely by position within the (append-only, docid-sorted) posting
+     * list, exactly like the batch index builders. The last entry of block_max_ids_per_dim_/
+     * block_max_scores_per_dim_ always represents the current, possibly still-open, last
+     * block and is updated in place until it fills up; a new entry is only appended once a
+     * new block starts.
+     *
+     * @param dim_id Inner dimension id whose posting list was just extended
+     * @param vec_id Vector id of the newly appended posting list entry
+     * @param score Score contribution of the newly appended entry
+     * @param block_size Number of posting list entries per block
+     */
+    void
+    update_block_max(uint32_t dim_id, uint32_t vec_id, float score, size_t block_size) {
+        auto& ids = block_max_ids_per_dim_[dim_id];
+        auto& scores = block_max_scores_per_dim_[dim_id];
+        const size_t pos = posting_lists_ids_[dim_id].size() - 1;
+        const size_t block_idx = pos / block_size;
+        if (block_idx == ids.size()) {
+            ids.emplace_back(vec_id);
+            scores.emplace_back(score);
+        } else {
+            ids.back() = vec_id;
+            scores.back() = std::max(scores.back(), score);
+        }
+    }
+
     // Inverted posting lists storing vector IDs
     std::vector<std::vector<std::uint32_t>> posting_lists_ids_;
 
     // Inverted posting lists storing corresponding values
     std::vector<std::vector<QType>> posting_lists_vals_;
+
+    // Growable counterpart of InvertedIndexMetaData::block_max_data_: for each inner dim,
+    // the max score of every closed block plus the still-open trailing block, keyed by the
+    // last vector id observed in that block. Only populated when
+    // InvertedIndexMetaData::FLAG_HAS_BLOCK_MAX_SCORES is set.
+    std::vector<std::vector<std::uint32_t>> block_max_ids_per_dim_;
+    std::vector<std::vector<float>> block_max_scores_per_dim_;
 };
 
 template <typename DType, typename QType>
@@ -220,10 +280,24 @@ GrowableInvertedIndex<DType, QType>::add(const SparseRow<DType>* data, size_t ro
 template <typename DType, typename QType>
 inline void
 GrowableInvertedIndex<DType, QType>::add_row_to_index(const SparseRow<DType>& row, std::uint32_t vec_id) {
+    const bool build_block_max = this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_BLOCK_MAX_SCORES;
+
+    // BM25 scoring (used below for block-max data) needs the row's total sum finalized before
+    // scoring any of its entries, so compute and publish it up front instead of accumulating it
+    // while iterating (which is what the non-block-max code path used to do, since it never
+    // needed a fully-finalized row_sum until after this function returned).
     float row_sum = 0.0f;
     for (size_t i = 0; i < row.size(); ++i) {
+        row_sum += row[i].val;
+    }
+    if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_ROW_SUMS) {
+        this->meta_data_.row_sums_[vec_id] = row_sum;
+    }
+
+    const size_t block_size = build_block_max ? std::max<size_t>(this->meta_data_.block_max_data_.block_size_, 1) : 0;
+
+    for (size_t i = 0; i < row.size(); ++i) {
         auto [dim, val] = row[i];
-        row_sum += val;
 
         // Skip values equals to or close enough to zero (which is little to the total IP score).
         if (std::abs(val) < std::numeric_limits<DType>::epsilon()) {
@@ -236,19 +310,27 @@ GrowableInvertedIndex<DType, QType>::add_row_to_index(const SparseRow<DType>& ro
             this->nr_inner_dims_ = this->dim_map_.size();
             posting_lists_ids_.emplace_back();
             posting_lists_vals_.emplace_back();
+            if (build_block_max) {
+                block_max_ids_per_dim_.emplace_back();
+                block_max_scores_per_dim_.emplace_back();
+            }
         }
 
-        posting_lists_ids_[inner_dim.value()].emplace_back(vec_id);
-        posting_lists_vals_[inner_dim.value()].emplace_back(get_quant_val<DType, QType>(val));
+        const auto dim_id = inner_dim.value();
+        posting_lists_ids_[dim_id].emplace_back(vec_id);
+        posting_lists_vals_[dim_id].emplace_back(get_quant_val<DType, QType>(val));
+
+        if (build_block_max) {
+            // Must be called immediately after the posting list append above so that
+            // posting_lists_ids_[dim_id].size() - 1 (read inside update_block_max) reflects
+            // the position of exactly this entry.
+            update_block_max(dim_id, vec_id, this->build_scorer_->vec_score(vec_id, val), block_size);
+        }
     }
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
     this->index_dataset_nnz_len_histogram_->Observe(row.size());
 #endif
-
-    if (this->meta_data_.flags_ & InvertedIndexMetaData::FLAG_HAS_ROW_SUMS) {
-        this->meta_data_.row_sums_[vec_id] = row_sum;
-    }
 }
 
 }  // namespace knowhere::sparse::inverted
