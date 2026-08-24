@@ -189,3 +189,23 @@ TEST_CASE("Test SuperKMeans Spherical", "[cluster]") {
     const float v_final = vanilla.iteration_stats.at(vanilla.iteration_stats.size() - 1).obj;
     REQUIRE(std::abs(sc_final - v_final) / v_final < 0.05f);
 }
+
+TEST_CASE("Test SuperKMeans with 256 centroids", "[cluster]") {
+    constexpr int d = 64;
+    constexpr int k = 256;
+    constexpr size_t n = 1024;
+
+    std::mt19937 rng(43);
+    std::normal_distribution<float> dist(0.f, 1.f);
+    std::vector<float> x(n * d);
+    for (auto& v : x) {
+        v = dist(rng);
+    }
+
+    faiss::SuperKMeansParameters sp;
+    sp.seed = 43;
+    sp.niter = 2;
+    faiss::SuperKMeans clustering(d, k, sp);
+    REQUIRE_NOTHROW(clustering.train(n, x.data()));
+    REQUIRE(clustering.centroids.size() == static_cast<size_t>(k * d));
+}

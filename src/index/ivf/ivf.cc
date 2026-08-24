@@ -682,11 +682,11 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         }
         // apply clustering config
         ApplyClusteringConfig(base_index->cp);
-        // SuperKMeans is designed for d >= 2 * d_prime_min (default 32) and
-        // large nlist (k >= 1024). Outside that range fall back to Clustering
-        // instead of failing the build or degrading recall.
+        // SuperKMeans requires d >= 2 * d_prime_min (default 32). Fall back to
+        // Clustering below that hard limit; use_super_kmeans otherwise remains
+        // the user's choice, including for small nlist values.
         bool use_super_kmeans = scann_cfg.use_super_kmeans.value();
-        if (use_super_kmeans && (dim < 2 * faiss::SuperKMeansParameters{}.d_prime_min || nlist < 1024)) {
+        if (use_super_kmeans && dim < 2 * faiss::SuperKMeansParameters{}.d_prime_min) {
             use_super_kmeans = false;
         }
         base_index->cp.use_super_kmeans = use_super_kmeans;

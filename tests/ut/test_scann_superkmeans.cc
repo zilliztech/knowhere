@@ -75,8 +75,9 @@ TEST_CASE("SCANN use_super_kmeans default matches Clustering recall", "[scann]")
 
     CAPTURE(super_recall, cluster_recall);
     // SuperKMeans coarse quantizer training is recall-equivalent to Clustering.
-    // MatchNlist shrinks nlist on this small synthetic set, so absolute recall
-    // is low; equivalence between the two configs is the meaningful assertion.
+    // MatchNlist shrinks nlist on this small synthetic set. The enabled build
+    // still honors SuperKMeans for the resulting small centroid count; recall
+    // equivalence between the two clustering implementations is the invariant.
     REQUIRE(super_recall == Catch::Approx(cluster_recall).margin(0.02f));
 }
 
