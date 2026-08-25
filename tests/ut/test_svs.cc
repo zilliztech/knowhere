@@ -221,6 +221,43 @@ TEST_CASE("Test SVS Vamana Build and Search", "[svs][vamana]") {
         }
     }
 
+    SECTION("All-pass bitsets use consistent search semantics") {
+        auto idx =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_SVS_VAMANA, version);
+        REQUIRE(idx.has_value());
+        auto index = idx.value();
+
+        auto cfg_json = gen().dump();
+        knowhere::Json json = knowhere::Json::parse(cfg_json);
+        REQUIRE(index.Build(train_ds, json) == knowhere::Status::success);
+
+        std::vector<uint8_t> filter_bits((nb + 7) / 8, 0);
+        knowhere::BitsetView unknown_count(filter_bits.data(), nb);
+        knowhere::BitsetView known_zero_count(filter_bits.data(), nb, 0);
+
+        auto unknown_knn = index.Search(query_ds, json, unknown_count);
+        auto known_zero_knn = index.Search(query_ds, json, known_zero_count);
+        REQUIRE(unknown_knn.has_value());
+        REQUIRE(known_zero_knn.has_value());
+        for (int64_t i = 0; i < nq * topk; ++i) {
+            REQUIRE(unknown_knn.value()->GetIds()[i] == known_zero_knn.value()->GetIds()[i]);
+            REQUIRE(unknown_knn.value()->GetDistance()[i] == known_zero_knn.value()->GetDistance()[i]);
+        }
+
+        json[knowhere::meta::RADIUS] = metric == knowhere::metric::L2 ? 10.0f : 0.99f;
+        auto unknown_range = index.RangeSearch(query_ds, json, unknown_count);
+        auto known_zero_range = index.RangeSearch(query_ds, json, known_zero_count);
+        REQUIRE(unknown_range.has_value());
+        REQUIRE(known_zero_range.has_value());
+        for (int64_t i = 0; i <= nq; ++i) {
+            REQUIRE(unknown_range.value()->GetLims()[i] == known_zero_range.value()->GetLims()[i]);
+        }
+        for (size_t i = 0; i < unknown_range.value()->GetLims()[nq]; ++i) {
+            REQUIRE(unknown_range.value()->GetIds()[i] == known_zero_range.value()->GetIds()[i]);
+            REQUIRE(unknown_range.value()->GetDistance()[i] == known_zero_range.value()->GetDistance()[i]);
+        }
+    }
+
     SECTION("Serialize and Deserialize") {
         knowhere::BinarySet bs;
 
