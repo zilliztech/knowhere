@@ -158,7 +158,7 @@ class SvsVamanaIndexNode : public IndexNode {
                     sp.search_window_size = v_cfg.svs_search_window_size.value();
                     sp.search_buffer_capacity = v_cfg.svs_search_buffer_capacity.value();
                     std::unique_ptr<BitsetViewIDSelector> bw_idselector;
-                    if (!bitset.empty()) {
+                    if (!bitset.empty() || bitset.num_bits() != 0) {
                         bw_idselector = std::make_unique<BitsetViewIDSelector>(bitset);
                         sp.sel = bw_idselector.get();
                     }
@@ -216,7 +216,7 @@ class SvsVamanaIndexNode : public IndexNode {
                     sp.search_window_size = v_cfg.svs_search_window_size.value();
                     sp.search_buffer_capacity = v_cfg.svs_search_buffer_capacity.value();
                     std::unique_ptr<BitsetViewIDSelector> bw_idselector;
-                    if (!bitset.empty()) {
+                    if (!bitset.empty() || bitset.num_bits() != 0) {
                         bw_idselector = std::make_unique<BitsetViewIDSelector>(bitset);
                         sp.sel = bw_idselector.get();
                     }
