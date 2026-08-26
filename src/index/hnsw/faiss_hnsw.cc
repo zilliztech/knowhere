@@ -2278,6 +2278,15 @@ class HNSWIndexNodeWithFallback : public IndexNode {
     }
 
     int64_t
+    ExternalCount() const override {
+        if (use_base_index) {
+            return base_index->ExternalCount();
+        } else {
+            return fallback_search_index->ExternalCount();
+        }
+    }
+
+    int64_t
     Size() const override {
         if (use_base_index) {
             return base_index->Size();

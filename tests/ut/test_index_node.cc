@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <unordered_set>
+#include <vector>
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
@@ -127,13 +128,26 @@ class BaseFlatIndexNode : public IndexNode {
 
     int64_t
     Count() const override {
-        return 0;
+        return count_;
+    }
+
+    void
+    SetCountForTest(int64_t count) {
+        count_ = count;
+    }
+
+    void
+    SetEmbListOffsetForTest(std::vector<size_t> offsets) {
+        emb_list_offset_ = std::make_shared<EmbListOffset>(std::move(offsets));
     }
 
     std::string
     Type() const override {
         return INDEX_BASE_FLAT;
     }
+
+ private:
+    int64_t count_ = 0;
 };
 
 TEST_CASE("Test index node") {
@@ -207,4 +221,26 @@ TEST_CASE("Test index node") {
         REQUIRE(index.Type() == INDEX_BASE_FLAT);
     }
 #pragma GCC diagnostic pop
+}
+
+TEST_CASE("Bitset size is validated in the external ID domain", "[index_node][bitset][emb_list]") {
+    auto version = GenTestVersionList();
+    Object object;
+    auto concrete_index = Index<BaseFlatIndexNode<fp32>>::Create(version, object);
+    concrete_index.Node()->SetCountForTest(1);
+    concrete_index.Node()->SetEmbListOffsetForTest({0, 1, 1, 1, 1, 1});
+    Index<IndexNode> index(std::move(concrete_index));
+
+    auto dataset = std::make_shared<DataSet>();
+    std::vector<uint8_t> list_bits(1, 0);
+    auto list_bitset = BitsetView(list_bits.data(), 5);
+
+    REQUIRE(index.Search(dataset, {}, list_bitset).error() == Status::not_implemented);
+    REQUIRE(index.RangeSearch(dataset, {}, list_bitset).error() == Status::not_implemented);
+    REQUIRE(index.AnnIterator(dataset, {}, list_bitset).error() == Status::not_implemented);
+
+    auto oversized_bitset = BitsetView(list_bits.data(), 6);
+    auto oversized_result = index.Search(dataset, {}, oversized_bitset);
+    REQUIRE(oversized_result.error() == Status::invalid_args);
+    REQUIRE(oversized_result.what().find("external count: 5") != std::string::npos);
 }
