@@ -318,6 +318,27 @@ class IndexNode : public Object {
     virtual int64_t
     Count() const = 0;
 
+    /**
+     * @brief Gets the size of the ID domain addressed by search filter bitsets.
+     *
+     * This is the domain visible to Knowhere after any caller-side compaction,
+     * such as removing nullable rows, rather than the original logical row
+     * domain.
+     *
+     * For regular vector indexes, filter bitsets address base-vector IDs, so the
+     * domain size is Count(). For embedding-list indexes, filter bitsets address
+     * compact embedding-list IDs defined by emb_list_offset_, so the domain size
+     * is the number of lists. The backend Count() may instead represent flattened
+     * vectors or encoded documents.
+     */
+    virtual int64_t
+    ExternalCount() const {
+        if (emb_list_offset_ != nullptr) {
+            return static_cast<int64_t>(emb_list_offset_->num_el());
+        }
+        return Count();
+    }
+
     virtual std::string
     Type() const = 0;
 

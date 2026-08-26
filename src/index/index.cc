@@ -138,13 +138,14 @@ Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& b
         if (load_status != Status::success) {
             return expected<DataSetPtr>::Err(load_status, msg);
         }
-        // when index is immutable, bitset size should always equal to data count in index
-        // when index is mutable, it could happen that data count larger than bitset size, see
+        // When an index is immutable, bitset size should always equal the external ID count.
+        // When an index is mutable, the external count can be larger than bitset size, see
         // https://github.com/zilliztech/knowhere/issues/70
-        // so something must be wrong at caller side when passed bitset size larger than data count
-        if (bitset_.size() > static_cast<size_t>(this->Count())) {
-            msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
-                              bitset_.size(), this->Count());
+        // so something must be wrong at caller side when passed bitset size larger than the external count.
+        const auto external_count = this->node->ExternalCount();
+        if (bitset_.size() > static_cast<size_t>(external_count)) {
+            msg = fmt::format("bitset size should be <= external count, but we get bitset size: {}, external count: {}",
+                              bitset_.size(), external_count);
             LOG_KNOWHERE_ERROR_ << msg;
             return expected<DataSetPtr>::Err(Status::invalid_args, msg);
         }
@@ -210,13 +211,14 @@ Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetVi
         if (status != Status::success) {
             return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(status, msg);
         }
-        // when index is immutable, bitset size should always equal to data count in index
-        // when index is mutable, it could happen that data count larger than bitset size, see
+        // When an index is immutable, bitset size should always equal the external ID count.
+        // When an index is mutable, the external count can be larger than bitset size, see
         // https://github.com/zilliztech/knowhere/issues/70
-        // so something must be wrong at caller side when passed bitset size larger than data count
-        if (bitset_.size() > static_cast<size_t>(this->Count())) {
-            msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
-                              bitset_.size(), this->Count());
+        // so something must be wrong at caller side when passed bitset size larger than the external count.
+        const auto external_count = this->node->ExternalCount();
+        if (bitset_.size() > static_cast<size_t>(external_count)) {
+            msg = fmt::format("bitset size should be <= external count, but we get bitset size: {}, external count: {}",
+                              bitset_.size(), external_count);
             LOG_KNOWHERE_ERROR_ << msg;
             return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(Status::invalid_args, msg);
         }
@@ -250,13 +252,14 @@ Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetVi
         if (status != Status::success) {
             return expected<DataSetPtr>::Err(status, std::move(msg));
         }
-        // when index is immutable, bitset size should always equal to data count in index
-        // when index is mutable, it could happen that data count larger than bitset size, see
+        // When an index is immutable, bitset size should always equal the external ID count.
+        // When an index is mutable, the external count can be larger than bitset size, see
         // https://github.com/zilliztech/knowhere/issues/70
-        // so something must be wrong at caller side when passed bitset size larger than data count
-        if (bitset_.size() > static_cast<size_t>(this->Count())) {
-            msg = fmt::format("bitset size should be <= data count, but we get bitset size: {}, data count: {}",
-                              bitset_.size(), this->Count());
+        // so something must be wrong at caller side when passed bitset size larger than the external count.
+        const auto external_count = this->node->ExternalCount();
+        if (bitset_.size() > static_cast<size_t>(external_count)) {
+            msg = fmt::format("bitset size should be <= external count, but we get bitset size: {}, external count: {}",
+                              bitset_.size(), external_count);
             LOG_KNOWHERE_ERROR_ << msg;
             return expected<DataSetPtr>::Err(Status::invalid_args, msg);
         }
