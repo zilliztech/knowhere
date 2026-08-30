@@ -53,8 +53,9 @@ class NeighborSetPopList {
  private:
     inline void
     insert_helper(const Neighbor& nbr, size_t pos) {
+        const size_t active_end = offset_ + size_;
         // move
-        std::memmove(&data_[pos + 1], &data_[pos], (size_ - pos) * sizeof(Neighbor));
+        std::memmove(&data_[pos + 1], &data_[pos], (active_end - pos) * sizeof(Neighbor));
         if (size_ < capacity_) {
             size_++;
         }
@@ -64,19 +65,29 @@ class NeighborSetPopList {
     }
 
  public:
-    explicit NeighborSetPopList(size_t capacity) : capacity_(capacity), data_(capacity + 1) {}
+    explicit NeighborSetPopList(size_t capacity)
+            : capacity_(capacity), data_(need_save ? capacity + 1 : capacity * 2 + 1) {}
 
     inline bool
     insert(const Neighbor nbr, IteratorMinHeap* disqualified = nullptr) {
-        size_t pos = std::upper_bound(&data_[0], &data_[0] + size_, nbr) - &data_[0];
-        if (pos >= capacity_) {
+        if constexpr (!need_save) {
+            if (offset_ + size_ >= data_.size()) {
+                std::memmove(&data_[0], &data_[offset_], size_ * sizeof(Neighbor));
+                offset_ = 0;
+            }
+        }
+        const size_t begin = offset_;
+        size_t pos = std::upper_bound(
+                             &data_[begin], &data_[begin] + size_, nbr) -
+                &data_[0];
+        if (pos - begin >= capacity_) {
             if (disqualified) {
                 disqualified->push(nbr);
             }
             return false;
         }
         if (size_ == capacity_ && disqualified) {
-            disqualified->push(data_[size_ - 1]);
+            disqualified->push(data_[begin + size_ - 1]);
         }
         insert_helper(nbr, pos);
         if constexpr (need_save) {
@@ -89,7 +100,7 @@ class NeighborSetPopList {
 
     inline auto
     pop() -> Neighbor {
-        auto ret = data_[cur_];
+        auto ret = data_[need_save ? cur_ : offset_];
         if constexpr (need_save) {
             data_[cur_].status = Neighbor::kChecked;
             cur_++;
@@ -97,10 +108,11 @@ class NeighborSetPopList {
                 cur_++;
             }
         } else {
-            if (size_ > 1) {
-                std::memmove(&data_[0], &data_[1], (size_ - 1) * sizeof(Neighbor));
-            }
+            ++offset_;
             size_--;
+            if (size_ == 0) {
+                offset_ = 0;
+            }
         }
         return ret;
     }
@@ -124,7 +136,7 @@ class NeighborSetPopList {
         if constexpr (need_save) {
             return data_[cur_];
         } else {
-            return data_[0];
+            return data_[offset_];
         }
     }
 
@@ -133,31 +145,30 @@ class NeighborSetPopList {
         if (size_ < capacity_) {
             return std::numeric_limits<float>::max();
         }
-        return data_[capacity_ - 1].distance;
+        return data_[offset_ + capacity_ - 1].distance;
     }
 
     void
     clear() {
         size_ = 0;
         cur_ = 0;
+        offset_ = 0;
     }
 
     inline const Neighbor&
     operator[](size_t i) {
-        return data_[i];
+        return data_[offset_ + i];
     }
 
  private:
-    size_t capacity_ = 0, size_ = 0, cur_ = 0;
+    size_t capacity_ = 0, size_ = 0, cur_ = 0, offset_ = 0;
     std::vector<Neighbor> data_;
 };
 
 class NeighborSetDoublePopList {
  public:
-    explicit NeighborSetDoublePopList(size_t capacity = 0) {
-        valid_ns_ = std::make_unique<NeighborSetPopList<true>>(capacity);
-        invalid_ns_ = std::make_unique<NeighborSetPopList<false>>(capacity);
-    }
+    explicit NeighborSetDoublePopList(size_t capacity = 0)
+            : valid_ns_(capacity), invalid_ns_(capacity) {}
 
     // will push any neighbor that does not fit into NeighborSet to disqualified.
     // When searching for iterator, those points removed from NeighborSet may be
@@ -166,16 +177,17 @@ class NeighborSetDoublePopList {
     bool
     insert(const Neighbor& nbr, IteratorMinHeap* disqualified = nullptr) {
         if (nbr.status == Neighbor::kValid) {
-            return valid_ns_->insert(nbr, disqualified);
+            return valid_ns_.insert(nbr, disqualified);
         } else {
-            if (nbr.distance < valid_ns_->at_search_back_dist()) {
-                return invalid_ns_->insert(nbr, disqualified);
+            if (nbr.distance < valid_ns_.at_search_back_dist()) {
+                return invalid_ns_.insert(nbr, disqualified);
             } else if (disqualified) {
                 disqualified->push(nbr);
             }
         }
         return false;
     }
+
     auto
     pop() -> Neighbor {
         return pop_based_on_distance();
@@ -183,37 +195,37 @@ class NeighborSetDoublePopList {
 
     auto
     has_next() const -> bool {
-        return valid_ns_->has_next() ||
-               (invalid_ns_->has_next() && invalid_ns_->cur().distance < valid_ns_->at_search_back_dist());
+        return valid_ns_.has_next() ||
+               (invalid_ns_.has_next() && invalid_ns_.cur().distance < valid_ns_.at_search_back_dist());
     }
 
     inline const Neighbor&
     operator[](size_t i) {
-        return (*valid_ns_)[i];
+        return valid_ns_[i];
     }
 
     inline size_t
     size() const {
-        return valid_ns_->size();
+        return valid_ns_.size();
     }
 
  private:
     auto
     pop_based_on_distance() -> Neighbor {
-        bool hasCandNext = invalid_ns_->has_next();
-        bool hasResNext = valid_ns_->has_next();
+        bool hasCandNext = invalid_ns_.has_next();
+        bool hasResNext = valid_ns_.has_next();
 
         if (hasCandNext && hasResNext) {
-            return invalid_ns_->cur().distance < valid_ns_->cur().distance ? invalid_ns_->pop() : valid_ns_->pop();
+            return invalid_ns_.cur().distance < valid_ns_.cur().distance ? invalid_ns_.pop() : valid_ns_.pop();
         }
         if (hasCandNext != hasResNext) {
-            return hasCandNext ? invalid_ns_->pop() : valid_ns_->pop();
+            return hasCandNext ? invalid_ns_.pop() : valid_ns_.pop();
         }
         return {0, 0, Neighbor::kValid};
     }
 
-    std::unique_ptr<NeighborSetPopList<true>> valid_ns_ = nullptr;
-    std::unique_ptr<NeighborSetPopList<false>> invalid_ns_ = nullptr;
+    NeighborSetPopList<true> valid_ns_;
+    NeighborSetPopList<false> invalid_ns_;
 };
 
 static inline int

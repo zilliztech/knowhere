@@ -173,6 +173,17 @@ struct HNSW {
     void neighbor_range(idx_t no, int layer_no, size_t* begin, size_t* end)
             const;
 
+    /// Fast path for the level-0 search hot loop. Callers have already
+    /// validated node ids through the graph/visited-table invariants.
+    inline void neighbor_range_level0(
+            idx_t no,
+            size_t* begin,
+            size_t* end) const {
+        const size_t o = offsets[no];
+        *begin = o;
+        *end = o + cum_nneighbor_per_level[1];
+    }
+
     /// only mandatory parameter: nb of neighbors
     explicit HNSW(int M = 32);
 

@@ -31,6 +31,9 @@ class BaseHnswConfig : public BaseConfig {
     CFG_INT efConstruction;
     CFG_INT ef;
     CFG_INT overview_levels;
+    CFG_BOOL use_adaptive_filter;
+    CFG_FLOAT kalpha_factor;
+    CFG_FLOAT adaptive_filter_threshold;
     CFG_BOOL disable_fallback_brute_force;  // default is false, means we will use fallback brute force when hnsw search
                                             // does not get enough topk results
     KNOWHERE_DECLARE_CONFIG(BaseHnswConfig) {
@@ -52,6 +55,20 @@ class BaseHnswConfig : public BaseConfig {
             .set_default(3)
             .set_range(1, 5)
             .for_feder();
+        KNOWHERE_CONFIG_DECLARE_FIELD(use_adaptive_filter)
+            .description("use adaptive local filtered HNSW traversal")
+            .set_default(true)
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(kalpha_factor)
+            .description("fraction of filtered nodes used as KAlpha routing nodes")
+            .set_default(0.7f)
+            .set_range(0.0f, 1.0f)
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(adaptive_filter_threshold)
+            .description("minimum filtered ratio for adaptive local graph traversal")
+            .set_default(0.65f)
+            .set_range(0.0f, 1.0f)
+            .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(disable_fallback_brute_force)
             .description("disable fallback brute force")
             .set_default(false)

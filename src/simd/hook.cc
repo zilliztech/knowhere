@@ -60,6 +60,73 @@ bool support_pq_fast_scan = true;
 decltype(fvec_inner_product) fvec_inner_product = fvec_inner_product_ref;
 decltype(fvec_L2sqr) fvec_L2sqr = fvec_L2sqr_ref;
 
+namespace {
+void
+fvec_inner_product_batch_2_fallback(
+        const float* x,
+        const float* y0,
+        const float* y1,
+        const size_t d,
+        float& dis0,
+        float& dis1) {
+    dis0 = fvec_inner_product(x, y0, d);
+    dis1 = fvec_inner_product(x, y1, d);
+}
+
+void
+fvec_inner_product_batch_3_fallback(
+        const float* x,
+        const float* y0,
+        const float* y1,
+        const float* y2,
+        const size_t d,
+        float& dis0,
+        float& dis1,
+        float& dis2) {
+    dis0 = fvec_inner_product(x, y0, d);
+    dis1 = fvec_inner_product(x, y1, d);
+    dis2 = fvec_inner_product(x, y2, d);
+}
+
+void
+fvec_inner_product_batch_8_fallback(
+        const float* x,
+        const float* y0,
+        const float* y1,
+        const float* y2,
+        const float* y3,
+        const float* y4,
+        const float* y5,
+        const float* y6,
+        const float* y7,
+        const size_t d,
+        float* dis) {
+    fvec_inner_product_batch_4(
+            x, y0, y1, y2, y3, d, dis[0], dis[1], dis[2], dis[3]);
+    fvec_inner_product_batch_4(
+            x, y4, y5, y6, y7, d, dis[4], dis[5], dis[6], dis[7]);
+}
+
+void
+fvec_L2sqr_batch_8_fallback(
+        const float* x,
+        const float* y0,
+        const float* y1,
+        const float* y2,
+        const float* y3,
+        const float* y4,
+        const float* y5,
+        const float* y6,
+        const float* y7,
+        const size_t d,
+        float* dis) {
+    fvec_L2sqr_batch_4(
+            x, y0, y1, y2, y3, d, dis[0], dis[1], dis[2], dis[3]);
+    fvec_L2sqr_batch_4(
+            x, y4, y5, y6, y7, d, dis[4], dis[5], dis[6], dis[7]);
+}
+}  // namespace
+
 decltype(fvec_L1) fvec_L1 = fvec_L1_ref;
 decltype(fvec_Linf) fvec_Linf = fvec_Linf_ref;
 decltype(fvec_norm_L2sqr) fvec_norm_L2sqr = fvec_norm_L2sqr_ref;
@@ -74,7 +141,11 @@ decltype(fvec_L2sqr_ny_nearest_y_transposed) fvec_L2sqr_ny_nearest_y_transposed 
 decltype(fvec_L2sqr_ny_transposed) fvec_L2sqr_ny_transposed = fvec_L2sqr_ny_transposed_ref;
 
 decltype(fvec_inner_product_batch_4) fvec_inner_product_batch_4 = fvec_inner_product_batch_4_ref;
+decltype(fvec_inner_product_batch_8) fvec_inner_product_batch_8 = fvec_inner_product_batch_8_fallback;
+decltype(fvec_inner_product_batch_2) fvec_inner_product_batch_2 = fvec_inner_product_batch_2_fallback;
+decltype(fvec_inner_product_batch_3) fvec_inner_product_batch_3 = fvec_inner_product_batch_3_fallback;
 decltype(fvec_L2sqr_batch_4) fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_ref;
+decltype(fvec_L2sqr_batch_8) fvec_L2sqr_batch_8 = fvec_L2sqr_batch_8_fallback;
 
 // for hnsw sq, obsolete
 decltype(ivec_inner_product) ivec_inner_product = ivec_inner_product_ref;
@@ -164,6 +235,8 @@ void
 fvec_hook(std::string& simd_type) {
     static std::mutex hook_mutex;
     std::scoped_lock lock(hook_mutex);
+    fvec_inner_product_batch_8 = fvec_inner_product_batch_8_fallback;
+    fvec_L2sqr_batch_8 = fvec_L2sqr_batch_8_fallback;
 #if defined(__x86_64__)
     if (use_avx512 && cpu_support_avx512()) {
         fvec_inner_product = fvec_inner_product_avx512;
@@ -410,7 +483,11 @@ fvec_hook(std::string& simd_type) {
         bf16_vec_L2sqr = bf16_vec_L2sqr_sve;
         bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_sve;
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_sve;
+        fvec_L2sqr_batch_8 = fvec_L2sqr_batch_8_sve;
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_sve;
+        fvec_inner_product_batch_8 = fvec_inner_product_batch_8_sve;
+        fvec_inner_product_batch_2 = fvec_inner_product_batch_2_sve;
+        fvec_inner_product_batch_3 = fvec_inner_product_batch_3_sve;
 
         bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_sve;
         bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_sve;

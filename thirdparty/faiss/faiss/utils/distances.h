@@ -76,6 +76,26 @@ void fvec_inner_product_batch_4(
         float& dis2,
         float& dis3);
 
+template <SIMDLevel>
+void fvec_L2sqr_batch_2(
+        const float* x,
+        const float* y0,
+        const float* y1,
+        const size_t d,
+        float& dis0,
+        float& dis1);
+
+template <SIMDLevel>
+void fvec_L2sqr_batch_3(
+        const float* x,
+        const float* y0,
+        const float* y1,
+        const float* y2,
+        const size_t d,
+        float& dis0,
+        float& dis1,
+        float& dis2);
+
 /// Special version of L2sqr that computes 4 distances
 /// between x and yi, which is performance oriented.
 void fvec_L2sqr_batch_4(

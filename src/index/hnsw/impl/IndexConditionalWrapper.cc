@@ -13,6 +13,7 @@
 
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 
@@ -33,7 +34,7 @@ namespace knowhere {
 // This may be applicable in case of very large topk values or
 //   extremely high filtering levels.
 std::optional<bool>
-WhetherPerformBruteForceSearch(const faiss::Index* index, const BaseConfig& cfg, const BitsetView& bitset) {
+WhetherPerformBruteForceSearch(const faiss::Index* index, const FaissHnswConfig& cfg, const BitsetView& bitset) {
     // check if parameters have all we need
     if (!cfg.k.has_value() || index == nullptr) {
         return std::nullopt;
@@ -52,8 +53,19 @@ WhetherPerformBruteForceSearch(const faiss::Index* index, const BaseConfig& cfg,
         double ratio = (static_cast<double>(filtered_out_num)) / bitset.size();
         knowhere::knowhere_hnsw_bitset_ratio.Observe(ratio);
 #endif
-        if (filtered_out_num >= (bitset.size() * HnswSearchThresholds::kHnswSearchKnnBFFilterThreshold) ||
-            k >= (bitset.size() - filtered_out_num) * HnswSearchThresholds::kHnswSearchBFTopkThreshold) {
+        const size_t accepted_num = bitset.size() - filtered_out_num;
+        if (k >= accepted_num * HnswSearchThresholds::kHnswSearchBFTopkThreshold) {
+            return true;
+        }
+
+        // KAlpha needs roughly ef/pass graph expansions to collect ef accepted
+        // candidates, while the sparse exact path evaluates N*pass vectors.
+        // Their first-order crossover is N*pass^2 ~= ef. Unlike the old fixed
+        // 93% threshold, this scales with both index size and requested quality.
+        const double accepted = static_cast<double>(accepted_num);
+        const double population = static_cast<double>(bitset.size());
+        const double ef = static_cast<double>(cfg.ef.value_or(std::max<int64_t>(k, 64)));
+        if (accepted * accepted <= population * ef) {
             return true;
         }
     }
