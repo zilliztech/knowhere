@@ -292,6 +292,35 @@ TEST_CASE("Test Brute Force", "[binary vector]") {
     }
 }
 
+TEST_CASE("Brute Force preserves trailing empty embedding lists", "[emb_list][trailing_empty]") {
+    constexpr int64_t dim = 2;
+    constexpr int64_t topk = 1;
+
+    std::array<float, 2> base_tensor = {1.0f, 0.0f};
+    std::array<size_t, 4> base_lims = {0, 1, 1, 1};
+    auto base = knowhere::GenDataSet(1, dim, base_tensor.data());
+    base->Set(knowhere::meta::EMB_LIST_OFFSET, static_cast<const size_t*>(base_lims.data()));
+    base->Set(knowhere::meta::EMB_LIST_COUNT, int64_t{3});
+
+    std::array<float, 2> query_tensor = {1.0f, 0.0f};
+    std::array<size_t, 2> query_lims = {0, 1};
+    auto query = knowhere::GenDataSet(1, dim, query_tensor.data());
+    query->Set(knowhere::meta::EMB_LIST_OFFSET, static_cast<const size_t*>(query_lims.data()));
+    query->Set(knowhere::meta::EMB_LIST_COUNT, int64_t{1});
+    query->Set(knowhere::meta::NQ, int64_t{1});
+
+    knowhere::Json conf;
+    conf[knowhere::meta::DIM] = dim;
+    conf[knowhere::meta::TOPK] = topk;
+    conf[knowhere::meta::METRIC_TYPE] = knowhere::metric::MAX_SIM_L2;
+
+    auto result = knowhere::BruteForce::Search<knowhere::fp32>(base, query, conf, nullptr);
+
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetRows() == 1);
+    REQUIRE(knowhere::EmbListOffset(base_lims.data(), 1, knowhere::GetEmbListCount(base)).num_el() == 3);
+}
+
 TEST_CASE("Test Brute Force with input ids", "[float vector]") {
     using Catch::Approx;
     const int64_t nb = 1000;

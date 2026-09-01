@@ -261,7 +261,7 @@ IndexNode::SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, 
         return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "missing emb_list offset, could not search");
     }
     auto num_q_vecs = static_cast<size_t>(dataset->GetRows());
-    EmbListOffset query_offset(lims, num_q_vecs);
+    EmbListOffset query_offset(lims, num_q_vecs, GetEmbListCount(dataset));
 
     auto result = emb_list_strategy_->Search(dataset, query_offset, this, std::move(cfg), bitset, op_context);
     if (result.has_value()) {
@@ -399,6 +399,7 @@ IndexNode::GetEmbListByStorageIds(const DataSetPtr dataset, const std::string& m
         auto* offsets_ptr = new size_t[out_offsets.size()];
         std::memcpy(offsets_ptr, out_offsets.data(), out_offsets.size() * sizeof(size_t));
         result->Set(meta::EMB_LIST_OFFSET, static_cast<const size_t*>(offsets_ptr));
+        result->Set(meta::EMB_LIST_COUNT, num_el_ids);
         return result;
     }
 
@@ -444,6 +445,7 @@ IndexNode::GetEmbListByStorageIds(const DataSetPtr dataset, const std::string& m
     auto* offsets_ptr = new size_t[out_offsets.size()];
     std::memcpy(offsets_ptr, out_offsets.data(), out_offsets.size() * sizeof(size_t));
     result->Set(meta::EMB_LIST_OFFSET, static_cast<const size_t*>(offsets_ptr));
+    result->Set(meta::EMB_LIST_COUNT, num_el_ids);
     return result;
 }
 

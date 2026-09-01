@@ -464,7 +464,7 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AddEmbList(const DataSetP
 
     {
         FairWriteLockGuard guard(*this->base_index_lock_);
-        RETURN_IF_ERROR(this->AppendEmbListOffsetAndIdMap(lims, num_rows, this->EmbListCount(dataset, lims, num_rows)));
+        RETURN_IF_ERROR(this->AppendEmbListOffsetAndIdMap(lims, num_rows, GetEmbListCount(dataset)));
     }
 
     if (num_rows == 0) {
