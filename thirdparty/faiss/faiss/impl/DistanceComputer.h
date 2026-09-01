@@ -8,6 +8,7 @@
 #pragma once
 
 #include <faiss/Index.h>
+#include <faiss/utils/prefetch.h>
 
 namespace faiss {
 
@@ -29,6 +30,71 @@ struct DistanceComputer {
 
     /// compute distance of vector i to current query
     virtual float operator()(idx_t i) = 0;
+
+    /// Approximate distances used only to order graph-routing nodes that
+    /// cannot enter the result set. Implementations must keep the score on
+    /// the same scale as operator().
+    virtual float routing_distance(idx_t i) {
+        return this->operator()(i);
+    }
+
+    virtual void routing_distances_batch_2(
+            idx_t idx0, idx_t idx1, float& dis0, float& dis1) {
+        dis0 = routing_distance(idx0);
+        dis1 = routing_distance(idx1);
+    }
+
+    virtual void routing_distances_batch_3(
+            idx_t idx0,
+            idx_t idx1,
+            idx_t idx2,
+            float& dis0,
+            float& dis1,
+            float& dis2) {
+        dis0 = routing_distance(idx0);
+        dis1 = routing_distance(idx1);
+        dis2 = routing_distance(idx2);
+    }
+
+    virtual void routing_distances_batch_4(
+            idx_t idx0,
+            idx_t idx1,
+            idx_t idx2,
+            idx_t idx3,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3) {
+        dis0 = routing_distance(idx0);
+        dis1 = routing_distance(idx1);
+        dis2 = routing_distance(idx2);
+        dis3 = routing_distance(idx3);
+    }
+
+    virtual bool supports_approximate_routing_distance() const {
+        return false;
+    }
+
+    virtual void distances_batch_2(
+            const idx_t idx0,
+            const idx_t idx1,
+            float& dis0,
+            float& dis1) {
+        dis0 = this->operator()(idx0);
+        dis1 = this->operator()(idx1);
+    }
+
+    virtual void distances_batch_3(
+            const idx_t idx0,
+            const idx_t idx1,
+            const idx_t idx2,
+            float& dis0,
+            float& dis1,
+            float& dis2) {
+        dis0 = this->operator()(idx0);
+        dis1 = this->operator()(idx1);
+        dis2 = this->operator()(idx2);
+    }
 
     /// compute distances of current query to 4 stored vectors.
     /// certain DistanceComputer implementations may benefit
@@ -53,8 +119,67 @@ struct DistanceComputer {
         dis3 = d3;
     }
 
+    virtual void distances_batch_8(
+            const idx_t idx0,
+            const idx_t idx1,
+            const idx_t idx2,
+            const idx_t idx3,
+            const idx_t idx4,
+            const idx_t idx5,
+            const idx_t idx6,
+            const idx_t idx7,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3,
+            float& dis4,
+            float& dis5,
+            float& dis6,
+            float& dis7) {
+        distances_batch_4(
+                idx0, idx1, idx2, idx3, dis0, dis1, dis2, dis3);
+        distances_batch_4(
+                idx4, idx5, idx6, idx7, dis4, dis5, dis6, dis7);
+    }
+
+    /// Start fetching four stored vectors before their distance batch is
+    /// evaluated. Non-flat distance computers can keep the default no-op.
+    virtual void
+    prefetch_batch_4(const idx_t, const idx_t, const idx_t, const idx_t) {
+    }
+
+    virtual bool
+    should_pipeline_distance_batches(const float) const {
+        return false;
+    }
+
+    virtual bool
+    supports_tail_distance_batches() const {
+        return false;
+    }
+
+    virtual bool
+    supports_distance_batch_8() const {
+        return false;
+    }
+
+    /// Graph-offset prefetch only helps when distance evaluation is short
+    /// enough that the random adjacency lookup remains exposed.
+    virtual bool
+    should_prefetch_graph_offsets() const {
+        return false;
+    }
+
     /// compute distance between two stored vectors
     virtual float symmetric_dis(idx_t i, idx_t j) = 0;
+
+    // Append capability slots after the established distance ABI. Compact
+    // graph loops should only batch short tails when the representation
+    // amortizes per-vector work (for example cosine norm handling).
+    virtual bool
+    prefers_compact_tail_distance_batches() const {
+        return false;
+    }
 
     virtual ~DistanceComputer() {}
 };
@@ -78,6 +203,75 @@ struct NegativeDistanceComputer : DistanceComputer {
         return -(*basedis)(i);
     }
 
+    float routing_distance(idx_t i) override {
+        return -basedis->routing_distance(i);
+    }
+
+    void routing_distances_batch_2(
+            idx_t idx0, idx_t idx1, float& dis0, float& dis1) override {
+        basedis->routing_distances_batch_2(idx0, idx1, dis0, dis1);
+        dis0 = -dis0;
+        dis1 = -dis1;
+    }
+
+    void routing_distances_batch_3(
+            idx_t idx0,
+            idx_t idx1,
+            idx_t idx2,
+            float& dis0,
+            float& dis1,
+            float& dis2) override {
+        basedis->routing_distances_batch_3(
+                idx0, idx1, idx2, dis0, dis1, dis2);
+        dis0 = -dis0;
+        dis1 = -dis1;
+        dis2 = -dis2;
+    }
+
+    void routing_distances_batch_4(
+            idx_t idx0,
+            idx_t idx1,
+            idx_t idx2,
+            idx_t idx3,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3) override {
+        basedis->routing_distances_batch_4(
+                idx0, idx1, idx2, idx3, dis0, dis1, dis2, dis3);
+        dis0 = -dis0;
+        dis1 = -dis1;
+        dis2 = -dis2;
+        dis3 = -dis3;
+    }
+
+    bool supports_approximate_routing_distance() const override {
+        return basedis->supports_approximate_routing_distance();
+    }
+
+    void distances_batch_2(
+            const idx_t idx0,
+            const idx_t idx1,
+            float& dis0,
+            float& dis1) override {
+        basedis->distances_batch_2(idx0, idx1, dis0, dis1);
+        dis0 = -dis0;
+        dis1 = -dis1;
+    }
+
+    void distances_batch_3(
+            const idx_t idx0,
+            const idx_t idx1,
+            const idx_t idx2,
+            float& dis0,
+            float& dis1,
+            float& dis2) override {
+        basedis->distances_batch_3(idx0, idx1, idx2, dis0, dis1, dis2);
+        dis0 = -dis0;
+        dis1 = -dis1;
+        dis2 = -dis2;
+    }
+
     void distances_batch_4(
             const idx_t idx0,
             const idx_t idx1,
@@ -93,6 +287,80 @@ struct NegativeDistanceComputer : DistanceComputer {
         dis1 = -dis1;
         dis2 = -dis2;
         dis3 = -dis3;
+    }
+
+    void distances_batch_8(
+            const idx_t idx0,
+            const idx_t idx1,
+            const idx_t idx2,
+            const idx_t idx3,
+            const idx_t idx4,
+            const idx_t idx5,
+            const idx_t idx6,
+            const idx_t idx7,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3,
+            float& dis4,
+            float& dis5,
+            float& dis6,
+            float& dis7) override {
+        basedis->distances_batch_8(
+                idx0,
+                idx1,
+                idx2,
+                idx3,
+                idx4,
+                idx5,
+                idx6,
+                idx7,
+                dis0,
+                dis1,
+                dis2,
+                dis3,
+                dis4,
+                dis5,
+                dis6,
+                dis7);
+        dis0 = -dis0;
+        dis1 = -dis1;
+        dis2 = -dis2;
+        dis3 = -dis3;
+        dis4 = -dis4;
+        dis5 = -dis5;
+        dis6 = -dis6;
+        dis7 = -dis7;
+    }
+
+    void
+    prefetch_batch_4(const idx_t idx0, const idx_t idx1, const idx_t idx2, const idx_t idx3) override {
+        basedis->prefetch_batch_4(idx0, idx1, idx2, idx3);
+    }
+
+    bool
+    should_pipeline_distance_batches(const float routing_alpha) const override {
+        return basedis->should_pipeline_distance_batches(routing_alpha);
+    }
+
+    bool
+    supports_tail_distance_batches() const override {
+        return basedis->supports_tail_distance_batches();
+    }
+
+    bool
+    prefers_compact_tail_distance_batches() const override {
+        return basedis->prefers_compact_tail_distance_batches();
+    }
+
+    bool
+    supports_distance_batch_8() const override {
+        return basedis->supports_distance_batch_8();
+    }
+
+    bool
+    should_prefetch_graph_offsets() const override {
+        return basedis->should_prefetch_graph_offsets();
     }
 
     /// compute distance between two stored vectors
@@ -148,6 +416,23 @@ struct FlatCodesDistanceComputer : DistanceComputer {
                 dis1,
                 dis2,
                 dis3);
+    }
+
+    void
+    prefetch_batch_4(const idx_t idx0, const idx_t idx1, const idx_t idx2, const idx_t idx3) override {
+        prefetch_L2(codes + idx0 * code_size);
+        prefetch_L2(codes + idx1 * code_size);
+        prefetch_L2(codes + idx2 * code_size);
+        prefetch_L2(codes + idx3 * code_size);
+    }
+
+    bool
+    should_pipeline_distance_batches(const float routing_alpha) const override {
+        // For short and medium vectors, software prefetch can hide a useful
+        // fraction of the first cache-line miss. Long vectors already form
+        // four hardware-prefetched streams, so extra buffering is useful only
+        // while the filter still admits distance batches densely.
+        return code_size <= 1024 || routing_alpha <= 0.35f;
     }
 
     /// Computes a partial dot product over a slice of the query vector.

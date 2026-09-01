@@ -15,6 +15,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <algorithm>
+#include <vector>
 
 #include <cstring>
 
@@ -44,6 +46,42 @@ struct FlatCosineDis : FlatCodesDistanceComputer {
 
     const float* inverse_l2_norms;
     float inverse_query_norm = 0;
+
+    const int8_t* routing_sq8_codes = nullptr;
+    const float* routing_sq8_scales = nullptr;
+    std::vector<int8_t> routing_query;
+    float routing_query_scale = 1.0f;
+
+    void set_routing_query(const float* x) {
+        if (x == nullptr || routing_sq8_codes == nullptr) {
+            routing_query.clear();
+            routing_query_scale = 1.0f;
+            return;
+        }
+        routing_query.resize(d);
+        float max_abs = 0.0f;
+        for (size_t j = 0; j < d; ++j) {
+            max_abs = std::max(max_abs, std::abs(x[j]));
+        }
+        routing_query_scale = max_abs > 0.0f ? max_abs / 127.0f : 1.0f;
+        const float inverse_scale = 1.0f / routing_query_scale;
+        for (size_t j = 0; j < d; ++j) {
+            const long quantized = std::lrintf(x[j] * inverse_scale);
+            routing_query[j] = static_cast<int8_t>(
+                    std::clamp(quantized, -127L, 127L));
+        }
+    }
+
+    void ensure_routing_query() {
+        if (routing_query.empty() && q != nullptr) {
+            set_routing_query(q);
+        }
+    }
+
+    float routing_scale(const idx_t idx) const {
+        return routing_sq8_scales[idx] * routing_query_scale *
+                inverse_l2_norms[idx] * inverse_query_norm;
+    }
 
     float distance_to_code(const uint8_t* code) final {
         ndis++;
@@ -92,6 +130,11 @@ struct FlatCosineDis : FlatCodesDistanceComputer {
               ndis(0) {
         // it is the caller's responsibility to ensure that everything is all right.
         inverse_l2_norms = storage.get_inverse_l2_norms();
+        if (!storage.routing_sq8_codes.empty() &&
+            storage.routing_sq8_scales.size() == size_t(storage.ntotal)) {
+            routing_sq8_codes = storage.routing_sq8_codes.data();
+            routing_sq8_scales = storage.routing_sq8_scales.data();
+        }
 
         if (q != nullptr) {
             const float query_l2norm = fvec_norm_L2sqr(q, d);
@@ -110,6 +153,127 @@ struct FlatCosineDis : FlatCodesDistanceComputer {
         } else {
             inverse_query_norm = 0;
         }
+        routing_query.clear();
+    }
+
+    bool supports_approximate_routing_distance() const final override {
+        return d >= 896 && routing_sq8_codes != nullptr;
+    }
+
+    float routing_distance(const idx_t idx) final override {
+        ndis += 1;
+        ensure_routing_query();
+        const float dot = int8_vec_inner_product(
+                routing_query.data(), routing_sq8_codes + idx * d, d);
+        return dot * routing_scale(idx);
+    }
+
+    void routing_distances_batch_2(
+            const idx_t idx0,
+            const idx_t idx1,
+            float& dis0,
+            float& dis1) final override {
+        float ignored2 = 0.0f;
+        float ignored3 = 0.0f;
+        routing_distances_batch_4(
+                idx0, idx1, idx1, idx1, dis0, dis1, ignored2, ignored3);
+        ndis -= 2;
+    }
+
+    void routing_distances_batch_3(
+            const idx_t idx0,
+            const idx_t idx1,
+            const idx_t idx2,
+            float& dis0,
+            float& dis1,
+            float& dis2) final override {
+        float ignored3 = 0.0f;
+        routing_distances_batch_4(
+                idx0, idx1, idx2, idx2, dis0, dis1, dis2, ignored3);
+        ndis -= 1;
+    }
+
+    void routing_distances_batch_4(
+            const idx_t idx0,
+            const idx_t idx1,
+            const idx_t idx2,
+            const idx_t idx3,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3) final override {
+        ndis += 4;
+        ensure_routing_query();
+        float dot0 = 0.0f;
+        float dot1 = 0.0f;
+        float dot2 = 0.0f;
+        float dot3 = 0.0f;
+        int8_vec_inner_product_batch_4(
+                routing_query.data(),
+                routing_sq8_codes + idx0 * d,
+                routing_sq8_codes + idx1 * d,
+                routing_sq8_codes + idx2 * d,
+                routing_sq8_codes + idx3 * d,
+                d,
+                dot0,
+                dot1,
+                dot2,
+                dot3);
+        dis0 = dot0 * routing_scale(idx0);
+        dis1 = dot1 * routing_scale(idx1);
+        dis2 = dot2 * routing_scale(idx2);
+        dis3 = dot3 * routing_scale(idx3);
+    }
+
+    void distances_batch_2(
+            const idx_t idx0,
+            const idx_t idx1,
+            float& dis0,
+            float& dis1) final override {
+        ndis += 2;
+        const float* y0 = reinterpret_cast<const float*>(codes + idx0 * code_size);
+        const float* y1 = reinterpret_cast<const float*>(codes + idx1 * code_size);
+        prefetch_L2(inverse_l2_norms + idx0);
+        prefetch_L2(inverse_l2_norms + idx1);
+        fvec_inner_product_batch_2(q, y0, y1, d, dis0, dis1);
+        dis0 *= inverse_l2_norms[idx0] * inverse_query_norm;
+        dis1 *= inverse_l2_norms[idx1] * inverse_query_norm;
+    }
+
+    void distances_batch_3(
+            const idx_t idx0,
+            const idx_t idx1,
+            const idx_t idx2,
+            float& dis0,
+            float& dis1,
+            float& dis2) final override {
+        ndis += 3;
+        const float* y0 = reinterpret_cast<const float*>(codes + idx0 * code_size);
+        const float* y1 = reinterpret_cast<const float*>(codes + idx1 * code_size);
+        const float* y2 = reinterpret_cast<const float*>(codes + idx2 * code_size);
+        prefetch_L2(inverse_l2_norms + idx0);
+        prefetch_L2(inverse_l2_norms + idx1);
+        prefetch_L2(inverse_l2_norms + idx2);
+        fvec_inner_product_batch_3(q, y0, y1, y2, d, dis0, dis1, dis2);
+        dis0 *= inverse_l2_norms[idx0] * inverse_query_norm;
+        dis1 *= inverse_l2_norms[idx1] * inverse_query_norm;
+        dis2 *= inverse_l2_norms[idx2] * inverse_query_norm;
+    }
+
+    bool supports_tail_distance_batches() const final override {
+        return true;
+    }
+
+    bool prefers_compact_tail_distance_batches() const final override {
+        return true;
+    }
+
+    bool supports_distance_batch_8() const final override {
+        return d >= 128;
+    }
+
+    bool should_prefetch_graph_offsets() const final override {
+        return d < 896;
     }
 
     // compute four distances
@@ -154,6 +318,53 @@ struct FlatCosineDis : FlatCodesDistanceComputer {
         dis1 = dp1 * inverse_code_norm1 * inverse_query_norm;
         dis2 = dp2 * inverse_code_norm2 * inverse_query_norm;
         dis3 = dp3 * inverse_code_norm3 * inverse_query_norm;
+    }
+
+    void distances_batch_8(
+            const idx_t idx0,
+            const idx_t idx1,
+            const idx_t idx2,
+            const idx_t idx3,
+            const idx_t idx4,
+            const idx_t idx5,
+            const idx_t idx6,
+            const idx_t idx7,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3,
+            float& dis4,
+            float& dis5,
+            float& dis6,
+            float& dis7) final override {
+        ndis += 8;
+        const idx_t ids[8] = {
+                idx0, idx1, idx2, idx3, idx4, idx5, idx6, idx7};
+        const float* ys[8];
+        for (size_t lane = 0; lane < 8; ++lane) {
+            ys[lane] = reinterpret_cast<const float*>(
+                    codes + ids[lane] * code_size);
+            prefetch_L2(inverse_l2_norms + ids[lane]);
+        }
+        float dp[8] = {};
+        fvec_inner_product_batch_8(
+                q,
+                ys[0],
+                ys[1],
+                ys[2],
+                ys[3],
+                ys[4],
+                ys[5],
+                ys[6],
+                ys[7],
+                d,
+                dp);
+        float* outputs[8] = {
+                &dis0, &dis1, &dis2, &dis3, &dis4, &dis5, &dis6, &dis7};
+        for (size_t lane = 0; lane < 8; ++lane) {
+            *outputs[lane] = dp[lane] * inverse_l2_norms[ids[lane]] *
+                    inverse_query_norm;
+        }
     }
 };
 
@@ -279,6 +490,39 @@ IndexFlatCosine::IndexFlatCosine() : IndexFlat() {
 IndexFlatCosine::IndexFlatCosine(idx_t d) : IndexFlat(d, MetricType::METRIC_INNER_PRODUCT) {
 }
 
+void IndexFlatCosine::add_routing_sq8(idx_t n, const float* x) {
+    if (d < 896 || n <= 0) {
+        return;
+    }
+    const size_t old_count = routing_sq8_scales.size();
+    routing_sq8_scales.resize(old_count + n);
+    routing_sq8_codes.resize((old_count + n) * d);
+    for (idx_t row = 0; row < n; ++row) {
+        const float* vector = x + row * d;
+        float max_abs = 0.0f;
+        for (idx_t j = 0; j < d; ++j) {
+            max_abs = std::max(max_abs, std::abs(vector[j]));
+        }
+        const float scale = max_abs > 0.0f ? max_abs / 127.0f : 1.0f;
+        routing_sq8_scales[old_count + row] = scale;
+        const float inverse_scale = 1.0f / scale;
+        int8_t* output = routing_sq8_codes.data() + (old_count + row) * d;
+        for (idx_t j = 0; j < d; ++j) {
+            const long quantized = std::lrintf(vector[j] * inverse_scale);
+            output[j] = static_cast<int8_t>(
+                    std::clamp(quantized, -127L, 127L));
+        }
+    }
+}
+
+void IndexFlatCosine::rebuild_routing_sq8() {
+    routing_sq8_codes.clear();
+    routing_sq8_scales.clear();
+    if (d >= 896 && ntotal > 0) {
+        add_routing_sq8(ntotal, get_xb());
+    }
+}
+
 //
 void IndexFlatCosine::add(idx_t n, const float* x) {
     FAISS_THROW_IF_NOT(is_trained);
@@ -288,6 +532,7 @@ void IndexFlatCosine::add(idx_t n, const float* x) {
 
     // Store inverse L2 norms (for distance computation)
     inverse_norms_storage.add(x, n, d);
+    add_routing_sq8(n, x);
 
     // Add original vectors to the base index
     IndexFlat::add(n, x);
@@ -296,6 +541,8 @@ void IndexFlatCosine::add(idx_t n, const float* x) {
 void IndexFlatCosine::reset() {
     IndexFlat::reset();
     inverse_norms_storage.reset();
+    routing_sq8_codes.clear();
+    routing_sq8_scales.clear();
 }
 
 void IndexFlatCosine::search(
@@ -552,6 +799,3 @@ const float* IndexHNSWProductResidualQuantizerCosine::get_inverse_l2_norms() con
 }
 
 }
-
-
-

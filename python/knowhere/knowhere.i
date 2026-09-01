@@ -312,17 +312,30 @@ class BitSet {
 
     void
     SetBit(const int idx) {
-        bitset_[idx >> 3] |= 0x1 << (idx & 0x7);
+        const auto mask = static_cast<uint8_t>(0x1U << (idx & 0x7));
+        auto& byte = bitset_[idx >> 3];
+        if ((byte & mask) == 0) {
+            byte |= mask;
+            ++filtered_count_;
+        }
+    }
+
+    void
+    SetRange(const int begin, const int end) {
+        for (int idx = std::max(0, begin); idx < std::min(num_bits_, end); ++idx) {
+            SetBit(idx);
+        }
     }
 
     knowhere::BitsetView
     GetBitSetView() {
-        return knowhere::BitsetView(bitset_.data(), num_bits_);
+        return knowhere::BitsetView(bitset_.data(), num_bits_, filtered_count_);
     }
 
  private:
     std::vector<uint8_t> bitset_;
     int num_bits_ = 0;
+    size_t filtered_count_ = 0;
 };
 
 knowhere::BitsetView

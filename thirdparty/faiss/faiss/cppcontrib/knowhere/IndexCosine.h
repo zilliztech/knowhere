@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include <faiss/IndexAdditiveQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
@@ -101,11 +102,21 @@ struct L2NormsStorage {
 struct IndexFlatCosine : IndexFlat, HasInverseL2Norms {
     L2NormsStorage inverse_norms_storage;
 
+    // Full-dimensional per-vector symmetric SQ8 codes. These are a routing
+    // representation only: result candidates still use the original fp32
+    // vectors. They are rebuilt from fp32 codes when an existing index loads,
+    // so the on-wire format stays backward compatible during experimentation.
+    std::vector<int8_t> routing_sq8_codes;
+    std::vector<float> routing_sq8_scales;
+
     IndexFlatCosine();
     IndexFlatCosine(idx_t d);
 
     void add(idx_t n, const float* x) override;
     void reset() override;
+
+    void add_routing_sq8(idx_t n, const float* x);
+    void rebuild_routing_sq8();
 
     void search(
             idx_t n,

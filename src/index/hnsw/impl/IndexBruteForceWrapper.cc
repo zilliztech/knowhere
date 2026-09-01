@@ -21,6 +21,7 @@
 #include <faiss/impl/ResultHandler.h>
 
 #include <algorithm>
+#include <cstring>
 #include <memory>
 
 #include "knowhere/bitsetview.h"
@@ -44,6 +45,80 @@ struct BitsetViewIDSelectorWrapper final {
         return (!bitset_view.test(id));
     }
 };
+
+// Enumerate the zero bits (accepted ids) a machine word at a time. The regular
+// brute-force loop checks every id, which makes bitset traversal itself dominate
+// highly selective filters even though very few distances are evaluated.
+template <typename C>
+void
+brute_force_search_sparse_bitset(const BitsetView& bitset_view, const idx_t ntotal,
+                                 faiss::DistanceComputer& __restrict qdis, const idx_t k,
+                                 float* __restrict distances, idx_t* __restrict labels) {
+    auto heap = std::make_unique<std::pair<float, idx_t>[]>(k);
+    idx_t n_added = 0;
+
+    const size_t backend_count = std::min<size_t>(static_cast<size_t>(ntotal), bitset_view.size());
+    const size_t public_begin = bitset_view.id_offset();
+    const size_t public_end =
+        public_begin < bitset_view.num_bits()
+            ? public_begin + std::min(backend_count, bitset_view.num_bits() - public_begin)
+            : public_begin;
+    if (public_begin < public_end) {
+        const size_t first_word = public_begin >> 6;
+        const size_t last_word = (public_end - 1) >> 6;
+        const size_t byte_size = bitset_view.byte_size();
+        const uint8_t* const bits = bitset_view.data();
+
+        for (size_t word_index = first_word; word_index <= last_word; ++word_index) {
+            const size_t byte_offset = word_index * sizeof(uint64_t);
+            const size_t available =
+                byte_offset < byte_size ? std::min(sizeof(uint64_t), byte_size - byte_offset) : 0;
+            uint64_t filtered = ~uint64_t{0};
+            if (available != 0) {
+                filtered = 0;
+                std::memcpy(&filtered, bits + byte_offset, available);
+                if (available < sizeof(uint64_t)) {
+                    filtered |= ~uint64_t{0} << (available * 8);
+                }
+            }
+
+            uint64_t valid = ~filtered;
+            if (word_index == first_word) {
+                valid &= ~uint64_t{0} << (public_begin & 63);
+            }
+            if (word_index == last_word) {
+                const size_t tail_bits = ((public_end - 1) & 63) + 1;
+                if (tail_bits != 64) {
+                    valid &= (uint64_t{1} << tail_bits) - 1;
+                }
+            }
+
+            while (valid != 0) {
+                const size_t bit = static_cast<size_t>(__builtin_ctzll(valid));
+                const idx_t idx = static_cast<idx_t>((word_index << 6) + bit - public_begin);
+                const float distance = qdis(idx);
+                if (n_added < k) {
+                    ++n_added;
+                    faiss::heap_push<C>(n_added, heap.get(), distance, idx);
+                } else if (C::cmp(heap[0].first, distance)) {
+                    faiss::heap_replace_top<C>(k, heap.get(), distance, idx);
+                }
+                valid &= valid - 1;
+            }
+        }
+    }
+
+    const idx_t len = std::min(n_added, k);
+    for (idx_t i = 0; i < len; ++i) {
+        labels[len - i - 1] = heap[0].second;
+        distances[len - i - 1] = heap[0].first;
+        faiss::heap_pop<C>(len - i, heap.get());
+    }
+    for (idx_t i = len; i < k; ++i) {
+        labels[i] = -1;
+        distances[i] = C::neutral();
+    }
+}
 
 //
 IndexBruteForceWrapper::IndexBruteForceWrapper(faiss::Index* underlying_index)
@@ -77,11 +152,15 @@ IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss:
             if (const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
                     dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
                 bw_idselector && !bw_idselector->bitset_view.empty()) {
-                BitsetViewIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view);
-
-                faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
-                                                                     BitsetViewIDSelectorWrapper>(
-                    index->ntotal, *dis, bw_idselector_w, k, local_distances, local_ids);
+                if (!bw_idselector->bitset_view.has_out_ids()) {
+                    brute_force_search_sparse_bitset<C>(
+                        bw_idselector->bitset_view, index->ntotal, *dis, k, local_distances, local_ids);
+                } else {
+                    BitsetViewIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view);
+                    faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
+                                                                         BitsetViewIDSelectorWrapper>(
+                        index->ntotal, *dis, bw_idselector_w, k, local_distances, local_ids);
+                }
             } else {
                 faiss::IDSelectorAll sel_all;
                 faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer, faiss::IDSelectorAll>(
@@ -94,11 +173,15 @@ IndexBruteForceWrapper::search(faiss::idx_t n, const float* __restrict x, faiss:
             if (const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
                     dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
                 bw_idselector && !bw_idselector->bitset_view.empty()) {
-                BitsetViewIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view);
-
-                faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
-                                                                     BitsetViewIDSelectorWrapper>(
-                    index->ntotal, *dis, bw_idselector_w, k, local_distances, local_ids);
+                if (!bw_idselector->bitset_view.has_out_ids()) {
+                    brute_force_search_sparse_bitset<C>(
+                        bw_idselector->bitset_view, index->ntotal, *dis, k, local_distances, local_ids);
+                } else {
+                    BitsetViewIDSelectorWrapper bw_idselector_w(bw_idselector->bitset_view);
+                    faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer,
+                                                                         BitsetViewIDSelectorWrapper>(
+                        index->ntotal, *dis, bw_idselector_w, k, local_distances, local_ids);
+                }
             } else {
                 faiss::IDSelectorAll sel_all;
                 faiss::cppcontrib::knowhere::brute_force_search_impl<C, faiss::DistanceComputer, faiss::IDSelectorAll>(
