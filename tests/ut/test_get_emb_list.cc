@@ -227,6 +227,7 @@ TEST_CASE("Test GetEmbListByIds with variable-length embedding lists", "[GetEmbL
 
         auto result_ds = result.value();
         auto result_offsets = result_ds->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+        REQUIRE(result_ds->Get<int64_t>(knowhere::meta::EMB_LIST_COUNT) == ids_ds->GetRows());
         size_t el_len = result_offsets[1] - result_offsets[0];
         REQUIRE(el_len == (original_offsets[el_id + 1] - original_offsets[el_id]));
 
@@ -249,6 +250,7 @@ TEST_CASE("Test GetEmbListByIds with variable-length embedding lists", "[GetEmbL
 
         auto result_ds = result.value();
         auto result_offsets = result_ds->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+        REQUIRE(result_ds->Get<int64_t>(knowhere::meta::EMB_LIST_COUNT) == ids_ds->GetRows());
         REQUIRE(result_offsets[0] == 0);
         REQUIRE(result_offsets[1] == 0);
     }

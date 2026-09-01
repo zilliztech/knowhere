@@ -854,6 +854,7 @@ GenNullableEmbListDataSet(int64_t total_docs, const std::vector<int32_t>& valid_
     auto offset_data = std::make_unique<size_t[]>(offsets.size());
     std::copy(offsets.begin(), offsets.end(), offset_data.get());
     ds->Set(knowhere::meta::EMB_LIST_OFFSET, static_cast<const size_t*>(offset_data.release()));
+    ds->Set(knowhere::meta::EMB_LIST_COUNT, static_cast<int64_t>(valid_doc_ids.size()));
     ds->Set(knowhere::meta::NQ, static_cast<int64_t>(valid_doc_ids.size()));
     return ds;
 }
@@ -878,6 +879,7 @@ GenEmbListBatchDataSet(const std::vector<int32_t>& public_doc_ids, const std::ve
     auto offset_data = std::make_unique<size_t[]>(absolute_offsets.size());
     std::copy(absolute_offsets.begin(), absolute_offsets.end(), offset_data.get());
     ds->Set(knowhere::meta::EMB_LIST_OFFSET, static_cast<const size_t*>(offset_data.release()));
+    ds->Set(knowhere::meta::EMB_LIST_COUNT, static_cast<int64_t>(public_doc_ids.size()));
     ds->Set(knowhere::meta::NQ, static_cast<int64_t>(public_doc_ids.size()));
     return ds;
 }
@@ -890,6 +892,7 @@ GenEmbListQueryDataSet(const std::vector<int32_t>& logical_doc_ids, int64_t dim)
         offsets[i] = i;
     }
     ds->Set(knowhere::meta::EMB_LIST_OFFSET, static_cast<const size_t*>(offsets.release()));
+    ds->Set(knowhere::meta::EMB_LIST_COUNT, static_cast<int64_t>(logical_doc_ids.size()));
     ds->Set(knowhere::meta::NQ, static_cast<int64_t>(logical_doc_ids.size()));
     return ds;
 }

@@ -207,9 +207,11 @@ data_type_conversion(const DataSet& src, const std::optional<int64_t> start = st
         } else {
             auto offset_start = lims[0];
             auto offset_end = offset_start + rows;
-            while (lims[lims_size] < offset_end) {
-                lims_size++;
+            auto num_el = src.Get<int64_t>(knowhere::meta::EMB_LIST_COUNT);
+            if (num_el <= 0) {
+                throw std::runtime_error("emb_list dataset must provide a positive EMB_LIST_COUNT.");
             }
+            lims_size = static_cast<size_t>(num_el);
             if (lims[lims_size] != (size_t)offset_end) {
                 throw std::runtime_error("emb_list offsets mismatch with rows.");
             }
@@ -220,6 +222,7 @@ data_type_conversion(const DataSet& src, const std::optional<int64_t> start = st
         }
         const size_t* lims_data_const = lims_data.release();
         des->Set(knowhere::meta::EMB_LIST_OFFSET, lims_data_const);
+        des->Set(knowhere::meta::EMB_LIST_COUNT, static_cast<int64_t>(lims_size));
         des->Set(knowhere::meta::NQ, static_cast<int64_t>(lims_size));
     }
 

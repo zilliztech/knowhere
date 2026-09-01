@@ -452,9 +452,13 @@ class IndexNode : public Object {
                            milvus::OpContext* op_context = nullptr) const;
 
     Status
-    AppendEmbListOffsetAndIdMap(const size_t* lims, size_t append_row_count, size_t append_el_count_hint = 0) {
+    AppendEmbListOffsetAndIdMap(const size_t* lims, size_t append_row_count, size_t append_el_count) {
         // lims is absolute in the whole index; AppendEmbListIds consumes the
         // appended local offset window.
+        if (lims == nullptr || append_el_count == 0) {
+            LOG_KNOWHERE_WARNING_ << "emb list offsets and a positive list count are required";
+            return Status::invalid_args;
+        }
         const auto old_el_count = emb_list_offset_->num_el();
         const auto old_vector_count = emb_list_offset_->offset.back();
         const auto new_vector_count = old_vector_count + append_row_count;
@@ -463,22 +467,10 @@ class IndexNode : public Object {
             return Status::emb_list_inner_error;
         }
 
-        size_t append_el_count = 1;
-        if (append_el_count_hint != 0) {
-            append_el_count = append_el_count_hint;
-            for (size_t i = 1; i <= append_el_count; ++i) {
-                if (lims[i] < lims[i - 1]) {
-                    LOG_KNOWHERE_WARNING_ << "emb list offset is not increasing";
-                    return Status::emb_list_inner_error;
-                }
-            }
-        } else {
-            while (lims[append_el_count] < new_vector_count) {
-                if (lims[append_el_count] < lims[append_el_count - 1]) {
-                    LOG_KNOWHERE_WARNING_ << "emb list offset is not increasing";
-                    return Status::emb_list_inner_error;
-                }
-                ++append_el_count;
+        for (size_t i = 1; i <= append_el_count; ++i) {
+            if (lims[i] < lims[i - 1]) {
+                LOG_KNOWHERE_WARNING_ << "emb list offset is not increasing";
+                return Status::emb_list_inner_error;
             }
         }
         if (lims[append_el_count] != new_vector_count) {
@@ -850,8 +842,7 @@ class IndexNode : public Object {
             return Status::emb_list_inner_error;
         }
 
-        return BuildEmbList(dataset, std::move(cfg), lims, dataset->GetRows(),
-                            EmbListCount(dataset, lims, static_cast<size_t>(dataset->GetRows())),
+        return BuildEmbList(dataset, std::move(cfg), lims, dataset->GetRows(), GetEmbListCount(dataset),
                             use_knowhere_build_pool);
     }
 
@@ -1052,21 +1043,6 @@ class IndexNode : public Object {
     expected<DataSetPtr>
     CalcDistByRawIndex(const DataSetPtr dataset, const int64_t* labels, size_t labels_len, bool is_cosine,
                        std::shared_ptr<ThreadPool> pool, milvus::OpContext* op_context = nullptr) const;
-
-    static size_t
-    EmbListCount(const DataSetPtr& dataset, const size_t* lims, size_t num_rows) {
-        if (dataset != nullptr) {
-            const auto nq = dataset->Get<int64_t>(meta::NQ);
-            if (nq > 0) {
-                return static_cast<size_t>(nq);
-            }
-        }
-        size_t count = 0;
-        while (lims[count] < num_rows) {
-            ++count;
-        }
-        return count;
-    }
 
     Version version_;
     std::shared_ptr<EmbListOffset> emb_list_offset_;  // emb_list group offset structure (shared with strategy)
