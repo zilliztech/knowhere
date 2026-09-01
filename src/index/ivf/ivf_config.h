@@ -27,6 +27,7 @@ class IvfConfig : public BaseConfig {
     CFG_INT nlist;
     CFG_INT nprobe;
     CFG_BOOL use_elkan;
+    CFG_BOOL use_super_kmeans;
     CFG_BOOL ensure_topk_full;  // internal config, used for temp index
     CFG_INT max_empty_result_buckets;
     KNOWHERE_DECLARE_CONFIG(IvfConfig) {
@@ -45,6 +46,10 @@ class IvfConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(use_elkan)
             .set_default(true)
             .description("whether to use elkan algorithm")
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(use_super_kmeans)
+            .set_default(false)
+            .description("whether to use SuperKMeans for coarse quantizer training")
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(ensure_topk_full)
             .set_default(true)
@@ -196,6 +201,13 @@ class ScannConfig : public IvfFlatConfig {
             .set_default(false)
             .description("whether to make sure topk results full")
             .for_search();
+        // SCANN defaults to SuperKMeans for coarse quantizer training: the
+        // super-fast k-means variant is recall-equivalent to Clustering on
+        // inner-product data but trains significantly faster for large nlist.
+        KNOWHERE_CONFIG_DECLARE_FIELD(use_super_kmeans)
+            .set_default(true)
+            .description("whether to use SuperKMeans for coarse quantizer training")
+            .for_train();
     }
 
     Status
