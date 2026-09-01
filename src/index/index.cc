@@ -11,7 +11,11 @@
 
 #include "knowhere/index/index.h"
 
+#include <cstdint>
+#include <limits>
+#include <numeric>
 #include <string>
+#include <vector>
 
 #include "folly/futures/Future.h"
 #include "knowhere/comp/time_recorder.h"
@@ -45,7 +49,15 @@ ThrowInvalidIdMapData(const std::string& msg) {
 }
 
 inline bool
-AddDatasetIdMapData(const DataSetPtr& dataset, IdMap& id_map, int64_t indexed_count) {
+UsesElementIdSpace(const DataSetPtr& dataset, const BaseConfig& config) {
+    const auto has_emb_list_layout =
+        (dataset != nullptr && dataset->Get<const size_t*>(meta::EMB_LIST_OFFSET) != nullptr) ||
+        config.emb_list_offset_file_path.has_value();
+    return has_emb_list_layout && !get_el_metric_type(config.metric_type.value()).has_value();
+}
+
+inline bool
+AddDatasetIdMapData(const DataSetPtr& dataset, const BaseConfig& config, IdMap& id_map, int64_t indexed_count) {
     const auto has_id_map_data = dataset != nullptr && dataset->HasIdMapData();
     if (!has_id_map_data) {
         if (id_map.IsEnabled()) {
@@ -61,8 +73,24 @@ AddDatasetIdMapData(const DataSetPtr& dataset, IdMap& id_map, int64_t indexed_co
     }
 
     try {
-        // Consume nullable id-map input into index-owned state.
-        id_map.AddFromData(dataset->GetIdMapData());
+        if (UsesElementIdSpace(dataset, config)) {
+            // An ordinary metric over EmbList input builds a flat vector
+            // index.  The attached nullable metadata describes outer lists,
+            // but null/empty lists contribute no vectors, so flattened vector
+            // ids remain the contiguous public element ids.  Materialize that
+            // vector-domain identity map to preserve the normal IdMap
+            // lifecycle for the element index.
+            const auto vector_count = dataset->GetRows();
+            if (vector_count < 0 || static_cast<uint64_t>(vector_count) > std::numeric_limits<int32_t>::max()) {
+                ThrowInvalidIdMapData("element id map count overflows int32");
+            }
+            std::vector<int32_t> vector_ids(static_cast<size_t>(vector_count));
+            std::iota(vector_ids.begin(), vector_ids.end(), 0);
+            id_map.AddFromData(IdMapData::FromIds(vector_ids.data(), vector_ids.size(), vector_ids.size()));
+        } else {
+            // Consume nullable id-map input into index-owned state.
+            id_map.AddFromData(dataset->GetIdMapData());
+        }
     } catch (const std::exception& e) {
         ThrowInvalidIdMapData(e.what());
     }
@@ -114,7 +142,7 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chro
                 auto cfg = this->node->CreateConfig();
                 RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
                 auto& id_map = this->node->GetIdMap();
-                const auto has_id_map = AddDatasetIdMapData(dataset, id_map, 0);
+                const auto has_id_map = AddDatasetIdMapData(dataset, *cfg, id_map, 0);
                 if (has_id_map && dataset != nullptr && dataset->GetRows() == 0) {
                     // All-null nullable build produces id-map metadata only.
                     return this->node->FinalizeIdMap();
@@ -163,7 +191,7 @@ Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_bu
         auto cfg = this->node->CreateConfig();
         RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
         auto& id_map = this->node->GetIdMap();
-        const auto has_id_map = AddDatasetIdMapData(dataset, id_map, 0);
+        const auto has_id_map = AddDatasetIdMapData(dataset, *cfg, id_map, 0);
         if (has_id_map && dataset != nullptr && dataset->GetRows() == 0) {
             // All-null nullable build produces id-map metadata only.
             return this->node->FinalizeIdMap();
@@ -213,7 +241,7 @@ Index<T>::Add(const DataSetPtr dataset, const Json& json, bool use_knowhere_buil
         std::string msg;
         RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Add", &msg));
         auto& id_map = this->node->GetIdMap();
-        AddDatasetIdMapData(dataset, id_map, this->node->Count());
+        AddDatasetIdMapData(dataset, *cfg, id_map, this->node->Count());
         const auto is_emb_list =
             dataset != nullptr && dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
         if (dataset != nullptr && dataset->GetRows() == 0 && !is_emb_list) {
