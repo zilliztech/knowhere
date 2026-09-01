@@ -4021,6 +4021,104 @@ TEST_CASE("Nullable Index rejects plain and mapped Add mixing", "[nullable][id_m
     }
 }
 
+TEST_CASE("Element index normalizes outer EmbList IdMap to vector ids", "[nullable][id_map][emblist][element]") {
+    constexpr int64_t kParentCount = 2;
+    constexpr int64_t kVectorsPerParent = 512;
+    constexpr int64_t kVectorCount = kParentCount * kVectorsPerParent;
+
+    auto base = GenNullableEmbListDataSet(kParentCount, {0, 1}, kDenseDim, kVectorsPerParent);
+    const int32_t parent_ids[] = {0, 1};
+    base->SetIdMapData(knowhere::IdMapData::FromIds(parent_ids, kParentCount, kParentCount));
+
+    auto json = BaseDenseConfig(knowhere::metric::L2, kDenseDim, 1);
+    json[knowhere::meta::INDEX_TYPE] = knowhere::IndexEnum::INDEX_HNSW;
+    json[knowhere::indexparam::HNSW_M] = 8;
+    json[knowhere::indexparam::EFCONSTRUCTION] = 40;
+    json[knowhere::indexparam::EF] = 64;
+
+    IndexRow row{"HNSW current", knowhere::IndexEnum::INDEX_HNSW, DataKind::DenseFp32, Capabilities{}, false, true};
+    auto version = VersionForRow(row);
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(row.index_type, version).value();
+    index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+    REQUIRE(index.Build(base, json, false) == Status::success);
+
+    auto query = GenDenseQueryDataSet({1}, kDenseDim);
+    auto filter_bits = MakeBitmap(kVectorCount, {});
+    auto result = index.Search(query, json, knowhere::BitsetView(filter_bits.data(), kVectorCount));
+    REQUIRE(result.has_value());
+    REQUIRE(index.GetIdMap().OutCount() == kVectorCount);
+    REQUIRE(index.GetIdMap().InCount() == kVectorCount);
+#ifdef KNOWHERE_WITH_CARDINAL
+    // Cardinal owns the composed internal -> public vector map after build.
+    REQUIRE(index.GetIdMap().InToOutIds().empty());
+#endif
+    REQUIRE(result.value()->GetIds()[0] >= kVectorsPerParent);
+    REQUIRE(result.value()->GetIds()[0] < kVectorCount);
+
+    std::vector<int32_t> filtered_second_parent(kVectorsPerParent);
+    std::iota(filtered_second_parent.begin(), filtered_second_parent.end(), kVectorsPerParent);
+    filter_bits = MakeBitmap(kVectorCount, filtered_second_parent);
+    result = index.Search(query, json, knowhere::BitsetView(filter_bits.data(), kVectorCount));
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] >= 0);
+    REQUIRE(result.value()->GetIds()[0] < kVectorsPerParent);
+}
+
+TEST_CASE("All-null element index keeps an empty vector IdMap", "[nullable][id_map][emblist][element]") {
+    constexpr int64_t kParentCount = 2;
+    constexpr int64_t kVectorsPerParent = 512;
+
+    auto base = GenNullableEmbListDataSet(kParentCount, {}, kDenseDim, kVectorsPerParent);
+    base->SetIdMapData(knowhere::IdMapData::FromIds(nullptr, 0, kParentCount));
+
+    auto json = BaseDenseConfig(knowhere::metric::L2, kDenseDim, 1);
+    json[knowhere::meta::INDEX_TYPE] = knowhere::IndexEnum::INDEX_HNSW;
+    json[knowhere::indexparam::HNSW_M] = 8;
+    json[knowhere::indexparam::EFCONSTRUCTION] = 40;
+
+    IndexRow row{"HNSW current", knowhere::IndexEnum::INDEX_HNSW, DataKind::DenseFp32, Capabilities{}, false, true};
+    auto version = VersionForRow(row);
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(row.index_type, version).value();
+    index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+    REQUIRE(index.Build(base, json, false) == Status::success);
+    REQUIRE(index.GetIdMap().IsEnabled());
+    REQUIRE(index.GetIdMap().OutCount() == 0);
+}
+
+TEST_CASE("Element index Add appends vector IdMap ranges", "[nullable][id_map][emblist][element]") {
+    constexpr int64_t kVectorsPerParent = 512;
+    constexpr int64_t kVectorCount = 2 * kVectorsPerParent;
+
+    auto first_batch = GenNullableEmbListDataSet(1, {0}, kDenseDim, kVectorsPerParent);
+    const int32_t first_parent_id[] = {0};
+    first_batch->SetIdMapData(knowhere::IdMapData::FromIds(first_parent_id, 1, 1));
+    auto second_batch = GenNullableEmbListDataSet(2, {1}, kDenseDim, kVectorsPerParent);
+    const int32_t second_parent_id[] = {1};
+    second_batch->SetIdMapData(knowhere::IdMapData::FromIds(second_parent_id, 1, 2));
+
+    auto row = NativeFaissHnswRow();
+    auto json = BaseDenseConfig(knowhere::metric::L2, kDenseDim, 1);
+    json[knowhere::meta::INDEX_TYPE] = row.index_type;
+    json[knowhere::indexparam::HNSW_M] = 8;
+    json[knowhere::indexparam::EFCONSTRUCTION] = 40;
+    json[knowhere::indexparam::EF] = 64;
+
+    auto version = VersionForRow(row);
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(row.index_type, version).value();
+    index.SetIdMapType(knowhere::IdMap::Type::GROWING);
+    REQUIRE(index.Build(first_batch, json, false) == Status::success);
+    REQUIRE(index.Add(second_batch, json, false) == Status::success);
+
+    auto query = GenDenseQueryDataSet({1}, kDenseDim);
+    auto filter_bits = MakeBitmap(kVectorCount, {});
+    auto result = index.Search(query, json, knowhere::BitsetView(filter_bits.data(), kVectorCount));
+    REQUIRE(result.has_value());
+    REQUIRE(index.GetIdMap().OutCount() == kVectorCount);
+    REQUIRE(index.GetIdMap().InCount() == kVectorCount);
+    REQUIRE(result.value()->GetIds()[0] >= kVectorsPerParent);
+    REQUIRE(result.value()->GetIds()[0] < kVectorCount);
+}
+
 TEST_CASE("Nullable vector Build plus Add matches full Build", "[nullable][ivf][add]") {
     auto json = BaseDenseConfig(knowhere::metric::L2, kDenseDim, 2);
     json[knowhere::meta::INDEX_TYPE] = knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC;
