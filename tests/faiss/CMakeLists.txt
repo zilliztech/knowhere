@@ -7,6 +7,7 @@ set(FAISS_TEST_SRCS
   ../../thirdparty/faiss/tests/test_pq_code_distance.cpp
   ../../thirdparty/faiss/tests/test_cppcontrib_uintreader.cpp
   ../../thirdparty/faiss/tests/test_distances_simd.cpp
+  ../../thirdparty/faiss/tests/test_rabitq_simd.cpp
   ../../thirdparty/faiss/tests/test_hnsw.cpp
   ../../thirdparty/faiss/tests/test_binary_flat.cpp
   ../../thirdparty/faiss/tests/test_cppcontrib_sa_decode.cpp
