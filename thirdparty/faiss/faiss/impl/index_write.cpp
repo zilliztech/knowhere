@@ -52,6 +52,7 @@
 #include <faiss/IndexRaBitQFastScan.h>
 #include <faiss/IndexRefine.h>
 #include <faiss/IndexRowwiseMinMax.h>
+#include <faiss/cppcontrib/knowhere/IndexHNSWRaBitQ.h>
 #ifdef FAISS_ENABLE_SVS
 #include <faiss/impl/svs_io.h>
 #include <faiss/svs/IndexSVSFlat.h>
@@ -370,6 +371,21 @@ static void write_HNSW(const HNSW* hnsw, IOWriter* f) {
     // WRITE1(hnsw->upper_beam);
     constexpr int tmp_upper_beam = 1;
     WRITE1(tmp_upper_beam);
+}
+
+static void write_knowhere_HNSW(
+        const cppcontrib::knowhere::HNSW* hnsw,
+        IOWriter* f) {
+    WRITEVECTOR(hnsw->assign_probas);
+    WRITEVECTOR(hnsw->cum_nneighbor_per_level);
+    WRITEVECTOR(hnsw->levels);
+    WRITEVECTOR(hnsw->offsets);
+    WRITEVECTOR(hnsw->neighbors);
+    WRITE1(hnsw->entry_point);
+    WRITE1(hnsw->max_level);
+    WRITE1(hnsw->efConstruction);
+    WRITE1(hnsw->efSearch);
+    WRITE1(hnsw->upper_beam);
 }
 
 static void write_NSG(const NSG* nsg, IOWriter* f) {
@@ -828,6 +844,22 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
             WRITE1(index_ivfpq->use_precomputed_table);
         }
     } else if (
+            const auto* cosine_rabitq = dynamic_cast<
+                    const cppcontrib::knowhere::IndexPreTransformRaBitQCosine*>(
+                    idx)) {
+        cosine_rabitq->validate_norms();
+        uint32_t h =
+                fourcc(cppcontrib::knowhere::kRaBitQPreTransformCosineFourcc);
+        WRITE1(h);
+        write_index_header(cosine_rabitq, f);
+        int nt = cosine_rabitq->chain.size();
+        WRITE1(nt);
+        for (int i = 0; i < nt; i++) {
+            write_VectorTransform(cosine_rabitq->chain[i], f);
+        }
+        write_index(cosine_rabitq->index, f, io_flags);
+        WRITEVECTOR(cosine_rabitq->inverse_norms_storage.inverse_l2_norms);
+    } else if (
             const IndexPreTransform* ixpt =
                     dynamic_cast<const IndexPreTransform*>(idx)) {
         uint32_t h = fourcc("IxPT");
@@ -865,6 +897,25 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         write_index_header(idxmap, f);
         write_index(idxmap->index, f);
         WRITEVECTOR(idxmap->id_map);
+    } else if (
+            const auto* idxhnsw =
+                    dynamic_cast<const cppcontrib::knowhere::IndexHNSWRaBitQ*>(
+                            idx)) {
+        FAISS_THROW_IF_NOT_MSG(
+                !(io_flags & IO_FLAG_SKIP_STORAGE),
+                "IndexHNSWRaBitQ cannot be serialized without its RaBitQ storage");
+        idxhnsw->validate_storage();
+        const bool is_cosine =
+                dynamic_cast<
+                        const cppcontrib::knowhere::IndexHNSWRaBitQCosine*>(
+                        idxhnsw) != nullptr;
+        uint32_t h =
+                fourcc(is_cosine ? cppcontrib::knowhere::kHnswRaBitQCosineFourcc
+                                 : cppcontrib::knowhere::kHnswRaBitQFourcc);
+        WRITE1(h);
+        write_index_header(idxhnsw, f);
+        write_knowhere_HNSW(&idxhnsw->hnsw, f);
+        write_index(idxhnsw->storage, f, io_flags);
     } else if (const IndexHNSW* idxhnsw = dynamic_cast<const IndexHNSW*>(idx)) {
         uint32_t h = dynamic_cast<const IndexHNSWFlatPanorama*>(idx)
                 ? fourcc("IHfP")
@@ -1024,7 +1075,8 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
             write_index_header(idx, f);
             write_RaBitQuantizer(&idxq->rabitq, f, false);
         } else {
-            uint32_t h = fourcc("Ixrr"); // multi-bit (new format)
+            uint32_t h =
+                    idxq->rabitq.dense_layout ? fourcc("Ixrd") : fourcc("Ixrr");
             WRITE1(h);
             write_index_header(idx, f);
             write_RaBitQuantizer(&idxq->rabitq, f, true);
