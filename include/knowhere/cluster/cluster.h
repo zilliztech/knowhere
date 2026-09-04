@@ -117,16 +117,16 @@ class Cluster {
     }
 
     expected<DataSetPtr>
-    Train(const DataSet& dataset, const Json& json);
+    Train(const DataSet& dataset, const Json& json) noexcept;
 
     expected<DataSetPtr>
-    Assign(const DataSet& dataset);
+    Assign(const DataSet& dataset) noexcept;
 
     expected<DataSetPtr>
-    GetCentroids() const;
+    GetCentroids() const noexcept;
 
     std::string
-    Type() const;
+    Type() const noexcept;
 
     ~Cluster() {
         if (node == nullptr)
