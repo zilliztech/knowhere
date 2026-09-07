@@ -68,6 +68,35 @@ KnownIndexTypes() {
     return index_types;
 }
 
+const char*
+CardinalSearchOutcomeLabel(CardinalSearchOutcome outcome) {
+    switch (outcome) {
+        case CardinalSearchOutcome::Success:
+            return "success";
+        case CardinalSearchOutcome::Cancelled:
+            return "cancelled";
+        case CardinalSearchOutcome::Error:
+            return "error";
+    }
+    return "error";
+}
+
+prometheus::Histogram&
+GetCardinalSearchHistogram(prometheus::Family<prometheus::Histogram>& family, CardinalSearchOutcome outcome,
+                           const prometheus::Histogram::BucketBoundaries& buckets = defaultBuckets) {
+    static std::mutex mutex;
+    static std::unordered_map<std::string, prometheus::Histogram*> metrics;
+    const auto* outcome_label = CardinalSearchOutcomeLabel(outcome);
+    const auto key = std::string(outcome_label) + '\n' + std::to_string(reinterpret_cast<uintptr_t>(&family));
+    std::scoped_lock lock(mutex);
+    if (const auto it = metrics.find(key); it != metrics.end()) {
+        return *it->second;
+    }
+    auto& metric = family.Add({{"module", "cardinal"}, {"outcome", outcome_label}}, buckets);
+    metrics.emplace(key, &metric);
+    return metric;
+}
+
 }  // namespace
 
 void
@@ -207,6 +236,31 @@ KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_change_base_cnt, PROMETHEUS_LABEL
 KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(filter_mv_supplement_ep_bool_cnt,
                                             "mv supplement ep from bitset boolean cnt per request")
 KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM(filter_mv_supplement_ep_bool_cnt, PROMETHEUS_LABEL_CARDINAL)
+
+void
+ObserveCardinalSearchMetrics(const CardinalSearchMetrics& metrics, CardinalSearchOutcome outcome) {
+    GetCardinalSearchHistogram(search_latency_family, outcome).Observe(metrics.latency);
+    GetCardinalSearchHistogram(search_topk_family, outcome).Observe(metrics.topk);
+    GetCardinalSearchHistogram(search_level_family, outcome).Observe(metrics.level);
+    GetCardinalSearchHistogram(bitset_ratio_family, outcome, ratioBuckets).Observe(metrics.bitset_ratio);
+    GetCardinalSearchHistogram(queue_latency_family, outcome).Observe(metrics.queue_latency);
+    GetCardinalSearchHistogram(exec_latency_family, outcome).Observe(metrics.exec_latency);
+    GetCardinalSearchHistogram(quant_compute_cnt_family, outcome).Observe(metrics.quant_compute_cnt);
+    GetCardinalSearchHistogram(raw_compute_cnt_family, outcome).Observe(metrics.raw_compute_cnt);
+    GetCardinalSearchHistogram(cache_hit_cnt_family, outcome).Observe(metrics.cache_hit_cnt);
+    GetCardinalSearchHistogram(io_cnt_family, outcome).Observe(metrics.io_cnt);
+    GetCardinalSearchHistogram(graph_search_cnt_family, outcome).Observe(metrics.graph_search_cnt);
+    GetCardinalSearchHistogram(ivf_search_cnt_family, outcome).Observe(metrics.ivf_search_cnt);
+    GetCardinalSearchHistogram(bf_search_cnt_family, outcome).Observe(metrics.bf_search_cnt);
+    GetCardinalSearchHistogram(re_search_cnt_family, outcome).Observe(metrics.re_search_cnt);
+    GetCardinalSearchHistogram(filter_connectivity_ratio_family, outcome).Observe(metrics.filter_connectivity_ratio);
+    GetCardinalSearchHistogram(filter_mv_only_cnt_family, outcome).Observe(metrics.filter_mv_only_cnt);
+    GetCardinalSearchHistogram(filter_mv_activated_fields_cnt_family, outcome)
+        .Observe(metrics.filter_mv_activated_fields_cnt);
+    GetCardinalSearchHistogram(filter_mv_change_base_cnt_family, outcome).Observe(metrics.filter_mv_change_base_cnt);
+    GetCardinalSearchHistogram(filter_mv_supplement_ep_bool_cnt_family, outcome)
+        .Observe(metrics.filter_mv_supplement_ep_bool_cnt);
+}
 
 KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_FAMILY(hnsw_bitset_ratio, "HNSW bitset ratio for search and range search")
 KNOWHERE_DEFINE_PROMETHEUS_HISTOGRAM_WITH_BUCKETS(hnsw_bitset_ratio, PROMETHEUS_LABEL_KNOWHERE, ratioBuckets)

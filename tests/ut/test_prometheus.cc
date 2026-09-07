@@ -53,4 +53,15 @@ TEST_CASE("Test prometheus client", "[prometheus client]") {
         std::unordered_set<prometheus::Histogram*> unique(observed.begin(), observed.end());
         CHECK(unique.size() == 1);
     }
+
+    SECTION("cardinal search metrics include the request outcome") {
+        knowhere::CardinalSearchMetrics metrics;
+        metrics.topk = 17;
+        metrics.quant_compute_cnt = 23;
+        knowhere::ObserveCardinalSearchMetrics(metrics, knowhere::CardinalSearchOutcome::Cancelled);
+
+        const auto str = knowhere::prometheusClient->GetMetrics();
+        CHECK(str.find("search_topk_count{module=\"cardinal\",outcome=\"cancelled\"}") != std::string::npos);
+        CHECK(str.find("quant_compute_cnt_count{module=\"cardinal\",outcome=\"cancelled\"}") != std::string::npos);
+    }
 }

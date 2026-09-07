@@ -145,6 +145,33 @@ prometheus::Histogram&
 GetPrometheusHistogram(prometheus::Family<prometheus::Histogram>& family, const std::string& module,
                        const std::string& index_type);
 
+enum class CardinalSearchOutcome { Success, Cancelled, Error };
+
+struct CardinalSearchMetrics {
+    double latency = 0;
+    double topk = 0;
+    double level = 0;
+    double bitset_ratio = 0;
+    double queue_latency = 0;
+    double exec_latency = 0;
+    double quant_compute_cnt = 0;
+    double raw_compute_cnt = 0;
+    double cache_hit_cnt = 0;
+    double io_cnt = 0;
+    double graph_search_cnt = 0;
+    double ivf_search_cnt = 0;
+    double bf_search_cnt = 0;
+    double re_search_cnt = 0;
+    double filter_connectivity_ratio = 0;
+    double filter_mv_only_cnt = 0;
+    double filter_mv_activated_fields_cnt = 0;
+    double filter_mv_change_base_cnt = 0;
+    double filter_mv_supplement_ep_bool_cnt = 0;
+};
+
+void
+ObserveCardinalSearchMetrics(const CardinalSearchMetrics& metrics, CardinalSearchOutcome outcome);
+
 KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_KNOWHERE);
 KNOWHERE_DECLARE_PROMETHEUS_HISTOGRAM(ann_iterator_init_latency, PROMETHEUS_LABEL_CARDINAL);
 
