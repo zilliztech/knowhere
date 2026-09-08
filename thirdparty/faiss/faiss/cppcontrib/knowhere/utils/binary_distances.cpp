@@ -176,7 +176,7 @@ float bvec_jaccard(
     int accu_num = 0;
     int accu_den = 0;
     fast_loop_imp(fun_u64, fun_u8);
-    return (accu_den == 0) ? 1.0
+    return (accu_den == 0) ? 0.0f
                            : ((float)(accu_den - accu_num) / (float)(accu_den));
 #undef fun_u64
 #undef fun_u8
@@ -825,6 +825,5 @@ void all_hamming_distances(
     }
 }
 }
-
 
 
