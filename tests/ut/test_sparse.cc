@@ -1712,6 +1712,61 @@ TEST_CASE("Test SINDI Index Window Size", "[sparse][sindi]") {
     REQUIRE(recall >= 0.85);
 }
 
+TEST_CASE("Test sealed SINDI direct mixed window encoding", "[sparse][sindi]") {
+    constexpr int32_t window_size = 1024;
+    constexpr int32_t nr_windows = 10;
+    constexpr int32_t nb = window_size * nr_windows;
+    constexpr int32_t dim = 4;
+    constexpr int32_t sparse_id_0 = 17;
+    constexpr int32_t sparse_id_1 = 5 * window_size + 23;
+
+    std::vector<std::map<int32_t, float>> base_data(nb);
+    // Dimension 0 occurs in every window and uses the dense encoding. Dimension 1 occurs in only two windows and
+    // uses the sparse encoding. Search and serialization must see the same posting lists for both formats.
+    for (int32_t window_id = 0; window_id < nr_windows; ++window_id) {
+        base_data[window_id * window_size][0] = 1.0f;
+    }
+    base_data[sparse_id_0][1] = 3.0f;
+    base_data[sparse_id_1][1] = 2.0f;
+    auto train_ds = GenSparseDataSet(base_data, dim);
+
+    std::vector<std::map<int32_t, float>> query_data(1);
+    query_data[0][1] = 1.0f;
+    auto query_ds = GenSparseDataSet(query_data, dim);
+
+    knowhere::Json json;
+    json[knowhere::meta::DIM] = dim;
+    json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    json[knowhere::meta::TOPK] = 2;
+    json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "SINDI";
+    json[knowhere::indexparam::SEARCH_ALGO] = "SINDI";
+    json["sindi_window_size"] = window_size;
+
+    const auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    const auto create_index = [&] {
+        return knowhere::IndexFactory::Instance()
+            .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+            .value();
+    };
+    auto check_results = [&](const auto& index) {
+        auto results = index.Search(query_ds, json, nullptr);
+        REQUIRE(results.has_value());
+        const auto* ids = results.value()->GetIds();
+        REQUIRE(ids[0] == sparse_id_0);
+        REQUIRE(ids[1] == sparse_id_1);
+    };
+
+    auto index = create_index();
+    REQUIRE(index.Build(train_ds, json) == knowhere::Status::success);
+    check_results(index);
+
+    knowhere::BinarySet binary_set;
+    REQUIRE(index.Serialize(binary_set) == knowhere::Status::success);
+    auto restored = create_index();
+    REQUIRE(restored.Deserialize(binary_set, json) == knowhere::Status::success);
+    check_results(restored);
+}
+
 TEST_CASE("Test SINDI Index Search with Window Filter Skip", "[sparse][sindi]") {
     auto nb = 3000;
     auto dim = 500;
