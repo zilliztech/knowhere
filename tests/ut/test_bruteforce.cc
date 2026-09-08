@@ -292,6 +292,26 @@ TEST_CASE("Test Brute Force", "[binary vector]") {
     }
 }
 
+TEST_CASE("Binary Jaccard preserves empty-vector identity", "[binary vector][jaccard]") {
+    const int64_t code_size = GENERATE(as<int64_t>{}, 1, 8, 16, 32, 64, 128, 256, 512);
+    const int64_t dim = code_size * 8;
+    std::vector<uint8_t> zeros(code_size, 0);
+    const auto dataset = knowhere::GenDataSet(1, dim, zeros.data());
+    const knowhere::Json conf = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::JACCARD},
+        {knowhere::meta::TOPK, 1},
+    };
+
+    int64_t id = -1;
+    float distance = -1.0f;
+    auto status = knowhere::BruteForce::SearchWithBuf<knowhere::bin1>(dataset, dataset, &id, &distance, conf, nullptr);
+
+    REQUIRE(status == knowhere::Status::success);
+    REQUIRE(id == 0);
+    REQUIRE(distance == 0.0f);
+}
+
 TEST_CASE("Brute Force preserves trailing empty embedding lists", "[emb_list][trailing_empty]") {
     constexpr int64_t dim = 2;
     constexpr int64_t topk = 1;
