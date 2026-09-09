@@ -17,6 +17,7 @@
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_check.h"
 #include "knowhere/index/index_factory.h"
+#include "simd/hook.h"
 
 using namespace knowhere;
 
@@ -232,7 +233,9 @@ TEST_CASE("Test index has raw data", "[IndexHasRawData]") {
         CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_IVFFLAT, ver, {}));
         CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_IVFFLAT_CC, ver, {}));
         CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_IVFPQ, ver, {}));
-        CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_SCANN, ver, {}));
+        if (faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+            CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_SCANN, ver, {}));
+        }
         CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_IVFSQ8, ver, {}));
         CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_IVFSQ_CC, ver, {}));
 
@@ -291,16 +294,18 @@ TEST_CASE("Test index has raw data", "[IndexHasRawData]") {
 
         CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(
             IndexEnum::INDEX_FAISS_IDMAP, min_ver, knowhere::Json::parse(R"({"metric_type": "COSINE"})")));
-        CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_SCANN, ver, json));
+        if (faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+            CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_SCANN, ver, json));
 
-        json[indexparam::WITH_RAW_DATA] = false;
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_SCANN, ver, json));
-        json[indexparam::WITH_RAW_DATA] = "true";
-        CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_SCANN, ver, json));
-        json[indexparam::WITH_RAW_DATA] = "false";
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_SCANN, ver, json));
-        json[indexparam::WITH_RAW_DATA] = 1;
-        CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_SCANN, ver, json));
+            json[indexparam::WITH_RAW_DATA] = false;
+            CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_SCANN, ver, json));
+            json[indexparam::WITH_RAW_DATA] = "true";
+            CHECK(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_SCANN, ver, json));
+            json[indexparam::WITH_RAW_DATA] = "false";
+            CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_SCANN, ver, json));
+            json[indexparam::WITH_RAW_DATA] = 1;
+            CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_FAISS_SCANN, ver, json));
+        }
 
         knowhere::Json faiss_hnsw_cfg = {{"refine", true}, {"refine_type", "bf16"}};
         CHECK_FALSE(knowhere::IndexStaticFaced<fp32>::HasRawData(IndexEnum::INDEX_HNSW_SQ, ver, faiss_hnsw_cfg));

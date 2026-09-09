@@ -9,7 +9,11 @@
 #include <stdint.h>
 #include <string.h>  // for memcpy
 
-#if defined(__SSE4_1__)
+#if defined(__SSE4_1__) || defined(__loongarch_sx)
+#define KNOWHERE_STREAMVBYTE_SIMD
+#endif
+
+#ifdef KNOWHERE_STREAMVBYTE_SIMD
 // using 0,1,2,4 bytes per value
 static uint8_t lengthTable[256] = {
     0, 1, 2, 4,  1, 2, 3, 5,  2, 3, 4,  6,  4,  5,  6,  8,  1, 2, 3,  5,  2, 3,  4,  6,  3,  4,  5,  7,  5,  6,  7,  9,
@@ -285,6 +289,8 @@ static int8_t encodingShuffleTable[256][16] = {
 
 #if defined(__SSE4_1__)
 #include <immintrin.h>
+#elif defined(__loongarch_sx)
+#include <lsxintrin.h>
 #endif
 
 static uint8_t
@@ -334,11 +340,30 @@ svb_encode_scalar(const uint32_t* in, uint8_t* __restrict__ keyPtr, uint8_t* __r
     return dataPtr;  // pointer to first unused data byte
 }
 
-#ifdef __SSE4_1__
+#ifdef KNOWHERE_STREAMVBYTE_SIMD
 typedef __m128i encode_t;
 
 static size_t
 streamvbyte_encode4(__m128i in, uint8_t* outData, uint8_t* outCode) {
+#if defined(__loongarch_sx)
+    const __m128i ones = __lsx_vrepli_w(1);
+    const __m128i zero_mask = __lsx_vseqi_w(in, 0);
+    const __m128i byte_mask = __lsx_vseqi_w(__lsx_vsrli_w(in, 8), 0);
+    const __m128i halfword_mask = __lsx_vseqi_w(__lsx_vsrli_w(in, 16), 0);
+    const __m128i nonzero = __lsx_vand_v(__lsx_vnor_v(zero_mask, zero_mask), ones);
+    const __m128i over_byte = __lsx_vand_v(__lsx_vnor_v(byte_mask, byte_mask), ones);
+    const __m128i over_halfword = __lsx_vand_v(__lsx_vnor_v(halfword_mask, halfword_mask), ones);
+    const __m128i symbols = __lsx_vadd_w(__lsx_vadd_w(nonzero, over_byte), over_halfword);
+    const uint8_t code = (uint8_t)(__lsx_vpickve2gr_wu(symbols, 0) | (__lsx_vpickve2gr_wu(symbols, 1) << 2) |
+                                   (__lsx_vpickve2gr_wu(symbols, 2) << 4) | (__lsx_vpickve2gr_wu(symbols, 3) << 6));
+    const size_t length = lengthTable[code];
+    const __m128i shuf = __lsx_vld((void*)&encodingShuffleTable[code], 0);
+    const __m128i out = __lsx_vshuf_b(__lsx_vldi(0), in, shuf);
+
+    __lsx_vst(out, outData, 0);
+    *outCode = code;
+    return length;
+#else
     const __m128i Ones = _mm_set1_epi32(0x01010101);
     const __m128i GatherBits = _mm_set1_epi32(0x08040102);
     const __m128i CodeTable = _mm_set_epi32(0x03030303, 0x03030303, 0x03030303, 0x02020100);
@@ -361,14 +386,19 @@ streamvbyte_encode4(__m128i in, uint8_t* outData, uint8_t* outCode) {
     _mm_storeu_si128((__m128i*)outData, out);
     *outCode = (uint8_t)code;
     return length;
+#endif
 }
 
 static size_t
 streamvbyte_encode_quad(const uint32_t* in, uint8_t* outData, uint8_t* outKey) {
+#if defined(__loongarch_sx)
+    __m128i vin = __lsx_vld((void*)in, 0);
+#else
     __m128i vin = _mm_loadu_si128((const __m128i*)in);
+#endif
     return streamvbyte_encode4(vin, outData, outKey);
 }
-#endif  // __SSE4_1__
+#endif  // KNOWHERE_STREAMVBYTE_SIMD
 
 size_t
 streamvbyte_encode_0124(const uint32_t* in, uint32_t count, uint8_t* out) {
@@ -376,7 +406,7 @@ streamvbyte_encode_0124(const uint32_t* in, uint32_t count, uint8_t* out) {
     uint32_t keyLen = (count + 3) / 4;   // 2-bits rounded to full byte
     uint8_t* dataPtr = keyPtr + keyLen;  // variable byte data after all keys
 
-#ifdef __SSE4_1__
+#ifdef KNOWHERE_STREAMVBYTE_SIMD
     uint32_t count_quads = count / 4;
     count -= 4 * count_quads;
     for (uint32_t c = 0; c < count_quads; c++) {
@@ -384,7 +414,7 @@ streamvbyte_encode_0124(const uint32_t* in, uint32_t count, uint8_t* out) {
         keyPtr++;
         in += 4;
     }
-#endif  // __SSE4_1__
+#endif  // KNOWHERE_STREAMVBYTE_SIMD
 
     return (size_t)(svb_encode_scalar(in, keyPtr, dataPtr, count) - out);
 }

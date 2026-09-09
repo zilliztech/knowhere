@@ -59,7 +59,7 @@ TEST_CASE("Knowhere global config", "[init]") {
 }
 
 TEST_CASE("Knowhere SIMD config", "[simd]") {
-    std::vector<std::string> v = {"AVX512", "AVX2", "SSE4_2", "GENERIC", "NEON", "SVE"};
+    std::vector<std::string> v = {"AVX512", "AVX2", "SSE4_2", "GENERIC", "NEON", "SVE", "LASX", "LSX"};
     std::unordered_set<std::string> s(v.begin(), v.end());
 
     auto res = knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX512);
@@ -72,6 +72,15 @@ TEST_CASE("Knowhere SIMD config", "[simd]") {
     REQUIRE(s.find(res) != s.end());
     res = knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AUTO);
     REQUIRE(s.find(res) != s.end());
+
+#ifdef __loongarch__
+    res = knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AUTO);
+    const auto expected = faiss::cppcontrib::knowhere::cpu_support_lasx() ? "LASX" : "LSX";
+    REQUIRE(res == expected);
+
+    res = knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::GENERIC);
+    REQUIRE(res == expected);
+#endif
 
     // Verify faiss DD level reacts to SetSimdType
     SECTION("faiss DD level synchronization") {

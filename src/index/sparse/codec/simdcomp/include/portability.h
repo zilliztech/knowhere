@@ -11,6 +11,8 @@
 #include "neon128.h"
 #elif defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)
 #include <emmintrin.h>
+#elif defined(__loongarch_sx)
+#include "../../lsx_sse_compat.h"
 #else
 /* Keep the generated SSE2 kernels available on the other architectures supported by Knowhere. */
 #ifndef SIMDE_ENABLE_NATIVE_ALIASES

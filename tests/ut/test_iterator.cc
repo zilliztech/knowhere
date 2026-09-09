@@ -23,6 +23,7 @@
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/log.h"
+#include "simd/hook.h"
 #include "utils.h"
 
 namespace {
@@ -249,6 +250,9 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_refine_flat_gen)}));
+        if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+            SKIP("SCANN requires PQ fast-scan SIMD support");
+        }
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -338,6 +342,9 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_refine_flat_gen)}));
+        if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+            SKIP("SCANN requires PQ fast-scan SIMD support");
+        }
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
@@ -387,6 +394,9 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_SCANN, scann_gen2),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_gen),
              make_tuple(knowhere::IndexEnum::INDEX_FAISS_IVFRABITQ, ivfrabitq_refine_flat_gen)}));
+        if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+            SKIP("SCANN requires PQ fast-scan SIMD support");
+        }
         auto idx = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
