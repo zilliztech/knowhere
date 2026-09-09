@@ -71,6 +71,9 @@ class DiskANNConfig : public BaseConfig {
     // cached the nodes on the search paths; 2. do bfs from the entry point and cache them. The first method is suitable
     // for TopK query heavy circumstances and the second one performed better in range search.
     CFG_BOOL use_bfs_cache;
+    // Optional deterministic seed for BFS cache selection. A negative value
+    // preserves the existing random selection behavior.
+    CFG_INT bfs_cache_seed;
     // The beamwidth to be used for search. This is the maximum number of IO requests each query will issue per
     // iteration of search code. Larger beamwidth will result in fewer IO round-trips per query but might result in
     // slightly higher total number of IO requests to SSD per query. For the highest query throughput with a fixed SSD
@@ -141,6 +144,11 @@ class DiskANNConfig : public BaseConfig {
             .description("should bfs strategy to cache nodes.")
             .set_default(false)
             .for_deserialize();
+        KNOWHERE_CONFIG_DECLARE_FIELD(bfs_cache_seed)
+            .description("seed for deterministic bfs cache selection; -1 uses a random seed.")
+            .set_default(-1)
+            .set_range(-1, std::numeric_limits<CFG_INT::value_type>::max())
+            .for_deserialize();
         KNOWHERE_CONFIG_DECLARE_FIELD(beamwidth)
             .description("the maximum number of IO requests each query will issue per iteration of search code.")
             .set_default(diskann::defaults::DEFAULT_DISKANN_BEAMWIDTH)
@@ -191,6 +199,61 @@ class DiskANNConfig : public BaseConfig {
             }
             default:
                 break;
+        }
+        return Status::success;
+    }
+};
+
+class DiskANNRaBitQConfig : public DiskANNConfig {
+ public:
+    CFG_INT rbq_bits;
+    CFG_INT rbq_bits_query;
+    CFG_STRING rbq_refine_mode;
+
+    KNOWHERE_DECLARE_CONFIG(DiskANNRaBitQConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(rbq_bits)
+            .description("number of RaBitQ bits per database vector dimension")
+            .set_default(1)
+            .set_range(1, 9)
+            .for_train()
+            .for_static();
+        KNOWHERE_CONFIG_DECLARE_FIELD(rbq_bits_query)
+            .description("query bits for the RaBitQ coarse estimator; 0 uses FP32")
+            .set_default(4)
+            .set_range(0, 8)
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(rbq_refine_mode)
+            .description("RaBitQ multi-bit refinement mode: probabilistic enables error-window pruning; full always "
+                         "computes the complete RaBitQ distance")
+            .set_default("probabilistic")
+            .for_search()
+            .for_range_search()
+            .for_iterator();
+    }
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        const auto base_status = DiskANNConfig::CheckAndAdjust(param_type, err_msg);
+        if (base_status != Status::success) {
+            return base_status;
+        }
+        const auto metric = metric_type.value_or(knowhere::metric::L2);
+        if (metric != knowhere::metric::L2 && metric != knowhere::metric::IP) {
+            return HandleError(err_msg, "DISKANN_RABITQ supports L2 and IP", Status::invalid_metric_type);
+        }
+        const auto database_bits = rbq_bits.value_or(1);
+        if (database_bits < 1 || database_bits > 9) {
+            return HandleError(err_msg, "DISKANN_RABITQ supports rbq_bits in [1, 9]", Status::invalid_args);
+        }
+        const auto refine_mode = rbq_refine_mode.value_or("probabilistic");
+        if (refine_mode != "probabilistic" && refine_mode != "full") {
+            return HandleError(err_msg, "rbq_refine_mode must be probabilistic or full", Status::invalid_args);
+        }
+        if (disk_pq_dims.value_or(0) != 0) {
+            return HandleError(err_msg, "DISKANN_RABITQ requires disk_pq_dims=0", Status::invalid_args);
+        }
+        if (warm_up.value_or(false)) {
+            return HandleError(err_msg, "DISKANN_RABITQ does not support warm_up", Status::invalid_args);
         }
         return Status::success;
     }

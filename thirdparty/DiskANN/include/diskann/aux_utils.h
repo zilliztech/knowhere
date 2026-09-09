@@ -43,6 +43,8 @@ namespace diskann {
 
   double get_memory_budget(const std::string &mem_budget_str);
   double get_memory_budget(double search_ram_budget_in_gb);
+  size_t get_num_pq_chunks(double pq_code_size_limit, size_t points_num,
+                           size_t dim);
   void   add_new_file_to_single_index(std::string index_file,
                                       std::string new_file);
 
@@ -131,6 +133,9 @@ namespace diskann {
     uint32_t inline_pq = 0;
     bool rearrange = false;
     int num_entry_points = 0;
+    // Keep the temporary MIPS-to-L2 base until the caller builds auxiliary
+    // indexes that must use the exact same internal d+1 representation.
+    bool keep_preprocessed_base = false;
   };
 
   template<typename T>
