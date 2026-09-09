@@ -212,6 +212,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64)")
         PROPERTIES COMPILE_FLAGS "-mavx512f -mavx512bw -mavx512vl -mavx512dq -mavx512cd -mavx2 -mfma -mf16c")
 endif()
 
+if(__LOONGARCH64)
+    set_source_files_properties(
+        src/index/sparse/codec/varintdecode.c
+        src/index/sparse/codec/streamvbyte_0124_decode.c
+        src/index/sparse/codec/streamvbyte_0124_encode.c
+        src/index/sparse/codec/simd_bitpacking_kernel.c
+        src/index/sparse/sindi_simd_lsx.cc
+        PROPERTIES COMPILE_OPTIONS "-mlsx;-mno-lasx")
+endif()
+
 if(__AARCH64)
     set(KNOWHERE_SVE_COMPILE_OPTIONS "")
     if(HAS_ARMV9_SVE_BF16)
