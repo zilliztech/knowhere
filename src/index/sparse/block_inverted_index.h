@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <span>
 #include <unordered_set>
@@ -526,15 +527,21 @@ class BlockInvertedIndex : public CRTPInvertedIndex<BlockInvertedIndex<DType, QT
     build_block_max_data(std::span<uint32_t> raw_index_ids, std::span<QType> raw_index_vals,
                          std::span<size_t> raw_index_offsets, bool enable_mmap, const std::string& backed_filename);
 
+    struct PostingEncodeWorkspace {
+        std::vector<uint8_t> encoded;
+        std::vector<uint32_t> ids;
+        std::vector<uint32_t> bm25_vals;
+    };
+
     /**
      * @brief Encode the posting list into a binary format
      *
-     * @param out_buf Output buffer to store the encoded posting list
+     * @param workspace Reusable per-worker buffers, including the encoded output
      * @param vec_ids Inverted lists storing vector IDs
      * @param vals Inverted lists storing quantized values
      */
     void
-    encode_posting_list(std::vector<uint8_t>& out_buf, std::span<uint32_t> vec_ids, std::span<QType> vals);
+    encode_posting_list(PostingEncodeWorkspace& workspace, std::span<uint32_t> vec_ids, std::span<QType> vals);
 
     /**
      * @brief Build the block compressed index from the raw index
@@ -756,7 +763,7 @@ BlockInvertedIndex<DType, QType, MetricType>::build_block_max_data(std::span<uin
 
 template <typename DType, typename QType, IndexScorerType MetricType>
 void
-BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<uint8_t>& out_buf,
+BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(PostingEncodeWorkspace& workspace,
                                                                   std::span<uint32_t> vec_ids, std::span<QType> vals) {
     // Posting list layout:
     // +----------------+------------------------------------------+
@@ -774,6 +781,8 @@ BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<ui
     // BM25 follows it with an untagged internal varint containing TF - 1, including zero for TF == 1. IP follows it
     // with its regular raw value payload.
     const uint32_t block_sz = block_codec_->block_size();
+    auto& out_buf = workspace.encoded;
+    out_buf.clear();
 
     const size_t list_sz = vec_ids.size();
     const bool use_singleton_short_form = list_sz == 1 && block_codec_->supports_singleton_short_form();
@@ -799,9 +808,10 @@ BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<ui
     auto* ids_it = vec_ids.data();
     auto* vals_it = vals.data();
 
-    std::vector<uint32_t> ids_buf(block_sz);
-    std::vector<QType> ip_vals_buf(kIsIPMetric ? block_sz : 0);
-    std::vector<uint32_t> bm25_vals_buf(kIsIPMetric ? 0 : block_sz);
+    workspace.ids.resize(block_sz);
+    if constexpr (!kIsIPMetric) {
+        workspace.bm25_vals.resize(block_sz);
+    }
     uint32_t last_vecid = UINT32_MAX;
 
     for (size_t b = 0; b < nr_blocks; ++b) {
@@ -809,30 +819,28 @@ BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(std::vector<ui
 
         for (size_t i = 0; i < cur_block_size; ++i) {
             uint32_t vecid(*ids_it++);
-            ids_buf[i] = vecid - last_vecid - 1;
+            workspace.ids[i] = vecid - last_vecid - 1;
             last_vecid = vecid;
         }
         std::memcpy(out_buf.data() + begin_block_maxids + sizeof(uint32_t) * b, &last_vecid, sizeof(last_vecid));
 
         if (!use_singleton_short_form) {
-            block_codec_->encode_doc_ids(ids_buf.data(), cur_block_size, out_buf);
+            block_codec_->encode_doc_ids(workspace.ids.data(), cur_block_size, out_buf);
         }
 
         if constexpr (kIsIPMetric) {
-            for (size_t i = 0; i < cur_block_size; ++i) {
-                ip_vals_buf[i] = *vals_it++;
-            }
-            out_buf.insert(out_buf.end(), reinterpret_cast<uint8_t*>(ip_vals_buf.data()),
-                           reinterpret_cast<uint8_t*>(ip_vals_buf.data() + cur_block_size));
+            const auto* values_begin = reinterpret_cast<const uint8_t*>(vals_it);
+            out_buf.insert(out_buf.end(), values_begin, values_begin + cur_block_size * sizeof(QType));
+            vals_it += cur_block_size;
         } else if (use_singleton_short_form) {
             assert(cur_block_size == 1 && b == 0);
             varint_encode(singleton_stored_value, out_buf);
             ++vals_it;
         } else {
             for (size_t i = 0; i < cur_block_size; ++i) {
-                bm25_vals_buf[i] = get_quant_val<DType, QType>(*vals_it++ - 1);
+                workspace.bm25_vals[i] = get_quant_val<DType, QType>(*vals_it++ - 1);
             }
-            block_codec_->encode(bm25_vals_buf.data(), cur_block_size, out_buf);
+            block_codec_->encode(workspace.bm25_vals.data(), cur_block_size, out_buf);
         }
 
         if (b != nr_blocks - 1) {
@@ -855,17 +863,39 @@ BlockInvertedIndex<DType, QType, MetricType>::build_block_index(std::span<uint32
         index_container_ = std::make_unique<MemBinaryContainer>();
     }
 
-    std::vector<std::vector<uint8_t>> encoded_posting_lists(this->nr_inner_dims_);
-    parallel_for(this->nr_inner_dims_, [&](size_t i) {
-        auto offset = raw_index_offsets[i];
-        size_t count = raw_index_offsets[i + 1] - offset;
-        encode_posting_list(encoded_posting_lists[i], raw_index_ids.subspan(offset, count),
-                            raw_index_vals.subspan(offset, count));
-    });
-
+    const size_t concurrency = GetParallelBuildConcurrency(this->nr_inner_dims_);
+    std::vector<PostingEncodeWorkspace> workspaces(concurrency);
     std::vector<size_t> posting_offsets(this->nr_inner_dims_ + 1, 0);
+
+    constexpr size_t posting_encode_batch_size = 8192;
+    auto encode_all_posting_lists = [&](auto&& consume_encoded) {
+        std::atomic<size_t> next_dim{0};
+        parallel_for_workers(concurrency, [&](size_t worker_id) {
+            auto& workspace = workspaces[worker_id];
+            for (;;) {
+                const size_t begin = next_dim.fetch_add(posting_encode_batch_size, std::memory_order_relaxed);
+                if (begin >= this->nr_inner_dims_) {
+                    break;
+                }
+                const size_t end = begin + std::min(posting_encode_batch_size, this->nr_inner_dims_ - begin);
+                for (size_t i = begin; i < end; ++i) {
+                    const auto offset = raw_index_offsets[i];
+                    const size_t count = raw_index_offsets[i + 1] - offset;
+                    encode_posting_list(workspace, raw_index_ids.subspan(offset, count),
+                                        raw_index_vals.subspan(offset, count));
+                    consume_encoded(i, workspace.encoded);
+                }
+            }
+        });
+    };
+
+    // Encode once to determine each list's exact byte size. Keeping only one reusable output buffer per worker avoids
+    // materializing a vector (and a separate allocation) for every dimension while the raw and final indexes coexist.
+    encode_all_posting_lists(
+        [&](size_t i, const std::vector<uint8_t>& encoded) { posting_offsets[i + 1] = encoded.size(); });
+
     for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-        posting_offsets[i + 1] = posting_offsets[i] + encoded_posting_lists[i].size();
+        posting_offsets[i + 1] += posting_offsets[i];
     }
 
     // This is a workaround to streamvbyte decode having to sometimes look beyond the buffer due to some SIMD loads.
@@ -876,10 +906,14 @@ BlockInvertedIndex<DType, QType, MetricType>::build_block_index(std::span<uint32
 
     auto data_ptr = index_container_->data();
     std::memcpy(data_ptr, posting_offsets.data(), offsets_byte_size);
-    for (size_t i = 0; i < this->nr_inner_dims_; ++i) {
-        std::memcpy(data_ptr + offsets_byte_size + posting_offsets[i], encoded_posting_lists[i].data(),
-                    encoded_posting_lists[i].size());
-    }
+
+    // Re-encode directly into each list's final, disjoint byte range. Encoding is deterministic, so the first-pass
+    // sizes are also a useful invariant check in debug builds.
+    encode_all_posting_lists([&](size_t i, const std::vector<uint8_t>& encoded) {
+        const size_t encoded_size = posting_offsets[i + 1] - posting_offsets[i];
+        assert(encoded.size() == encoded_size);
+        std::memcpy(data_ptr + offsets_byte_size + posting_offsets[i], encoded.data(), encoded_size);
+    });
     std::memset(data_ptr + offsets_byte_size + posting_offsets.back(), 0, padding_size);
 
     posting_blocks_dim_offsets_ = std::span<size_t>(reinterpret_cast<size_t*>(data_ptr), this->nr_inner_dims_ + 1);
