@@ -65,6 +65,17 @@ batch_insert_avx512(const float* scores, size_t docid_start, size_t count,
                     knowhere::ResultMinHeap<float, uint32_t>& topk_q, float& threshold, const BitsetView& bitset);
 #endif
 
+#if defined(__loongarch__)
+float
+ip_accumulate_lsx_fp16(float qval, const knowhere::fp16* vals, const uint16_t* ids, int32_t num, float* out);
+float
+bm25_accumulate_lsx_u16(float qval, const uint16_t* vals, const uint16_t* ids, int32_t num, float* out, float k1,
+                        float b, float avgdl, const float* row_sums);
+void
+batch_insert_lsx(const float* scores, size_t docid_start, size_t count,
+                 knowhere::ResultMinHeap<float, uint32_t>& topk_q, float& threshold, const BitsetView& bitset);
+#endif
+
 #if defined(__aarch64__) && defined(KNOWHERE_USE_SVE)
 // SVE implementations (compiled with SVE support)
 float

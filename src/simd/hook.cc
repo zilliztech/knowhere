@@ -39,6 +39,17 @@
 #include "distances_powerpc.h"
 #endif
 
+#if defined(__loongarch__)
+#include <sys/auxv.h>
+
+#if __has_include(<asm/hwcap.h>)
+#include <asm/hwcap.h>
+#endif
+
+#include "distances_lasx.h"
+#include "distances_lsx.h"
+#endif
+
 #if defined(__aarch64__) && !defined(__APPLE__)
 #include <asm/hwcap.h>
 #include <sys/auxv.h>
@@ -158,6 +169,19 @@ supports_sve() {
     return (hwcap & HWCAP_SVE) != 0;
 }
 #endif
+#endif
+
+#if defined(__loongarch__)
+bool
+cpu_support_lasx() {
+#ifdef HWCAP_LOONGARCH_LASX
+    constexpr unsigned long kHwcapLasx = HWCAP_LOONGARCH_LASX;
+#else
+    // Keep compatibility with libc headers older than the LoongArch HWCAP definitions.
+    constexpr unsigned long kHwcapLasx = 1ul << 5;
+#endif
+    return (getauxval(AT_HWCAP) & kHwcapLasx) != 0;
+}
 #endif
 
 void
@@ -513,6 +537,65 @@ fvec_hook(std::string& simd_type) {
     support_pq_fast_scan = false;
 #endif
 
+#if defined(__loongarch__)
+    fvec_inner_product = fvec_inner_product_lsx;
+    fvec_L2sqr = fvec_L2sqr_lsx;
+    fvec_L1 = fvec_L1_lsx;
+    fvec_Linf = fvec_Linf_lsx;
+    fvec_norm_L2sqr = fvec_norm_L2sqr_lsx;
+    fvec_L2sqr_ny = fvec_L2sqr_ny_lsx;
+    fvec_inner_products_ny = fvec_inner_products_ny_lsx;
+    fvec_L2sqr_ny_transposed = fvec_L2sqr_ny_transposed_lsx;
+    fvec_L2sqr_ny_nearest = fvec_L2sqr_ny_nearest_lsx;
+    fvec_L2sqr_ny_nearest_y_transposed = fvec_L2sqr_ny_nearest_y_transposed_lsx;
+    fvec_madd = fvec_madd_lsx;
+    fvec_madd_and_argmin = fvec_madd_and_argmin_lsx;
+    fvec_inner_product_batch_4 = fvec_inner_product_batch_4_lsx;
+    fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_lsx;
+
+    ivec_inner_product = ivec_inner_product_lsx;
+    ivec_L2sqr = ivec_L2sqr_lsx;
+
+    fp16_vec_inner_product = fp16_vec_inner_product_lsx;
+    fp16_vec_L2sqr = fp16_vec_L2sqr_lsx;
+    fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_lsx;
+    fp16_vec_inner_product_batch_4 = fp16_vec_inner_product_batch_4_lsx;
+    fp16_vec_L2sqr_batch_4 = fp16_vec_L2sqr_batch_4_lsx;
+
+    bf16_vec_inner_product = bf16_vec_inner_product_lsx;
+    bf16_vec_L2sqr = bf16_vec_L2sqr_lsx;
+    bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_lsx;
+    bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_lsx;
+    bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_lsx;
+
+    int8_vec_inner_product = int8_vec_inner_product_lsx;
+    int8_vec_L2sqr = int8_vec_L2sqr_lsx;
+    int8_vec_norm_L2sqr = int8_vec_norm_L2sqr_lsx;
+    int8_vec_inner_product_batch_4 = int8_vec_inner_product_batch_4_lsx;
+    int8_vec_L2sqr_batch_4 = int8_vec_L2sqr_batch_4_lsx;
+
+    if (cpu_support_lasx()) {
+        fvec_inner_product = fvec_inner_product_lasx;
+        fvec_L2sqr = fvec_L2sqr_lasx;
+        fvec_L1 = fvec_L1_lasx;
+        fvec_Linf = fvec_Linf_lasx;
+        fvec_norm_L2sqr = fvec_norm_L2sqr_lasx;
+        fvec_L2sqr_ny = fvec_L2sqr_ny_lasx;
+        fvec_inner_products_ny = fvec_inner_products_ny_lasx;
+        fvec_L2sqr_ny_transposed = fvec_L2sqr_ny_transposed_lasx;
+        fvec_L2sqr_ny_nearest = fvec_L2sqr_ny_nearest_lasx;
+        fvec_L2sqr_ny_nearest_y_transposed = fvec_L2sqr_ny_nearest_y_transposed_lasx;
+        fvec_madd = fvec_madd_lasx;
+        fvec_madd_and_argmin = fvec_madd_and_argmin_lasx;
+        fvec_inner_product_batch_4 = fvec_inner_product_batch_4_lasx;
+        fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_lasx;
+        simd_type = "LASX";
+    } else {
+        simd_type = "LSX";
+    }
+    support_pq_fast_scan = false;
+#endif
+
 // ToDo MG: include VSX intrinsics via distances_vsx once _ref tests succeed
 #if defined(__powerpc64__)
     fvec_inner_product = fvec_inner_product_ppc;
@@ -572,6 +655,14 @@ fvec_hook(std::string& simd_type) {
     if (faiss::SIMDConfig::is_simd_level_available(faiss::SIMDLevel::NONE)) {
         faiss::SIMDLevel target_level = faiss::SIMDConfig::auto_detect_simd_level();
         faiss::SIMDConfig::set_level(target_level);
+    }
+#endif
+
+#if defined(__loongarch__)
+    // Faiss has no LoongArch SIMDLevel yet. Keep its internal dispatch on the
+    // scalar backend while Knowhere's distance hooks use LSX/LASX above.
+    if (faiss::SIMDConfig::is_simd_level_available(faiss::SIMDLevel::NONE)) {
+        faiss::SIMDConfig::set_level(faiss::SIMDLevel::NONE);
     }
 #endif
 }

@@ -25,6 +25,7 @@ WITH_GPU ?=
 WITH_UT ?=
 WITH_BENCHMARK ?=
 WITH_ASAN ?=
+WITH_DISKANN ?= True
 WITH_SVS ?=
 WITH_CARDINAL ?=
 CARDINAL_VERSION_FORCE_CHECKOUT ?=
@@ -40,7 +41,7 @@ export CMAKE_POLICY_VERSION_MINIMUM ?= 3.5
 # variables such as WITH_ASAN to every sub-process, which causes the custom
 # folly recipe to pick up $ENV{WITH_ASAN} and compile folly itself with
 # -fsanitize=address — breaking the build on GCC.
-unexport WITH_GPU WITH_UT WITH_BENCHMARK WITH_ASAN WITH_CARDINAL CARDINAL_VERSION_FORCE_CHECKOUT WITH_DEBUG
+unexport WITH_GPU WITH_UT WITH_BENCHMARK WITH_ASAN WITH_DISKANN WITH_CARDINAL CARDINAL_VERSION_FORCE_CHECKOUT WITH_DEBUG
 
 # ---------- Derived settings ----------
 ifdef WITH_DEBUG
@@ -66,9 +67,15 @@ CONAN_SETTINGS := -s compiler.libcxx=$(LIBCXX) -s build_type=$(BUILD_TYPE) -s co
 
 # DiskANN and liburing require libaio (Linux-only).
 ifneq ($(UNAME_S),Darwin)
-    CONAN_SETTINGS += -o \&:with_diskann=True
-    ifndef WITH_GPU
-        CONAN_INSTALL_FLAGS += --build=liburing
+    ifneq ($(filter True true ON on 1,$(WITH_DISKANN)),)
+        CONAN_SETTINGS += -o \&:with_diskann=True
+        ifndef WITH_GPU
+            CONAN_INSTALL_FLAGS += --build=liburing
+        endif
+    else ifneq ($(filter False false OFF off 0,$(WITH_DISKANN)),)
+        CONAN_SETTINGS += -o \&:with_diskann=False
+    else
+        $(error WITH_DISKANN must be True/False, ON/OFF, or 1/0)
     endif
 endif
 
@@ -173,6 +180,7 @@ help: ## Show available targets
 	@echo "  WITH_UT=True       Enable unit tests"
 	@echo "  WITH_BENCHMARK=True Enable benchmarks build"
 	@echo "  WITH_ASAN=True     Enable AddressSanitizer"
+	@echo "  WITH_DISKANN=False Disable DiskANN (enabled by default on Linux)"
 	@echo "  WITH_SVS=True      Enable SVS (Intel Scalable Vector Search, x86 only)"
 	@echo "  WITH_CARDINAL=True Enable Cardinal build"
 	@echo "  CARDINAL_VERSION_FORCE_CHECKOUT=True Force Cardinal checkout to configured version"
