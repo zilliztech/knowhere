@@ -30,6 +30,7 @@
 
 #include "index/hnsw/impl/DummyVisitor.h"
 #include "index/hnsw/impl/FederVisitor.h"
+#include "index/hnsw/impl/HnswSearchDispatch.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/bitsetview_idselector.h"
 
@@ -40,24 +41,6 @@
 namespace knowhere {
 
 /**************************************************************
- * Utilities
- **************************************************************/
-
-namespace {
-
-// cloned from IndexHNSW.cpp
-faiss::DistanceComputer*
-storage_distance_computer(const faiss::Index* storage) {
-    if (faiss::cppcontrib::knowhere::is_similarity_metric(storage->metric_type)) {
-        return new faiss::NegativeDistanceComputer(storage->get_distance_computer());
-    } else {
-        return storage->get_distance_computer();
-    }
-}
-
-}  // namespace
-
-/**************************************************************
  * IndexHNSWWrapper implementation
  **************************************************************/
 
@@ -65,6 +48,29 @@ using idx_t = faiss::idx_t;
 
 IndexHNSWWrapper::IndexHNSWWrapper(faiss::cppcontrib::knowhere::IndexHNSW* underlying_index)
     : faiss::cppcontrib::knowhere::IndexWrapper(underlying_index) {
+}
+
+std::unique_ptr<faiss::Index>
+SearchParametersHNSWWrapper::create_hnsw_wrapper(faiss::cppcontrib::knowhere::IndexHNSW* index) const {
+    return std::make_unique<IndexHNSWWrapper>(index);
+}
+
+std::unique_ptr<faiss::DistanceComputer>
+IndexHNSWWrapper::storage_distance_computer(const faiss::cppcontrib::knowhere::IndexHNSW* index,
+                                            const SearchParametersHNSWWrapper*) const {
+    const auto* storage = index->storage;
+    if (faiss::cppcontrib::knowhere::is_similarity_metric(storage->metric_type)) {
+        return std::unique_ptr<faiss::DistanceComputer>(
+            new faiss::NegativeDistanceComputer(storage->get_distance_computer()));
+    }
+    return std::unique_ptr<faiss::DistanceComputer>(storage->get_distance_computer());
+}
+
+faiss::cppcontrib::knowhere::HNSWStats
+IndexHNSWWrapper::search_query(const faiss::cppcontrib::knowhere::HNSW& graph, faiss::DistanceComputer& dc,
+                               faiss::cppcontrib::knowhere::Bitset& visited, faiss::idx_t k, float* distances,
+                               faiss::idx_t* labels, const SearchParametersHNSWWrapper* params) const {
+    return search_hnsw_query(graph, dc, visited, k, distances, labels, params);
 }
 
 void
@@ -95,12 +101,9 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
     const SearchParametersHNSWWrapper* params = nullptr;
     const faiss::cppcontrib::knowhere::HNSW& hnsw = index_hnsw->hnsw;
 
-    float kAlpha = 0.0f;
     if (params_in) {
         params = dynamic_cast<const SearchParametersHNSWWrapper*>(params_in);
         FAISS_THROW_IF_NOT_MSG(params, "params type invalid");
-
-        kAlpha = params->kAlpha;
     }
 
     // set up hnsw_stats
@@ -117,8 +120,7 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
     faiss::cppcontrib::knowhere::Bitset bitset_visited_nodes =
         faiss::cppcontrib::knowhere::Bitset::create_uninitialized(index->ntotal);
 
-    // create a distance computer
-    std::unique_ptr<faiss::DistanceComputer> dis(storage_distance_computer(index_hnsw->storage));
+    auto dis = storage_distance_computer(index_hnsw, params);
 
     // no parallelism by design
     for (idx_t i = 0; i < n; i++) {
@@ -128,78 +130,8 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
         // prepare the table of visited elements
         bitset_visited_nodes.clear();
 
-        // a visitor
-        knowhere::feder::hnsw::FederResult* feder = (params == nullptr) ? nullptr : params->feder;
-
-        // future results
-        faiss::cppcontrib::knowhere::HNSWStats local_stats;
-
-        // set up a filter
-        faiss::IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
-
-        // try knowhere-specific filter
-        if (const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
-                dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
-            bw_idselector && !bw_idselector->bitset_view.empty()) {
-            // with filter, no mapping
-
-            // feder templating is important, bcz it removes an unneeded 'CALL' instruction.
-            if (feder == nullptr) {
-                // no feder
-                DummyVisitor graph_visitor;
-
-                using searcher_type =
-                    faiss::cppcontrib::knowhere::v2_hnsw_searcher<faiss::DistanceComputer, DummyVisitor,
-                                                                  faiss::cppcontrib::knowhere::Bitset,
-                                                                  knowhere::BitsetViewIDSelector>;
-
-                searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       *bw_idselector, kAlpha,       params};
-
-                local_stats = searcher.search(k, distances + i * k, labels + i * k);
-            } else {
-                // use feder
-                FederVisitor graph_visitor(feder);
-
-                using searcher_type =
-                    faiss::cppcontrib::knowhere::v2_hnsw_searcher<faiss::DistanceComputer, FederVisitor,
-                                                                  faiss::cppcontrib::knowhere::Bitset,
-                                                                  knowhere::BitsetViewIDSelector>;
-
-                searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       *bw_idselector, kAlpha,       params};
-
-                local_stats = searcher.search(k, distances + i * k, labels + i * k);
-            }
-        } else {
-            // no filter
-            faiss::IDSelectorAll sel_all;
-
-            // feder templating is important, bcz it removes an unneeded 'CALL' instruction.
-            if (feder == nullptr) {
-                // no feder
-                DummyVisitor graph_visitor;
-
-                using searcher_type = faiss::cppcontrib::knowhere::v2_hnsw_searcher<
-                    faiss::DistanceComputer, DummyVisitor, faiss::cppcontrib::knowhere::Bitset, faiss::IDSelectorAll>;
-
-                searcher_type searcher{hnsw,    *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       sel_all, kAlpha,       params};
-
-                local_stats = searcher.search(k, distances + i * k, labels + i * k);
-            } else {
-                // use feder
-                FederVisitor graph_visitor(feder);
-
-                using searcher_type = faiss::cppcontrib::knowhere::v2_hnsw_searcher<
-                    faiss::DistanceComputer, FederVisitor, faiss::cppcontrib::knowhere::Bitset, faiss::IDSelectorAll>;
-
-                searcher_type searcher{hnsw,    *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       sel_all, kAlpha,       params};
-
-                local_stats = searcher.search(k, distances + i * k, labels + i * k);
-            }
-        }
+        const auto local_stats =
+            search_query(hnsw, *dis, bitset_visited_nodes, k, distances + i * k, labels + i * k, params);
 
         // record some statistics
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
@@ -271,7 +203,11 @@ IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_
         faiss::cppcontrib::knowhere::Bitset::create_uninitialized(index->ntotal);
 
     // create a distance computer
-    std::unique_ptr<faiss::DistanceComputer> dis(storage_distance_computer(index_hnsw->storage));
+    std::unique_ptr<faiss::DistanceComputer> dis(params ? params->storage_distance_computer(index_hnsw)
+                                                        : index_hnsw->get_distance_computer());
+    if (faiss::cppcontrib::knowhere::is_similarity_metric(index_hnsw->metric_type)) {
+        dis.reset(new faiss::NegativeDistanceComputer(dis.release()));
+    }
 
     // radius
     float radius = radius_in;

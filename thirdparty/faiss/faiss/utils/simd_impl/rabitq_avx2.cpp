@@ -275,9 +275,9 @@ uint64_t bitwise_and_dot_product<SIMDLevel::AVX2>(
     }
     sum += reduce_add_128(sum_128);
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const uint64_t yv = *(const uint64_t*)(data + offset);
+        const uint64_t yv = load_u64_unaligned(data + offset);
         for (int j = 0; j < qb; j++) {
-            const uint64_t qv = *(const uint64_t*)(query + j * size + offset);
+            const uint64_t qv = load_u64_unaligned(query + j * size + offset);
             sum += popcount64(qv & yv) << j;
         }
     }
@@ -336,10 +336,10 @@ BitwiseAndDotProductResult bitwise_and_dot_product_with_popcount<
     dot_product += reduce_add_128(dot_128);
     popcount_sum += reduce_add_128(pop_128);
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const uint64_t yv = *(const uint64_t*)(data + offset);
+        const uint64_t yv = load_u64_unaligned(data + offset);
         popcount_sum += popcount64(yv);
         for (int j = 0; j < qb; j++) {
-            const uint64_t qv = *(const uint64_t*)(query + j * size + offset);
+            const uint64_t qv = load_u64_unaligned(query + j * size + offset);
             dot_product += popcount64(qv & yv) << j;
         }
     }
@@ -391,9 +391,9 @@ uint64_t bitwise_xor_dot_product<SIMDLevel::AVX2>(
     }
     sum += reduce_add_128(sum_128);
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *(const uint64_t*)(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         for (int j = 0; j < qb; j++) {
-            const auto qv = *(const uint64_t*)(query + j * size + offset);
+            const auto qv = load_u64_unaligned(query + j * size + offset);
             sum += popcount64(qv ^ yv) << j;
         }
     }
@@ -427,7 +427,7 @@ uint64_t popcount<SIMDLevel::AVX2>(const uint8_t* data, size_t size) {
     }
     sum += reduce_add_128(sum_128);
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *(const uint64_t*)(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         sum += popcount64(yv);
     }
     for (; offset < size; ++offset) {
@@ -517,8 +517,8 @@ inline float ip_1exbit_avx2(
     return result;
 }
 
-#ifdef __BMI2__
-inline float ip_bitplane_avx2(
+#if defined(__GNUC__) && defined(__x86_64__)
+__attribute__((target("bmi2"), noinline)) float ip_bitplane_avx2(
         const uint8_t* __restrict sign_bits,
         const uint8_t* __restrict ex_code,
         const float* __restrict rotated_q,
@@ -583,12 +583,34 @@ float compute_inner_product<SIMDLevel::AVX2>(
         size_t d,
         size_t ex_bits,
         float cb) {
+    if (ex_bits == 8) {
+        // Eight byte-aligned extra codes, plus their independent sign bits.
+        __m256 acc = _mm256_setzero_ps();
+        const __m256 weight = _mm256_set1_ps(256.f);
+        const __m256 offset = _mm256_set1_ps(cb);
+        const __m256i positions = _mm256_setr_epi32(1, 2, 4, 8, 16, 32, 64, 128);
+        size_t i = 0;
+        for (; i + 8 <= d; i += 8) {
+            const __m128i bytes = _mm_loadl_epi64(
+                    reinterpret_cast<const __m128i*>(ex_code + i));
+            const __m256 extra = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(bytes));
+            const __m256i mask = _mm256_cmpgt_epi32(
+                    _mm256_and_si256(_mm256_set1_epi32(sign_bits[i / 8]), positions),
+                    _mm256_setzero_si256());
+            const __m256 recon = _mm256_add_ps(
+                    extra, _mm256_and_ps(_mm256_castsi256_ps(mask), weight));
+            acc = _mm256_fmadd_ps(_mm256_loadu_ps(rotated_q + i),
+                                 _mm256_add_ps(recon, offset), acc);
+        }
+        return hsum_avx2(acc) +
+                ip_scalar(sign_bits, ex_code, rotated_q, i, d, ex_bits, cb);
+    }
     if (ex_bits == 1) {
         return ip_1exbit_avx2(sign_bits, ex_code, rotated_q, d, cb);
     }
 
-#ifdef __BMI2__
-    if (ex_bits <= 7) {
+#if defined(__GNUC__) && defined(__x86_64__)
+    if (ex_bits <= 7 && __builtin_cpu_supports("bmi2")) {
         return ip_bitplane_avx2(sign_bits, ex_code, rotated_q, d, ex_bits, cb);
     }
 #endif

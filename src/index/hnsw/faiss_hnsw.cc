@@ -9,14 +9,18 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <faiss/IndexPreTransform.h>
+#include <faiss/IndexRaBitQ.h>
 #include <faiss/cppcontrib/knowhere/IndexBinaryScalarQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSWBinary.h>
+#include <faiss/cppcontrib/knowhere/IndexHNSWRaBitQ.h>
 #include <faiss/cppcontrib/knowhere/IndexSQ4Uniform.h>
 #include <faiss/cppcontrib/knowhere/MetricType.h>
 #include <faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h>
 #include <faiss/cppcontrib/knowhere/impl/HnswSearcher.h>
+#include <faiss/cppcontrib/knowhere/impl/RaBitQBuildUtils.h>
 #include <faiss/cppcontrib/knowhere/impl/additional_io.h>
 #include <faiss/cppcontrib/knowhere/utils/Bitset.h>
 #include <faiss/utils/Heap.h>
@@ -46,6 +50,7 @@
 #include "index/hnsw/impl/IndexConditionalWrapper.h"
 #include "index/hnsw/impl/IndexHNSWWrapper.h"
 #include "index/hnsw/impl/IndexWrapperCosine.h"
+#include "index/hnsw/impl/RaBitQSearchParameters.h"
 #include "index/refine/refine_utils.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview_idselector.h"
@@ -784,16 +789,6 @@ get_index_data_format(const faiss::Index* index) {
     return std::nullopt;
 }
 
-// cloned from IndexHNSW.cpp
-faiss::DistanceComputer*
-storage_distance_computer(const faiss::Index* storage) {
-    if (faiss::cppcontrib::knowhere::is_similarity_metric(storage->metric_type)) {
-        return new faiss::NegativeDistanceComputer(storage->get_distance_computer());
-    } else {
-        return storage->get_distance_computer();
-    }
-}
-
 // there are chances that each partition split by scalar distribution is too small that we could not even train pq on it
 // bcz 256 points are needed for a 8-bit pq training in faiss
 // combine some small partitions to get a bigger one
@@ -886,7 +881,8 @@ class FaissHnswIterator : public IndexIterator {
                       const std::shared_ptr<std::vector<uint32_t>>& labels_in, std::unique_ptr<float[]>&& query_in,
                       const BitsetView& bitset_in, const int32_t ef_in, bool larger_is_closer,
                       const float refine_ratio = 0.5f, const std::vector<uint32_t>& label_to_internal_offset_in = {},
-                      const uint32_t mv_base_offset_in = 0, bool use_knowhere_search_pool = true)
+                      const uint32_t mv_base_offset_in = 0, bool use_knowhere_search_pool = true,
+                      const SearchParametersHNSWWrapper* storage_params = nullptr)
         : IndexIterator(larger_is_closer, use_knowhere_search_pool, refine_ratio),
           index{index_in},
           labels{labels_in},
@@ -920,7 +916,11 @@ class FaissHnswIterator : public IndexIterator {
             workspace.hnsw = &index_hnsw->hnsw;
 
             // wrap a sign, if needed
-            workspace.qdis = std::unique_ptr<faiss::DistanceComputer>(storage_distance_computer(index_hnsw));
+            workspace.qdis.reset(storage_params ? storage_params->storage_distance_computer(index_hnsw)
+                                                : index_hnsw->get_distance_computer());
+            if (larger_is_closer) {
+                workspace.qdis.reset(new faiss::NegativeDistanceComputer(workspace.qdis.release()));
+            }
 
             if (refine_ratio != 0) {
                 // the refine is needed
@@ -960,7 +960,11 @@ class FaissHnswIterator : public IndexIterator {
             workspace.hnsw = &index_hnsw->hnsw;
 
             // wrap a sign, if needed
-            workspace.qdis = std::unique_ptr<faiss::DistanceComputer>(storage_distance_computer(index_hnsw));
+            workspace.qdis.reset(storage_params ? storage_params->storage_distance_computer(index_hnsw)
+                                                : index_hnsw->get_distance_computer());
+            if (larger_is_closer) {
+                workspace.qdis.reset(new faiss::NegativeDistanceComputer(workspace.qdis.release()));
+            }
         }
 
         // set query
@@ -1155,6 +1159,11 @@ class FaissHnswIterator : public IndexIterator {
 //
 class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
  public:
+    virtual std::unique_ptr<knowhere::SearchParametersHNSWWrapper>
+    CreateSearchParameters(const FaissHnswConfig&) const {
+        return std::make_unique<knowhere::SearchParametersHNSWWrapper>();
+    }
+
     BaseFaissRegularIndexHNSWNode(const int32_t& version, const Object& object, DataFormatEnum data_format_in)
         : BaseFaissRegularIndexNode(version, object), data_format{data_format_in} {
     }
@@ -1359,7 +1368,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const auto rows = dataset->GetRows();
         const auto* data = dataset->GetTensor();
 
-        const auto hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
+        const auto& hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
         const auto k = hnsw_cfg.k.value();
 
         BitsetView bitset(bitset_);
@@ -1389,9 +1398,11 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         // whether a user wants a refine
         const bool whether_to_enable_refine = hnsw_cfg.refine_k.has_value();
 
+        auto search_parameters = CreateSearchParameters(hnsw_cfg);
         // set up an index wrapper
-        auto [index_wrapper, is_refined] = create_conditional_hnsw_wrapper(
-            indexes[index_id].get(), hnsw_cfg, whether_bf_search.value_or(false), whether_to_enable_refine);
+        auto [index_wrapper, is_refined] =
+            create_conditional_hnsw_wrapper(indexes[index_id].get(), hnsw_cfg, whether_bf_search.value_or(false),
+                                            whether_to_enable_refine, search_parameters.get());
 
         if (index_wrapper == nullptr) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
@@ -1412,7 +1423,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         faiss::Index* index_wrapper_ptr = index_wrapper.get();
 
         // set up faiss search parameters
-        knowhere::SearchParametersHNSWWrapper hnsw_search_params;
+        auto& hnsw_search_params = *search_parameters;
         if (hnsw_cfg.ef.has_value()) {
             hnsw_search_params.efSearch = hnsw_cfg.ef.value();
         }
@@ -1590,7 +1601,20 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
                         dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(indexes[index_id].get());
                     if (index_refine != nullptr) {
-                        dist_computer.reset(index_refine->refine_index->get_distance_computer());
+                        const auto* graph =
+                            dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(index_refine->base_index);
+                        const auto* norms =
+                            graph ? dynamic_cast<const faiss::cppcontrib::knowhere::HasInverseL2Norms*>(graph->storage)
+                                  : nullptr;
+                        if (is_cosine && norms) {
+                            // Match Search: refine storage holds unnormalized vectors,
+                            // while the base storage owns their original inverse norms.
+                            IndexWrapperCosine refine_wrapper(index_refine->refine_index,
+                                                              norms->get_inverse_l2_norms());
+                            dist_computer.reset(refine_wrapper.get_distance_computer());
+                        } else {
+                            dist_computer.reset(index_refine->refine_index->get_distance_computer());
+                        }
                     } else {
                         dist_computer.reset(indexes[index_id]->get_distance_computer());
                     }
@@ -1660,7 +1684,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const auto rows = dataset->GetRows();
         const auto* data = dataset->GetTensor();
 
-        const auto hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
+        const auto& hnsw_cfg = static_cast<const FaissHnswConfig&>(*cfg);
         BitsetView bitset(bitset_);
         auto index_id = getIndexToSearchByScalarInfo(bitset);
         if (index_id < 0) {
@@ -1694,9 +1718,11 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         // whether a user wants a refine
         const bool whether_to_enable_refine = true;
 
+        auto search_parameters = CreateSearchParameters(hnsw_cfg);
         // set up an index wrapper
-        auto [index_wrapper, is_refined] = create_conditional_hnsw_wrapper(
-            indexes[index_id].get(), hnsw_cfg, whether_bf_search.value_or(false), whether_to_enable_refine);
+        auto [index_wrapper, is_refined] =
+            create_conditional_hnsw_wrapper(indexes[index_id].get(), hnsw_cfg, whether_bf_search.value_or(false),
+                                            whether_to_enable_refine, search_parameters.get());
 
         if (index_wrapper == nullptr) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
@@ -1705,7 +1731,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         faiss::Index* index_wrapper_ptr = index_wrapper.get();
 
         // set up faiss search parameters
-        knowhere::SearchParametersHNSWWrapper hnsw_search_params;
+        auto& hnsw_search_params = *search_parameters;
 
         if (hnsw_cfg.ef.has_value()) {
             hnsw_search_params.efSearch = hnsw_cfg.ef.value();
@@ -1993,6 +2019,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         const bool larger_is_closer = (IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::IP) || is_cosine);
 
         const auto ef = hnsw_cfg.ef.value_or(kIteratorSeedEf);
+        const auto storage_search_params = CreateSearchParameters(hnsw_cfg);
         const auto& id_map = GetIdMap();
         const auto* result_id_map = SearchResultIdMap(id_map);
 
@@ -2033,7 +2060,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                 auto it = std::make_shared<FaissHnswIterator>(
                     indexes[index_id], labels.empty() ? nullptr : labels[index_id], std::move(cur_query), bitset, ef,
                     larger_is_closer, iterator_refine_ratio, label_to_internal_offset, mv_base_offset,
-                    use_knowhere_search_pool);
+                    use_knowhere_search_pool, storage_search_params.get());
                 it->SetResultIdMap(result_id_map);
                 // store
                 vec[i] = it;
@@ -3032,6 +3059,297 @@ class BaseFaissRegularIndexHNSWPQNodeTemplate : public BaseFaissRegularIndexHNSW
     }
 };
 
+// Build an exact HNSW graph with Flat storage, train RaBitQ independently,
+// then replace the Flat storage after both indexes have received the data.
+// RaBitQ does not currently provide the symmetric code-to-code distance that
+// HNSW graph construction requires, so the finalized index is intentionally
+// immutable.
+class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode {
+ public:
+    Status
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config>) override {
+        auto binary = binset.GetByName(Type());
+        if (!binary)
+            return Status::invalid_binary_set;
+        MemoryIOReader reader(binary->data.get(), binary->size);
+        return LoadRaBitQ(reader);
+    }
+
+    Status
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config>) override {
+        try {
+            faiss::FileIOReader reader(filename.c_str());
+            return LoadRaBitQ(reader);
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "RaBitQ file load failed: " << e.what();
+            return Status::faiss_inner_error;
+        }
+    }
+
+    std::unique_ptr<knowhere::SearchParametersHNSWWrapper>
+    CreateSearchParameters(const FaissHnswConfig& config) const override {
+        auto params = std::make_unique<knowhere::SearchParametersHNSWRaBitQWrapper>();
+        params->storage_params.qb = dynamic_cast<const FaissHnswRaBitQConfig&>(config).rbq_bits_query.value_or(4);
+        return params;
+    }
+
+    BaseFaissRegularIndexHNSWRaBitQNode(const int32_t& version, const Object& object, DataFormatEnum data_format)
+        : BaseFaissRegularIndexHNSWNode(version, object, data_format) {
+    }
+
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<FaissHnswRaBitQConfig>();
+    }
+
+    std::unique_ptr<BaseConfig>
+    CreateConfig() const override {
+        return StaticCreateConfig();
+    }
+
+    std::string
+    Type() const override {
+        return knowhere::IndexEnum::INDEX_HNSW_RABITQ;
+    }
+
+    bool
+    IsAdditionalScalarSupported(bool) const override {
+        return false;
+    }
+
+    bool
+    IsIndexRefineEnabled() const override {
+        return !indexes.empty() && std::all_of(indexes.begin(), indexes.end(), [](const auto& index) {
+            return index != nullptr &&
+                   dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(index.get()) != nullptr;
+        });
+    }
+
+ protected:
+    std::vector<std::unique_ptr<faiss::IndexPreTransform>> tmp_index_rabitq;
+
+    Status
+    LoadRaBitQ(faiss::IOReader& reader) {
+        try {
+            // Validate before replacing the live index. Other readable Faiss
+            // types are not valid HNSW_RABITQ payloads, including MV containers.
+            auto loaded = std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
+            const auto* refine = dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(loaded.get());
+            const auto* rbq = dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSWRaBitQ*>(
+                refine ? refine->base_index : loaded.get());
+            if (!rbq)
+                return Status::invalid_serialized_index_type;
+            // read_index already checked the storage and HNSW composition.
+            // Only the outer Knowhere type and optional refine relation remain.
+            if (refine) {
+                const auto* storage = refine->refine_index;
+                if (!storage || !refine->is_trained || !storage->is_trained || refine->d != rbq->d ||
+                    storage->d != rbq->d || refine->ntotal != rbq->ntotal || storage->ntotal != rbq->ntotal ||
+                    refine->metric_type != rbq->metric_type || storage->metric_type != rbq->metric_type) {
+                    return Status::invalid_serialized_index_type;
+                }
+            }
+            indexes.assign(1, std::shared_ptr<faiss::Index>(loaded.release()));
+            tmp_index_rabitq.clear();
+            return Status::success;
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "RaBitQ load failed: " << e.what();
+            return is_faiss_fourcc_error(e.what()) ? Status::invalid_serialized_index_type : Status::faiss_inner_error;
+        }
+    }
+
+    Status
+    TrainInternal(const DataSetPtr dataset, const Config& cfg) override {
+        const auto rows = dataset->GetRows();
+        const auto dim = dataset->GetDim();
+        const auto& hnsw_cfg = static_cast<const FaissHnswRaBitQConfig&>(cfg);
+
+        auto metric = Str2FaissMetricType(hnsw_cfg.metric_type.value());
+        if (!metric.has_value() ||
+            (metric.value() != faiss::METRIC_L2 && metric.value() != faiss::METRIC_INNER_PRODUCT)) {
+            LOG_KNOWHERE_ERROR_ << "HNSW_RABITQ only supports L2, IP and COSINE metrics";
+            return Status::invalid_metric_type;
+        }
+        const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), metric::COSINE);
+        const auto& scalar_info_map =
+            dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
+        if (!scalar_info_map.empty()) {
+            LOG_KNOWHERE_ERROR_ << "HNSW_RABITQ does not support building with scalar info";
+            return Status::invalid_args;
+        }
+
+        auto float_ds_ptr = convert_ds_to_float(dataset, data_format);
+        if (float_ds_ptr == nullptr) {
+            LOG_KNOWHERE_ERROR_ << "Unsupported data format";
+            return Status::invalid_args;
+        }
+        const auto* data = static_cast<const float*>(float_ds_ptr->GetTensor());
+
+        try {
+            std::unique_ptr<faiss::cppcontrib::knowhere::IndexHNSW> hnsw_index;
+            if (is_cosine) {
+                hnsw_index =
+                    std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWFlatCosine>(dim, hnsw_cfg.M.value());
+            } else {
+                hnsw_index = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWFlat>(dim, hnsw_cfg.M.value(),
+                                                                                          metric.value());
+            }
+            hnsw_index->hnsw.efConstruction = hnsw_cfg.efConstruction.value();
+
+            const auto rbq_bits = static_cast<uint8_t>(hnsw_cfg.rbq_bits.value());
+            auto rabitq_index = std::make_unique<faiss::IndexRaBitQ>(dim, metric.value(), rbq_bits);
+            // Query quantization accelerates the coarse estimate; full scoring uses FP32.
+            rabitq_index->qb = 4;
+            rabitq_index->centered = false;
+            auto rotation = std::make_unique<faiss::RandomRotationMatrix>(dim, dim);
+            std::unique_ptr<faiss::IndexPreTransform> transformed_rabitq;
+            if (is_cosine) {
+                transformed_rabitq = std::make_unique<faiss::cppcontrib::knowhere::IndexPreTransformRaBitQCosine>(
+                    rotation.get(), rabitq_index.get());
+            } else {
+                transformed_rabitq = std::make_unique<faiss::IndexPreTransform>(rotation.get(), rabitq_index.get());
+            }
+            transformed_rabitq->own_fields = true;
+            rotation.release();
+            rabitq_index.release();
+
+            std::unique_ptr<faiss::Index> final_index;
+            if (hnsw_cfg.refine.value_or(false) && hnsw_cfg.refine_type.has_value()) {
+                const auto hnsw_d = hnsw_index->storage->d;
+                const auto hnsw_metric_type = hnsw_index->storage->metric_type;
+                auto final_index_cnd = pick_refine_index(data_format, hnsw_cfg.refine_type, std::move(hnsw_index),
+                                                         hnsw_d, hnsw_metric_type);
+                if (!final_index_cnd.has_value()) {
+                    return Status::invalid_args;
+                }
+                final_index = std::move(final_index_cnd.value());
+            } else {
+                final_index = std::move(hnsw_index);
+            }
+
+            LOG_KNOWHERE_INFO_ << "Training exact HNSW graph storage";
+            final_index->train(rows, data);
+            LOG_KNOWHERE_INFO_ << "Training RaBitQ storage";
+            transformed_rabitq->train(rows, data);
+
+            indexes[0] = std::move(final_index);
+            tmp_index_rabitq.clear();
+            tmp_index_rabitq.emplace_back(std::move(transformed_rabitq));
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return Status::faiss_inner_error;
+        }
+
+        return Status::success;
+    }
+
+    Status
+    AddInternal(const DataSetPtr dataset, const Config&) override {
+        if (isIndexEmpty()) {
+            LOG_KNOWHERE_ERROR_ << "Can not add data to an empty index.";
+            return Status::empty_index;
+        }
+        if (tmp_index_rabitq.size() != indexes.size() || tmp_index_rabitq.empty() || tmp_index_rabitq[0] == nullptr) {
+            LOG_KNOWHERE_ERROR_ << "HNSW_RABITQ is immutable after its initial Add";
+            return Status::not_implemented;
+        }
+
+        const auto& scalar_info_map =
+            dataset->Get<std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>>(meta::SCALAR_INFO);
+        if (!scalar_info_map.empty()) {
+            LOG_KNOWHERE_ERROR_ << "HNSW_RABITQ does not support building with scalar info";
+            return Status::invalid_args;
+        }
+
+        try {
+            LOG_KNOWHERE_INFO_ << "Adding " << dataset->GetRows() << " rows to exact HNSW graph";
+            auto status = add_to_index(indexes[0].get(), dataset, data_format);
+            if (status != Status::success) {
+                return status;
+            }
+
+            LOG_KNOWHERE_INFO_ << "Adding " << dataset->GetRows() << " rows to RaBitQ storage";
+            // Bound the rotation buffer only while populating RBQ storage;
+            // leave graph/refine construction and the common add API unchanged.
+            if (data_format == DataFormatEnum::fp32) {
+                faiss::cppcontrib::knowhere::rabitq_build::add_in_blocks(
+                    *tmp_index_rabitq[0], dataset->GetRows(), static_cast<const float*>(dataset->GetTensor()));
+            } else {
+                // Non-FP32 conversion already feeds storage in 4096-row blocks.
+                status = add_to_index(tmp_index_rabitq[0].get(), dataset, data_format);
+            }
+            if (status != Status::success) {
+                return status;
+            }
+
+            faiss::cppcontrib::knowhere::IndexRefine* index_refine =
+                dynamic_cast<faiss::cppcontrib::knowhere::IndexRefine*>(indexes[0].get());
+            auto* index_hnsw = index_refine != nullptr
+                                   ? dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(index_refine->base_index)
+                                   : dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(indexes[0].get());
+            if (index_hnsw == nullptr) {
+                LOG_KNOWHERE_ERROR_ << "HNSW_RABITQ build produced an unexpected base index";
+                return Status::invalid_index_error;
+            }
+
+            const bool is_cosine = faiss::cppcontrib::knowhere::is_cosine_index(index_hnsw->storage);
+            std::unique_ptr<faiss::cppcontrib::knowhere::IndexHNSWRaBitQ> index_hnsw_rabitq;
+            if (is_cosine) {
+                index_hnsw_rabitq = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWRaBitQCosine>();
+            } else {
+                index_hnsw_rabitq = std::make_unique<faiss::cppcontrib::knowhere::IndexHNSWRaBitQ>();
+            }
+            // C++ slicing is intentional: preserve the exact graph while
+            // changing only the runtime HNSW type and its vector storage.
+            static_cast<faiss::cppcontrib::knowhere::IndexHNSW&>(*index_hnsw_rabitq) =
+                static_cast<faiss::cppcontrib::knowhere::IndexHNSW&>(*index_hnsw);
+
+            // Validate the replacement before relinquishing either owner so a
+            // malformed storage cannot leave the exact graph half-finalized.
+            auto* flat_storage = index_hnsw->storage;
+            index_hnsw_rabitq->storage = tmp_index_rabitq[0].get();
+            index_hnsw_rabitq->own_fields = false;
+            if (is_cosine) {
+                dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSWRaBitQCosine*>(index_hnsw_rabitq.get())
+                    ->check_cosine_storage_compatibility();
+            } else {
+                index_hnsw_rabitq->check_storage_compatibility();
+            }
+            index_hnsw_rabitq->own_fields = true;
+            tmp_index_rabitq[0].release();
+            index_hnsw->storage = nullptr;
+            delete flat_storage;
+
+            if (index_refine != nullptr) {
+                delete index_refine->base_index;
+                index_refine->base_index = index_hnsw_rabitq.release();
+            } else {
+                indexes[0] = std::move(index_hnsw_rabitq);
+            }
+            tmp_index_rabitq.clear();
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
+            return Status::faiss_inner_error;
+        }
+
+        return Status::success;
+    }
+};
+
+template <typename DataType>
+class BaseFaissRegularIndexHNSWRaBitQNodeTemplate : public BaseFaissRegularIndexHNSWRaBitQNode {
+ public:
+    BaseFaissRegularIndexHNSWRaBitQNodeTemplate(const int32_t& version, const Object& object)
+        : BaseFaissRegularIndexHNSWRaBitQNode(version, object, datatype_v<DataType>) {
+    }
+
+    static bool
+    StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
+        const auto& hnsw_cfg = static_cast<const FaissHnswRaBitQConfig&>(config);
+        return has_lossless_refine_index(hnsw_cfg.refine, hnsw_cfg.refine_type, datatype_v<DataType>);
+    }
+};
+
 // this index trains PRQ and HNSW+FLAT separately, then constructs HNSW+PRQ
 class BaseFaissRegularIndexHNSWPRQNode : public BaseFaissRegularIndexHNSWNode {
  public:
@@ -3354,5 +3672,7 @@ KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexH
                                                     knowhere::feature::EMB_LIST)
 KNOWHERE_SIMPLE_REGISTER_DENSE_INT_GLOBAL(HNSW_PRQ, BaseFaissRegularIndexHNSWPRQNodeTemplate,
                                           knowhere::feature::MMAP | knowhere::feature::MV | knowhere::feature::EMB_LIST)
+KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(HNSW_RABITQ, BaseFaissRegularIndexHNSWRaBitQNodeTemplate,
+                                                knowhere::feature::NONE)
 
 }  // namespace knowhere

@@ -20,6 +20,9 @@ static size_t magic_num = 2;
 
 size_t
 MemoryIOWriter::operator()(const void* ptr, size_t size, size_t nitems) {
+    if (size == 0 || nitems == 0) {
+        return 0;
+    }
     auto total_need = size * nitems + rp_;
 
     if (!data_) {  // data == nullptr
@@ -49,6 +52,9 @@ MemoryIOWriter::operator()(const void* ptr, size_t size, size_t nitems) {
 
 size_t
 MemoryIOReader::operator()(void* ptr, size_t size, size_t nitems) {
+    if (size == 0 || nitems == 0) {
+        return 0;
+    }
     if (rp_ >= total_) {
         return 0;
     }
