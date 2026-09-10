@@ -6,6 +6,7 @@
  */
 
 #include <faiss/cppcontrib/knowhere/IndexHNSWRaBitQ.h>
+#include <faiss/cppcontrib/knowhere/impl/RaBitQDistanceEvaluation.h>
 
 #include <faiss/VectorTransform.h>
 #include <faiss/impl/FaissAssert.h>
@@ -67,9 +68,8 @@ struct RaBitQStagedDistanceComputer final : StagedDistanceComputer {
         float d = estimate;
         // Compare in output-distance units: positive cosine scale preserves
         // ordering, avoiding a division for every visited candidate.
-        const float error = factors->f_error * dc->g_error;
-        const bool refine = similarity ? (estimate + error) * s > -threshold
-                                       : std::max(0.0f, estimate - error) < threshold;
+        const bool refine = rabitq_search::should_refine(
+                estimate, factors->f_error, dc->g_error, threshold, similarity, s);
         if (refine) {
             d = dc->distance_to_code_full(code);
             ++refine_count;

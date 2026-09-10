@@ -13,13 +13,18 @@
 
 #include <faiss/cppcontrib/knowhere/IndexHNSWRaBitQ.h>
 
-#include "index/hnsw/impl/IndexHNSWWrapper.h"
+#include "index/hnsw/impl/IndexHNSWRaBitQWrapper.h"
 
 namespace knowhere {
 
 // Owns the per-request storage parameters; no shared index state is changed.
 struct SearchParametersHNSWRaBitQWrapper : SearchParametersHNSWWrapper {
     faiss::RaBitQSearchParameters storage_params;
+
+    std::unique_ptr<faiss::Index>
+    create_hnsw_wrapper(faiss::cppcontrib::knowhere::IndexHNSW* index) const override {
+        return std::make_unique<IndexHNSWRaBitQWrapper>(index);
+    }
 
     faiss::DistanceComputer*
     storage_distance_computer(const faiss::Index* index) const override {

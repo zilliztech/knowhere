@@ -11,6 +11,7 @@
 
 #include <faiss/cppcontrib/knowhere/IndexHNSWRaBitQ.h>
 #include <faiss/impl/RaBitQUtils.h>
+#include <faiss/cppcontrib/knowhere/impl/RaBitQDistanceEvaluation.h>
 #include <faiss/impl/ResultHandler.h>
 #include <faiss/impl/VisitedTable.h>
 #include <faiss/impl/hnsw/MinimaxHeap.h>
@@ -92,10 +93,9 @@ SearchStats search_one(const faiss::cppcontrib::knowhere::HNSW& graph,
                 const auto* factors = reinterpret_cast<const faiss::rabitq_utils::SignBitFactorsWithError*>(
                     code + (rq.d + 7) / 8);
                 const float s = scale(ids[i]);
-                const float error = factors->f_error * rq.g_error;
                 float distance = estimate;
-                const bool refine = similarity ? (estimate + error) * s > -threshold
-                                               : std::max(0.f, estimate - error) < threshold;
+                const bool refine = should_refine(
+                        estimate, factors->f_error, rq.g_error, threshold, similarity, s);
                 if (refine) {
                     distance = rq.distance_to_code_full(code);
                     ++stats.refine;

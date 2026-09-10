@@ -215,10 +215,7 @@ void read_xb_vector(VectorT& target, IOReader* f) {
  * Read
  **************************************************************/
 
-static void read_index_header(
-        Index* idx,
-        IOReader* f,
-        bool* is_cosine_out = nullptr) {
+static void read_index_header(Index* idx, IOReader* f, bool* is_cosine_out = nullptr) {
     READ1(idx->d);
     READ1(idx->ntotal);
 
@@ -364,27 +361,24 @@ static void read_ArrayInvertedLists_sizes(
                 "read_InvertedLists:"
                 " WARN! inverted lists not stored with IVF object\n");
         return nullptr;
-    } else if (h == fourcc("iloa") && !(io_flags & IO_FLAG_MMAP)) {
+    } else if (h == fourcc ("iloa") && !(io_flags & IO_FLAG_MMAP)) {
         size_t nlist;
         size_t code_size;
-        std::vector<size_t> list_length;
+        std::vector <size_t> list_length;
         READ1(nlist);
         READ1(code_size);
         READVECTOR(list_length);
-        auto ails =
-                new ReadOnlyArrayInvertedLists(nlist, code_size, list_length);
+        auto ails = new ReadOnlyArrayInvertedLists(nlist, code_size, list_length);
         size_t n;
         READ1(n);
 #ifdef USE_GPU
-        ails->pin_readonly_ids =
-                std::make_shared<PageLockMemory>(n * sizeof(idx_t));
-        ails->pin_readonly_codes = std::make_shared<PageLockMemory>(
-                n * code_size * sizeof(uint8_t));
-        READANDCHECK((idx_t*)ails->pin_readonly_ids->data, n);
-        READANDCHECK((uint8_t*)ails->pin_readonly_codes->data, n * code_size);
+        ails->pin_readonly_ids = std::make_shared<PageLockMemory>(n * sizeof(idx_t));
+        ails->pin_readonly_codes = std::make_shared<PageLockMemory>(n * code_size * sizeof(uint8_t));
+        READANDCHECK((idx_t *) ails->pin_readonly_ids->data, n);
+        READANDCHECK((uint8_t *) ails->pin_readonly_codes->data, n * code_size);
 #else
         ails->readonly_ids.resize(n);
-        ails->readonly_codes.resize(n * code_size);
+        ails->readonly_codes.resize(n*code_size);
         READANDCHECK(ails->readonly_ids.data(), n);
         READANDCHECK(ails->readonly_codes.data(), n * code_size);
 #endif
@@ -396,8 +390,7 @@ static void read_ArrayInvertedLists_sizes(
         READ1(segment_size);
 
         bool save_norm = io_flags & IO_FLAG_WITH_NORM;
-        auto lca = new ConcurrentArrayInvertedLists(
-                nlist, code_size, segment_size, save_norm);
+        auto lca = new ConcurrentArrayInvertedLists(nlist, code_size, segment_size, save_norm);
         std::vector<size_t> sizes(nlist);
         read_ArrayInvertedLists_sizes(f, sizes);
         for (size_t i = 0; i < lca->nlist; i++) {
@@ -408,15 +401,12 @@ static void read_ArrayInvertedLists_sizes(
             if (n > 0) {
                 size_t seg_num = lca->get_segment_num(i);
                 for (size_t j = 0; j < seg_num; j++) {
-                    size_t seg_size = lca->get_segment_size(i, j);
+                    size_t seg_size = lca->get_segment_size(i , j);
                     size_t seg_off = lca->get_segment_offset(i, j);
-                    READANDCHECK(
-                            lca->codes[i][j].data_.data(),
-                            seg_size * lca->code_size);
+                    READANDCHECK(lca->codes[i][j].data_.data(), seg_size * lca->code_size);
                     READANDCHECK(lca->ids[i][j].data_.data(), seg_size);
                     if (save_norm) {
-                        READANDCHECK(
-                                lca->code_norms[i][j].data_.data(), seg_size);
+                        READANDCHECK(lca->code_norms[i][j].data_.data(), seg_size);
                     }
                 }
             }
@@ -594,7 +584,9 @@ static void read_ProductLocalSearchQuantizer(
     }
 }
 
-static void read_ScalarQuantizer(::faiss::ScalarQuantizer* ivsc, IOReader* f) {
+static void read_ScalarQuantizer(
+        ::faiss::ScalarQuantizer* ivsc,
+        IOReader* f) {
     READ1(ivsc->qtype);
     READ1(ivsc->rangestat);
     READ1(ivsc->rangestat_arg);
@@ -741,11 +733,11 @@ static void read_direct_map(DirectMap* dm, IOReader* f) {
             map[it.first] = it.second;
         }
     }
-    // Path-D step 10.9: the former `if (dm->type ==
-    // DirectMap::ConcurrentArray)` read branch is gone — see the symmetric
-    // comment in index_write.cpp. Old files (if any) with `type == 3` would
-    // fail to round-trip here since the enum value no longer exists; in
-    // practice CC indexes were never written through this path.
+    // Path-D step 10.9: the former `if (dm->type == DirectMap::ConcurrentArray)`
+    // read branch is gone — see the symmetric comment in index_write.cpp.
+    // Old files (if any) with `type == 3` would fail to round-trip here
+    // since the enum value no longer exists; in practice CC indexes
+    // were never written through this path.
 }
 
 static void read_ivf_header(
@@ -833,8 +825,7 @@ Index* read_index(IOReader* f, int io_flags) {
         READVECTOR(wire_l2_norms);
 
         // reconstruct inverse norms from wire L2 norms
-        idxf->inverse_norms_storage =
-                L2NormsStorage::from_l2_norms(wire_l2_norms);
+        idxf->inverse_norms_storage = L2NormsStorage::from_l2_norms(wire_l2_norms);
 
         FAISS_THROW_IF_NOT(
                 idxf->codes.size() == idxf->ntotal * idxf->code_size);
@@ -871,8 +862,7 @@ Index* read_index(IOReader* f, int io_flags) {
             idxfc->code_size = idxf->code_size;
             idxfc->codes = std::move(idxf->codes);
             // reconstruct inverse norms from wire L2 norms
-            idxfc->inverse_norms_storage =
-                    L2NormsStorage::from_l2_norms(wire_code_norms);
+            idxfc->inverse_norms_storage = L2NormsStorage::from_l2_norms(wire_code_norms);
             delete idxf;
             idxf = idxfc;
         }
@@ -893,7 +883,7 @@ Index* read_index(IOReader* f, int io_flags) {
         READVECTOR(idxp->inverse_norms_storage.inverse_l2_norms);
 
         if (!(io_flags & IO_FLAG_PQ_SKIP_SDC_TABLE)) {
-            idxp->pq.compute_sdc_table();
+            idxp->pq.compute_sdc_table ();
         }
 
         idx = idxp;
@@ -919,7 +909,7 @@ Index* read_index(IOReader* f, int io_flags) {
 
         // the following "if" block is Knowhere-specific
         if (h == fourcc("IxPq")) {
-            idxp->pq.compute_sdc_table();
+            idxp->pq.compute_sdc_table ();
         }
 
         idx = idxp;
@@ -1114,7 +1104,8 @@ Index* read_index(IOReader* f, int io_flags) {
         // either enum name, and route legacy data to
         // IndexBinaryScalarQuantizer.
         const int legacy_qt_1bit_direct_marker = 9;
-        if (static_cast<int>(idxs->sq.qtype) == legacy_qt_1bit_direct_marker) {
+        if (static_cast<int>(idxs->sq.qtype) ==
+                    legacy_qt_1bit_direct_marker) {
             IndexBinaryScalarQuantizer* bsq = new IndexBinaryScalarQuantizer(
                     static_cast<int>(idxs->d), idxs->metric_type);
             bsq->ntotal = idxs->ntotal;
@@ -1222,8 +1213,7 @@ Index* read_index(IOReader* f, int io_flags) {
         READ1(idxrf->k_factor);
         if (dynamic_cast<::faiss::IndexFlat*>(idxrf->refine_index)) {
             // then make a RefineFlat with it. Refine index may be a baseline
-            // ::faiss::IndexFlat{,IP,L2} or the knowhere Jaccard-aware
-            // subclass.
+            // ::faiss::IndexFlat{,IP,L2} or the knowhere Jaccard-aware subclass.
             IndexRefine* idxrf_old = idxrf;
             idxrf = new IndexRefineFlat();
             *idxrf = *idxrf_old;
@@ -1423,8 +1413,7 @@ Index* read_index(IOReader* f, int io_flags) {
         // field); Iwrr is baseline multi-bit and does serialize nb_bits.
         auto ivrq = new IndexIVFRaBitQ();
         read_ivf_header(ivrq, f);
-        read_RaBitQuantizer(
-                &ivrq->rabitq, f, /*multi_bit=*/h == fourcc("Iwrr"));
+        read_RaBitQuantizer(&ivrq->rabitq, f, /*multi_bit=*/h == fourcc("Iwrr"));
         READ1(ivrq->code_size);
         READ1(ivrq->by_residual);
         READ1(ivrq->qb);

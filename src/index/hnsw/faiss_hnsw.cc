@@ -1398,9 +1398,11 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         // whether a user wants a refine
         const bool whether_to_enable_refine = hnsw_cfg.refine_k.has_value();
 
+        auto search_parameters = CreateSearchParameters(hnsw_cfg);
         // set up an index wrapper
-        auto [index_wrapper, is_refined] = create_conditional_hnsw_wrapper(
-            indexes[index_id].get(), hnsw_cfg, whether_bf_search.value_or(false), whether_to_enable_refine);
+        auto [index_wrapper, is_refined] =
+            create_conditional_hnsw_wrapper(indexes[index_id].get(), hnsw_cfg, whether_bf_search.value_or(false),
+                                            whether_to_enable_refine, search_parameters.get());
 
         if (index_wrapper == nullptr) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
@@ -1410,8 +1412,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         std::unique_ptr<faiss::Index> bf_index_wrapper = nullptr;
         faiss::Index* bf_index_wrapper_ptr = nullptr;
         if (!whether_bf_search.value_or(false)) {
-            std::tie(bf_index_wrapper, is_refined) =
-                create_conditional_hnsw_wrapper(indexes[index_id].get(), hnsw_cfg, true, whether_to_enable_refine);
+            std::tie(bf_index_wrapper, is_refined) = create_conditional_hnsw_wrapper(
+                indexes[index_id].get(), hnsw_cfg, true, whether_to_enable_refine, search_parameters.get());
             if (bf_index_wrapper == nullptr) {
                 return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
             }
@@ -1421,7 +1423,6 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         faiss::Index* index_wrapper_ptr = index_wrapper.get();
 
         // set up faiss search parameters
-        auto search_parameters = CreateSearchParameters(hnsw_cfg);
         auto& hnsw_search_params = *search_parameters;
         if (hnsw_cfg.ef.has_value()) {
             hnsw_search_params.efSearch = hnsw_cfg.ef.value();
@@ -1704,9 +1705,11 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         // whether a user wants a refine
         const bool whether_to_enable_refine = true;
 
+        auto search_parameters = CreateSearchParameters(hnsw_cfg);
         // set up an index wrapper
-        auto [index_wrapper, is_refined] = create_conditional_hnsw_wrapper(
-            indexes[index_id].get(), hnsw_cfg, whether_bf_search.value_or(false), whether_to_enable_refine);
+        auto [index_wrapper, is_refined] =
+            create_conditional_hnsw_wrapper(indexes[index_id].get(), hnsw_cfg, whether_bf_search.value_or(false),
+                                            whether_to_enable_refine, search_parameters.get());
 
         if (index_wrapper == nullptr) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
@@ -1715,7 +1718,6 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         faiss::Index* index_wrapper_ptr = index_wrapper.get();
 
         // set up faiss search parameters
-        auto search_parameters = CreateSearchParameters(hnsw_cfg);
         auto& hnsw_search_params = *search_parameters;
 
         if (hnsw_cfg.ef.has_value()) {
@@ -3051,6 +3053,26 @@ class BaseFaissRegularIndexHNSWPQNodeTemplate : public BaseFaissRegularIndexHNSW
 // immutable.
 class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode {
  public:
+    Status
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config>) override {
+        auto binary = binset.GetByName(Type());
+        if (!binary)
+            return Status::invalid_binary_set;
+        MemoryIOReader reader(binary->data.get(), binary->size);
+        return LoadRaBitQ(reader);
+    }
+
+    Status
+    DeserializeFromFile(const std::string& filename, std::shared_ptr<Config>) override {
+        try {
+            faiss::FileIOReader reader(filename.c_str());
+            return LoadRaBitQ(reader);
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "RaBitQ file load failed: " << e.what();
+            return Status::faiss_inner_error;
+        }
+    }
+
     std::unique_ptr<knowhere::SearchParametersHNSWWrapper>
     CreateSearchParameters(const FaissHnswConfig& config) const override {
         auto params = std::make_unique<knowhere::SearchParametersHNSWRaBitQWrapper>();
@@ -3092,6 +3114,39 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
 
  protected:
     std::vector<std::unique_ptr<faiss::IndexPreTransform>> tmp_index_rabitq;
+
+    Status
+    LoadRaBitQ(faiss::IOReader& reader) {
+        try {
+            // Validate before replacing the live index. Other readable Faiss
+            // types are not valid HNSW_RABITQ payloads, including MV containers.
+            auto loaded = std::unique_ptr<faiss::Index>(faiss::cppcontrib::knowhere::read_index(&reader));
+            const auto* refine = dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(loaded.get());
+            const auto* rbq = dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSWRaBitQ*>(
+                refine ? refine->base_index : loaded.get());
+            if (!rbq)
+                return Status::invalid_serialized_index_type;
+            if (const auto* cosine = dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSWRaBitQCosine*>(rbq)) {
+                cosine->validate_cosine_storage();
+            } else {
+                rbq->validate_storage();
+            }
+            if (refine) {
+                const auto* storage = refine->refine_index;
+                if (!storage || !refine->is_trained || !storage->is_trained || refine->d != rbq->d ||
+                    storage->d != rbq->d || refine->ntotal != rbq->ntotal || storage->ntotal != rbq->ntotal ||
+                    refine->metric_type != rbq->metric_type || storage->metric_type != rbq->metric_type) {
+                    return Status::invalid_serialized_index_type;
+                }
+            }
+            indexes.assign(1, std::shared_ptr<faiss::Index>(loaded.release()));
+            tmp_index_rabitq.clear();
+            return Status::success;
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "RaBitQ load failed: " << e.what();
+            return is_faiss_fourcc_error(e.what()) ? Status::invalid_serialized_index_type : Status::faiss_inner_error;
+        }
+    }
 
     Status
     TrainInternal(const DataSetPtr dataset, const Config& cfg) override {

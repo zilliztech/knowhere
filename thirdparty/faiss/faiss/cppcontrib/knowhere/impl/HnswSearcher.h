@@ -34,7 +34,6 @@
 
 // Knowhere-specific headers
 #include <faiss/cppcontrib/knowhere/impl/Neighbor.h>
-#include <faiss/cppcontrib/knowhere/impl/StagedDistanceComputer.h>
 
 namespace faiss {
 namespace cppcontrib {
@@ -47,6 +46,26 @@ constexpr bool track_hnsw_stats = true;
 
 } // namespace
 
+// Default evaluator preserves ordinary full-distance, batch-four execution.
+struct FullDistanceEvaluation {
+    void begin(size_t) {}
+    void record(float, int) {}
+
+    template <class DC, class Emit>
+    size_t compute(DC& dc, const size_t* ids, const int*, size_t count,
+                   int, Emit&& emit) {
+        if (count == 4) {
+            float d[4];
+            dc.distances_batch_4(ids[0], ids[1], ids[2], ids[3],
+                                 d[0], d[1], d[2], d[3]);
+            for (size_t i = 0; i < count; ++i) emit(i, d[i]);
+        } else {
+            for (size_t i = 0; i < count; ++i) emit(i, dc(ids[i]));
+        }
+        return 0;
+    }
+};
+
 // Accomodates all the search logic and variables.
 /// * DistanceComputerT is responsible for computing distances
 /// * GraphVisitorT records visited edges
@@ -58,7 +77,8 @@ template <
         typename DistanceComputerT,
         typename GraphVisitorT,
         typename VisitedT,
-        typename FilterT>
+        typename FilterT,
+        typename EvaluationT = FullDistanceEvaluation>
 struct v2_hnsw_searcher {
     using storage_idx_t = faiss::cppcontrib::knowhere::HNSW::storage_idx_t;
     using idx_t = faiss::idx_t;
@@ -90,21 +110,7 @@ struct v2_hnsw_searcher {
     // the pointer is not owned.
     const faiss::cppcontrib::knowhere::SearchParametersHNSW* params;
 
-    StagedDistanceComputer* staged = nullptr;
-    size_t staged_k = 0;
-    std::priority_queue<float> staged_results;
-
-    float staged_threshold() const {
-        return staged_results.size() < staged_k
-                ? std::numeric_limits<float>::infinity() : staged_results.top();
-    }
-    void record_staged_result(float distance, int status) {
-        if (!staged || !staged_k || status == knowhere::Neighbor::kInvalid) return;
-        if (staged_results.size() < staged_k) staged_results.push(distance);
-        else if (distance < staged_results.top()) {
-            staged_results.pop(); staged_results.push(distance);
-        }
-    }
+    EvaluationT evaluation;
 
     //
     v2_hnsw_searcher(
@@ -248,76 +254,31 @@ struct v2_hnsw_searcher {
             ndis += 1;
 
             if (counter == 4) {
-                // Staged evaluation preserves per-candidate threshold updates.
-                if (staged && staged_k && level == 0) {
-                    for (size_t i = 0; i < 4; ++i) {
-                        const float d = staged->evaluate(saved_indices[i], staged_threshold());
-                        graph_visitor.visit_edge(level, node_id, saved_indices[i], d);
-                        record_staged_result(d, saved_statuses[i]);
-                        func_add_candidate(knowhere::Neighbor(saved_indices[i], d, saved_statuses[i]));
-                    }
-                    counter = 0;
-                    continue;
-                }
-                // evaluate 4x distances at once
-                float dis[4] = {0, 0, 0, 0};
-                qdis.distances_batch_4(
-                        saved_indices[0],
-                        saved_indices[1],
-                        saved_indices[2],
-                        saved_indices[3],
-                        dis[0],
-                        dis[1],
-                        dis[2],
-                        dis[3]);
-
-                for (size_t id4 = 0; id4 < 4; id4++) {
-                    // record a traversed edge
-                    graph_visitor.visit_edge(
-                            level, node_id, saved_indices[id4], dis[id4]);
-
-                    // add a record of visited nodes
-                    knowhere::Neighbor nn(
-                            saved_indices[id4], dis[id4], saved_statuses[id4]);
-                    if (func_add_candidate(nn)) {
-#if defined(USE_PREFETCH)
-                        // TODO
-                        // _mm_prefetch(get_linklist0(v), _MM_HINT_T0);
-#endif
-                    }
-                }
+                ndis += evaluation.compute(
+                        qdis, saved_indices, saved_statuses, counter, level,
+                        [&](size_t i, float distance) {
+                            graph_visitor.visit_edge(level, node_id, saved_indices[i], distance);
+                            func_add_candidate(knowhere::Neighbor(
+                                    saved_indices[i], distance, saved_statuses[i]));
+                        });
 
                 counter = 0;
             }
         }
 
-        // process leftovers
-        for (size_t id4 = 0; id4 < counter; id4++) {
-            // evaluate a single distance
-            const float dis = staged && staged_k && level == 0
-                    ? staged->evaluate(saved_indices[id4], staged_threshold())
-                    : qdis(saved_indices[id4]);
-            record_staged_result(dis, saved_statuses[id4]);
+        // Evaluate the remaining candidates with the same policy.
+        ndis += evaluation.compute(
+                qdis, saved_indices, saved_statuses, counter, level,
+                [&](size_t i, float distance) {
+                    graph_visitor.visit_edge(level, node_id, saved_indices[i], distance);
+                    func_add_candidate(knowhere::Neighbor(
+                            saved_indices[i], distance, saved_statuses[i]));
+                });
 
-            // record a traversed edge
-            graph_visitor.visit_edge(level, node_id, saved_indices[id4], dis);
-
-            // add a record of visited
-            knowhere::Neighbor nn(saved_indices[id4], dis, saved_statuses[id4]);
-            if (func_add_candidate(nn)) {
-#if defined(USE_PREFETCH)
-                // TODO
-                // _mm_prefetch(get_linklist0(v), _MM_HINT_T0);
-#endif
-            }
-        }
-
-        // update stats
         if (track_hnsw_stats) {
             stats.ndis = ndis;
             stats.nhops = 1;
         }
-
         // done
         return stats;
     }
@@ -357,6 +318,9 @@ struct v2_hnsw_searcher {
             }
         }
 
+        if (disqualified) {
+            retset.save_pending(*disqualified);
+        }
         // done
         return stats;
     }
@@ -400,9 +364,7 @@ struct v2_hnsw_searcher {
         // grab some needed parameters
         const int efSearch = params ? params->efSearch : hnsw.efSearch;
 
-        staged = dynamic_cast<StagedDistanceComputer*>(&qdis);
-        staged_k = static_cast<size_t>(k);
-        staged_results = {};
+        evaluation.begin(static_cast<size_t>(k));
 
         // yes.
         // greedy search on upper levels.
@@ -439,7 +401,7 @@ struct v2_hnsw_searcher {
             }
 
             visited_nodes[nearest] = true;
-            record_staged_result(d_nearest, filter.is_member(nearest)
+            evaluation.record(d_nearest, filter.is_member(nearest)
                     ? knowhere::Neighbor::kValid : knowhere::Neighbor::kInvalid);
         }
 
