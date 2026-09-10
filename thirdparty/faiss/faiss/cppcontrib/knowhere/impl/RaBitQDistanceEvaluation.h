@@ -3,46 +3,64 @@
 #pragma once
 
 #include <faiss/cppcontrib/knowhere/impl/HnswSearcher.h>
-#include <faiss/cppcontrib/knowhere/impl/StagedDistanceComputer.h>
+#include <faiss/cppcontrib/knowhere/impl/RaBitQStagedDistanceComputer.h>
 #include <faiss/impl/RaBitQUtils.h>
 #include <limits>
-#include <queue>
+#include <vector>
 #include <utility>
 
 namespace faiss::cppcontrib::knowhere::rabitq_search {
 
-// Both graph traversal implementations compare in smaller-is-better units.
-// This is a probability window, not a deterministic lower bound.
-inline bool should_refine(float estimate, float f_error, float g_error,
-                          float threshold, bool similarity, float scale) {
-    const float error = f_error * g_error;
-    return similarity ? (estimate + error) * scale > -threshold
-                      : std::max(0.0f, estimate - error) < threshold;
-}
-
-// Used only by the RaBitQ wrapper's filtered/feder/RBQ1 kNN specialization.
+// Used only by the RaBitQ wrapper's Knowhere-traversal specialization.
 struct DistanceEvaluation {
     size_t k = 0;
-    std::priority_queue<float> results;
+    std::vector<float> results;
 
-    void begin(size_t count) { k = count; results = {}; }
+    void begin(size_t count) { k = count; results.clear(); results.reserve(k); }
     float threshold() const {
-        return results.size() < k ? std::numeric_limits<float>::infinity() : results.top();
+        return results.size() < k ? std::numeric_limits<float>::infinity() : results.front();
     }
     void record(float distance, int status) {
         if (!k || status == Neighbor::kInvalid) return;
-        if (results.size() < k) results.push(distance);
-        else if (distance < results.top()) {
-            results.pop();
-            results.push(distance);
+        if (results.size() < k) {
+            results.push_back(distance);
+            std::push_heap(results.begin(), results.end());
+        } else if (distance < results.front()) {
+            // Replace the worst retained distance with one sift-down, instead
+            // of repairing the threshold heap separately for pop and push.
+            size_t parent = 0;
+            for (size_t child = 1; child < k; child = 2 * parent + 1) {
+                if (child + 1 < k && results[child] < results[child + 1]) ++child;
+                if (!(distance < results[child])) break;
+                results[parent] = results[child];
+                parent = child;
+            }
+            results[parent] = distance;
         }
     }
     template <class DC, class Emit>
     size_t compute(DC& dc, const size_t* ids, const int* statuses,
                    size_t count, int level, Emit&& emit) {
         if (k && level == 0) {
-            auto& staged = static_cast<StagedDistanceComputer&>(dc);
+            auto& staged = static_cast<RaBitQStagedDistanceComputer&>(dc);
             const auto before = staged.refine_count;
+            if (count == 4 && staged.dc->nb_bits > 1) {
+                const uint8_t* codes[4];
+                for (size_t i = 0; i < 4; ++i) {
+                    codes[i] = staged.dc->codes + ids[i] * staged.dc->code_size;
+                }
+                float estimates[4];
+                staged.dc->distance_to_code_1bit_batch_4(codes, estimates);
+                staged.estimate_count += 4;
+                for (size_t i = 0; i < 4; ++i) {
+                    // Only estimates are batched. Refine and update the threshold
+                    // in exactly the original candidate order.
+                    const float distance = staged.evaluate_estimate(ids[i], codes[i], estimates[i], threshold());
+                    record(distance, statuses[i]);
+                    emit(i, distance);
+                }
+                return staged.refine_count - before;
+            }
             for (size_t i = 0; i < count; ++i) {
                 const float distance = staged.evaluate(ids[i], threshold());
                 record(distance, statuses[i]);

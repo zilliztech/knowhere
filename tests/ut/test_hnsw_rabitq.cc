@@ -3,7 +3,7 @@
 
 #include <faiss/VectorTransform.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSWRaBitQ.h>
-#include <faiss/cppcontrib/knowhere/impl/RaBitQSearch.h>
+#include <faiss/cppcontrib/knowhere/impl/RaBitQDistanceEvaluation.h>
 #include <faiss/cppcontrib/knowhere/impl/StagedDistanceComputer.h>
 #include <faiss/cppcontrib/knowhere/index_io.h>
 #include <faiss/impl/RaBitQUtils.h>
@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <cmath>
 #include <future>
+#include <queue>
+#include <random>
 #include <vector>
 
 #include "catch2/catch_approx.hpp"
@@ -57,6 +59,99 @@ struct OriginalFullEvaluation {
     }
 };
 }  // namespace
+
+TEST_CASE("RaBitQ threshold heap matches priority queue after every update", "[hnsw_rabitq_core]") {
+    using faiss::cppcontrib::knowhere::Neighbor;
+    rabitq_search::DistanceEvaluation evaluation;
+    std::mt19937 rng(12345);
+    for (size_t k : {1, 2, 3, 10, 100, 511}) {
+        for (int mode = 0; mode < 3; ++mode) {
+            evaluation.begin(k);
+            std::priority_queue<float> reference;
+            for (int i = 0; i < 10000; ++i) {
+                float distance = mode == 0 ? static_cast<float>(static_cast<int>(rng() % 2001) - 1000)
+                                           : static_cast<float>(mode == 1 ? i : -i);
+                if (i % 89 == 0)
+                    distance = std::numeric_limits<float>::infinity();
+                if (i % 97 == 0)
+                    distance = -std::numeric_limits<float>::infinity();
+                const int status = i % 7 == 0 ? Neighbor::kInvalid : Neighbor::kValid;
+                evaluation.record(distance, status);
+                if (status != Neighbor::kInvalid) {
+                    if (reference.size() < k)
+                        reference.push(distance);
+                    else if (distance < reference.top()) {
+                        reference.pop();
+                        reference.push(distance);
+                    }
+                }
+                const float expected = reference.size() < k ? std::numeric_limits<float>::infinity() : reference.top();
+                REQUIRE(evaluation.threshold() == expected);
+                REQUIRE(std::is_heap(evaluation.results.begin(), evaluation.results.end()));
+            }
+        }
+    }
+    evaluation.begin(0);
+    evaluation.record(1.0f, Neighbor::kValid);
+    REQUIRE(evaluation.results.empty());
+}
+
+TEST_CASE("RaBitQ batch4 integer kernel matches independent scalar candidates", "[hnsw_rabitq_core]") {
+#if defined(__GNUC__) && defined(__x86_64__)
+    if (!__builtin_cpu_supports("avx512f") || !__builtin_cpu_supports("avx512bw") ||
+        !__builtin_cpu_supports("avx512dq") || !__builtin_cpu_supports("avx512vl"))
+        return;
+    for (size_t bytes : {1, 7, 8, 15, 16, 31, 32, 63, 64, 65, 96, 120, 128, 192, 193}) {
+        std::vector<uint8_t> query(bytes * 4 + 1);
+        std::vector<uint8_t> data[4];
+        const uint8_t* codes[4];
+        for (size_t i = 0; i < query.size(); ++i) query[i] = (i * 17 + 47) % 256;
+        for (int lane = 0; lane < 4; ++lane) {
+            data[lane].resize(bytes + 1);
+            for (size_t i = 0; i < data[lane].size(); ++i) data[lane][i] = (i * 31 + lane * 73) % 256;
+            codes[lane] = data[lane].data() + 1;
+        }
+        faiss::rabitq::BitwiseAndDotProductResult actual[4];
+        faiss::rabitq::bitwise_q4_batch_4<faiss::SIMDLevel::AVX512>(query.data() + 1, codes, bytes, actual);
+        for (int lane = 0; lane < 4; ++lane) {
+            const auto expected = faiss::rabitq::bitwise_and_dot_product_with_popcount<faiss::SIMDLevel::NONE>(
+                query.data() + 1, codes[lane], bytes, 4);
+            REQUIRE(actual[lane].dot_product == expected.dot_product);
+            REQUIRE(actual[lane].popcount == expected.popcount);
+        }
+    }
+#endif
+}
+
+TEST_CASE("RaBitQ batch4 estimates exactly match scalar calls across query modes", "[hnsw_rabitq_core]") {
+    for (int dim : {65, 960, 1024, 1536}) {
+        auto base = GenDataSet(32, dim, 9201);
+        auto query = GenDataSet(2, dim, 9202);
+        for (auto metric : {faiss::METRIC_L2, faiss::METRIC_INNER_PRODUCT}) {
+            for (int bits : {1, 4, 8, 9}) {
+                faiss::IndexRaBitQ index(dim, metric, bits);
+                index.train(32, static_cast<const float*>(base->GetTensor()));
+                index.add(32, static_cast<const float*>(base->GetTensor()));
+                for (int qb : {0, 4, 8}) {
+                    for (bool centered : {false, true}) {
+                        std::unique_ptr<faiss::FlatCodesDistanceComputer> owner(
+                            index.get_quantized_distance_computer(qb, centered));
+                        auto* dc = dynamic_cast<faiss::RaBitQDistanceComputer*>(owner.get());
+                        REQUIRE(dc != nullptr);
+                        for (int q = 0; q < 2; ++q) {
+                            dc->set_query(static_cast<const float*>(query->GetTensor()) + q * dim);
+                            const uint8_t* codes[4];
+                            float actual[4];
+                            for (int i = 0; i < 4; ++i) codes[i] = dc->codes + (i * 7 + q) * dc->code_size;
+                            dc->distance_to_code_1bit_batch_4(codes, actual);
+                            for (int i = 0; i < 4; ++i) REQUIRE(actual[i] == dc->distance_to_code_1bit(codes[i]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 TEST_CASE("RaBitQ qb4 SIMD matches scalar including masked tails", "[hnsw_rabitq_core]") {
 #if defined(__GNUC__) && defined(__x86_64__)
@@ -146,19 +241,10 @@ TEST_CASE("RaBitQ traversal retains all results when k covers the graph", "[hnsw
         std::unique_ptr<faiss::DistanceComputer> full(storage.get_distance_computer());
         std::vector<float> distances(4 * n);
         std::vector<faiss::idx_t> labels(4 * n);
-        rabitq_search::search(graph, 4, static_cast<const float*>(queries->GetTensor()), n, distances.data(),
-                              labels.data(), n, true);
-        std::vector<float> api_distances(4 * n);
-        std::vector<faiss::idx_t> api_labels(4 * n);
         knowhere::IndexHNSWRaBitQWrapper api(&graph);
         knowhere::SearchParametersHNSWWrapper params;
         params.efSearch = n;
-        api.search(4, static_cast<const float*>(queries->GetTensor()), n, api_distances.data(), api_labels.data(),
-                   &params);
-        for (int i = 0; i < 4 * n; ++i) {
-            REQUIRE(api_labels[i] == labels[i]);
-            REQUIRE(api_distances[i] == Catch::Approx((similarity ? -1.f : 1.f) * distances[i]).margin(1e-5));
-        }
+        api.search(4, static_cast<const float*>(queries->GetTensor()), n, distances.data(), labels.data(), &params);
         for (int q = 0; q < 4; ++q) {
             full->set_query(static_cast<const float*>(queries->GetTensor()) + q * dim);
             std::vector<std::pair<float, faiss::idx_t>> expected;
@@ -167,7 +253,8 @@ TEST_CASE("RaBitQ traversal retains all results when k covers the graph", "[hnsw
             for (int i = 0; i < n; ++i) {
                 CAPTURE(q, i, distances[q * n + i], expected[i].first);
                 REQUIRE(labels[q * n + i] == expected[i].second);
-                REQUIRE(distances[q * n + i] == Catch::Approx(expected[i].first).margin(1e-5));
+                REQUIRE(distances[q * n + i] ==
+                        Catch::Approx((similarity ? -1.f : 1.f) * expected[i].first).margin(1e-5));
             }
         }
     }

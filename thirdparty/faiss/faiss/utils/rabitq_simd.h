@@ -53,6 +53,20 @@ BitwiseAndDotProductResult bitwise_and_dot_product_with_popcount(
         size_t size,
         size_t qb);
 
+template <SIMDLevel SL = SINGLE_SIMD_LEVEL>
+inline void bitwise_q4_batch_4(
+        const uint8_t* query, const uint8_t* const* data, size_t size,
+        BitwiseAndDotProductResult* results) {
+    for (size_t i = 0; i < 4; ++i) {
+        results[i] = bitwise_and_dot_product_with_popcount<SL>(query, data[i], size, 4);
+    }
+}
+
+template <>
+void bitwise_q4_batch_4<SIMDLevel::AVX512>(
+        const uint8_t* query, const uint8_t* const* data, size_t size,
+        BitwiseAndDotProductResult* results);
+
 /**
  * Compute dot product between query and binary data using popcount on XOR.
  *

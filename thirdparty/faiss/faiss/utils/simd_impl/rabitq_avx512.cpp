@@ -417,8 +417,57 @@ BitwiseAndDotProductResult bitwise_q4_vpopcnt(
     return {static_cast<uint64_t>(_mm512_reduce_add_epi64(dots)),
             static_cast<uint64_t>(_mm512_reduce_add_epi64(pops))};
 }
+__attribute__((target("avx512vpopcntdq"), noinline))
+void bitwise_q4_vpopcnt_batch_4(
+        const uint8_t* query, const uint8_t* const* data, size_t size,
+        BitwiseAndDotProductResult* results) {
+    __m512i dots[4], pops[4];
+    for (int i = 0; i < 4; ++i) {
+        dots[i] = pops[i] = _mm512_setzero_si512();
+    }
+    for (size_t off = 0; off < size; off += 64) {
+        const size_t count = std::min(size - off, size_t(64));
+        const __mmask64 mask = count == 64 ? ~__mmask64(0) : (__mmask64(1) << count) - 1;
+        __m512i x[4];
+        for (int i = 0; i < 4; ++i) {
+            x[i] = _mm512_maskz_loadu_epi8(mask, data[i] + off);
+            pops[i] = _mm512_add_epi64(pops[i], _mm512_popcnt_epi64(x[i]));
+        }
+        for (int bit = 0; bit < 4; ++bit) {
+            // Load each query plane once for four independent database codes.
+            const __m512i q = _mm512_maskz_loadu_epi8(mask, query + bit * size + off);
+            for (int i = 0; i < 4; ++i) {
+                const __m512i p = _mm512_popcnt_epi64(_mm512_and_si512(q, x[i]));
+                dots[i] = _mm512_add_epi64(dots[i], _mm512_slli_epi64(p, bit));
+            }
+        }
+    }
+    for (int i = 0; i < 4; ++i) {
+        results[i] = {static_cast<uint64_t>(_mm512_reduce_add_epi64(dots[i])),
+                      static_cast<uint64_t>(_mm512_reduce_add_epi64(pops[i]))};
+    }
+}
 } // namespace
 #endif
+
+template <>
+BitwiseAndDotProductResult bitwise_and_dot_product_with_popcount<SIMDLevel::AVX512>(
+        const uint8_t* query, const uint8_t* data, size_t size, size_t qb);
+
+template <>
+void bitwise_q4_batch_4<SIMDLevel::AVX512>(
+        const uint8_t* query, const uint8_t* const* data, size_t size,
+        BitwiseAndDotProductResult* results) {
+#if defined(__GNUC__) && defined(__x86_64__)
+    if (__builtin_cpu_supports("avx512vpopcntdq")) {
+        bitwise_q4_vpopcnt_batch_4(query, data, size, results);
+        return;
+    }
+#endif
+    for (int i = 0; i < 4; ++i) {
+        results[i] = bitwise_and_dot_product_with_popcount<SIMDLevel::AVX512>(query, data[i], size, 4);
+    }
+}
 
 template <>
 BitwiseAndDotProductResult bitwise_and_dot_product_with_popcount<
