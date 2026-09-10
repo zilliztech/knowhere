@@ -7,9 +7,6 @@
 namespace knowhere {
 struct IndexHNSWRaBitQWrapper : IndexHNSWWrapper {
     using IndexHNSWWrapper::IndexHNSWWrapper;
-    void
-    search(faiss::idx_t n, const float* x, faiss::idx_t k, float* distances, faiss::idx_t* labels,
-           const faiss::SearchParameters* params) const override;
 
  protected:
     std::unique_ptr<faiss::DistanceComputer>

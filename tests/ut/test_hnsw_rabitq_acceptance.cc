@@ -7,7 +7,6 @@
 #include <faiss/cppcontrib/knowhere/IndexHNSWRaBitQ.h>
 #include <faiss/cppcontrib/knowhere/IndexRefine.h>
 #include <faiss/cppcontrib/knowhere/impl/RaBitQBuildUtils.h>
-#include <faiss/cppcontrib/knowhere/impl/RaBitQSearch.h>
 #include <faiss/cppcontrib/knowhere/impl/StagedDistanceComputer.h>
 #include <faiss/cppcontrib/knowhere/index_io.h>
 #include <faiss/impl/RaBitQUtils.h>
@@ -41,8 +40,6 @@
 #include "knowhere/index/index_factory.h"
 #include "knowhere/utils.h"
 #include "utils.h"
-
-namespace rabitq_search = faiss::cppcontrib::knowhere::rabitq_search;
 
 TEST_CASE("RBQ bounded add preserves input slices and rejects invalid sizes", "[hnsw_rabitq_acceptance][rbq_build]") {
     using faiss::cppcontrib::knowhere::rabitq_build::add_in_blocks;
