@@ -13,6 +13,8 @@
 
 #include <faiss/cppcontrib/knowhere/IndexHNSW.h>
 #include <faiss/cppcontrib/knowhere/IndexWrapper.h>
+#include <faiss/impl/DistanceComputer.h>
+#include <faiss/impl/FaissAssert.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -29,6 +31,12 @@ struct SearchParametersHNSWWrapper : public faiss::cppcontrib::knowhere::SearchP
     knowhere::feder::hnsw::FederResult* feder = nullptr;
     // filtering parameter
     float kAlpha = 1.0f;
+
+    // Request-local storage factory, also used by brute-force fallback.
+    virtual faiss::DistanceComputer*
+    storage_distance_computer(const faiss::Index* index) const {
+        return index->get_distance_computer();
+    }
 
     inline ~SearchParametersHNSWWrapper() {
     }
