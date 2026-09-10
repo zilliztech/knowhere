@@ -115,6 +115,13 @@ MRLIndexNode::MRLIndexNode(Index<IndexNode>&& base_index, int64_t source_dim, in
 
 MRLIndexNode::~MRLIndexNode() = default;
 
+Index<IndexNode>
+CreateMRLIndex(Index<IndexNode>&& base_index, int64_t source_dim, int64_t mrl_dim, DataFormatEnum data_type,
+               bool with_mrl_refine, ViewDataOp view_data) {
+    return Index<MRLIndexNode>::Create(std::move(base_index), source_dim, mrl_dim, data_type, with_mrl_refine,
+                                       std::move(view_data));
+}
+
 size_t
 MRLIndexNode::ElementSize() const {
     return data_type_ == DataFormatEnum::fp32 ? sizeof(fp32) : sizeof(fp16);
