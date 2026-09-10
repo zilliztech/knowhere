@@ -23,6 +23,13 @@ if(__X86_64)
   set(CMAKE_CXX_FLAGS "-msse4.2 ${CMAKE_CXX_FLAGS}")
 endif()
 
+# Keep LoongArch vector instructions confined to dedicated objects, which opt
+# into LSX or LASX explicitly.
+if(__LOONGARCH64)
+  set(CMAKE_C_FLAGS "-mno-lsx -mno-lasx ${CMAKE_C_FLAGS}")
+  set(CMAKE_CXX_FLAGS "-mno-lsx -mno-lasx ${CMAKE_CXX_FLAGS}")
+endif()
+
 set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 

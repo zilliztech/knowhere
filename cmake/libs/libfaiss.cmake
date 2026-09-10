@@ -345,6 +345,22 @@ if(__RISCV64)
   )
 endif()
 
+# generate `knowhere_utils` library for LoongArch64
+if(__LOONGARCH64)
+  set(UTILS_SRC
+      src/simd/hook.cc
+      src/simd/distances_ref.cc)
+  add_library(utils_lsx OBJECT src/simd/distances_lsx.cc)
+  add_library(utils_lasx OBJECT src/simd/distances_lasx.cc)
+  target_compile_options(utils_lsx PRIVATE -mlsx -mno-lasx)
+  target_compile_options(utils_lasx PRIVATE -mlasx)
+
+  add_library(knowhere_utils STATIC ${UTILS_SRC} $<TARGET_OBJECTS:utils_lsx> $<TARGET_OBJECTS:utils_lasx>)
+  target_link_libraries(knowhere_utils PUBLIC glog::glog)
+  target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
+  target_link_libraries(knowhere_utils PUBLIC milvus-common::milvus-common)
+endif()
+
 # generate `knowhere_utils` library for PPC64
 # ToDo: Add distances_vsx.cc for powerpc64 SIMD acceleration
 if(__PPC64)
@@ -574,6 +590,28 @@ if(__RISCV64)
   target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES}
                                      ${LAPACK_LIBRARIES} knowhere_utils)
   target_compile_definitions(faiss PRIVATE FINTEGER=int COMPILE_SIMD_RISCV_RVV)
+endif()
+
+# generate `faiss` library for LoongArch64
+if(__LOONGARCH64)
+  add_library(faiss STATIC ${FAISS_SRCS})
+  target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
+  target_sources(faiss PRIVATE ${FAISS_FASTSCAN_SRCS})
+
+  target_compile_options(
+    faiss
+    PRIVATE $<$<COMPILE_LANGUAGE:CXX>:
+            -Wno-sign-compare
+            -Wno-unused-variable
+            -Wno-reorder
+            -Wno-unused-local-typedefs
+            -Wno-unused-function
+            -Wno-strict-aliasing>)
+
+  add_dependencies(faiss knowhere_utils)
+  target_link_libraries(faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
+                                     knowhere_utils)
+  target_compile_definitions(faiss PRIVATE FINTEGER=int FAISS_ENABLE_DD)
 endif()
 
 # generate `faiss` library for PPC64

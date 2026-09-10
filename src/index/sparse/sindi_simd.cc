@@ -78,6 +78,10 @@ get_ip_kernels() {
             k.batch_insert = batch_insert_sve;
             return k;
         }
+#elif defined(__loongarch__)
+        k.accumulate = ip_accumulate_lsx_fp16;
+        k.batch_insert = batch_insert_lsx;
+        return k;
 #endif
         k.accumulate = ip_accumulate_scalar_fp16;
         k.batch_insert = batch_insert_scalar;
@@ -108,6 +112,10 @@ get_bm25_kernels() {
             k.batch_insert = batch_insert_sve;
             return k;
         }
+#elif defined(__loongarch__)
+        k.accumulate = bm25_accumulate_lsx_u16;
+        k.batch_insert = batch_insert_lsx;
+        return k;
 #endif
         k.accumulate = bm25_accumulate_scalar_u16;
         k.batch_insert = batch_insert_scalar;
