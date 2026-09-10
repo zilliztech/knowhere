@@ -117,4 +117,8 @@ class MRLIndexNode final : public IndexNode {
     ViewDataOp view_data_;
 };
 
+Index<IndexNode>
+CreateMRLIndex(Index<IndexNode>&& base_index, int64_t source_dim, int64_t mrl_dim, DataFormatEnum data_type,
+               bool with_mrl_refine, ViewDataOp view_data);
+
 }  // namespace knowhere

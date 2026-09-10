@@ -25,8 +25,8 @@ CreateMRLIndex(const float* base_data, bool with_refine) {
                                                   knowhere::Version::GetDefaultVersion().VersionNumber())
                           .value();
     knowhere::ViewDataOp view_data = [base_data](size_t id) { return base_data + id * kSourceDim; };
-    return knowhere::Index<knowhere::MRLIndexNode>::Create(
-        std::move(base_index), kSourceDim, kMRLDim, knowhere::DataFormatEnum::fp32, with_refine, std::move(view_data));
+    return knowhere::CreateMRLIndex(std::move(base_index), kSourceDim, kMRLDim, knowhere::DataFormatEnum::fp32,
+                                    with_refine, std::move(view_data));
 }
 }  // namespace
 
