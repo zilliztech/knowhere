@@ -304,9 +304,8 @@ void write_InvertedLists(const ::faiss::InvertedLists* ils, IOWriter* f) {
                 }
             }
         }
-    } else if (
-            const auto& lca =
-                    dynamic_cast<const ConcurrentArrayInvertedLists*>(ils)) {
+    } else if (const auto & lca =
+                       dynamic_cast<const ConcurrentArrayInvertedLists *>(ils)) {
         uint32_t h = fourcc("ilca");
         WRITE1(h);
         WRITE1(lca->nlist);
@@ -350,20 +349,16 @@ void write_InvertedLists(const ::faiss::InvertedLists* ils, IOWriter* f) {
                 size_t seg_num = lca->get_segment_num(i);
                 for (size_t j = 0; j < seg_num; j++) {
                     size_t seg_size = lca->get_segment_size(i, j);
-                    WRITEANDCHECK(
-                            lca->codes[i][j].data_.data(),
-                            seg_size * lca->code_size);
+                    WRITEANDCHECK(lca->codes[i][j].data_.data(), seg_size * lca->code_size);
                     WRITEANDCHECK(lca->ids[i][j].data_.data(), seg_size);
                     if (lca->save_norm) {
-                        WRITEANDCHECK(
-                                lca->code_norms[i][j].data_.data(), seg_size);
+                        WRITEANDCHECK(lca->code_norms[i][j].data_.data(), seg_size);
                     }
                 }
             }
         }
-    } else if (
-            const auto& oa =
-                    dynamic_cast<const ReadOnlyArrayInvertedLists*>(ils)) {
+    } else if (const auto & oa =
+            dynamic_cast<const ReadOnlyArrayInvertedLists *>(ils)) {
         uint32_t h = fourcc("iloa");
         WRITE1(h);
         WRITE1(oa->nlist);
@@ -373,16 +368,16 @@ void write_InvertedLists(const ::faiss::InvertedLists* ils, IOWriter* f) {
         size_t n = oa->pin_readonly_ids->size() / sizeof(InvertedLists::idx_t);
         WRITE1(n);
         WRITEANDCHECK((InvertedLists::idx_t*)oa->pin_readonly_ids->data, n);
-        WRITEANDCHECK(
-                (uint8_t*)oa->pin_readonly_codes->data, n * oa->code_size);
+        WRITEANDCHECK((uint8_t*)oa->pin_readonly_codes->data, n * oa->code_size);
 #else
         size_t n = oa->readonly_ids.size();
         WRITE1(n);
         WRITEANDCHECK(oa->readonly_ids.data(), n);
         WRITEANDCHECK(oa->readonly_codes.data(), n * oa->code_size);
 #endif
-    } else if (const auto& od = dynamic_cast<const OnDiskInvertedLists*>(ils)) {
-        uint32_t h = fourcc("ilod");
+    } else if (const auto & od =
+               dynamic_cast<const OnDiskInvertedLists *>(ils)) {
+        uint32_t h = fourcc ("ilod");
         WRITE1(h);
         WRITE1(ils->nlist);
         WRITE1(ils->code_size);
@@ -391,7 +386,7 @@ void write_InvertedLists(const ::faiss::InvertedLists* ils, IOWriter* f) {
 
         {
             std::vector<OnDiskInvertedLists::Slot> v(
-                    od->slots.begin(), od->slots.end());
+                      od->slots.begin(), od->slots.end());
             WRITEVECTOR(v);
         }
         {
@@ -550,12 +545,11 @@ static void write_direct_map(const DirectMap* dm, IOWriter* f) {
         std::copy(map.begin(), map.end(), v.begin());
         WRITEVECTOR(v);
     }
-    // Path-D step 10.9: the former `if (dm->type ==
-    // DirectMap::ConcurrentArray)` write branch is gone — fork DirectMap no
-    // longer supports that variant. CC indexes now carry their own
-    // `cc_direct_map` member (ConcurrentDirectMap) which is not serialized
-    // through this path (CC indexes have no serialize stage; see ivf.cc:619
-    // comment).
+    // Path-D step 10.9: the former `if (dm->type == DirectMap::ConcurrentArray)`
+    // write branch is gone — fork DirectMap no longer supports that
+    // variant. CC indexes now carry their own `cc_direct_map` member
+    // (ConcurrentDirectMap) which is not serialized through this path
+    // (CC indexes have no serialize stage; see ivf.cc:619 comment).
 }
 
 static void write_ivf_header(const IndexIVF* ivf, IOWriter* f) {
@@ -573,9 +567,7 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         // eg. for a storage component of HNSW that is set to nullptr
         uint32_t h = fourcc("null");
         WRITE1(h);
-    } else if (
-            const IndexFlatCosine* idxf =
-                    dynamic_cast<const IndexFlatCosine*>(idx)) {
+    } else if (const IndexFlatCosine* idxf = dynamic_cast<const IndexFlatCosine*>(idx)) {
         uint32_t h = fourcc("IxF9");
         WRITE1(h);
         write_index_header(idx, f);
@@ -595,9 +587,7 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(h);
         write_index_header(idx, f);
         WRITEXBVECTOR(idxf->codes);
-    } else if (
-            const IndexPQCosine* idxp =
-                    dynamic_cast<const IndexPQCosine*>(idx)) {
+    } else if (const IndexPQCosine* idxp = dynamic_cast<const IndexPQCosine*>(idx)) {
         uint32_t h = fourcc("IxP7");
         WRITE1(h);
         write_index_header(idx, f);
@@ -639,8 +629,7 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITEVECTOR(idxr_2->codes);
     } else if (
             const IndexProductResidualQuantizerCosine* idxpr =
-                    dynamic_cast<const IndexProductResidualQuantizerCosine*>(
-                            idx)) {
+                    dynamic_cast<const IndexProductResidualQuantizerCosine*>(idx)) {
         uint32_t h = fourcc("IxP5");
         WRITE1(h);
         write_index_header(idx, f);

@@ -422,7 +422,7 @@ TEST_CASE("RaBitQ advertised refiners rerank the requested expanded candidate se
             REQUIRE(refiner != nullptr);
             auto* graph = dynamic_cast<fk::IndexHNSWRaBitQ*>(refiner->base_index);
             REQUIRE(graph != nullptr);
-            knowhere::IndexHNSWWrapper wrapper(graph);
+            knowhere::IndexHNSWRaBitQWrapper wrapper(graph);
             for (int qb : {0, 4, 8}) {
                 cfg["rbq_bits_query"] = qb;
                 auto result = index.Search(query, cfg, nullptr);
@@ -611,6 +611,54 @@ TEST_CASE("RaBitQ file serialization rejects truncated and incompatible indexes"
         REQUIRE(index.Count() == 128);
         cfg["enable_mmap"] = true;
         REQUIRE(create().DeserializeFromFile(path, cfg) != knowhere::Status::success);
+    }
+}
+
+TEST_CASE("RaBitQ rejects valid non-RaBitQ payloads without replacing the live index", "[hnsw_rabitq_acceptance]") {
+    auto base = GenDataSet(128, 33, 2031);
+    auto query = GenDataSet(2, 33, 2032);
+    const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    knowhere::Json cfg = {{"dim", 33}, {"metric_type", "L2"}, {"M", 8},          {"efConstruction", 64}, {"ef", 80},
+                          {"k", 10},   {"rbq_bits", 4},       {"sq_type", "SQ8"}};
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>("HNSW_RABITQ", version).value();
+    REQUIRE(index.Build(base, cfg) == knowhere::Status::success);
+    auto before = index.Search(query, cfg, nullptr);
+    REQUIRE(before.has_value());
+    for (const auto* wrong_type : {"HNSW", "HNSW_SQ"}) {
+        CAPTURE(wrong_type);
+        auto wrong = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(wrong_type, version).value();
+        REQUIRE(wrong.Build(base, cfg) == knowhere::Status::success);
+        knowhere::BinarySet binary;
+        REQUIRE(wrong.Serialize(binary) == knowhere::Status::success);
+        const auto blob = binary.binary_map_.begin()->second;
+        knowhere::BinarySet mislabelled;
+        mislabelled.Append("HNSW_RABITQ", blob->data, blob->size);
+        REQUIRE(index.Deserialize(mislabelled, cfg) == knowhere::Status::invalid_serialized_index_type);
+        auto pattern = (std::filesystem::temp_directory_path() / "knowhere-rabitq-type-XXXXXX").string();
+        std::vector<char> filename(pattern.begin(), pattern.end());
+        filename.push_back('\0');
+        const int fd = mkstemp(filename.data());
+        REQUIRE(fd >= 0);
+        struct Cleanup {
+            std::string path;
+            ~Cleanup() {
+                std::error_code error;
+                std::filesystem::remove(path, error);
+            }
+        } cleanup{filename.data()};
+        std::unique_ptr<FILE, decltype(&std::fclose)> file(fdopen(fd, "wb"), &std::fclose);
+        if (!file)
+            close(fd);
+        REQUIRE(file != nullptr);
+        REQUIRE(std::fwrite(blob->data.get(), 1, blob->size, file.get()) == blob->size);
+        REQUIRE(std::fflush(file.get()) == 0);
+        REQUIRE(index.DeserializeFromFile(filename.data(), cfg) == knowhere::Status::invalid_serialized_index_type);
+        auto after = index.Search(query, cfg, nullptr);
+        REQUIRE(after.has_value());
+        for (int i = 0; i < 20; ++i) {
+            REQUIRE(after.value()->GetIds()[i] == before.value()->GetIds()[i]);
+            REQUIRE(after.value()->GetDistance()[i] == before.value()->GetDistance()[i]);
+        }
     }
 }
 

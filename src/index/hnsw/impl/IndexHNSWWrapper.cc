@@ -13,12 +13,10 @@
 
 #include <faiss/MetricType.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSW.h>
-#include <faiss/cppcontrib/knowhere/IndexHNSWRaBitQ.h>
 #include <faiss/cppcontrib/knowhere/MetricType.h>
 #include <faiss/cppcontrib/knowhere/impl/Bruteforce.h>
 #include <faiss/cppcontrib/knowhere/impl/HNSW.h>
 #include <faiss/cppcontrib/knowhere/impl/HnswSearcher.h>
-#include <faiss/cppcontrib/knowhere/impl/RaBitQSearch.h>
 #include <faiss/cppcontrib/knowhere/impl/ResultHandler.h>
 #include <faiss/cppcontrib/knowhere/utils/Bitset.h>
 #include <faiss/impl/AuxIndexStructures.h>
@@ -32,7 +30,7 @@
 
 #include "index/hnsw/impl/DummyVisitor.h"
 #include "index/hnsw/impl/FederVisitor.h"
-#include "index/hnsw/impl/RaBitQSearchParameters.h"
+#include "index/hnsw/impl/HnswSearchDispatch.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/bitsetview_idselector.h"
 
@@ -41,7 +39,6 @@
 #endif
 
 namespace knowhere {
-namespace rabitq_search = faiss::cppcontrib::knowhere::rabitq_search;
 
 /**************************************************************
  * Utilities
@@ -69,6 +66,24 @@ using idx_t = faiss::idx_t;
 
 IndexHNSWWrapper::IndexHNSWWrapper(faiss::cppcontrib::knowhere::IndexHNSW* underlying_index)
     : faiss::cppcontrib::knowhere::IndexWrapper(underlying_index) {
+}
+
+std::unique_ptr<faiss::Index>
+SearchParametersHNSWWrapper::create_hnsw_wrapper(faiss::cppcontrib::knowhere::IndexHNSW* index) const {
+    return std::make_unique<IndexHNSWWrapper>(index);
+}
+
+std::unique_ptr<faiss::DistanceComputer>
+IndexHNSWWrapper::graph_distance_computer(const faiss::cppcontrib::knowhere::IndexHNSW* index,
+                                          const SearchParametersHNSWWrapper*) const {
+    return std::unique_ptr<faiss::DistanceComputer>(storage_distance_computer(index->storage));
+}
+
+faiss::cppcontrib::knowhere::HNSWStats
+IndexHNSWWrapper::search_query(const faiss::cppcontrib::knowhere::HNSW& graph, faiss::DistanceComputer& dc,
+                               faiss::cppcontrib::knowhere::Bitset& visited, faiss::idx_t k, float* distances,
+                               faiss::idx_t* labels, const SearchParametersHNSWWrapper* params) const {
+    return search_hnsw_query(graph, dc, visited, k, distances, labels, params);
 }
 
 void
@@ -99,40 +114,9 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
     const SearchParametersHNSWWrapper* params = nullptr;
     const faiss::cppcontrib::knowhere::HNSW& hnsw = index_hnsw->hnsw;
 
-    float kAlpha = 0.0f;
     if (params_in) {
         params = dynamic_cast<const SearchParametersHNSWWrapper*>(params_in);
         FAISS_THROW_IF_NOT_MSG(params, "params type invalid");
-
-        kAlpha = params->kAlpha;
-    }
-
-    const auto* rbq_params = dynamic_cast<const SearchParametersHNSWRaBitQWrapper*>(params);
-    // Use the optimized multi-bit path only when its selector/visitor contract
-    // is satisfied. RBQ1, filtering and feder use the compatible searcher below.
-    const auto* rabitq_index = dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSWRaBitQ*>(index_hnsw);
-    const auto* bitset_sel = params ? dynamic_cast<const knowhere::BitsetViewIDSelector*>(params->sel) : nullptr;
-    const bool unfiltered = !params || !params->sel || (bitset_sel && bitset_sel->bitset_view.empty());
-    if (rabitq_index && rabitq_index->rabitq_index()->rabitq.nb_bits > 1 && unfiltered && (!params || !params->feder)) {
-        rabitq_search::search(*rabitq_index, n, x, k, distances, labels, params ? params->efSearch : hnsw.efSearch,
-                              params ? params->check_relative_distance : hnsw.check_relative_distance,
-                              rbq_params ? &rbq_params->storage_params : nullptr,
-                              [&](const rabitq_search::SearchStats& counts) {
-                                  const size_t hops = counts.expanded + counts.upper_expanded;
-#if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
-                                  knowhere::knowhere_hnsw_search_hops.Observe(hops);
-#endif
-                                  if (params && params->hnsw_stats) {
-                                      params->hnsw_stats->combine({.n1 = 1,
-                                                                   .n2 = size_t(counts.exhausted),
-                                                                   .ndis = counts.estimate + counts.upper_full,
-                                                                   .nhops = hops});
-                                  }
-                              });
-        if (faiss::cppcontrib::knowhere::is_similarity_metric(index->metric_type)) {
-            for (idx_t i = 0; i < k * n; ++i) distances[i] = -distances[i];
-        }
-        return;
     }
 
     // set up hnsw_stats
@@ -149,10 +133,7 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
     faiss::cppcontrib::knowhere::Bitset bitset_visited_nodes =
         faiss::cppcontrib::knowhere::Bitset::create_uninitialized(index->ntotal);
 
-    // create a distance computer
-    std::unique_ptr<faiss::DistanceComputer> dis(
-        rabitq_index ? rabitq_index->get_staged_distance_computer(rbq_params ? &rbq_params->storage_params : nullptr)
-                     : storage_distance_computer(index_hnsw->storage));
+    auto dis = graph_distance_computer(index_hnsw, params);
 
     // no parallelism by design
     for (idx_t i = 0; i < n; i++) {
@@ -162,78 +143,8 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
         // prepare the table of visited elements
         bitset_visited_nodes.clear();
 
-        // a visitor
-        knowhere::feder::hnsw::FederResult* feder = (params == nullptr) ? nullptr : params->feder;
-
-        // future results
-        faiss::cppcontrib::knowhere::HNSWStats local_stats;
-
-        // set up a filter
-        faiss::IDSelector* sel = (params == nullptr) ? nullptr : params->sel;
-
-        // try knowhere-specific filter
-        if (const knowhere::BitsetViewIDSelector* __restrict bw_idselector =
-                dynamic_cast<const knowhere::BitsetViewIDSelector*>(sel);
-            bw_idselector && !bw_idselector->bitset_view.empty()) {
-            // with filter, no mapping
-
-            // feder templating is important, bcz it removes an unneeded 'CALL' instruction.
-            if (feder == nullptr) {
-                // no feder
-                DummyVisitor graph_visitor;
-
-                using searcher_type =
-                    faiss::cppcontrib::knowhere::v2_hnsw_searcher<faiss::DistanceComputer, DummyVisitor,
-                                                                  faiss::cppcontrib::knowhere::Bitset,
-                                                                  knowhere::BitsetViewIDSelector>;
-
-                searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       *bw_idselector, kAlpha,       params};
-
-                local_stats = searcher.search(k, distances + i * k, labels + i * k);
-            } else {
-                // use feder
-                FederVisitor graph_visitor(feder);
-
-                using searcher_type =
-                    faiss::cppcontrib::knowhere::v2_hnsw_searcher<faiss::DistanceComputer, FederVisitor,
-                                                                  faiss::cppcontrib::knowhere::Bitset,
-                                                                  knowhere::BitsetViewIDSelector>;
-
-                searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       *bw_idselector, kAlpha,       params};
-
-                local_stats = searcher.search(k, distances + i * k, labels + i * k);
-            }
-        } else {
-            // no filter
-            faiss::IDSelectorAll sel_all;
-
-            // feder templating is important, bcz it removes an unneeded 'CALL' instruction.
-            if (feder == nullptr) {
-                // no feder
-                DummyVisitor graph_visitor;
-
-                using searcher_type = faiss::cppcontrib::knowhere::v2_hnsw_searcher<
-                    faiss::DistanceComputer, DummyVisitor, faiss::cppcontrib::knowhere::Bitset, faiss::IDSelectorAll>;
-
-                searcher_type searcher{hnsw,    *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       sel_all, kAlpha,       params};
-
-                local_stats = searcher.search(k, distances + i * k, labels + i * k);
-            } else {
-                // use feder
-                FederVisitor graph_visitor(feder);
-
-                using searcher_type = faiss::cppcontrib::knowhere::v2_hnsw_searcher<
-                    faiss::DistanceComputer, FederVisitor, faiss::cppcontrib::knowhere::Bitset, faiss::IDSelectorAll>;
-
-                searcher_type searcher{hnsw,    *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       sel_all, kAlpha,       params};
-
-                local_stats = searcher.search(k, distances + i * k, labels + i * k);
-            }
-        }
+        const auto local_stats =
+            search_query(hnsw, *dis, bitset_visited_nodes, k, distances + i * k, labels + i * k, params);
 
         // record some statistics
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)

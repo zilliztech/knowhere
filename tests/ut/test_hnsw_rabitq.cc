@@ -5,7 +5,9 @@
 #include <faiss/cppcontrib/knowhere/IndexHNSWRaBitQ.h>
 #include <faiss/cppcontrib/knowhere/impl/RaBitQSearch.h>
 #include <faiss/cppcontrib/knowhere/impl/StagedDistanceComputer.h>
+#include <faiss/cppcontrib/knowhere/index_io.h>
 #include <faiss/impl/RaBitQUtils.h>
+#include <faiss/impl/io.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/rabitq_simd.h>
 
@@ -16,14 +18,45 @@
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
+#include "index/hnsw/impl/HnswSearchDispatch.h"
+#include "index/hnsw/impl/IndexHNSWRaBitQWrapper.h"
 #include "index/hnsw/impl/IndexHNSWWrapper.h"
 #include "knowhere/bitsetview.h"
+#include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/utils.h"
 #include "utils.h"
 
 namespace rabitq_search = faiss::cppcontrib::knowhere::rabitq_search;
+
+namespace {
+// Independent reproduction of the original full-distance candidate batch:
+// four-at-a-time, with scalar tails and no threshold/result state.
+struct OriginalFullEvaluation {
+    void
+    begin(size_t) {
+    }
+    void
+    record(float, int) {
+    }
+    template <class DC, class Emit>
+    size_t
+    compute(DC& dc, const size_t* ids, const int*, size_t count, int, Emit&& emit) {
+        size_t i = 0;
+        for (; i + 4 <= count; i += 4) {
+            float a, b, c, d;
+            dc.distances_batch_4(ids[i], ids[i + 1], ids[i + 2], ids[i + 3], a, b, c, d);
+            emit(i, a);
+            emit(i + 1, b);
+            emit(i + 2, c);
+            emit(i + 3, d);
+        }
+        for (; i < count; ++i) emit(i, dc(ids[i]));
+        return 0;
+    }
+};
+}  // namespace
 
 TEST_CASE("RaBitQ qb4 SIMD matches scalar including masked tails", "[hnsw_rabitq_core]") {
 #if defined(__GNUC__) && defined(__x86_64__)
@@ -117,7 +150,7 @@ TEST_CASE("RaBitQ traversal retains all results when k covers the graph", "[hnsw
                               labels.data(), n, true);
         std::vector<float> api_distances(4 * n);
         std::vector<faiss::idx_t> api_labels(4 * n);
-        knowhere::IndexHNSWWrapper api(&graph);
+        knowhere::IndexHNSWRaBitQWrapper api(&graph);
         knowhere::SearchParametersHNSWWrapper params;
         params.efSearch = n;
         api.search(4, static_cast<const float*>(queries->GetTensor()), n, api_distances.data(), api_labels.data(),
@@ -463,6 +496,45 @@ TEST_CASE("Generic HNSW parameter factory preserves SQ and PQ searches", "[hnsw_
             REQUIRE(index.Build(base, config) == knowhere::Status::success);
             auto result = index.Search(query, config, nullptr);
             REQUIRE(result.has_value());
+            // Same graph and codes: compare the new default evaluator with
+            // the pre-refactor full batch rule, including moderate filtering.
+            knowhere::BinarySet binary;
+            REQUIRE(index.Serialize(binary) == knowhere::Status::success);
+            auto blob = binary.binary_map_.begin()->second;
+            faiss::VectorIOReader reader;
+            reader.data.assign(blob->data.get(), blob->data.get() + blob->size);
+            std::unique_ptr<faiss::Index> decoded(faiss::cppcontrib::knowhere::read_index(&reader));
+            auto* graph = dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(decoded.get());
+            REQUIRE(graph != nullptr);
+            for (int excluded : {0, 128}) {
+                std::vector<uint8_t> bits(128, 0);
+                std::fill_n(bits.begin(), excluded / 8, uint8_t(255));
+                knowhere::BitsetView filter(bits.data(), 1024, excluded);
+                knowhere::BitsetViewIDSelector selector(filter);
+                knowhere::SearchParametersHNSWWrapper parameters;
+                parameters.efSearch = 128;
+                parameters.sel = excluded ? &selector : nullptr;
+                parameters.kAlpha = filter.filter_ratio() * 0.7f;
+                auto actual = index.Search(query, config, excluded ? filter : knowhere::BitsetView{});
+                REQUIRE(actual.has_value());
+                for (int q = 0; q < 2; ++q) {
+                    std::unique_ptr<faiss::DistanceComputer> dc(graph->storage->get_distance_computer());
+                    const bool similarity = std::string(metric) != "L2";
+                    if (similarity)
+                        dc.reset(new faiss::NegativeDistanceComputer(dc.release()));
+                    dc->set_query(static_cast<const float*>(query->GetTensor()) + q * 32);
+                    auto visited = faiss::cppcontrib::knowhere::Bitset::create_cleared(1024);
+                    float distances[10];
+                    faiss::idx_t ids[10];
+                    knowhere::search_hnsw_query<OriginalFullEvaluation>(graph->hnsw, *dc, visited, 10, distances, ids,
+                                                                        &parameters);
+                    for (int j = 0; j < 10; ++j) {
+                        REQUIRE(actual.value()->GetIds()[q * 10 + j] == ids[j]);
+                        REQUIRE(actual.value()->GetDistance()[q * 10 + j] ==
+                                (similarity ? -distances[j] : distances[j]));
+                    }
+                }
+            }
             auto iterators = index.AnnIterator(query, config, nullptr);
             REQUIRE(iterators.has_value());
             REQUIRE(iterators.value()[0]->HasNext().value());
