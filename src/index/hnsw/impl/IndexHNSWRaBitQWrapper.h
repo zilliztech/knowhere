@@ -10,8 +10,8 @@ struct IndexHNSWRaBitQWrapper : IndexHNSWWrapper {
 
  protected:
     std::unique_ptr<faiss::DistanceComputer>
-    graph_distance_computer(const faiss::cppcontrib::knowhere::IndexHNSW* index,
-                            const SearchParametersHNSWWrapper* params) const override;
+    storage_distance_computer(const faiss::cppcontrib::knowhere::IndexHNSW* index,
+                              const SearchParametersHNSWWrapper* params) const override;
     faiss::cppcontrib::knowhere::HNSWStats
     search_query(const faiss::cppcontrib::knowhere::HNSW& graph, faiss::DistanceComputer& dc,
                  faiss::cppcontrib::knowhere::Bitset& visited, faiss::idx_t k, float* distances, faiss::idx_t* labels,

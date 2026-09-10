@@ -41,24 +41,6 @@
 namespace knowhere {
 
 /**************************************************************
- * Utilities
- **************************************************************/
-
-namespace {
-
-// cloned from IndexHNSW.cpp
-faiss::DistanceComputer*
-storage_distance_computer(const faiss::Index* storage) {
-    if (faiss::cppcontrib::knowhere::is_similarity_metric(storage->metric_type)) {
-        return new faiss::NegativeDistanceComputer(storage->get_distance_computer());
-    } else {
-        return storage->get_distance_computer();
-    }
-}
-
-}  // namespace
-
-/**************************************************************
  * IndexHNSWWrapper implementation
  **************************************************************/
 
@@ -74,9 +56,14 @@ SearchParametersHNSWWrapper::create_hnsw_wrapper(faiss::cppcontrib::knowhere::In
 }
 
 std::unique_ptr<faiss::DistanceComputer>
-IndexHNSWWrapper::graph_distance_computer(const faiss::cppcontrib::knowhere::IndexHNSW* index,
-                                          const SearchParametersHNSWWrapper*) const {
-    return std::unique_ptr<faiss::DistanceComputer>(storage_distance_computer(index->storage));
+IndexHNSWWrapper::storage_distance_computer(const faiss::cppcontrib::knowhere::IndexHNSW* index,
+                                            const SearchParametersHNSWWrapper*) const {
+    const auto* storage = index->storage;
+    if (faiss::cppcontrib::knowhere::is_similarity_metric(storage->metric_type)) {
+        return std::unique_ptr<faiss::DistanceComputer>(
+            new faiss::NegativeDistanceComputer(storage->get_distance_computer()));
+    }
+    return std::unique_ptr<faiss::DistanceComputer>(storage->get_distance_computer());
 }
 
 faiss::cppcontrib::knowhere::HNSWStats
@@ -133,7 +120,7 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
     faiss::cppcontrib::knowhere::Bitset bitset_visited_nodes =
         faiss::cppcontrib::knowhere::Bitset::create_uninitialized(index->ntotal);
 
-    auto dis = graph_distance_computer(index_hnsw, params);
+    auto dis = storage_distance_computer(index_hnsw, params);
 
     // no parallelism by design
     for (idx_t i = 0; i < n; i++) {
