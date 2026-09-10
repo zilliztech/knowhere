@@ -72,6 +72,8 @@ constexpr const char* INDEX_SVS_IVF_LEANVEC = "SVS_IVF_LEANVEC";
 
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
+constexpr const char* INDEX_SPARSE_DSP = "SPARSE_DSP";
+constexpr const char* INDEX_SPARSE_DSP_CC = "SPARSE_DSP_CC";
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX_CC = "SPARSE_INVERTED_INDEX_CC";
 constexpr const char* INDEX_SPARSE_WAND_CC = "SPARSE_WAND_CC";
 
