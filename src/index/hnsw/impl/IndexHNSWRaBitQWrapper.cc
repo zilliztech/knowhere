@@ -11,8 +11,8 @@ namespace knowhere {
 namespace rabitq_search = faiss::cppcontrib::knowhere::rabitq_search;
 
 std::unique_ptr<faiss::DistanceComputer>
-IndexHNSWRaBitQWrapper::graph_distance_computer(const faiss::cppcontrib::knowhere::IndexHNSW* index,
-                                                const SearchParametersHNSWWrapper* params) const {
+IndexHNSWRaBitQWrapper::storage_distance_computer(const faiss::cppcontrib::knowhere::IndexHNSW* index,
+                                                  const SearchParametersHNSWWrapper* params) const {
     const auto* rbq = dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSWRaBitQ*>(index);
     FAISS_THROW_IF_NOT(rbq);
     const auto* rbq_params = dynamic_cast<const SearchParametersHNSWRaBitQWrapper*>(params);

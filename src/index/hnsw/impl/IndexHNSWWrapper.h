@@ -66,9 +66,12 @@ struct IndexHNSWWrapper : public faiss::cppcontrib::knowhere::IndexWrapper {
                  const faiss::SearchParameters* params) const override;
 
  protected:
+    // Graph-search factory: returns smaller-is-better distances. The index is
+    // the owning HNSW index, allowing subclasses to access storage metadata.
+    // Unlike the request-parameter factory, this may expose staged evaluation.
     virtual std::unique_ptr<faiss::DistanceComputer>
-    graph_distance_computer(const faiss::cppcontrib::knowhere::IndexHNSW* index,
-                            const SearchParametersHNSWWrapper* params) const;
+    storage_distance_computer(const faiss::cppcontrib::knowhere::IndexHNSW* index,
+                              const SearchParametersHNSWWrapper* params) const;
     virtual faiss::cppcontrib::knowhere::HNSWStats
     search_query(const faiss::cppcontrib::knowhere::HNSW& graph, faiss::DistanceComputer& dc,
                  faiss::cppcontrib::knowhere::Bitset& visited, faiss::idx_t k, float* distances, faiss::idx_t* labels,
