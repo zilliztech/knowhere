@@ -167,10 +167,9 @@ uint64_t bitwise_and_dot_product<SIMDLevel::AVX512_SPR>(
 
     // 64-bit scalar tail.
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *reinterpret_cast<const uint64_t*>(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         for (size_t j = 0; j < qb; j++) {
-            const auto qv = *reinterpret_cast<const uint64_t*>(
-                    query + j * size + offset);
+            const auto qv = load_u64_unaligned(query + j * size + offset);
             sum += static_cast<uint64_t>(popcount64(qv & yv)) << j;
         }
     }
@@ -258,11 +257,10 @@ BitwiseAndDotProductResult bitwise_and_dot_product_with_popcount<
     popcount_sum += reduce_add_128(pop_128);
 
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *reinterpret_cast<const uint64_t*>(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         popcount_sum += popcount64(yv);
         for (size_t j = 0; j < qb; j++) {
-            const auto qv = *reinterpret_cast<const uint64_t*>(
-                    query + j * size + offset);
+            const auto qv = load_u64_unaligned(query + j * size + offset);
             dot_product += static_cast<uint64_t>(popcount64(qv & yv)) << j;
         }
     }
@@ -339,10 +337,9 @@ uint64_t bitwise_xor_dot_product<SIMDLevel::AVX512_SPR>(
     sum += reduce_add_128(sum_128);
 
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *reinterpret_cast<const uint64_t*>(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         for (size_t j = 0; j < qb; j++) {
-            const auto qv = *reinterpret_cast<const uint64_t*>(
-                    query + j * size + offset);
+            const auto qv = load_u64_unaligned(query + j * size + offset);
             sum += static_cast<uint64_t>(popcount64(qv ^ yv)) << j;
         }
     }
@@ -392,7 +389,7 @@ uint64_t popcount<SIMDLevel::AVX512_SPR>(const uint8_t* data, size_t size) {
     sum += reduce_add_128(sum_128);
 
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *reinterpret_cast<const uint64_t*>(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         sum += popcount64(yv);
     }
     for (; offset < size; ++offset) {

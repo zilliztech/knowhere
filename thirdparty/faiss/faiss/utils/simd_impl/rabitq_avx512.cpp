@@ -378,9 +378,9 @@ uint64_t bitwise_and_dot_product<SIMDLevel::AVX512>(
     }
     sum += reduce_add_128(sum_128);
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *(const uint64_t*)(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         for (int j = 0; j < qb; j++) {
-            const auto qv = *(const uint64_t*)(query + j * size + offset);
+            const auto qv = load_u64_unaligned(query + j * size + offset);
             sum += popcount64(qv & yv) << j;
         }
     }
@@ -394,6 +394,32 @@ uint64_t bitwise_and_dot_product<SIMDLevel::AVX512>(
     return sum;
 }
 
+#if defined(__GNUC__) && defined(__x86_64__)
+namespace {
+// Ice Lake already has VPOPCNTDQ; requiring the full SPR feature set here
+// unnecessarily selects the shuffle-based fallback. Isolate the optional ISA.
+__attribute__((target("avx512vpopcntdq"), noinline))
+BitwiseAndDotProductResult bitwise_q4_vpopcnt(
+        const uint8_t* query, const uint8_t* data, size_t size) {
+    __m512i dots = _mm512_setzero_si512();
+    __m512i pops = _mm512_setzero_si512();
+    for (size_t off = 0; off < size; off += 64) {
+        const size_t count = std::min(size - off, size_t(64));
+        const __mmask64 mask = count == 64 ? ~__mmask64(0) : (__mmask64(1) << count) - 1;
+        const __m512i x = _mm512_maskz_loadu_epi8(mask, data + off);
+        pops = _mm512_add_epi64(pops, _mm512_popcnt_epi64(x));
+        for (int bit = 0; bit < 4; ++bit) {
+            const __m512i q = _mm512_maskz_loadu_epi8(mask, query + bit * size + off);
+            const __m512i p = _mm512_popcnt_epi64(_mm512_and_si512(q, x));
+            dots = _mm512_add_epi64(dots, _mm512_slli_epi64(p, bit));
+        }
+    }
+    return {static_cast<uint64_t>(_mm512_reduce_add_epi64(dots)),
+            static_cast<uint64_t>(_mm512_reduce_add_epi64(pops))};
+}
+} // namespace
+#endif
+
 template <>
 BitwiseAndDotProductResult bitwise_and_dot_product_with_popcount<
         SIMDLevel::AVX512>(
@@ -401,6 +427,11 @@ BitwiseAndDotProductResult bitwise_and_dot_product_with_popcount<
         const uint8_t* data,
         size_t size,
         size_t qb) {
+#if defined(__GNUC__) && defined(__x86_64__)
+    if (qb == 4 && __builtin_cpu_supports("avx512vpopcntdq")) {
+        return bitwise_q4_vpopcnt(query, data, size);
+    }
+#endif
     uint64_t dot_product = 0;
     uint64_t popcount_sum = 0;
     size_t offset = 0;
@@ -457,10 +488,10 @@ BitwiseAndDotProductResult bitwise_and_dot_product_with_popcount<
     dot_product += reduce_add_128(dot_128);
     popcount_sum += reduce_add_128(pop_128);
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *(const uint64_t*)(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         popcount_sum += popcount64(yv);
         for (int j = 0; j < qb; j++) {
-            const auto qv = *(const uint64_t*)(query + j * size + offset);
+            const auto qv = load_u64_unaligned(query + j * size + offset);
             dot_product += popcount64(qv & yv) << j;
         }
     }
@@ -527,9 +558,9 @@ uint64_t bitwise_xor_dot_product<SIMDLevel::AVX512>(
     }
     sum += reduce_add_128(sum_128);
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *(const uint64_t*)(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         for (int j = 0; j < qb; j++) {
-            const auto qv = *(const uint64_t*)(query + j * size + offset);
+            const auto qv = load_u64_unaligned(query + j * size + offset);
             sum += popcount64(qv ^ yv) << j;
         }
     }
@@ -572,7 +603,7 @@ uint64_t popcount<SIMDLevel::AVX512>(const uint8_t* data, size_t size) {
     }
     sum += reduce_add_128(sum_128);
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *(const uint64_t*)(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         sum += popcount64(yv);
     }
     for (; offset < size; ++offset) {
@@ -664,60 +695,82 @@ inline float ip_1exbit_avx512(
     return result;
 }
 
-// AVX2+BMI2 bitplane kernel used as fallback for ex_bits >= 2.
-// AVX512 TU has AVX2 available. BMI2 guarded separately since
-// VIA Eden X4 has AVX2 without BMI2.
-#ifdef __BMI2__
-inline float ip_bitplane_avx2(
+// Faiss #5526 AVX512 bitplane kernel: 16 dimensions per iteration.
+// BMI2 is isolated in this function and checked by the caller at runtime.
+#if defined(__GNUC__) && defined(__x86_64__)
+__attribute__((target("bmi2"), noinline)) float ip_bitplane_avx512(
         const uint8_t* __restrict sign_bits,
         const uint8_t* __restrict ex_code,
         const float* __restrict rotated_q,
         size_t d,
         size_t ex_bits,
         float cb) {
-    __m256 acc = _mm256_setzero_ps();
-    const __m256 v_one = _mm256_set1_ps(1.0f);
-    const __m256i bit_pos = _mm256_setr_epi32(1, 2, 4, 8, 16, 32, 64, 128);
-    const __m256i zero = _mm256_setzero_si256();
-    const __m256 v_cb = _mm256_set1_ps(cb);
+    __m512 acc = _mm512_setzero_ps();
+    const __m512 v_cb = _mm512_set1_ps(cb);
 
     uint64_t pext_masks[7];
-    __m256 v_weights[8];
+    __m512 v_weights[8];
     for (size_t b = 0; b < ex_bits; b++) {
         uint64_t m = 0;
         for (int j = 0; j < 8; j++) {
             m |= (1ULL << (b + j * ex_bits));
         }
         pext_masks[b] = m;
-        v_weights[b] = _mm256_set1_ps(static_cast<float>(1u << b));
+        v_weights[b] = _mm512_set1_ps(static_cast<float>(1u << b));
     }
-    v_weights[ex_bits] = _mm256_set1_ps(static_cast<float>(1u << ex_bits));
+    v_weights[ex_bits] = _mm512_set1_ps(static_cast<float>(1u << ex_bits));
 
     size_t i = 0;
-    for (; i + 8 <= d; i += 8) {
-        __m256i sb_cmp = _mm256_cmpgt_epi32(
-                _mm256_and_si256(_mm256_set1_epi32(sign_bits[i / 8]), bit_pos),
-                zero);
-        __m256 recon = _mm256_mul_ps(
-                _mm256_and_ps(_mm256_castsi256_ps(sb_cmp), v_one),
-                v_weights[ex_bits]);
+    for (; i + 16 <= d; i += 16) {
+        uint16_t sb = 0;
+        memcpy(&sb, sign_bits + (i / 8), sizeof(uint16_t));
+        __m512 recon = _mm512_maskz_mov_ps(
+                static_cast<__mmask16>(sb), v_weights[ex_bits]);
 
-        uint64_t ex64 = 0;
-        memcpy(&ex64, ex_code + (i / 8) * ex_bits, sizeof(uint64_t));
+        uint64_t lo64 = 0;
+        uint64_t hi64 = 0;
+        memcpy(&lo64, ex_code + (i / 8) * ex_bits, sizeof(uint64_t));
+        memcpy(&hi64, ex_code + ((i / 8) + 1) * ex_bits, sizeof(uint64_t));
 
         for (size_t b = 0; b < ex_bits; b++) {
-            auto plane = static_cast<uint8_t>(_pext_u64(ex64, pext_masks[b]));
-            __m256i p_cmp = _mm256_cmpgt_epi32(
-                    _mm256_and_si256(_mm256_set1_epi32(plane), bit_pos), zero);
-            __m256 p_f = _mm256_and_ps(_mm256_castsi256_ps(p_cmp), v_one);
-            recon = _mm256_fmadd_ps(p_f, v_weights[b], recon);
+            const uint32_t plane =
+                    static_cast<uint32_t>(_pext_u64(lo64, pext_masks[b])) |
+                    (static_cast<uint32_t>(_pext_u64(hi64, pext_masks[b]))
+                     << 8);
+            recon = _mm512_mask_add_ps(
+                    recon, static_cast<__mmask16>(plane), recon, v_weights[b]);
         }
 
-        __m256 rq = _mm256_loadu_ps(rotated_q + i);
-        acc = _mm256_fmadd_ps(rq, _mm256_add_ps(recon, v_cb), acc);
+        __m512 rq = _mm512_loadu_ps(rotated_q + i);
+        acc = _mm512_fmadd_ps(rq, _mm512_add_ps(recon, v_cb), acc);
     }
 
-    float result = hsum_avx2(acc);
+    // Half-width step: keeps the scalar tail under 8 dims when d is a multiple
+    // of 8 but not of 16 (e.g. 200, 1000). The upper 8 lanes are masked off
+    // throughout, and rotated_q is loaded masked so nothing is read past the
+    // end.
+    if (i + 8 <= d) {
+        const __mmask16 low8 = static_cast<__mmask16>(0x00ff);
+        __m512 recon = _mm512_maskz_mov_ps(
+                static_cast<__mmask16>(sign_bits[i / 8]), v_weights[ex_bits]);
+
+        uint64_t lo64 = 0;
+        memcpy(&lo64, ex_code + (i / 8) * ex_bits, sizeof(uint64_t));
+
+        for (size_t b = 0; b < ex_bits; b++) {
+            const uint32_t plane =
+                    static_cast<uint32_t>(_pext_u64(lo64, pext_masks[b]));
+            recon = _mm512_mask_add_ps(
+                    recon, static_cast<__mmask16>(plane), recon, v_weights[b]);
+        }
+
+        __m512 rq = _mm512_maskz_loadu_ps(low8, rotated_q + i);
+        acc = _mm512_fmadd_ps(
+                rq, _mm512_mask_add_ps(recon, low8, recon, v_cb), acc);
+        i += 8;
+    }
+
+    float result = _mm512_reduce_add_ps(acc);
     result += ip_scalar(sign_bits, ex_code, rotated_q, i, d, ex_bits, cb);
     return result;
 }
@@ -733,13 +786,33 @@ float compute_inner_product<SIMDLevel::AVX512>(
         size_t d,
         size_t ex_bits,
         float cb) {
+    if (ex_bits == 8) {
+        // RBQ9 has one byte per extra code: no bit-plane extraction or BMI2.
+        __m512 acc = _mm512_setzero_ps();
+        const __m512 weight = _mm512_set1_ps(256.f);
+        const __m512 offset = _mm512_set1_ps(cb);
+        size_t i = 0;
+        for (; i + 16 <= d; i += 16) {
+            uint16_t signs;
+            memcpy(&signs, sign_bits + i / 8, sizeof(signs));
+            const __m128i bytes = _mm_loadu_si128(
+                    reinterpret_cast<const __m128i*>(ex_code + i));
+            __m512 recon = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(bytes));
+            recon = _mm512_mask_add_ps(recon, signs, recon, weight);
+            acc = _mm512_fmadd_ps(
+                    _mm512_loadu_ps(rotated_q + i),
+                    _mm512_add_ps(recon, offset), acc);
+        }
+        return _mm512_reduce_add_ps(acc) +
+                ip_scalar(sign_bits, ex_code, rotated_q, i, d, ex_bits, cb);
+    }
     if (ex_bits == 1) {
         return ip_1exbit_avx512(sign_bits, ex_code, rotated_q, d, cb);
     }
 
-#ifdef __BMI2__
-    if (ex_bits <= 7) {
-        return ip_bitplane_avx2(sign_bits, ex_code, rotated_q, d, ex_bits, cb);
+#if defined(__GNUC__) && defined(__x86_64__)
+    if (ex_bits <= 7 && __builtin_cpu_supports("bmi2")) {
+        return ip_bitplane_avx512(sign_bits, ex_code, rotated_q, d, ex_bits, cb);
     }
 #endif
     return ip_scalar(sign_bits, ex_code, rotated_q, 0, d, ex_bits, cb);
