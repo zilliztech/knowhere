@@ -1027,6 +1027,102 @@ TEST_CASE("RaBitQ range boundaries and range_filter match full-code reference", 
     }
 }
 
+TEST_CASE("HNSW refined distances by ID match Search and metric references", "[hnsw_rabitq_regression]") {
+    constexpr int n = 128, d = 32, nq = 3, k = 20;
+    auto base = GenDataSet(n, d, 1961);
+    auto query = GenDataSet(nq, d, 1962);
+    auto* x = const_cast<float*>(static_cast<const float*>(base->GetTensor()));
+    auto* q = const_cast<float*>(static_cast<const float*>(query->GetTensor()));
+    // Non-unit vectors expose a raw-IP/cosine mismatch. Use values exactly
+    // representable in all three refine formats to isolate metric semantics
+    // from conversion rounding. Also cover the Search norm convention for zeros.
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < d; ++j) x[i * d + j] = ((i * 17 + j * 13) % 31 - 15) * 0.25f * (1 + i % 7);
+    std::fill_n(x, 2 * d, 0.0f);
+    x[0] = 6.0f;
+    x[1] = 8.0f;
+    std::fill_n(q, nq * d, 0.0f);
+    q[0] = 3.0f;
+    q[1] = 4.0f;
+    q[d] = -4.0f;
+    q[d + 1] = 3.0f;
+    std::vector<int64_t> labels(n);
+    for (int i = 0; i < n; ++i) labels[i] = n - 1 - i;
+
+    for (const auto* type : {"HNSW_RABITQ", "HNSW_SQ"}) {
+        for (const auto* metric : {"L2", "IP", "COSINE"}) {
+            for (const auto* refine : {"FP32", "FP16", "BF16"}) {
+                CAPTURE(type, metric, refine);
+                const bool cosine = std::string(metric) == "COSINE";
+                const bool l2 = std::string(metric) == "L2";
+                knowhere::Json cfg = {{"dim", d},       {"metric_type", metric},
+                                      {"M", 16},        {"efConstruction", 100},
+                                      {"ef", n},        {"k", k},
+                                      {"refine", true}, {"refine_type", refine},
+                                      {"refine_k", 1.3}};
+                if (std::string(type) == "HNSW_RABITQ") {
+                    cfg["rbq_bits"] = 4;
+                    cfg["rbq_bits_query"] = 4;
+                } else {
+                    cfg["sq_type"] = "SQ8";
+                }
+                auto create = [&] {
+                    return knowhere::IndexFactory::Instance()
+                        .Create<knowhere::fp32>(type, knowhere::Version::GetCurrentVersion().VersionNumber())
+                        .value();
+                };
+                auto index = create();
+                REQUIRE(index.Build(base, cfg) == knowhere::Status::success);
+                knowhere::BinarySet binary;
+                REQUIRE(index.Serialize(binary) == knowhere::Status::success);
+                auto restored = create();
+                REQUIRE(restored.Deserialize(binary, cfg) == knowhere::Status::success);
+                for (const auto* current : {&index, &restored}) {
+                    auto by_storage =
+                        current->Node()->CalcDistByStorageIds(query, {}, labels.data(), labels.size(), cosine);
+                    auto by_public = current->Node()->CalcDistByIDs(query, {}, labels.data(), labels.size(), cosine);
+                    auto search = current->Search(query, cfg, nullptr);
+                    REQUIRE(by_storage.has_value());
+                    REQUIRE(by_public.has_value());
+                    REQUIRE(search.has_value());
+                    for (int qi = 0; qi < nq; ++qi) {
+                        for (int j = 0; j < n; ++j) {
+                            const auto id = labels[j];
+                            std::vector<float> decoded(d);
+                            for (int c = 0; c < d; ++c) {
+                                const float v = x[id * d + c];
+                                decoded[c] = std::string(refine) == "FP16"   ? float(knowhere::fp16(v))
+                                             : std::string(refine) == "BF16" ? faiss::decode_bf16(faiss::encode_bf16(v))
+                                                                             : v;
+                            }
+                            float expected = l2 ? faiss::fvec_L2sqr(q + qi * d, decoded.data(), d)
+                                                : faiss::fvec_inner_product(q + qi * d, decoded.data(), d);
+                            if (cosine) {
+                                const float qnorm = std::sqrt(faiss::fvec_norm_L2sqr(q + qi * d, d));
+                                const float xnorm = std::sqrt(faiss::fvec_norm_L2sqr(x + id * d, d));
+                                expected /= (qnorm > 0 ? qnorm : 1.0f) * (xnorm > 0 ? xnorm : 1.0f);
+                            }
+                            REQUIRE(by_storage.value()->GetDistance()[qi * n + j] ==
+                                    Catch::Approx(expected).epsilon(1e-5).margin(1e-4));
+                            REQUIRE(by_public.value()->GetDistance()[qi * n + j] ==
+                                    by_storage.value()->GetDistance()[qi * n + j]);
+                        }
+                        for (int j = 0; j < k; ++j) {
+                            const auto id = search.value()->GetIds()[qi * k + j];
+                            REQUIRE(id >= 0);
+                            REQUIRE(id < n);
+                            REQUIRE(search.value()->GetDistance()[qi * k + j] ==
+                                    Catch::Approx(by_storage.value()->GetDistance()[qi * n + n - 1 - id])
+                                        .epsilon(1e-5)
+                                        .margin(1e-4));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 TEST_CASE("RaBitQ FP16 BF16 and FP32 refine return refiner distances", "[hnsw_rabitq_acceptance]") {
     constexpr int n = 128, d = 33, k = 20;
     auto base = GenDataSet(n, d, 1921);

@@ -1601,7 +1601,20 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                     const faiss::cppcontrib::knowhere::IndexRefine* index_refine =
                         dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(indexes[index_id].get());
                     if (index_refine != nullptr) {
-                        dist_computer.reset(index_refine->refine_index->get_distance_computer());
+                        const auto* graph =
+                            dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSW*>(index_refine->base_index);
+                        const auto* norms =
+                            graph ? dynamic_cast<const faiss::cppcontrib::knowhere::HasInverseL2Norms*>(graph->storage)
+                                  : nullptr;
+                        if (is_cosine && norms) {
+                            // Match Search: refine storage holds unnormalized vectors,
+                            // while the base storage owns their original inverse norms.
+                            IndexWrapperCosine refine_wrapper(index_refine->refine_index,
+                                                              norms->get_inverse_l2_norms());
+                            dist_computer.reset(refine_wrapper.get_distance_computer());
+                        } else {
+                            dist_computer.reset(index_refine->refine_index->get_distance_computer());
+                        }
                     } else {
                         dist_computer.reset(indexes[index_id]->get_distance_computer());
                     }
