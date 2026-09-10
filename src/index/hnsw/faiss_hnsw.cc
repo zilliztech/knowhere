@@ -1082,7 +1082,6 @@ class FaissHnswIterator : public IndexIterator {
                 };
 
                 searcher.evaluate_single_node(top.id, 0, workspace.accumulated_alpha, add_search_candidate);
-
                 if (searcher.filter.is_member(top.id)) {
                     workspace.dists.emplace_back(top.id, top.distance);
                     break;
@@ -1380,7 +1379,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         }
 
         // check for brute-force search
-        auto whether_bf_search = WhetherPerformBruteForceSearch(indexes[index_id].get(), hnsw_cfg, bitset);
+        auto whether_bf_search = hnsw_cfg.disable_fallback_brute_force.value()
+                                     ? std::optional<bool>(false)
+                                     : WhetherPerformBruteForceSearch(indexes[index_id].get(), hnsw_cfg, bitset);
 
         if (!whether_bf_search.has_value()) {
             return expected<DataSetPtr>::Err(Status::invalid_args, "k parameter is missing");
@@ -1421,8 +1422,51 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         hnsw_search_params.hnsw_stats = nullptr;
         // set up feder
         hnsw_search_params.feder = feder_result.get();
-        // set up kAlpha
-        hnsw_search_params.kAlpha = bitset.filter_ratio() * 0.7f;
+        // Predicate-aware planner: KAlpha at common selectivities,
+        // adaptive-local graph traversal when the projected graph gets sparse,
+        // and the outer conditional wrapper may still choose sparse exact scan.
+        const float filter_ratio = bitset.filter_ratio();
+        const bool use_filter_planner = hnsw_cfg.use_adaptive_filter.value() && !bitset.empty();
+        // Concurrent throughput crosses over later on cheaper distance
+        // functions: 128D at 98%, 200-768D at 95%, and 960D+ at 90%.
+        // Below that boundary, preserve the current KAlpha budget exactly.
+        const float throughput_adaptive_threshold =
+            dim < 192 ? 0.975f : (dim < 896 ? 0.93f : 0.875f);
+        // A zero threshold is an explicit experimental override used by the
+        // filtered-ANN benchmark. Production defaults retain the guard above.
+        const float configured_adaptive_threshold = hnsw_cfg.adaptive_filter_threshold.value();
+        const float adaptive_threshold = configured_adaptive_threshold <= 0.0f
+                                             ? 0.0f
+                                             : std::max(configured_adaptive_threshold, throughput_adaptive_threshold);
+        hnsw_search_params.kAlpha = filter_ratio * hnsw_cfg.kalpha_factor.value();
+        hnsw_search_params.use_adaptive_filter =
+            use_filter_planner && filter_ratio >= adaptive_threshold && feder_result == nullptr;
+        if (hnsw_search_params.use_adaptive_filter) {
+            int ef_scale = 1;
+            int ef_divisor = 1;
+            if (filter_ratio >= 0.975f) {
+                ef_scale = 5;
+                ef_divisor = 2;
+            } else if (filter_ratio >= 0.93f) {
+                // At medium dimensions the local adaptive walk already
+                // recovers enough valid candidates at the caller's ef. The
+                // 15/8 expansion only moves the operating point to higher
+                // recall while reducing concurrent throughput. Expensive
+                // high-dimensional distances still need the wider frontier.
+                if (dim >= 896) {
+                    ef_scale = 15;
+                    ef_divisor = 8;
+                }
+            } else if (filter_ratio >= 0.85f) {
+                ef_scale = 25;
+                ef_divisor = 16;
+            }
+            hnsw_search_params.efSearch =
+                (hnsw_search_params.efSearch * ef_scale + ef_divisor - 1) / ef_divisor;
+        }
+        if (use_filter_planner) {
+            hnsw_search_params.efSearch = std::max(hnsw_search_params.efSearch, static_cast<int>(k));
+        }
 
         // set up a selector
         BitsetViewIDSelector bw_idselector(bitset);
@@ -1716,7 +1760,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         // set up feder
         hnsw_search_params.feder = feder_result.get();
         // set up kAlpha
-        hnsw_search_params.kAlpha = bitset.filter_ratio() * 0.7f;
+        hnsw_search_params.kAlpha = bitset.filter_ratio() * hnsw_cfg.kalpha_factor.value();
 
         // set up a selector
         BitsetViewIDSelector bw_idselector(bitset);

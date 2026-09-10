@@ -792,6 +792,7 @@ Index* read_index(IOReader* f, int io_flags) {
 
         // reconstruct inverse norms from wire L2 norms
         idxf->inverse_norms_storage = L2NormsStorage::from_l2_norms(wire_l2_norms);
+        idxf->rebuild_routing_sq8();
 
         FAISS_THROW_IF_NOT(
                 idxf->codes.size() == idxf->ntotal * idxf->code_size);
@@ -829,6 +830,7 @@ Index* read_index(IOReader* f, int io_flags) {
             idxfc->codes = std::move(idxf->codes);
             // reconstruct inverse norms from wire L2 norms
             idxfc->inverse_norms_storage = L2NormsStorage::from_l2_norms(wire_code_norms);
+            idxfc->rebuild_routing_sq8();
             delete idxf;
             idxf = idxfc;
         }

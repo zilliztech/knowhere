@@ -125,6 +125,60 @@ FAISS_PRAGMA_IMPRECISE_FUNCTION_END
 
 FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
 template <>
+void fvec_L2sqr_batch_2<SL>(
+        const float* x,
+        const float* y0,
+        const float* y1,
+        const size_t d,
+        float& dis0,
+        float& dis1) {
+    float d0 = 0;
+    float d1 = 0;
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (size_t i = 0; i < d; ++i) {
+        const float q0 = x[i] - y0[i];
+        const float q1 = x[i] - y1[i];
+        d0 += q0 * q0;
+        d1 += q1 * q1;
+    }
+
+    dis0 = d0;
+    dis1 = d1;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+template <>
+void fvec_L2sqr_batch_3<SL>(
+        const float* x,
+        const float* y0,
+        const float* y1,
+        const float* y2,
+        const size_t d,
+        float& dis0,
+        float& dis1,
+        float& dis2) {
+    float d0 = 0;
+    float d1 = 0;
+    float d2 = 0;
+    FAISS_PRAGMA_IMPRECISE_LOOP
+    for (size_t i = 0; i < d; ++i) {
+        const float q0 = x[i] - y0[i];
+        const float q1 = x[i] - y1[i];
+        const float q2 = x[i] - y2[i];
+        d0 += q0 * q0;
+        d1 += q1 * q1;
+        d2 += q2 * q2;
+    }
+
+    dis0 = d0;
+    dis1 = d1;
+    dis2 = d2;
+}
+FAISS_PRAGMA_IMPRECISE_FUNCTION_END
+
+FAISS_PRAGMA_IMPRECISE_FUNCTION_BEGIN
+template <>
 void fvec_L2sqr_batch_4<SL>(
         const float* x,
         const float* y0,
