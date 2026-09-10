@@ -80,7 +80,7 @@ class DataViewIndexBase {
             quant_data_ = nullptr;
         }
     }
-    virtual ~DataViewIndexBase() {};
+    virtual ~DataViewIndexBase(){};
 
     virtual void
     Train(idx_t n, const void* __restrict x, bool use_knowhere_build_pool) = 0;
