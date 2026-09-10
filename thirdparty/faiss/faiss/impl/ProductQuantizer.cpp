@@ -280,7 +280,9 @@ void compute_1_code(const ProductQuantizer& pq, const float* x, uint8_t* code) {
 } // namespace
 
 void ProductQuantizer::compute_code(const float* x, uint8_t* code) const {
-    with_simd_level([&]<SIMDLevel SL>() {
+    // A1 includes ARM_SVE so the low-dimensional SVE nearest kernel in
+    // fvec_L2sqr_ny_nearest is reachable from PQ encoding.
+    with_selected_simd_levels<AVAILABLE_SIMD_LEVELS_A1>([&]<SIMDLevel SL>() {
         switch (nbits) {
             case 8:
                 compute_1_code<PQEncoder8, SL>(*this, x, code);

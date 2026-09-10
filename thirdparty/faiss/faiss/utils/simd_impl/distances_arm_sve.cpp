@@ -7,6 +7,9 @@
 
 #include <arm_sve.h>
 
+#include <initializer_list>
+#include <utility>
+
 #include <faiss/utils/distances.h>
 
 #include <faiss/impl/AuxIndexStructures.h>
@@ -520,6 +523,100 @@ void fvec_L2sqr_ny<SIMDLevel::ARM_SVE>(
     }
 }
 
+namespace {
+
+/// Low-dimensional L2sqr nearest (D in {2,4,8}). The data is row-major
+/// (centroid c is y[c*D .. c*D+D]). Each SVE lane tracks one centroid across
+/// batches, keeping the lane-local minimum and index in registers. The scratch
+/// buffer is not written, matching the AVX2/AVX512 D2/D4/D8 implementations.
+template <int D>
+size_t fvec_L2sqr_ny_nearest_lowdim(
+        float* /*distances_tmp_buffer*/,
+        const float* x,
+        const float* y,
+        size_t ny) {
+    const size_t lanes = svcntw();
+    svfloat32_t global_mins = svdup_n_f32(HUGE_VALF);
+    svuint32_t global_ids = svdup_n_u32(0);
+    svuint32_t current_ids = svindex_u32(0, 1);
+
+    for (size_t c = 0; c < ny; c += lanes) {
+        const svbool_t pg = svwhilelt_b32_u64(c, ny);
+        svfloat32_t distances = svdup_n_f32(0.0f);
+        for (uint32_t j = 0; j < D; ++j) {
+            const svuint32_t offsets = svindex_u32(j, D);
+            const svfloat32_t yv =
+                    svld1_gather_u32index_f32(pg, y + c * D, offsets);
+            const svfloat32_t diff = svsub_n_f32_x(pg, yv, x[j]);
+            distances = svmla_f32_m(pg, distances, diff, diff);
+        }
+
+        const svbool_t closer = svcmplt_f32(pg, distances, global_mins);
+        global_mins = svsel_f32(closer, distances, global_mins);
+        global_ids = svsel_u32(closer, current_ids, global_ids);
+        current_ids = svadd_n_u32_x(
+                pg, current_ids, static_cast<uint32_t>(lanes));
+    }
+
+    const svbool_t all = svptrue_b32();
+    const float global_min = svminv_f32(all, global_mins);
+    return svminv_u32(
+            svcmpeq_n_f32(all, global_mins, global_min), global_ids);
+}
+
+} // namespace
+
+// Specializations for low-dimensional L2sqr nearest, mirroring the
+// fvec_L2sqr_ny_nearest_D2/D4/D8 declarations used by the SSE/AVX
+// implementations. One SVE lane covers one D-float centroid.
+template <SIMDLevel>
+size_t fvec_L2sqr_ny_nearest_D2(
+        float* distances_tmp_buffer,
+        const float* x,
+        const float* y,
+        size_t ny);
+
+template <SIMDLevel>
+size_t fvec_L2sqr_ny_nearest_D4(
+        float* distances_tmp_buffer,
+        const float* x,
+        const float* y,
+        size_t ny);
+
+template <SIMDLevel>
+size_t fvec_L2sqr_ny_nearest_D8(
+        float* distances_tmp_buffer,
+        const float* x,
+        const float* y,
+        size_t ny);
+
+template <>
+size_t fvec_L2sqr_ny_nearest_D2<SIMDLevel::ARM_SVE>(
+        float* distances_tmp_buffer,
+        const float* x,
+        const float* y,
+        size_t ny) {
+    return fvec_L2sqr_ny_nearest_lowdim<2>(distances_tmp_buffer, x, y, ny);
+}
+
+template <>
+size_t fvec_L2sqr_ny_nearest_D4<SIMDLevel::ARM_SVE>(
+        float* distances_tmp_buffer,
+        const float* x,
+        const float* y,
+        size_t ny) {
+    return fvec_L2sqr_ny_nearest_lowdim<4>(distances_tmp_buffer, x, y, ny);
+}
+
+template <>
+size_t fvec_L2sqr_ny_nearest_D8<SIMDLevel::ARM_SVE>(
+        float* distances_tmp_buffer,
+        const float* x,
+        const float* y,
+        size_t ny) {
+    return fvec_L2sqr_ny_nearest_lowdim<8>(distances_tmp_buffer, x, y, ny);
+}
+
 template <>
 size_t fvec_L2sqr_ny_nearest<SIMDLevel::ARM_SVE>(
         float* distances_tmp_buffer,
@@ -527,6 +624,25 @@ size_t fvec_L2sqr_ny_nearest<SIMDLevel::ARM_SVE>(
         const float* y,
         size_t d,
         size_t ny) {
+    // Low-dimensional L2sqr nearest (d in {2,4,8}): each SVE lane tracks one
+    // centroid while D gathers load its components. d is the SIMD layout
+    // condition; ny is the generic loop bound. The scratch buffer is not
+    // written (matching the x86 D2/D4/D8 implementations); minima and indices
+    // remain in registers.
+    if (d == 2 || d == 4 || d == 8) {
+        switch (d) {
+            case 2:
+                return fvec_L2sqr_ny_nearest_D2<SIMDLevel::ARM_SVE>(
+                        distances_tmp_buffer, x, y, ny);
+            case 4:
+                return fvec_L2sqr_ny_nearest_D4<SIMDLevel::ARM_SVE>(
+                        distances_tmp_buffer, x, y, ny);
+            default:
+                return fvec_L2sqr_ny_nearest_D8<SIMDLevel::ARM_SVE>(
+                        distances_tmp_buffer, x, y, ny);
+        }
+    }
+
     fvec_L2sqr_ny<SIMDLevel::ARM_SVE>(distances_tmp_buffer, x, y, d, ny);
 
     size_t nearest_idx = 0;
