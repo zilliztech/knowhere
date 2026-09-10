@@ -65,6 +65,11 @@ uint64_t bitwise_xor_dot_product<SIMDLevel::AVX512>(
         size_t qb);
 template <>
 uint64_t popcount<SIMDLevel::AVX512>(const uint8_t* data, size_t size);
+template <>
+float selected_float_sum<SIMDLevel::AVX512>(
+        const uint8_t* sign_bits,
+        const float* values,
+        size_t d);
 
 namespace {
 
@@ -402,9 +407,93 @@ uint64_t popcount<SIMDLevel::AVX512_SPR>(const uint8_t* data, size_t size) {
     return sum;
 }
 
+template <>
+float selected_float_sum<SIMDLevel::AVX512_SPR>(
+        const uint8_t* sign_bits,
+        const float* values,
+        size_t d) {
+    return selected_float_sum<SIMDLevel::AVX512>(sign_bits, values, d);
+}
+
 } // namespace faiss::rabitq
 
 namespace faiss::rabitq::multibit {
+
+template <>
+float compute_inner_product_byte<SIMDLevel::AVX512>(
+        const uint8_t* __restrict code,
+        const float* __restrict query,
+        size_t d,
+        float cb);
+
+template <>
+void compute_inner_product_byte_batch_4<SIMDLevel::AVX512>(
+        const uint8_t* const codes[4],
+        const float* __restrict query,
+        size_t d,
+        float cb,
+        float out[4]);
+
+template <>
+float compute_inner_product_dense<SIMDLevel::AVX512>(
+        const uint8_t* code,
+        const float* query,
+        size_t d,
+        size_t nbits,
+        float cb);
+
+template <>
+void compute_inner_product_dense_batch_4<SIMDLevel::AVX512>(
+        const uint8_t* const codes[4],
+        const float* query,
+        size_t d,
+        size_t nbits,
+        float cb,
+        float out[4]);
+
+template <>
+float compute_inner_product_byte<SIMDLevel::AVX512_SPR>(
+        const uint8_t* __restrict code,
+        const float* __restrict query,
+        size_t d,
+        float cb) {
+    return compute_inner_product_byte<SIMDLevel::AVX512>(
+            code, query, d, cb);
+}
+
+template <>
+void compute_inner_product_byte_batch_4<SIMDLevel::AVX512_SPR>(
+        const uint8_t* const codes[4],
+        const float* __restrict query,
+        size_t d,
+        float cb,
+        float out[4]) {
+    compute_inner_product_byte_batch_4<SIMDLevel::AVX512>(
+            codes, query, d, cb, out);
+}
+
+template <>
+float compute_inner_product_dense<SIMDLevel::AVX512_SPR>(
+        const uint8_t* code,
+        const float* query,
+        size_t d,
+        size_t nbits,
+        float cb) {
+    return compute_inner_product_dense<SIMDLevel::AVX512>(
+            code, query, d, nbits, cb);
+}
+
+template <>
+void compute_inner_product_dense_batch_4<SIMDLevel::AVX512_SPR>(
+        const uint8_t* const codes[4],
+        const float* query,
+        size_t d,
+        size_t nbits,
+        float cb,
+        float out[4]) {
+    compute_inner_product_dense_batch_4<SIMDLevel::AVX512>(
+            codes, query, d, nbits, cb, out);
+}
 
 // Forward-declare the AVX512 floating-point inner-product kernel.
 // VPOPCNTDQ does not help this kernel (it operates on FP32), so we
@@ -419,6 +508,16 @@ float compute_inner_product<SIMDLevel::AVX512>(
         float cb);
 
 template <>
+void compute_inner_product_batch_4<SIMDLevel::AVX512>(
+        const uint8_t* const sign_bits[4],
+        const uint8_t* const ex_codes[4],
+        const float* __restrict rotated_q,
+        size_t d,
+        size_t ex_bits,
+        float cb,
+        float out[4]);
+
+template <>
 float compute_inner_product<SIMDLevel::AVX512_SPR>(
         const uint8_t* __restrict sign_bits,
         const uint8_t* __restrict ex_code,
@@ -428,6 +527,19 @@ float compute_inner_product<SIMDLevel::AVX512_SPR>(
         float cb) {
     return compute_inner_product<SIMDLevel::AVX512>(
             sign_bits, ex_code, rotated_q, d, ex_bits, cb);
+}
+
+template <>
+void compute_inner_product_batch_4<SIMDLevel::AVX512_SPR>(
+        const uint8_t* const sign_bits[4],
+        const uint8_t* const ex_codes[4],
+        const float* __restrict rotated_q,
+        size_t d,
+        size_t ex_bits,
+        float cb,
+        float out[4]) {
+    compute_inner_product_batch_4<SIMDLevel::AVX512>(
+            sign_bits, ex_codes, rotated_q, d, ex_bits, cb, out);
 }
 
 } // namespace faiss::rabitq::multibit

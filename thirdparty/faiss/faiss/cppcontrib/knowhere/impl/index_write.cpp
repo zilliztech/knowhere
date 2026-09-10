@@ -18,30 +18,32 @@
 #include <faiss/cppcontrib/knowhere/invlists/InvertedListsIOHook.h>
 #include <faiss/cppcontrib/knowhere/invlists/OnDiskInvertedLists.h>
 
+#include <faiss/cppcontrib/knowhere/utils/hamming.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/io_macros.h>
-#include <faiss/cppcontrib/knowhere/utils/hamming.h>
 
 #include <faiss/IndexAdditiveQuantizer.h>
-#include <faiss/IndexIVFRaBitQ.h>
 #include <faiss/IndexIVFPQFastScan.h>
-#include <faiss/impl/RaBitQuantizer.h>
+#include <faiss/IndexIVFRaBitQ.h>
+#include <faiss/IndexPQ.h>
+#include <faiss/IndexPreTransform.h>
+#include <faiss/IndexRaBitQ.h>
+#include <faiss/IndexScalarQuantizer.h>
+#include <faiss/VectorTransform.h>
 #include <faiss/cppcontrib/knowhere/IndexBinaryScalarQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSW.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSWBinary.h>
+#include <faiss/cppcontrib/knowhere/IndexHNSWRaBitQ.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFPQ.h>
-#include <faiss/IndexPQ.h>
-#include <faiss/IndexPreTransform.h>
 #include <faiss/cppcontrib/knowhere/IndexRefine.h>
 #include <faiss/cppcontrib/knowhere/IndexSQ4Uniform.h>
 #include <faiss/cppcontrib/knowhere/IndexScaNN.h>
 #include <faiss/cppcontrib/knowhere/IndexScalarQuantizer.h>
-#include <faiss/IndexScalarQuantizer.h>
-#include <faiss/VectorTransform.h>
+#include <faiss/impl/RaBitQuantizer.h>
 
 #include <faiss/cppcontrib/knowhere/IndexBinaryFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexBinaryIVF.h>
@@ -69,10 +71,7 @@
  * leak memory.
  **************************************************************/
 
-
-
 namespace faiss::cppcontrib::knowhere {
-
 
 /*************************************************************
  * Write
@@ -94,7 +93,7 @@ static void write_index_header(const Index* idx, IOWriter* f) {
     WRITE1(dummy32);
     idx_t dummy = 0;
     WRITE1(dummy);
-    
+
     WRITE1(idx->is_trained);
     WRITE1(idx->metric_type);
     if (idx->metric_type > 1) {
@@ -305,8 +304,9 @@ void write_InvertedLists(const ::faiss::InvertedLists* ils, IOWriter* f) {
                 }
             }
         }
-    } else if (const auto & lca =
-                       dynamic_cast<const ConcurrentArrayInvertedLists *>(ils)) {
+    } else if (
+            const auto& lca =
+                    dynamic_cast<const ConcurrentArrayInvertedLists*>(ils)) {
         uint32_t h = fourcc("ilca");
         WRITE1(h);
         WRITE1(lca->nlist);
@@ -350,16 +350,20 @@ void write_InvertedLists(const ::faiss::InvertedLists* ils, IOWriter* f) {
                 size_t seg_num = lca->get_segment_num(i);
                 for (size_t j = 0; j < seg_num; j++) {
                     size_t seg_size = lca->get_segment_size(i, j);
-                    WRITEANDCHECK(lca->codes[i][j].data_.data(), seg_size * lca->code_size);
+                    WRITEANDCHECK(
+                            lca->codes[i][j].data_.data(),
+                            seg_size * lca->code_size);
                     WRITEANDCHECK(lca->ids[i][j].data_.data(), seg_size);
                     if (lca->save_norm) {
-                        WRITEANDCHECK(lca->code_norms[i][j].data_.data(), seg_size);
+                        WRITEANDCHECK(
+                                lca->code_norms[i][j].data_.data(), seg_size);
                     }
                 }
             }
         }
-    } else if (const auto & oa =
-            dynamic_cast<const ReadOnlyArrayInvertedLists *>(ils)) {
+    } else if (
+            const auto& oa =
+                    dynamic_cast<const ReadOnlyArrayInvertedLists*>(ils)) {
         uint32_t h = fourcc("iloa");
         WRITE1(h);
         WRITE1(oa->nlist);
@@ -369,16 +373,16 @@ void write_InvertedLists(const ::faiss::InvertedLists* ils, IOWriter* f) {
         size_t n = oa->pin_readonly_ids->size() / sizeof(InvertedLists::idx_t);
         WRITE1(n);
         WRITEANDCHECK((InvertedLists::idx_t*)oa->pin_readonly_ids->data, n);
-        WRITEANDCHECK((uint8_t*)oa->pin_readonly_codes->data, n * oa->code_size);
+        WRITEANDCHECK(
+                (uint8_t*)oa->pin_readonly_codes->data, n * oa->code_size);
 #else
         size_t n = oa->readonly_ids.size();
         WRITE1(n);
         WRITEANDCHECK(oa->readonly_ids.data(), n);
         WRITEANDCHECK(oa->readonly_codes.data(), n * oa->code_size);
 #endif
-    } else if (const auto & od =
-               dynamic_cast<const OnDiskInvertedLists *>(ils)) {
-        uint32_t h = fourcc ("ilod");
+    } else if (const auto& od = dynamic_cast<const OnDiskInvertedLists*>(ils)) {
+        uint32_t h = fourcc("ilod");
         WRITE1(h);
         WRITE1(ils->nlist);
         WRITE1(ils->code_size);
@@ -387,7 +391,7 @@ void write_InvertedLists(const ::faiss::InvertedLists* ils, IOWriter* f) {
 
         {
             std::vector<OnDiskInvertedLists::Slot> v(
-                      od->slots.begin(), od->slots.end());
+                    od->slots.begin(), od->slots.end());
             WRITEVECTOR(v);
         }
         {
@@ -502,6 +506,41 @@ static void write_RaBitQuantizer(
     }
 }
 
+static void validate_RaBitQ_index_for_write(const ::faiss::IndexRaBitQ* idxq) {
+    FAISS_THROW_IF_NOT_MSG(
+            idxq->metric_type == METRIC_L2 ||
+                    idxq->metric_type == METRIC_INNER_PRODUCT,
+            "IndexRaBitQ only supports L2 and inner product metrics");
+    FAISS_THROW_IF_NOT_MSG(
+            idxq->rabitq.d == static_cast<size_t>(idxq->d) &&
+                    idxq->rabitq.metric_type == idxq->metric_type,
+            "IndexRaBitQ quantizer metadata mismatch");
+    FAISS_THROW_IF_NOT_MSG(
+            idxq->rabitq.nb_bits >= 1 && idxq->rabitq.nb_bits <= 9,
+            "IndexRaBitQ nb_bits must be in [1, 9]");
+    FAISS_THROW_IF_NOT_MSG(
+            !idxq->rabitq.dense_layout || idxq->rabitq.nb_bits > 1,
+            "IndexRaBitQ dense layout requires nb_bits>1");
+    const size_t expected_code_size =
+            idxq->rabitq.compute_code_size(idxq->d, idxq->rabitq.nb_bits);
+    FAISS_THROW_IF_NOT_MSG(
+            idxq->rabitq.code_size == expected_code_size &&
+                    idxq->code_size == expected_code_size,
+            "IndexRaBitQ code size mismatch");
+    FAISS_THROW_IF_NOT_MSG(
+            idxq->codes.size() ==
+                    static_cast<size_t>(idxq->ntotal) * expected_code_size,
+            "IndexRaBitQ codes size mismatch");
+    FAISS_THROW_IF_NOT_MSG(
+            idxq->center.empty() ||
+                    idxq->center.size() == static_cast<size_t>(idxq->d),
+            "IndexRaBitQ center size mismatch");
+    FAISS_THROW_IF_NOT_MSG(idxq->qb <= 8, "IndexRaBitQ qb must be in [0, 8]");
+    FAISS_THROW_IF_NOT_MSG(
+            !idxq->centered,
+            "cppcontrib IndexRaBitQ V1 serialization requires centered=false");
+}
+
 static void write_direct_map(const DirectMap* dm, IOWriter* f) {
     char maintain_direct_map =
             (char)dm->type; // for backwards compatibility with bool
@@ -514,11 +553,12 @@ static void write_direct_map(const DirectMap* dm, IOWriter* f) {
         std::copy(map.begin(), map.end(), v.begin());
         WRITEVECTOR(v);
     }
-    // Path-D step 10.9: the former `if (dm->type == DirectMap::ConcurrentArray)`
-    // write branch is gone — fork DirectMap no longer supports that
-    // variant. CC indexes now carry their own `cc_direct_map` member
-    // (ConcurrentDirectMap) which is not serialized through this path
-    // (CC indexes have no serialize stage; see ivf.cc:619 comment).
+    // Path-D step 10.9: the former `if (dm->type ==
+    // DirectMap::ConcurrentArray)` write branch is gone — fork DirectMap no
+    // longer supports that variant. CC indexes now carry their own
+    // `cc_direct_map` member (ConcurrentDirectMap) which is not serialized
+    // through this path (CC indexes have no serialize stage; see ivf.cc:619
+    // comment).
 }
 
 static void write_ivf_header(const IndexIVF* ivf, IOWriter* f) {
@@ -536,13 +576,15 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         // eg. for a storage component of HNSW that is set to nullptr
         uint32_t h = fourcc("null");
         WRITE1(h);
-    } else if (const IndexFlatCosine* idxf = dynamic_cast<const IndexFlatCosine*>(idx)) {
+    } else if (
+            const IndexFlatCosine* idxf =
+                    dynamic_cast<const IndexFlatCosine*>(idx)) {
         uint32_t h = fourcc("IxF9");
         WRITE1(h);
         write_index_header(idx, f);
         WRITEXBVECTOR(idxf->codes);
         // we're storing real l2 norms, because of
-        //   backward compatibility issues. 
+        //   backward compatibility issues.
         WRITEVECTOR(idxf->inverse_norms_storage.as_l2_norms());
     } else if (
             const ::faiss::IndexFlat* idxf =
@@ -556,7 +598,9 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(h);
         write_index_header(idx, f);
         WRITEXBVECTOR(idxf->codes);
-    } else if (const IndexPQCosine* idxp = dynamic_cast<const IndexPQCosine*>(idx)) {
+    } else if (
+            const IndexPQCosine* idxp =
+                    dynamic_cast<const IndexPQCosine*>(idx)) {
         uint32_t h = fourcc("IxP7");
         WRITE1(h);
         write_index_header(idx, f);
@@ -598,7 +642,8 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITEVECTOR(idxr_2->codes);
     } else if (
             const IndexProductResidualQuantizerCosine* idxpr =
-                    dynamic_cast<const IndexProductResidualQuantizerCosine*>(idx)) {
+                    dynamic_cast<const IndexProductResidualQuantizerCosine*>(
+                            idx)) {
         uint32_t h = fourcc("IxP5");
         WRITE1(h);
         write_index_header(idx, f);
@@ -711,6 +756,20 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         write_ScalarQuantizer(&idxs->sq, f);
         WRITEVECTOR(idxs->codes);
     } else if (
+            const ::faiss::IndexRaBitQ* idxq =
+                    dynamic_cast<const ::faiss::IndexRaBitQ*>(idx)) {
+        validate_RaBitQ_index_for_write(idxq);
+        const bool multi_bit = idxq->rabitq.nb_bits > 1;
+        uint32_t h = idxq->rabitq.dense_layout
+                ? fourcc("Ixrd")
+                : (multi_bit ? fourcc("Ixrr") : fourcc("Ixrq"));
+        WRITE1(h);
+        write_index_header(idxq, f);
+        write_RaBitQuantizer(&idxq->rabitq, f, multi_bit);
+        WRITEVECTOR(idxq->codes);
+        WRITEVECTOR(idxq->center);
+        WRITE1(idxq->qb);
+    } else if (
             const IndexIVFFlat* ivfl =
                     dynamic_cast<const IndexIVFFlatCC*>(idx)) {
         uint32_t h = fourcc("IwFc");
@@ -742,6 +801,19 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(ivpq->code_size);
         write_ProductQuantizer(&ivpq->pq, f);
         write_InvertedLists(ivpq->invlists, f);
+    } else if (
+            const auto* cosine_rabitq =
+                    dynamic_cast<const IndexPreTransformRaBitQCosine*>(idx)) {
+        cosine_rabitq->validate_norms();
+        uint32_t h = fourcc(kRaBitQPreTransformCosineFourcc);
+        WRITE1(h);
+        write_index_header(cosine_rabitq, f);
+        int nt = cosine_rabitq->chain.size();
+        WRITE1(nt);
+        for (int i = 0; i < nt; i++)
+            write_VectorTransform(cosine_rabitq->chain[i], f);
+        write_index(cosine_rabitq->index, f);
+        WRITEVECTOR(cosine_rabitq->inverse_norms_storage.inverse_l2_norms);
     } else if (
             const IndexPreTransform* ixpt =
                     dynamic_cast<const IndexPreTransform*>(idx)) {
@@ -780,8 +852,23 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         write_index(idxrf->refine_index, f);
         WRITE1(idxrf->k_factor);
     } else if (const IndexHNSW* idxhnsw = dynamic_cast<const IndexHNSW*>(idx)) {
-        uint32_t h = dynamic_cast<const IndexHNSWFlat*>(idx)    ? fourcc("IHNf")
-                : dynamic_cast<const IndexHNSWPQ*>(idx)         ? fourcc("IHNp")
+        const auto* hnsw_rabitq_cosine =
+                dynamic_cast<const IndexHNSWRaBitQCosine*>(idx);
+        const auto* hnsw_rabitq = dynamic_cast<const IndexHNSWRaBitQ*>(idx);
+        if (hnsw_rabitq) {
+            FAISS_THROW_IF_NOT_MSG(
+                    !(io_flags & IO_FLAG_SKIP_STORAGE),
+                    "IndexHNSWRaBitQ cannot be serialized without its RaBitQ storage");
+            if (hnsw_rabitq_cosine) {
+                hnsw_rabitq_cosine->validate_cosine_storage();
+            } else {
+                hnsw_rabitq->validate_storage();
+            }
+        }
+        uint32_t h = hnsw_rabitq_cosine ? fourcc(kHnswRaBitQCosineFourcc)
+                : hnsw_rabitq           ? fourcc(kHnswRaBitQFourcc)
+                : dynamic_cast<const IndexHNSWFlat*>(idx) ? fourcc("IHNf")
+                : dynamic_cast<const IndexHNSWPQ*>(idx)   ? fourcc("IHNp")
                 // IndexHNSWBinary reuses the legacy IHNs fourcc so
                 // on-disk bytes match what IndexHNSWSQ(QT_1bit_direct,
                 // metric) used to produce. Readers dispatch to
@@ -888,7 +975,6 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
     }
 }
 
-
 void write_index(const Index* idx, FILE* f, int io_flags) {
     FileIOWriter writer(f);
     write_index(idx, &writer, io_flags);
@@ -967,4 +1053,4 @@ void write_index_binary(const IndexBinary* idx, const char* fname) {
     write_index_binary(idx, &writer);
 }
 
-}
+} // namespace faiss::cppcontrib::knowhere

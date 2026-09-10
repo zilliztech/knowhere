@@ -57,6 +57,7 @@
 #include <faiss/IndexRaBitQFastScan.h>
 #include <faiss/IndexRefine.h>
 #include <faiss/IndexRowwiseMinMax.h>
+#include <faiss/cppcontrib/knowhere/IndexHNSWRaBitQ.h>
 #ifdef FAISS_ENABLE_SVS
 #include <faiss/impl/svs_io.h>
 #include <faiss/svs/IndexSVSFlat.h>
@@ -1305,6 +1306,19 @@ static void read_HNSW(HNSW& hnsw, IOReader* f) {
     validate_HNSW(hnsw);
 }
 
+static void read_knowhere_HNSW(cppcontrib::knowhere::HNSW& hnsw, IOReader* f) {
+    READVECTOR(hnsw.assign_probas);
+    READVECTOR(hnsw.cum_nneighbor_per_level);
+    READVECTOR(hnsw.levels);
+    READVECTOR(hnsw.offsets);
+    read_vector(hnsw.neighbors, f);
+    READ1(hnsw.entry_point);
+    READ1(hnsw.max_level);
+    READ1(hnsw.efConstruction);
+    READ1(hnsw.efSearch);
+    READ1(hnsw.upper_beam);
+}
+
 static void read_NSG(NSG& nsg, IOReader* f) {
     READ1(nsg.ntotal);
     READ1(nsg.R);
@@ -1420,7 +1434,8 @@ static void read_RaBitQuantizer(
         RaBitQuantizer& rabitq,
         IOReader* f,
         int expected_d,
-        bool multi_bit = true) {
+        bool multi_bit = true,
+        bool dense_layout = false) {
     READ1(rabitq.d);
     READ1(rabitq.code_size);
     int metric_type_int;
@@ -1432,12 +1447,21 @@ static void read_RaBitQuantizer(
     } else {
         rabitq.nb_bits = 1;
     }
+    rabitq.dense_layout = dense_layout;
 
     FAISS_THROW_IF_NOT_FMT(
             rabitq.d == static_cast<size_t>(expected_d),
             "RaBitQuantizer dimension mismatch: rabitq.d=%zu vs index d=%d",
             rabitq.d,
             expected_d);
+
+    const size_t expected_code_size =
+            rabitq.compute_code_size(rabitq.d, rabitq.nb_bits);
+    FAISS_THROW_IF_NOT_FMT(
+            rabitq.code_size == expected_code_size,
+            "RaBitQuantizer code size mismatch: stored=%zu expected=%zu",
+            rabitq.code_size,
+            expected_code_size);
 }
 
 static void read_EDENScalarQuantizer(
@@ -2351,6 +2375,24 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
             READ1(index_ivfpq->use_precomputed_table);
         }
         idx = std::move(indep);
+    } else if (
+            h ==
+            fourcc(cppcontrib::knowhere::kRaBitQPreTransformCosineFourcc)) {
+        auto ixpt = std::make_unique<
+                cppcontrib::knowhere::IndexPreTransformRaBitQCosine>();
+        ixpt->own_fields = true;
+        read_index_header(*ixpt, f);
+        int nt;
+        READ1(nt);
+        FAISS_THROW_IF_NOT_MSG(
+                nt >= 0, "negative transform count in cosine RaBitQ storage");
+        for (int i = 0; i < nt; i++) {
+            ixpt->chain.push_back(read_VectorTransform(f));
+        }
+        ixpt->index = read_index(f, io_flags);
+        READVECTOR(ixpt->inverse_norms_storage.inverse_l2_norms);
+        ixpt->validate_norms();
+        idx = std::move(ixpt);
     } else if (h == fourcc("IxPT")) {
         auto ixpt = std::make_unique<IndexPreTransform>();
         ixpt->own_fields = true;
@@ -2494,6 +2536,30 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
                         idxp->code_size,
                         "Index2Layer codes"));
         idx = std::move(idxp);
+    } else if (
+            h == fourcc(cppcontrib::knowhere::kHnswRaBitQFourcc) ||
+            h == fourcc(cppcontrib::knowhere::kHnswRaBitQCosineFourcc)) {
+        const bool is_cosine =
+                h == fourcc(cppcontrib::knowhere::kHnswRaBitQCosineFourcc);
+        std::unique_ptr<cppcontrib::knowhere::IndexHNSWRaBitQ> idxhnsw;
+        if (is_cosine) {
+            idxhnsw = std::make_unique<
+                    cppcontrib::knowhere::IndexHNSWRaBitQCosine>();
+        } else {
+            idxhnsw = std::make_unique<cppcontrib::knowhere::IndexHNSWRaBitQ>();
+        }
+        read_index_header(*idxhnsw, f);
+        read_knowhere_HNSW(idxhnsw->hnsw, f);
+        idxhnsw->storage = read_index(f, io_flags);
+        idxhnsw->own_fields = idxhnsw->storage != nullptr;
+        if (is_cosine) {
+            dynamic_cast<cppcontrib::knowhere::IndexHNSWRaBitQCosine*>(
+                    idxhnsw.get())
+                    ->validate_cosine_storage();
+        } else {
+            idxhnsw->validate_storage();
+        }
+        idx = std::move(idxhnsw);
     } else if (
             h == fourcc("IHNf") || h == fourcc("IHNp") || h == fourcc("IHNs") ||
             h == fourcc("IHN2") || h == fourcc("IHNc") || h == fourcc("IHc2") ||
@@ -2851,12 +2917,12 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
         // rabitq.nb_bits is already set to 1 by read_RaBitQuantizer
         idxq->code_size = idxq->rabitq.code_size;
         idx = std::move(idxq);
-    } else if (h == fourcc("Ixrr")) {
-        // Ixrr = multi-bit format (new)
+    } else if (h == fourcc("Ixrr") || h == fourcc("Ixrd")) {
+        // Ixrr = split multi-bit format; Ixrd = dense multi-bit format.
         auto idxq = std::make_unique<IndexRaBitQ>();
         read_index_header(*idxq, f);
         read_RaBitQuantizer(
-                idxq->rabitq, f, idxq->d, true); // Reads nb_bits from file
+                idxq->rabitq, f, idxq->d, true, h == fourcc("Ixrd"));
         READVECTOR(idxq->codes);
         READVECTOR(idxq->center);
         READ1(idxq->qb);
@@ -2868,6 +2934,12 @@ std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
                 idxq->qb);
 
         idxq->code_size = idxq->rabitq.code_size;
+        FAISS_THROW_IF_NOT_FMT(
+                idxq->codes.size() ==
+                        static_cast<size_t>(idxq->ntotal) * idxq->code_size,
+                "IndexRaBitQ codes size mismatch: stored=%zu expected=%zu",
+                idxq->codes.size(),
+                static_cast<size_t>(idxq->ntotal) * idxq->code_size);
         idx = std::move(idxq);
     } else if (h == fourcc("Iwrq")) {
         auto ivrq = std::make_unique<IndexIVFRaBitQ>();

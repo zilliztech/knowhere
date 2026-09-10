@@ -57,6 +57,7 @@ KnownIndexTypes() {
                                                          IndexEnum::INDEX_HNSW_SQ,
                                                          IndexEnum::INDEX_HNSW_PQ,
                                                          IndexEnum::INDEX_HNSW_PRQ,
+                                                         IndexEnum::INDEX_HNSW_RABITQ,
                                                          IndexEnum::INDEX_DISKANN,
                                                          IndexEnum::INDEX_AISAQ,
                                                          IndexEnum::INDEX_MINHASH_LSH,
