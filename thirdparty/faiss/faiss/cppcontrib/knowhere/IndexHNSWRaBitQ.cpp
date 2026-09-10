@@ -90,7 +90,7 @@ const faiss::IndexRaBitQ* IndexHNSWRaBitQ::rabitq_index() const {
             : nullptr;
 }
 
-void IndexHNSWRaBitQ::validate_storage() const {
+void IndexHNSWRaBitQ::check_storage_compatibility() const {
     FAISS_THROW_IF_NOT_MSG(
             metric_type == METRIC_L2 || metric_type == METRIC_INNER_PRODUCT,
             "IndexHNSWRaBitQ only supports L2 and inner product metrics");
@@ -125,8 +125,7 @@ void IndexHNSWRaBitQ::validate_storage() const {
                     rabitq->is_trained,
             "IndexHNSWRaBitQ requires fully trained storage");
     FAISS_THROW_IF_NOT_MSG(
-            pretransform->index != nullptr &&
-                    pretransform->ntotal == rabitq->ntotal &&
+            pretransform->ntotal == rabitq->ntotal &&
                     pretransform->metric_type == rabitq->metric_type,
             "IndexHNSWRaBitQ pretransform and RaBitQ metadata mismatch");
     FAISS_THROW_IF_NOT_MSG(
@@ -140,31 +139,6 @@ void IndexHNSWRaBitQ::validate_storage() const {
                             static_cast<size_t>(rotation->d_in) *
                                     rotation->d_out,
             "IndexHNSWRaBitQ rotation matrix has invalid storage");
-    FAISS_THROW_IF_NOT_MSG(
-            rabitq->rabitq.d == static_cast<size_t>(rabitq->d) &&
-                    rabitq->rabitq.metric_type == rabitq->metric_type,
-            "IndexHNSWRaBitQ RaBitQ quantizer metadata mismatch");
-    FAISS_THROW_IF_NOT_MSG(
-            rabitq->rabitq.nb_bits >= 1 && rabitq->rabitq.nb_bits <= 9,
-            "IndexHNSWRaBitQ RaBitQ nb_bits must be in [1, 9]");
-
-    const size_t expected_code_size =
-            rabitq->rabitq.compute_code_size(rabitq->d, rabitq->rabitq.nb_bits);
-    FAISS_THROW_IF_NOT_MSG(
-            rabitq->rabitq.code_size == expected_code_size &&
-                    rabitq->code_size == expected_code_size,
-            "IndexHNSWRaBitQ RaBitQ code size mismatch");
-    FAISS_THROW_IF_NOT_MSG(
-            rabitq->codes.size() ==
-                    static_cast<size_t>(rabitq->ntotal) * expected_code_size,
-            "IndexHNSWRaBitQ RaBitQ codes size mismatch");
-    FAISS_THROW_IF_NOT_MSG(
-            rabitq->center.size() == static_cast<size_t>(rabitq->d),
-            "IndexHNSWRaBitQ RaBitQ center size mismatch");
-    FAISS_THROW_IF_NOT_MSG(
-            rabitq->qb <= 8, "IndexHNSWRaBitQ RaBitQ qb must be in [0, 8]");
-    FAISS_THROW_IF_NOT_MSG(
-            !rabitq->centered, "IndexHNSWRaBitQ V1 requires centered=false");
 }
 
 IndexHNSWRaBitQCosine::IndexHNSWRaBitQCosine() = default;
@@ -175,8 +149,8 @@ const float* IndexHNSWRaBitQCosine::get_inverse_l2_norms() const {
     return cosine_storage ? cosine_storage->get_inverse_l2_norms() : nullptr;
 }
 
-void IndexHNSWRaBitQCosine::validate_cosine_storage() const {
-    validate_storage();
+void IndexHNSWRaBitQCosine::check_cosine_storage_compatibility() const {
+    check_storage_compatibility();
     const auto* cosine_storage =
             dynamic_cast<const IndexPreTransformRaBitQCosine*>(storage);
     FAISS_THROW_IF_NOT_MSG(
@@ -185,7 +159,6 @@ void IndexHNSWRaBitQCosine::validate_cosine_storage() const {
     FAISS_THROW_IF_NOT_MSG(
             metric_type == METRIC_INNER_PRODUCT,
             "IndexHNSWRaBitQCosine requires inner product storage");
-    cosine_storage->validate_norms();
 }
 
 } // namespace faiss::cppcontrib::knowhere

@@ -70,9 +70,10 @@ struct IndexHNSWRaBitQ : IndexHNSW {
     faiss::DistanceComputer* get_staged_distance_computer(
             const faiss::RaBitQSearchParameters* params = nullptr) const;
 
-    /** Validate the complete runtime/storage shape and serialized invariants.
-     * Throws FaissException on malformed state. */
-    void validate_storage() const;
+    /** Check the HNSW/pretransform/storage composition at build and IO boundaries.
+     * Leaf code buffers and cosine norms are checked by their own IO handlers.
+     * This does not validate all graph data or the serialization format. */
+    void check_storage_compatibility() const;
 };
 
 /** Cosine runtime marker for HNSW backed by cosine-aware RaBitQ storage. */
@@ -80,7 +81,7 @@ struct IndexHNSWRaBitQCosine : IndexHNSWRaBitQ, HasInverseL2Norms {
     IndexHNSWRaBitQCosine();
 
     const float* get_inverse_l2_norms() const override;
-    void validate_cosine_storage() const;
+    void check_cosine_storage_compatibility() const;
 };
 
 } // namespace faiss::cppcontrib::knowhere

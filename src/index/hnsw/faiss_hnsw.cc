@@ -1412,8 +1412,8 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         std::unique_ptr<faiss::Index> bf_index_wrapper = nullptr;
         faiss::Index* bf_index_wrapper_ptr = nullptr;
         if (!whether_bf_search.value_or(false)) {
-            std::tie(bf_index_wrapper, is_refined) = create_conditional_hnsw_wrapper(
-                indexes[index_id].get(), hnsw_cfg, true, whether_to_enable_refine, search_parameters.get());
+            std::tie(bf_index_wrapper, is_refined) =
+                create_conditional_hnsw_wrapper(indexes[index_id].get(), hnsw_cfg, true, whether_to_enable_refine);
             if (bf_index_wrapper == nullptr) {
                 return expected<DataSetPtr>::Err(Status::invalid_args, "an input index seems to be unrelated to HNSW");
             }
@@ -3126,11 +3126,8 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
                 refine ? refine->base_index : loaded.get());
             if (!rbq)
                 return Status::invalid_serialized_index_type;
-            if (const auto* cosine = dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSWRaBitQCosine*>(rbq)) {
-                cosine->validate_cosine_storage();
-            } else {
-                rbq->validate_storage();
-            }
+            // read_index already checked the storage and HNSW composition.
+            // Only the outer Knowhere type and optional refine relation remain.
             if (refine) {
                 const auto* storage = refine->refine_index;
                 if (!storage || !refine->is_trained || !storage->is_trained || refine->d != rbq->d ||
@@ -3301,9 +3298,9 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
             index_hnsw_rabitq->own_fields = false;
             if (is_cosine) {
                 dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSWRaBitQCosine*>(index_hnsw_rabitq.get())
-                    ->validate_cosine_storage();
+                    ->check_cosine_storage_compatibility();
             } else {
-                index_hnsw_rabitq->validate_storage();
+                index_hnsw_rabitq->check_storage_compatibility();
             }
             index_hnsw_rabitq->own_fields = true;
             tmp_index_rabitq[0].release();

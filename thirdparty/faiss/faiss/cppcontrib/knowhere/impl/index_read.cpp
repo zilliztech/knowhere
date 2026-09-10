@@ -708,7 +708,7 @@ static void finalize_and_validate_RaBitQ_index(::faiss::IndexRaBitQ* idxq) {
                     static_cast<size_t>(idxq->ntotal) * expected_code_size,
             "IndexRaBitQ codes size mismatch");
     FAISS_THROW_IF_NOT_MSG(
-            idxq->center.empty() ||
+            (!idxq->is_trained && idxq->center.empty()) ||
                     idxq->center.size() == static_cast<size_t>(idxq->d),
             "IndexRaBitQ center size mismatch");
     FAISS_THROW_IF_NOT_FMT(
@@ -1272,11 +1272,11 @@ Index* read_index(IOReader* f, int io_flags) {
         idxhnsw->storage = read_index(f, io_flags);
         idxhnsw->own_fields = idxhnsw->storage != nullptr;
         if (h == fourcc(kHnswRaBitQFourcc)) {
-            dynamic_cast<IndexHNSWRaBitQ*>(idxhnsw)->validate_storage();
+            dynamic_cast<IndexHNSWRaBitQ*>(idxhnsw)->check_storage_compatibility();
         }
         if (h == fourcc(kHnswRaBitQCosineFourcc)) {
             dynamic_cast<IndexHNSWRaBitQCosine*>(idxhnsw)
-                    ->validate_cosine_storage();
+                    ->check_cosine_storage_compatibility();
         }
         if (h == fourcc("IHNp") && !(io_flags & IO_FLAG_PQ_SKIP_SDC_TABLE)) {
             dynamic_cast<IndexPQ*>(idxhnsw->storage)->pq.compute_sdc_table();
