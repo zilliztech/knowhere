@@ -2,17 +2,21 @@
  * Licensed under the MIT license in thirdparty/faiss/LICENSE. */
 #pragma once
 
-#include <faiss/cppcontrib/knowhere/impl/HnswSearcher.h>
+#include <faiss/cppcontrib/knowhere/impl/HnswDistanceEvaluation.h>
+#include <faiss/cppcontrib/knowhere/impl/Neighbor.h>
 #include <faiss/cppcontrib/knowhere/impl/RaBitQStagedDistanceComputer.h>
 #include <faiss/impl/RaBitQUtils.h>
 #include <limits>
 #include <vector>
 #include <utility>
+#include <algorithm>
 
 namespace faiss::cppcontrib::knowhere::rabitq_search {
 
-// Used only by the RaBitQ wrapper's Knowhere-traversal specialization.
-struct DistanceEvaluation {
+// Alternative to DefaultHnswDistanceEvaluation under the same policy contract.
+// Requires RaBitQStagedDistanceComputer; delegates non-staged work to the
+// default policy without inheriting from it or depending on the searcher.
+struct RaBitQHnswDistanceEvaluation {
     size_t k = 0;
     std::vector<float> results;
 
@@ -68,8 +72,8 @@ struct DistanceEvaluation {
             }
             return staged.refine_count - before;
         }
-        FullDistanceEvaluation full;
-        return full.compute(dc, ids, statuses, count, level, std::forward<Emit>(emit));
+        DefaultHnswDistanceEvaluation default_evaluation;
+        return default_evaluation.compute(dc, ids, statuses, count, level, std::forward<Emit>(emit));
     }
 };
 } // namespace faiss::cppcontrib::knowhere::rabitq_search

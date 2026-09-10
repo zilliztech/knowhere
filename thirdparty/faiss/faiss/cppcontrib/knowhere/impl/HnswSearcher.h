@@ -34,6 +34,7 @@
 
 // Knowhere-specific headers
 #include <faiss/cppcontrib/knowhere/impl/Neighbor.h>
+#include <faiss/cppcontrib/knowhere/impl/HnswDistanceEvaluation.h>
 
 namespace faiss {
 namespace cppcontrib {
@@ -46,31 +47,13 @@ constexpr bool track_hnsw_stats = true;
 
 } // namespace
 
-// Default evaluator preserves ordinary full-distance, batch-four execution.
-struct FullDistanceEvaluation {
-    void begin(size_t) {}
-    void record(float, int) {}
-
-    template <class DC, class Emit>
-    size_t compute(DC& dc, const size_t* ids, const int*, size_t count,
-                   int, Emit&& emit) {
-        if (count == 4) {
-            float d[4];
-            dc.distances_batch_4(ids[0], ids[1], ids[2], ids[3],
-                                 d[0], d[1], d[2], d[3]);
-            for (size_t i = 0; i < count; ++i) emit(i, d[i]);
-        } else {
-            for (size_t i = 0; i < count; ++i) emit(i, dc(ids[i]));
-        }
-        return 0;
-    }
-};
-
 // Accomodates all the search logic and variables.
 /// * DistanceComputerT is responsible for computing distances
 /// * GraphVisitorT records visited edges
 /// * VisitedT is responsible for tracking visited nodes
 /// * FilterT is resposible for filtering unneeded nodes
+/// * DistanceEvaluationT selects candidate evaluation via the compile-time
+///   policy contract in HnswDistanceEvaluation.h (independent of traversal).
 /// Interfaces of all templates are tweaked to accept standard Faiss structures
 ///   with dynamic dispatching. Custom Knowhere structures are also accepted.
 template <
@@ -78,7 +61,7 @@ template <
         typename GraphVisitorT,
         typename VisitedT,
         typename FilterT,
-        typename EvaluationT = FullDistanceEvaluation>
+        typename DistanceEvaluationT = DefaultHnswDistanceEvaluation>
 struct v2_hnsw_searcher {
     using storage_idx_t = faiss::cppcontrib::knowhere::HNSW::storage_idx_t;
     using idx_t = faiss::idx_t;
@@ -110,7 +93,7 @@ struct v2_hnsw_searcher {
     // the pointer is not owned.
     const faiss::cppcontrib::knowhere::SearchParametersHNSW* params;
 
-    EvaluationT evaluation;
+    DistanceEvaluationT evaluation;
 
     //
     v2_hnsw_searcher(

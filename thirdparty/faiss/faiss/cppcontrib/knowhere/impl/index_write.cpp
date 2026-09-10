@@ -524,7 +524,7 @@ static void validate_RaBitQ_index_for_write(const ::faiss::IndexRaBitQ* idxq) {
                     static_cast<size_t>(idxq->ntotal) * expected_code_size,
             "IndexRaBitQ codes size mismatch");
     FAISS_THROW_IF_NOT_MSG(
-            idxq->center.empty() ||
+            (!idxq->is_trained && idxq->center.empty()) ||
                     idxq->center.size() == static_cast<size_t>(idxq->d),
             "IndexRaBitQ center size mismatch");
     FAISS_THROW_IF_NOT_MSG(idxq->qb <= 8, "IndexRaBitQ qb must be in [0, 8]");
@@ -844,9 +844,9 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
                     !(io_flags & IO_FLAG_SKIP_STORAGE),
                     "IndexHNSWRaBitQ cannot be serialized without its RaBitQ storage");
             if (hnsw_rabitq_cosine) {
-                hnsw_rabitq_cosine->validate_cosine_storage();
+                hnsw_rabitq_cosine->check_cosine_storage_compatibility();
             } else {
-                hnsw_rabitq->validate_storage();
+                hnsw_rabitq->check_storage_compatibility();
             }
         }
         uint32_t h = hnsw_rabitq_cosine ? fourcc(kHnswRaBitQCosineFourcc)

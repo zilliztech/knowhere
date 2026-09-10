@@ -547,29 +547,68 @@ TEST_CASE("RaBitQ file serialization rejects truncated and incompatible indexes"
         auto* storage = const_cast<faiss::IndexPreTransform*>(graph->pretransform_index());
         auto* rq = const_cast<faiss::IndexRaBitQ*>(graph->rabitq_index());
         auto* rr = dynamic_cast<faiss::RandomRotationMatrix*>(storage->chain[0]);
-        REQUIRE_NOTHROW(graph->validate_storage());
+        // Test the serialization boundary, not an outer validator duplicating
+        // checks owned by RaBitQ codes and cosine norm storage.
+        auto write_decoded = [&] {
+            faiss::VectorIOWriter writer;
+            fk::write_index(decoded.get(), &writer);
+        };
+        REQUIRE_NOTHROW(graph->check_storage_compatibility());
+        REQUIRE_NOTHROW(write_decoded());
         ++rq->code_size;
-        REQUIRE_THROWS(graph->validate_storage());
+        REQUIRE_NOTHROW(graph->check_storage_compatibility());
+        REQUIRE_THROWS(write_decoded());
         --rq->code_size;
         auto last = rr->A.back();
         rr->A.pop_back();
-        REQUIRE_THROWS(graph->validate_storage());
+        REQUIRE_THROWS(graph->check_storage_compatibility());
         rr->A.push_back(last);
         rr->have_bias = true;
-        REQUIRE_THROWS(graph->validate_storage());
+        REQUIRE_THROWS(graph->check_storage_compatibility());
         rr->have_bias = false;
         const auto old_metric = rq->rabitq.metric_type;
         rq->rabitq.metric_type = faiss::METRIC_L1;
-        REQUIRE_THROWS(graph->validate_storage());
+        REQUIRE_THROWS(write_decoded());
         rq->rabitq.metric_type = old_metric;
+        const auto saved_center = rq->center;
+        rq->center.clear();
+        REQUIRE_THROWS(write_decoded());
+        rq->center = saved_center;
+        const auto code_bytes = rq->codes.size();
+        const auto last_code = rq->codes[code_bytes - 1];
+        rq->codes.resize(code_bytes - 1);
+        REQUIRE_THROWS(write_decoded());
+        rq->codes.resize(code_bytes);
+        rq->codes[code_bytes - 1] = last_code;
+        const auto saved_bits = rq->rabitq.nb_bits;
+        rq->rabitq.nb_bits = 10;
+        REQUIRE_THROWS(write_decoded());
+        rq->rabitq.nb_bits = saved_bits;
+        const auto saved_qb = rq->qb;
+        rq->qb = 9;
+        REQUIRE_THROWS(write_decoded());
+        rq->qb = saved_qb;
+        rq->centered = true;
+        REQUIRE_NOTHROW(graph->check_storage_compatibility());
+        REQUIRE_THROWS(write_decoded());
+        rq->centered = false;
+        ++storage->ntotal;
+        REQUIRE_THROWS(graph->check_storage_compatibility());
+        REQUIRE_THROWS(write_decoded());
+        --storage->ntotal;
+        REQUIRE_NOTHROW(write_decoded());
         if (auto* cosine = dynamic_cast<fk::IndexHNSWRaBitQCosine*>(graph)) {
             auto* cs = dynamic_cast<fk::IndexPreTransformRaBitQCosine*>(storage);
             auto norm = cs->inverse_norms_storage.inverse_l2_norms.back();
             cs->inverse_norms_storage.inverse_l2_norms.pop_back();
-            REQUIRE_THROWS(cosine->validate_cosine_storage());
+            REQUIRE_NOTHROW(cosine->check_cosine_storage_compatibility());
+            REQUIRE_THROWS(write_decoded());
             cs->inverse_norms_storage.inverse_l2_norms.push_back(norm);
+            const auto first_norm = cs->inverse_norms_storage.inverse_l2_norms[0];
             cs->inverse_norms_storage.inverse_l2_norms[0] = std::numeric_limits<float>::quiet_NaN();
-            REQUIRE_THROWS(cosine->validate_cosine_storage());
+            REQUIRE_THROWS(write_decoded());
+            cs->inverse_norms_storage.inverse_l2_norms[0] = first_norm;
+            REQUIRE_NOTHROW(write_decoded());
         }
         // A real file, independently loaded through the public Knowhere API.
         auto pattern = (std::filesystem::temp_directory_path() / "knowhere-rabitq-XXXXXX").string();

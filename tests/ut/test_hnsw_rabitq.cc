@@ -3,7 +3,7 @@
 
 #include <faiss/VectorTransform.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSWRaBitQ.h>
-#include <faiss/cppcontrib/knowhere/impl/RaBitQDistanceEvaluation.h>
+#include <faiss/cppcontrib/knowhere/impl/RaBitQHnswDistanceEvaluation.h>
 #include <faiss/cppcontrib/knowhere/impl/StagedDistanceComputer.h>
 #include <faiss/cppcontrib/knowhere/index_io.h>
 #include <faiss/impl/RaBitQUtils.h>
@@ -62,7 +62,7 @@ struct OriginalFullEvaluation {
 
 TEST_CASE("RaBitQ threshold heap matches priority queue after every update", "[hnsw_rabitq_core]") {
     using faiss::cppcontrib::knowhere::Neighbor;
-    rabitq_search::DistanceEvaluation evaluation;
+    rabitq_search::RaBitQHnswDistanceEvaluation evaluation;
     std::mt19937 rng(12345);
     for (size_t k : {1, 2, 3, 10, 100, 511}) {
         for (int mode = 0; mode < 3; ++mode) {

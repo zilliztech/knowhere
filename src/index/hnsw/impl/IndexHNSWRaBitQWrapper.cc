@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "index/hnsw/impl/IndexHNSWRaBitQWrapper.h"
 
-#include <faiss/cppcontrib/knowhere/impl/RaBitQDistanceEvaluation.h>
+#include <faiss/cppcontrib/knowhere/impl/RaBitQHnswDistanceEvaluation.h>
 
 #include "index/hnsw/impl/HnswSearchDispatch.h"
 #include "index/hnsw/impl/RaBitQSearchParameters.h"
@@ -24,6 +24,7 @@ faiss::cppcontrib::knowhere::HNSWStats
 IndexHNSWRaBitQWrapper::search_query(const faiss::cppcontrib::knowhere::HNSW& graph, faiss::DistanceComputer& dc,
                                      faiss::cppcontrib::knowhere::Bitset& visited, faiss::idx_t k, float* distances,
                                      faiss::idx_t* labels, const SearchParametersHNSWWrapper* params) const {
-    return search_hnsw_query<rabitq_search::DistanceEvaluation>(graph, dc, visited, k, distances, labels, params);
+    return search_hnsw_query<rabitq_search::RaBitQHnswDistanceEvaluation>(graph, dc, visited, k, distances, labels,
+                                                                          params);
 }
 }  // namespace knowhere
