@@ -919,7 +919,9 @@ class FaissHnswIterator : public IndexIterator {
             workspace.qdis.reset(storage_params ? storage_params->storage_distance_computer(index_hnsw)
                                                 : index_hnsw->get_distance_computer());
             if (larger_is_closer) {
-                workspace.qdis.reset(new faiss::NegativeDistanceComputer(workspace.qdis.release()));
+                auto negated = std::make_unique<faiss::NegativeDistanceComputer>(workspace.qdis.get());
+                workspace.qdis.release();
+                workspace.qdis = std::move(negated);
             }
 
             if (refine_ratio != 0) {
@@ -963,7 +965,9 @@ class FaissHnswIterator : public IndexIterator {
             workspace.qdis.reset(storage_params ? storage_params->storage_distance_computer(index_hnsw)
                                                 : index_hnsw->get_distance_computer());
             if (larger_is_closer) {
-                workspace.qdis.reset(new faiss::NegativeDistanceComputer(workspace.qdis.release()));
+                auto negated = std::make_unique<faiss::NegativeDistanceComputer>(workspace.qdis.get());
+                workspace.qdis.release();
+                workspace.qdis = std::move(negated);
             }
         }
 
@@ -3069,8 +3073,9 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
     Status
     Deserialize(const BinarySet& binset, std::shared_ptr<Config>) override {
         auto binary = binset.GetByName(Type());
-        if (!binary)
+        if (!binary) {
             return Status::invalid_binary_set;
+        }
         MemoryIOReader reader(binary->data.get(), binary->size);
         return LoadRaBitQ(reader);
     }
@@ -3137,8 +3142,9 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
             const auto* refine = dynamic_cast<const faiss::cppcontrib::knowhere::IndexRefine*>(loaded.get());
             const auto* rbq = dynamic_cast<const faiss::cppcontrib::knowhere::IndexHNSWRaBitQ*>(
                 refine ? refine->base_index : loaded.get());
-            if (!rbq)
+            if (!rbq) {
                 return Status::invalid_serialized_index_type;
+            }
             // read_index already checked the storage and HNSW composition.
             // Only the outer Knowhere type and optional refine relation remain.
             if (refine) {
