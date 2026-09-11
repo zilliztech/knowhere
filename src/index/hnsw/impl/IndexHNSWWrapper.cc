@@ -206,7 +206,9 @@ IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_
     std::unique_ptr<faiss::DistanceComputer> dis(params ? params->storage_distance_computer(index_hnsw)
                                                         : index_hnsw->get_distance_computer());
     if (faiss::cppcontrib::knowhere::is_similarity_metric(index_hnsw->metric_type)) {
-        dis.reset(new faiss::NegativeDistanceComputer(dis.release()));
+        auto negated = std::make_unique<faiss::NegativeDistanceComputer>(dis.get());
+        dis.release();
+        dis = std::move(negated);
     }
 
     // radius
