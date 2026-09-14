@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <queue>
@@ -43,8 +44,16 @@ namespace knowhere::sparse::inverted {
 template <typename DataType, typename QuantType, bool AllowIncremental = false>
 class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental> {
  public:
-    static_assert(std::is_same_v<QuantType, knowhere::fp16> || std::is_same_v<QuantType, uint16_t>,
-                  "QuantType must be fp16 (for IP) or uint16_t (for BM25)");
+    static constexpr bool is_ip = std::is_same_v<QuantType, knowhere::fp16>;
+    static constexpr bool is_bm25 = std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, uint8_t>;
+    static constexpr bool is_bm25_u8 = std::is_same_v<QuantType, uint8_t>;
+    static_assert(is_ip || is_bm25, "QuantType must be fp16 (for IP) or u8/u16 (for BM25)");
+    static_assert(!(AllowIncremental && is_bm25_u8), "growable SINDI does not support BM25 u8");
+
+    struct Bm25U8Overflow {
+        uint32_t posting_offset;
+        uint16_t value;
+    };
 
     static constexpr uint32_t min_window_size = 1024;
     static constexpr uint32_t max_window_size = 65535;
@@ -94,6 +103,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
         // Row sums for BM25 support
         res += row_sums_span_.size() * sizeof(float);
+        res += bm25_u8_overflow_offsets_span_.size() * sizeof(uint32_t);
+        res += bm25_u8_overflow_values_span_.size() * sizeof(uint16_t);
 
         return res;
     }
@@ -394,7 +405,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 }
                 auto dim_id = inner_dim.value();
                 total_plists_ids_[dim_id].push_back(local_id);
-                total_plists_vals_[dim_id].push_back(static_cast<QuantType>(static_cast<float>(val)));
+                total_plists_vals_[dim_id].push_back(quantize_value(val));
                 ++window_index_plists_sz_[widx][dim_id];
             }
         }
@@ -430,6 +441,10 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         std::vector<WindowId> posting_window_ids(total_postings);
 
         const size_t concurrency = posting_plan.cursors_by_worker.size();
+        std::vector<std::vector<Bm25U8Overflow>> bm25_u8_overflows_by_worker;
+        if constexpr (is_bm25_u8) {
+            bm25_u8_overflows_by_worker.resize(concurrency);
+        }
         LOG_KNOWHERE_INFO_ << "SindiInvertedIndex filling preallocated postings: total_postings=" << total_postings
                            << ", posting_bytes=" << (total_postings * (sizeof(uint16_t) + sizeof(QuantType)))
                            << ", posting_window_id_bytes=" << (total_postings * sizeof(WindowId))
@@ -453,11 +468,19 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                             ? worker_offset
                             : posting_plan.posting_offsets[inner_dim] + worker_offset;
                     total_plists_ids_flat_[absolute_posting_offset] = local_id;
-                    total_plists_vals_flat_[absolute_posting_offset] = static_cast<QuantType>(static_cast<float>(val));
+                    store_sealed_value(absolute_posting_offset, val);
+                    if constexpr (is_bm25_u8) {
+                        const uint16_t overflow_value = bm25_u16_value(val);
+                        if (overflow_value > 255) {
+                            bm25_u8_overflows_by_worker[worker_id].push_back(
+                                {static_cast<uint32_t>(absolute_posting_offset), overflow_value});
+                        }
+                    }
                     posting_window_ids[absolute_posting_offset] = static_cast<WindowId>(window_id);
                 }
             }
         });
+        finalize_sealed_bm25_u8_overflows(bm25_u8_overflows_by_worker);
         LOG_KNOWHERE_INFO_ << "SindiInvertedIndex preallocated postings filled: total_postings=" << total_postings;
 
         // The write cursors and size_t offsets are build-only. The compact uint32_t offsets retained by the index
@@ -469,7 +492,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         float bm25_p1 = 0.0f;
         float bm25_p2 = 0.0f;
         float bm25_p3 = 0.0f;
-        if constexpr (std::is_same_v<QuantType, uint16_t>) {
+        if constexpr (is_bm25) {
             const auto& cfg = this->build_scorer_->config();
             bm25_p1 = cfg.scorer_params.bm25.k1 + 1.0f;
             bm25_p2 = cfg.scorer_params.bm25.k1 * (1.0f - cfg.scorer_params.bm25.b);
@@ -481,16 +504,18 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             const size_t end = plists_dim_offsets_[dim_id + 1];
 
             float max_score = 0.0f;
-            if constexpr (std::is_same_v<QuantType, knowhere::fp16>) {
+            if constexpr (is_ip) {
                 for (size_t offset = begin; offset < end; ++offset) {
                     const float value = std::abs(static_cast<float>(total_plists_vals_flat_[offset]));
                     max_score = std::max(max_score, value);
                 }
             } else {
+                auto [overflow_cursor, overflow_end] = bm25_u8_overflow_range(begin, end);
                 for (size_t offset = begin; offset < end; ++offset) {
                     const uint32_t global_id = static_cast<uint32_t>(posting_window_ids[offset]) * window_size_ +
                                                total_plists_ids_flat_[offset];
-                    const float value = std::abs(static_cast<float>(total_plists_vals_flat_[offset]));
+                    const float value =
+                        bm25_posting_value(offset, total_plists_vals_flat_[offset], overflow_cursor, overflow_end);
                     const float dl = row_sums_[global_id];
                     max_score = std::max(max_score, bm25_p1 * value / (value + bm25_p2 + bm25_p3 * dl));
                 }
@@ -515,6 +540,10 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         window_index_plists_sz_spans_.resize(nr_windows_);
 
         const size_t concurrency = posting_plan.cursors_by_worker.size();
+        std::vector<std::vector<Bm25U8Overflow>> bm25_u8_overflows_by_worker;
+        if constexpr (is_bm25_u8) {
+            bm25_u8_overflows_by_worker.resize(concurrency);
+        }
         LOG_KNOWHERE_INFO_ << "SindiInvertedIndex filling preallocated postings: total_postings=" << total_postings
                            << ", posting_bytes=" << (total_postings * (sizeof(uint16_t) + sizeof(QuantType)))
                            << ", dense_window_count_bytes="
@@ -539,12 +568,20 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                             ? worker_offset
                             : posting_plan.posting_offsets[inner_dim] + worker_offset;
                     total_plists_ids_flat_[absolute_posting_offset] = local_id;
-                    total_plists_vals_flat_[absolute_posting_offset] = static_cast<QuantType>(static_cast<float>(val));
+                    store_sealed_value(absolute_posting_offset, val);
+                    if constexpr (is_bm25_u8) {
+                        const uint16_t overflow_value = bm25_u16_value(val);
+                        if (overflow_value > 255) {
+                            bm25_u8_overflows_by_worker[worker_id].push_back(
+                                {static_cast<uint32_t>(absolute_posting_offset), overflow_value});
+                        }
+                    }
                     std::atomic_ref<uint16_t>(window_index_plists_sz_[window_id][inner_dim])
                         .fetch_add(1, std::memory_order_relaxed);
                 }
             }
         });
+        finalize_sealed_bm25_u8_overflows(bm25_u8_overflows_by_worker);
         LOG_KNOWHERE_INFO_ << "SindiInvertedIndex preallocated postings filled: total_postings=" << total_postings;
 
         WorkerPostingCursors{}.swap(posting_plan.cursors_by_worker);
@@ -554,7 +591,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         float bm25_p1 = 0.0f;
         float bm25_p2 = 0.0f;
         float bm25_p3 = 0.0f;
-        if constexpr (std::is_same_v<QuantType, uint16_t>) {
+        if constexpr (is_bm25) {
             const auto& cfg = this->build_scorer_->config();
             bm25_p1 = cfg.scorer_params.bm25.k1 + 1.0f;
             bm25_p2 = cfg.scorer_params.bm25.k1 * (1.0f - cfg.scorer_params.bm25.b);
@@ -566,19 +603,21 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             const size_t end = plists_dim_offsets_[dim_id + 1];
 
             float max_score = 0.0f;
-            if constexpr (std::is_same_v<QuantType, knowhere::fp16>) {
+            if constexpr (is_ip) {
                 for (size_t offset = begin; offset < end; ++offset) {
                     const float value = std::abs(static_cast<float>(total_plists_vals_flat_[offset]));
                     max_score = std::max(max_score, value);
                 }
             } else {
+                auto [overflow_cursor, overflow_end] = bm25_u8_overflow_range(begin, end);
                 size_t posting_offset = 0;
                 for (size_t window_id = 0; window_id < nr_windows_; ++window_id) {
                     const size_t window_nnz = window_index_plists_sz_[window_id][dim_id];
                     for (size_t i = 0; i < window_nnz; ++i, ++posting_offset) {
                         const size_t offset = begin + posting_offset;
                         const uint32_t global_id = window_id * window_size_ + total_plists_ids_flat_[offset];
-                        const float value = std::abs(static_cast<float>(total_plists_vals_flat_[offset]));
+                        const float value =
+                            bm25_posting_value(offset, total_plists_vals_flat_[offset], overflow_cursor, overflow_end);
                         const float dl = row_sums_[global_id];
                         max_score = std::max(max_score, bm25_p1 * value / (value + bm25_p2 + bm25_p3 * dl));
                     }
@@ -672,8 +711,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         this->max_dim_ = std::max(this->max_dim_, static_cast<uint32_t>(dim));
         LOG_KNOWHERE_INFO_ << "SindiInvertedIndex build started: rows=" << rows << ", existing_rows=" << old_nr_rows
                            << ", max_dim=" << this->max_dim_ << ", window_size=" << window_size_
-                           << ", metric=" << (std::is_same_v<QuantType, knowhere::fp16> ? "IP" : "BM25")
-                           << ", incremental=" << AllowIncremental;
+                           << ", metric=" << (is_ip ? "IP" : "BM25") << ", incremental=" << AllowIncremental;
 
         if constexpr (AllowIncremental) {
             for (size_t i = 0; i < rows; ++i) {
@@ -698,7 +736,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             LOG_KNOWHERE_INFO_ << "SindiInvertedIndex posting plan completed: inner_dims=" << this->nr_inner_dims_
                                << ", total_postings=" << posting_plan.total_postings();
 
-            if constexpr (std::is_same_v<QuantType, uint16_t>) {
+            if constexpr (is_bm25) {
                 row_sums_.resize(rows);
                 parallel_for(rows, [&](size_t i) {
                     float row_sum = 0.0f;
@@ -725,8 +763,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         append_window_indexes(data, rows);
         this->nr_rows_ += rows;
 
-        // Compute row sums for BM25 support (only for uint16_t QuantType)
-        if constexpr (std::is_same_v<QuantType, uint16_t>) {
+        // Compute row sums for BM25 support.
+        if constexpr (is_bm25) {
             row_sums_.reserve(row_sums_.size() + rows);
             for (size_t i = 0; i < rows; ++i) {
                 float row_sum = 0.0f;
@@ -747,7 +785,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         // For IP: max_score = max(abs(val)) across quantized postings.
         // For BM25: max_score = max((k1+1)*tf / (tf + k1*(1-b+b*dl/avgdl))) across postings.
         max_scores_per_dim_.resize(this->nr_inner_dims_);
-        if constexpr (std::is_same_v<QuantType, knowhere::fp16>) {
+        if constexpr (is_ip) {
             for (size_t i = 0; i < rows; ++i) {
                 for (size_t j = 0; j < data[i].size(); ++j) {
                     const auto [dim, val] = data[i][j];
@@ -791,7 +829,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                         continue;
                     }
                     const auto dim_id = inner_dim.value();
-                    const float tf = static_cast<float>(abs_val);
+                    const float tf = static_cast<float>(bm25_u16_value(abs_val));
                     const float bm25_score = p1 * tf / (tf + p2 + p3 * dl);
                     if (bm25_score > max_scores_per_dim_[dim_id]) {
                         max_scores_per_dim_[dim_id] = bm25_score;
@@ -827,9 +865,17 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             writer.write(&this->max_dim_, sizeof(uint32_t));
             writer.write(&this->nr_inner_dims_, sizeof(uint32_t));
             auto reserved = std::array<uint8_t, kInvertedIndexHeaderReservedBytes>();
+            if constexpr (is_bm25) {
+                const SindiHeaderMetadata header_metadata{
+                    .magic = kSindiHeaderMetadataMagic,
+                    .quant_type = serialized_quant_type(),
+                };
+                std::memcpy(reserved.data(), &header_metadata, sizeof(header_metadata));
+            }
             writer.write(reserved.data(), reserved.size());
 
             const bool has_row_sums = !row_sums_span_.empty();
+            const bool has_bm25_u8_overflows = !bm25_u8_overflow_offsets_span_.empty();
             const auto dim_map_storage = legacy_dim_map_mphf_trailer_workaround_ ? DimMapMphfStorage::LegacyTrailer
                                                                                  : DimMapMphfStorage::SeparateSection;
 
@@ -838,6 +884,9 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 nr_sections += 1;
             }
             if (has_row_sums) {
+                nr_sections += 1;
+            }
+            if (has_bm25_u8_overflows) {
                 nr_sections += 1;
             }
             writer.write(&nr_sections, sizeof(uint32_t));
@@ -889,6 +938,14 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             section_headers[curr_section_idx].size = sizeof(float) * this->nr_inner_dims_;
             assign_section_offset(section_headers[curr_section_idx], used_offset);
             curr_section_idx++;
+
+            if (has_bm25_u8_overflows) {
+                section_headers[curr_section_idx].type = InvertedIndexSectionType::BM25_U8_OVERFLOWS;
+                section_headers[curr_section_idx].size =
+                    sizeof(uint32_t) + bm25_u8_overflow_offsets_span_.size() * (sizeof(uint32_t) + sizeof(uint16_t));
+                assign_section_offset(section_headers[curr_section_idx], used_offset);
+                curr_section_idx++;
+            }
 
             if (has_row_sums) {
                 section_headers[curr_section_idx].type = InvertedIndexSectionType::ROW_SUMS;
@@ -946,6 +1003,15 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             writer.write(max_scores_per_dim_span_.data(), sizeof(float), max_scores_per_dim_span_.size());
             curr_section_idx++;
 
+            if (has_bm25_u8_overflows) {
+                write_padding_until(writer, section_headers[curr_section_idx].offset);
+                const auto overflow_count = static_cast<uint32_t>(bm25_u8_overflow_offsets_span_.size());
+                writer.write(&overflow_count, sizeof(uint32_t));
+                writer.write(bm25_u8_overflow_offsets_span_.data(), sizeof(uint32_t), overflow_count);
+                writer.write(bm25_u8_overflow_values_span_.data(), sizeof(uint16_t), overflow_count);
+                curr_section_idx++;
+            }
+
             if (has_row_sums) {
                 write_padding_until(writer, section_headers[curr_section_idx].offset);
                 writer.write(row_sums_span_.data(), sizeof(float), row_sums_span_.size());
@@ -974,7 +1040,17 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 reader.read(&this->nr_rows_, sizeof(uint32_t));
                 reader.read(&this->max_dim_, sizeof(uint32_t));
                 reader.read(&this->nr_inner_dims_, sizeof(uint32_t));
-                reader.advance(kInvertedIndexHeaderReservedBytes);
+                std::array<uint8_t, kInvertedIndexHeaderReservedBytes> reserved{};
+                reader.read(reserved.data(), reserved.size());
+                SindiHeaderMetadata header_metadata{};
+                std::memcpy(&header_metadata, reserved.data(), sizeof(header_metadata));
+                if (header_metadata.magic == kSindiHeaderMetadataMagic) {
+                    if constexpr (!is_bm25) {
+                        return Status::invalid_serialized_index_type;
+                    } else if (header_metadata.quant_type != serialized_quant_type()) {
+                        return Status::invalid_serialized_index_type;
+                    }
+                }
 
                 // if there are zero rows, there should be no inner dims, something is wrong
                 if (this->nr_rows_ == 0 && this->nr_inner_dims_ != 0) {
@@ -1058,6 +1134,10 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                             total_plists_vals_spans_.clear();
                             total_plists_ids_flat_span_ = {};
                             total_plists_vals_flat_span_ = {};
+                            bm25_u8_overflow_offsets_.clear();
+                            bm25_u8_overflow_values_.clear();
+                            bm25_u8_overflow_offsets_span_ = {};
+                            bm25_u8_overflow_values_span_ = {};
                             plists_window_nnzs_.clear();
                             plists_window_nnzs_spans_.assign(nr_dims, {});
                             plists_window_nnzs_flat_.clear();
@@ -1142,6 +1222,40 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                                 reinterpret_cast<const float*>(reader.data() + section_header.offset),
                                 this->nr_inner_dims_);
                             reader.advance(sizeof(float) * this->nr_inner_dims_);
+                            break;
+                        }
+                        case InvertedIndexSectionType::BM25_U8_OVERFLOWS: {
+                            if constexpr (!is_bm25_u8) {
+                                return Status::invalid_serialized_index_type;
+                            }
+                            if (section_header.size < sizeof(uint32_t)) {
+                                return Status::invalid_serialized_index_type;
+                            }
+                            reader.seekg(section_header.offset);
+                            uint32_t overflow_count = 0;
+                            reader.read(&overflow_count, sizeof(uint32_t));
+                            const uint64_t expected_size = sizeof(uint32_t) + static_cast<uint64_t>(overflow_count) *
+                                                                                  (sizeof(uint32_t) + sizeof(uint16_t));
+                            if (section_header.size != expected_size) {
+                                return Status::invalid_serialized_index_type;
+                            }
+                            const auto* offsets = reinterpret_cast<const uint32_t*>(reader.data() + reader.tellg());
+                            bm25_u8_overflow_offsets_span_ = std::span<const uint32_t>(offsets, overflow_count);
+                            reader.advance(static_cast<size_t>(overflow_count) * sizeof(uint32_t));
+                            const auto* values = reinterpret_cast<const uint16_t*>(reader.data() + reader.tellg());
+                            bm25_u8_overflow_values_span_ = std::span<const uint16_t>(values, overflow_count);
+                            reader.advance(static_cast<size_t>(overflow_count) * sizeof(uint16_t));
+                            if (!std::is_sorted(bm25_u8_overflow_offsets_span_.begin(),
+                                                bm25_u8_overflow_offsets_span_.end()) ||
+                                (!bm25_u8_overflow_offsets_span_.empty() &&
+                                 bm25_u8_overflow_offsets_span_.back() >= total_postings)) {
+                                return Status::invalid_serialized_index_type;
+                            }
+                            for (uint16_t value : bm25_u8_overflow_values_span_) {
+                                if (value <= 255) {
+                                    return Status::invalid_serialized_index_type;
+                                }
+                            }
                             break;
                         }
                         case InvertedIndexSectionType::ROW_SUMS: {
@@ -1258,6 +1372,12 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         // Cursors track position in posting lists and handle window-by-window iteration
         std::vector<PostingCursor> cursors;
         cursors.reserve(sorted_q_vec.size());
+        std::vector<Bm25U8QueryOverflowCursor> overflow_cursors;
+        if constexpr (is_bm25_u8) {
+            if (!bm25_u8_overflow_offsets_span_.empty()) {
+                overflow_cursors.reserve(sorted_q_vec.size());
+            }
+        }
         for (auto& [qid, qval] : sorted_q_vec) {
             const auto wnnz_buf_span = encoded_window_nnzs(qid);
             const auto ids = posting_ids(qid);
@@ -1278,10 +1398,22 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                                  wnnz_bits,                   // wnnz_bits
                                  wnnz_mask                    // wnnz_mask
             );
+            if constexpr (is_bm25_u8) {
+                if (!bm25_u8_overflow_offsets_span_.empty()) {
+                    const uint32_t posting_begin = plists_dim_offsets_span_[qid];
+                    const auto [overflow_begin, overflow_end] =
+                        bm25_u8_overflow_range(posting_begin, plists_dim_offsets_span_[qid + 1]);
+                    if (overflow_begin != overflow_end) {
+                        overflow_cursors.emplace_back(cursors.size() - 1, posting_begin,
+                                                      bm25_u8_overflow_offsets_span_.data(), overflow_begin,
+                                                      overflow_end);
+                    }
+                }
+            }
         }
 
         // Main search loop: iterate over windows and process each window
-        if constexpr (std::is_same_v<QuantType, knowhere::fp16>) {
+        if constexpr (is_ip) {
             const auto scatter_fn = sindi::get_ip_kernels().accumulate;
             const auto batch_insert_fn = sindi::get_ip_kernels().batch_insert;
 
@@ -1336,64 +1468,112 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 }
             }
         } else {
-            const auto accumulate_fn = sindi::get_bm25_kernels().accumulate;
-            const auto batch_insert_fn = sindi::get_bm25_kernels().batch_insert;
+            const auto accumulate_fn = []() {
+                if constexpr (is_bm25_u8) {
+                    return sindi::get_bm25_u8_kernels().accumulate;
+                } else {
+                    return sindi::get_bm25_kernels().accumulate;
+                }
+            }();
+            const auto batch_insert_fn = []() {
+                if constexpr (is_bm25_u8) {
+                    return sindi::get_bm25_u8_kernels().batch_insert;
+                } else {
+                    return sindi::get_bm25_kernels().batch_insert;
+                }
+            }();
 
             const float bm25_k1 = search_params.scorer_config.scorer_params.bm25.k1;
             const float bm25_b = search_params.scorer_config.scorer_params.bm25.b;
             const float bm25_avgdl = search_params.scorer_config.scorer_params.bm25.avgdl;
             const float* row_sums_ptr = row_sums_span_.data();
 
-            for (size_t widx = 0; widx < nr_windows_; ++widx) {
-                const size_t docid_start = window_size_ * widx;
-                const uint32_t curr_window_size =
-                    std::min(window_size_, static_cast<uint32_t>(this->nr_rows_ - docid_start));
-                if (window_all_filtered(docid_start, curr_window_size)) {
-                    // Keep posting cursors in sync even when the window is skipped, so the
-                    // cumulative posting offsets stay correct for subsequent windows.
-                    for (auto& cur : cursors) {
+            // Compile a correction-free loop for the overwhelmingly common case where the index has no
+            // overflowing TFs. This keeps BM25 U8's hot loop identical to clamp-only U8 on those datasets.
+            const auto search_bm25_windows = [&]<bool RestoreOverflow>() {
+                for (size_t widx = 0; widx < nr_windows_; ++widx) {
+                    const size_t docid_start = window_size_ * widx;
+                    const uint32_t curr_window_size =
+                        std::min(window_size_, static_cast<uint32_t>(this->nr_rows_ - docid_start));
+                    if (window_all_filtered(docid_start, curr_window_size)) {
+                        // Keep posting cursors in sync even when the window is skipped, so the
+                        // cumulative posting offsets stay correct for subsequent windows.
+                        for (auto& cur : cursors) {
+                            if (cur.wnnz_buf == nullptr || cur.wnnz_buf_sz == 0) {
+                                continue;
+                            }
+                            cur.advance_window(widx);
+                        }
+                        if constexpr (RestoreOverflow) {
+                            for (auto& overflow_query_cur : overflow_cursors) {
+                                overflow_query_cur.cursor.advance(cursors[overflow_query_cur.query_cursor].offset);
+                            }
+                        }
+                        continue;
+                    }
+                    std::fill_n(wscores_final, curr_window_size, 0);
+
+                    float curr_max_score = 0.0f;
+                    bool skip_window_calc = false;
+                    size_t next_overflow_cursor = 0;
+                    for (size_t ci = 0; ci < cursors.size(); ++ci) {
+                        auto& cur = cursors[ci];
                         if (cur.wnnz_buf == nullptr || cur.wnnz_buf_sz == 0) {
                             continue;
                         }
-                        cur.advance_window(widx);
+
+                        auto [soff, wnnz] = cur.advance_window(widx);
+                        Bm25U8OverflowCursor* overflow_cur = nullptr;
+                        if constexpr (RestoreOverflow) {
+                            if (next_overflow_cursor < overflow_cursors.size() &&
+                                overflow_cursors[next_overflow_cursor].query_cursor == ci) {
+                                overflow_cur = &overflow_cursors[next_overflow_cursor++].cursor;
+                                overflow_cur->advance(cur.offset);
+                            }
+                        }
+
+                        if (skip_window_calc || wnnz == 0) {
+                            continue;
+                        }
+
+                        // Skip window calculation if current max + remaining max contributions <= threshold
+                        if (curr_max_score + search_params.approx.dim_max_score_ratio * suffix_sum[ci] <= threshold) {
+                            skip_window_calc = true;
+                            continue;
+                        }
+
+                        const uint16_t* plist_ids = cur.ids_base + soff;
+                        const QuantType* plist_vals = cur.vals_base + soff;
+
+                        float dispatch_max = accumulate_fn(cur.qval, plist_vals, plist_ids, wnnz, wscores_final,
+                                                           bm25_k1, bm25_b, bm25_avgdl, row_sums_ptr + docid_start);
+                        if constexpr (RestoreOverflow) {
+                            if (overflow_cur != nullptr && overflow_cur->window_begin != overflow_cur->window_end) {
+                                dispatch_max = apply_bm25_u8_overflow_corrections(
+                                    overflow_cur->posting_begin, soff, plist_ids, wnnz, overflow_cur->window_begin,
+                                    overflow_cur->window_end, cur.qval, wscores_final, dispatch_max, bm25_k1, bm25_b,
+                                    bm25_avgdl, row_sums_ptr + docid_start);
+                            }
+                        }
+                        if (dispatch_max > curr_max_score) {
+                            curr_max_score = dispatch_max;
+                        }
                     }
-                    continue;
+
+                    if (curr_max_score > threshold) {
+                        batch_insert_fn(wscores_final, docid_start, curr_window_size, topk_q, threshold, bitset);
+                    }
                 }
-                std::fill_n(wscores_final, curr_window_size, 0);
+            };
 
-                float curr_max_score = 0.0f;
-                bool skip_window_calc = false;
-                for (size_t ci = 0; ci < cursors.size(); ++ci) {
-                    auto& cur = cursors[ci];
-                    if (cur.wnnz_buf == nullptr || cur.wnnz_buf_sz == 0) {
-                        continue;
-                    }
-
-                    auto [soff, wnnz] = cur.advance_window(widx);
-
-                    if (skip_window_calc || wnnz == 0) {
-                        continue;
-                    }
-
-                    // Skip window calculation if current max + remaining max contributions <= threshold
-                    if (curr_max_score + search_params.approx.dim_max_score_ratio * suffix_sum[ci] <= threshold) {
-                        skip_window_calc = true;
-                        continue;
-                    }
-
-                    const uint16_t* plist_ids = cur.ids_base + soff;
-                    const QuantType* plist_vals = cur.vals_base + soff;
-
-                    float dispatch_max = accumulate_fn(cur.qval, plist_vals, plist_ids, wnnz, wscores_final, bm25_k1,
-                                                       bm25_b, bm25_avgdl, row_sums_ptr + docid_start);
-                    if (dispatch_max > curr_max_score) {
-                        curr_max_score = dispatch_max;
-                    }
+            if constexpr (is_bm25_u8) {
+                if (overflow_cursors.empty()) {
+                    search_bm25_windows.template operator()<false>();
+                } else {
+                    search_bm25_windows.template operator()<true>();
                 }
-
-                if (curr_max_score > threshold) {
-                    batch_insert_fn(wscores_final, docid_start, curr_window_size, topk_q, threshold, bitset);
-                }
+            } else {
+                search_bm25_windows.template operator()<false>();
             }
         }
 
@@ -1424,6 +1604,12 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         // Initialize posting list cursors for each query term
         std::vector<PostingCursor> cursors;
         cursors.reserve(q_vec.size());
+        std::vector<Bm25U8QueryOverflowCursor> overflow_cursors;
+        if constexpr (is_bm25_u8) {
+            if (!bm25_u8_overflow_offsets_span_.empty()) {
+                overflow_cursors.reserve(q_vec.size());
+            }
+        }
         for (auto& [qid, qval] : q_vec) {
             const auto nnz_span = encoded_window_nnzs(qid);
             const auto ids = posting_ids(qid);
@@ -1444,13 +1630,25 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                                  wnnz_bits,                   // wnnz_bits
                                  wnnz_mask                    // wnnz_mask
             );
+            if constexpr (is_bm25_u8) {
+                if (!bm25_u8_overflow_offsets_span_.empty()) {
+                    const uint32_t posting_begin = plists_dim_offsets_span_[qid];
+                    const auto [overflow_begin, overflow_end] =
+                        bm25_u8_overflow_range(posting_begin, plists_dim_offsets_span_[qid + 1]);
+                    if (overflow_begin != overflow_end) {
+                        overflow_cursors.emplace_back(cursors.size() - 1, posting_begin,
+                                                      bm25_u8_overflow_offsets_span_.data(), overflow_begin,
+                                                      overflow_end);
+                    }
+                }
+            }
         }
 
         std::vector<float> distances(this->nr_rows_, 0.0f);
 
         // Cache SIMD kernel function pointer and process windows
         // Use compile-time dispatch to select appropriate kernel
-        if constexpr (std::is_same_v<QuantType, knowhere::fp16>) {
+        if constexpr (is_ip) {
             // IP scoring path
             const auto scatter_fn = sindi::get_ip_kernels().accumulate;
 
@@ -1476,7 +1674,13 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             }
         } else {
             // BM25 scoring path
-            const auto scatter_fn = sindi::get_bm25_kernels().accumulate;
+            const auto scatter_fn = []() {
+                if constexpr (is_bm25_u8) {
+                    return sindi::get_bm25_u8_kernels().accumulate;
+                } else {
+                    return sindi::get_bm25_kernels().accumulate;
+                }
+            }();
 
             // Extract BM25 parameters
             const float bm25_k1 = search_params.scorer_config.scorer_params.bm25.k1;
@@ -1487,13 +1691,23 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             for (size_t widx = 0; widx < nr_windows_; ++widx) {
                 const size_t docid_start = window_size_ * widx;
                 float* wscores_final = distances.data() + docid_start;
+                size_t next_overflow_cursor = 0;
 
-                for (auto& cur : cursors) {
+                for (size_t ci = 0; ci < cursors.size(); ++ci) {
+                    auto& cur = cursors[ci];
                     if (cur.wnnz_buf == nullptr || cur.wnnz_buf_sz == 0) {
                         continue;
                     }
 
                     auto [soff, wnnz] = cur.advance_window(widx);
+                    Bm25U8OverflowCursor* overflow_cur = nullptr;
+                    if constexpr (is_bm25_u8) {
+                        if (next_overflow_cursor < overflow_cursors.size() &&
+                            overflow_cursors[next_overflow_cursor].query_cursor == ci) {
+                            overflow_cur = &overflow_cursors[next_overflow_cursor++].cursor;
+                            overflow_cur->advance(cur.offset);
+                        }
+                    }
                     if (wnnz == 0) {
                         continue;
                     }
@@ -1503,6 +1717,14 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
                     scatter_fn(cur.qval, plist_vals, plist_ids, wnnz, wscores_final, bm25_k1, bm25_b, bm25_avgdl,
                                row_sums_ptr + docid_start);
+                    if constexpr (is_bm25_u8) {
+                        if (overflow_cur != nullptr && overflow_cur->window_begin != overflow_cur->window_end) {
+                            (void)apply_bm25_u8_overflow_corrections(
+                                overflow_cur->posting_begin, soff, plist_ids, wnnz, overflow_cur->window_begin,
+                                overflow_cur->window_end, cur.qval, wscores_final, 0.0f, bm25_k1, bm25_b, bm25_avgdl,
+                                row_sums_ptr + docid_start);
+                        }
+                    }
                 }
             }
         }
@@ -1535,6 +1757,127 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     }
 
  private:
+    [[nodiscard]] static constexpr SindiQuantType
+    serialized_quant_type() noexcept {
+        static_assert(is_bm25);
+        if constexpr (is_bm25_u8) {
+            return SindiQuantType::BM25_U8;
+        } else {
+            return SindiQuantType::BM25_U16;
+        }
+    }
+
+    void
+    store_sealed_value(size_t offset, DataType value) noexcept {
+        total_plists_vals_flat_[offset] = quantize_value(value);
+    }
+
+    void
+    finalize_sealed_bm25_u8_overflows(const std::vector<std::vector<Bm25U8Overflow>>& overflows_by_worker) {
+        if constexpr (is_bm25_u8) {
+            size_t count = 0;
+            for (const auto& worker_overflows : overflows_by_worker) {
+                count += worker_overflows.size();
+            }
+
+            std::vector<Bm25U8Overflow> overflows;
+            overflows.reserve(count);
+            for (const auto& worker_overflows : overflows_by_worker) {
+                overflows.insert(overflows.end(), worker_overflows.begin(), worker_overflows.end());
+            }
+            std::sort(overflows.begin(), overflows.end(),
+                      [](const auto& lhs, const auto& rhs) { return lhs.posting_offset < rhs.posting_offset; });
+
+            bm25_u8_overflow_offsets_.resize(count);
+            bm25_u8_overflow_values_.resize(count);
+            for (size_t i = 0; i < count; ++i) {
+                bm25_u8_overflow_offsets_[i] = overflows[i].posting_offset;
+                bm25_u8_overflow_values_[i] = overflows[i].value;
+            }
+            refresh_bm25_u8_overflow_spans();
+            LOG_KNOWHERE_INFO_ << "SindiInvertedIndex BM25 U8 overflow sidecar built: count=" << count
+                               << ", bytes=" << count * (sizeof(uint32_t) + sizeof(uint16_t));
+        }
+    }
+
+    void
+    refresh_bm25_u8_overflow_spans() noexcept {
+        bm25_u8_overflow_offsets_span_ =
+            std::span<const uint32_t>(bm25_u8_overflow_offsets_.data(), bm25_u8_overflow_offsets_.size());
+        bm25_u8_overflow_values_span_ =
+            std::span<const uint16_t>(bm25_u8_overflow_values_.data(), bm25_u8_overflow_values_.size());
+    }
+
+    [[nodiscard]] std::pair<uint32_t, uint32_t>
+    bm25_u8_overflow_range(size_t posting_begin, size_t posting_end) const noexcept {
+        if constexpr (is_bm25_u8) {
+            const auto first = std::lower_bound(bm25_u8_overflow_offsets_span_.begin(),
+                                                bm25_u8_overflow_offsets_span_.end(), posting_begin);
+            const auto last = std::lower_bound(first, bm25_u8_overflow_offsets_span_.end(), posting_end);
+            return {static_cast<uint32_t>(first - bm25_u8_overflow_offsets_span_.begin()),
+                    static_cast<uint32_t>(last - bm25_u8_overflow_offsets_span_.begin())};
+        } else {
+            return {0, 0};
+        }
+    }
+
+    [[nodiscard]] float
+    bm25_posting_value(size_t posting_offset, QuantType value, uint32_t& overflow_cursor,
+                       uint32_t overflow_end) const noexcept {
+        if constexpr (is_bm25_u8) {
+            if (overflow_cursor < overflow_end && bm25_u8_overflow_offsets_span_[overflow_cursor] == posting_offset) {
+                return bm25_u8_overflow_values_span_[overflow_cursor++];
+            }
+        }
+        return std::abs(static_cast<float>(value));
+    }
+
+    [[nodiscard]] float
+    apply_bm25_u8_overflow_corrections(uint32_t posting_begin, uint32_t window_posting_offset,
+                                       const uint16_t* posting_ids, uint16_t window_nnz, uint32_t overflow_begin,
+                                       uint32_t overflow_end, float qval, float* scores, float current_max, float k1,
+                                       float b, float avgdl, const float* row_sums) const noexcept {
+        if constexpr (is_bm25_u8) {
+            const float p1 = k1 + 1.0f;
+            const float p2 = k1 * (1.0f - b);
+            const float p3 = k1 * b / avgdl;
+            const uint32_t window_begin = posting_begin + window_posting_offset;
+            for (uint32_t i = overflow_begin; i < overflow_end; ++i) {
+                const uint32_t local_offset = bm25_u8_overflow_offsets_span_[i] - window_begin;
+                if (local_offset >= window_nnz) {
+                    continue;
+                }
+                const uint16_t docid = posting_ids[local_offset];
+                const float dl_term = p2 + p3 * row_sums[docid];
+                const float true_tf = static_cast<float>(bm25_u8_overflow_values_span_[i]);
+                const float correction = qval * p1 * (true_tf / (true_tf + dl_term) - 255.0f / (255.0f + dl_term));
+                const float corrected_score = (scores[docid] += correction);
+                current_max = std::max(current_max, corrected_score);
+            }
+        }
+        return current_max;
+    }
+
+    [[nodiscard]] static uint16_t
+    bm25_u16_value(DataType value) noexcept {
+        // Match the existing BM25 u16 representation: truncate fractional TF
+        // values and saturate values outside the representable range.
+        const float bounded =
+            std::clamp(static_cast<float>(value), 0.0f, static_cast<float>(std::numeric_limits<uint16_t>::max()));
+        return static_cast<uint16_t>(bounded);
+    }
+
+    [[nodiscard]] QuantType
+    quantize_value(DataType value) const noexcept {
+        if constexpr (is_bm25_u8) {
+            return static_cast<uint8_t>(std::min<uint16_t>(bm25_u16_value(value), 255));
+        } else if constexpr (is_bm25) {
+            return static_cast<QuantType>(bm25_u16_value(value));
+        } else {
+            return static_cast<QuantType>(static_cast<float>(value));
+        }
+    }
+
     [[nodiscard]] std::span<const uint16_t>
     posting_ids(size_t dim_id) const {
         if (!total_plists_ids_flat_span_.empty()) {
@@ -1578,7 +1921,6 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     aligned_quant_vec total_plists_vals_flat_;
     std::span<const uint16_t> total_plists_ids_flat_span_;
     std::span<const QuantType> total_plists_vals_flat_span_;
-
     // Window sizes encoding (per-dim window nnz) and bitset of formats
     // Bit=1 means sparse format (wid, wnnz pairs), Bit=0 means dense format (one entry per window)
     std::vector<uint8_t> plists_wnnzs_fmts_msk_;
@@ -1593,6 +1935,13 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     std::span<const uint32_t> plists_dim_offsets_span_;
     std::vector<float> max_scores_per_dim_;
     std::span<const float> max_scores_per_dim_span_;
+
+    // U8 keeps the hot posting array compact and stores exact TF only for values above 255.
+    // Offsets are global positions in the dimension-concatenated posting array.
+    std::vector<uint32_t> bm25_u8_overflow_offsets_;
+    std::vector<uint16_t> bm25_u8_overflow_values_;
+    std::span<const uint32_t> bm25_u8_overflow_offsets_span_;
+    std::span<const uint16_t> bm25_u8_overflow_values_span_;
 
     // Row sums only needed for BM25
     std::vector<float> row_sums_;
@@ -1656,10 +2005,46 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             return {soff, wnnz};
         }
     };
+
+    struct Bm25U8OverflowCursor {
+        uint32_t posting_begin{0};
+        const uint32_t* offsets{nullptr};
+        uint32_t cursor{0};
+        uint32_t end{0};
+        uint32_t window_begin{0};
+        uint32_t window_end{0};
+
+        Bm25U8OverflowCursor(uint32_t posting_begin, const uint32_t* offsets, uint32_t cursor, uint32_t end)
+            : posting_begin(posting_begin), offsets(offsets), cursor(cursor), end(end) {
+        }
+
+        inline void
+        advance(uint32_t posting_offset) {
+            window_begin = cursor;
+            if (offsets != nullptr) {
+                const uint32_t global_end = posting_begin + posting_offset;
+                while (cursor < end && offsets[cursor] < global_end) {
+                    ++cursor;
+                }
+            }
+            window_end = cursor;
+        }
+    };
+
+    struct Bm25U8QueryOverflowCursor {
+        size_t query_cursor{0};
+        Bm25U8OverflowCursor cursor;
+
+        Bm25U8QueryOverflowCursor(size_t query_cursor, uint32_t posting_begin, const uint32_t* offsets,
+                                  uint32_t cursor_begin, uint32_t cursor_end)
+            : query_cursor(query_cursor), cursor(posting_begin, offsets, cursor_begin, cursor_end) {
+        }
+    };
 };
 
 using SindiInvertedIndexIP = SindiInvertedIndex<float, knowhere::fp16>;
 using SindiInvertedIndexBM25 = SindiInvertedIndex<float, uint16_t>;
+using SindiInvertedIndexBM25U8 = SindiInvertedIndex<float, uint8_t>;
 using GrowableSindiInvertedIndexIP = SindiInvertedIndex<float, knowhere::fp16, true>;
 using GrowableSindiInvertedIndexBM25 = SindiInvertedIndex<float, uint16_t, true>;
 

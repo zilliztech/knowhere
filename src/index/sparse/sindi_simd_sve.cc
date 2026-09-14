@@ -156,6 +156,41 @@ bm25_accumulate_sve_u16(float qval, const uint16_t* vals, const uint16_t* ids, i
     return svmaxv_f32(svptrue_b32(), v_max);
 }
 
+float
+bm25_accumulate_sve_u8(float qval, const uint8_t* vals, const uint16_t* ids, int32_t num, float* out, float k1, float b,
+                       float avgdl, const float* row_sums) {
+    const float p1 = k1 + 1.0f;
+    const float p2 = k1 * (1.0f - b);
+    const float p3 = k1 * b / avgdl;
+
+    const svfloat32_t vqp1 = svdup_f32(qval * p1);
+    const svfloat32_t vp2 = svdup_f32(p2);
+    const svfloat32_t vp3 = svdup_f32(p3);
+    svfloat32_t v_max = svdup_f32(0.0f);
+    const uint32_t vl = svcntw();
+
+    int32_t i = 0;
+    while (i < num) {
+        const svbool_t pg = svwhilelt_b32(static_cast<uint32_t>(i), static_cast<uint32_t>(num));
+        const svuint32_t quantized = svld1ub_u32(pg, vals + i);
+        const svfloat32_t tf = svcvt_f32_u32_x(pg, quantized);
+        const svuint32_t indices = svld1uh_u32(pg, ids + i);
+        const svfloat32_t dl = svld1_gather_u32index_f32(pg, row_sums, indices);
+
+        const svfloat32_t numerator = svmul_f32_x(pg, tf, vqp1);
+        svfloat32_t denominator = svmad_f32_x(pg, dl, vp3, vp2);
+        denominator = svadd_f32_x(pg, tf, denominator);
+        const svfloat32_t contribution = svdiv_f32_x(pg, numerator, denominator);
+
+        const svfloat32_t old_scores = svld1_gather_u32index_f32(pg, out, indices);
+        const svfloat32_t scores = svadd_f32_x(pg, old_scores, contribution);
+        svst1_scatter_u32index_f32(pg, out, indices, scores);
+        v_max = svmax_f32_m(pg, v_max, scores);
+        i += static_cast<int32_t>(vl);
+    }
+    return svmaxv_f32(svptrue_b32(), v_max);
+}
+
 void
 batch_insert_sve(const float* scores, size_t docid_start, size_t count,
                  knowhere::ResultMinHeap<float, uint32_t>& topk_q, float& threshold, const BitsetView& bitset) {

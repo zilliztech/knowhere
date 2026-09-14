@@ -1545,6 +1545,400 @@ TEST_CASE("Test SINDI Index Requires Version 10", "[sparse][sindi]") {
     REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::invalid_args);
 }
 
+TEST_CASE("Test SINDI BM25 U8 posting value quantization", "[sparse][sindi][quant]") {
+    const std::string metric = knowhere::metric::BM25;
+    const std::string quant_type = "u8";
+    const std::string baseline_quant_type = "u16";
+    constexpr int64_t nb = 4000;
+    constexpr int64_t nq = 20;
+    constexpr int64_t dim = 1000;
+    constexpr int64_t topk = 20;
+    const auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+
+    auto train_ds = GenSparseDataSetWithMaxVal(nb, dim, 0.97, 250, true);
+    auto query_ds = GenSparseDataSetWithMaxVal(nq, dim, 0.98, 10, true);
+
+    knowhere::Json config = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::TOPK, topk},
+        {knowhere::meta::METRIC_TYPE, metric},
+        {knowhere::meta::BM25_K1, 1.2},
+        {knowhere::meta::BM25_B, 0.75},
+        {knowhere::meta::BM25_AVGDL, 100},
+        {knowhere::indexparam::INVERTED_INDEX_ALGO, "SINDI"},
+        {knowhere::indexparam::SEARCH_ALGO, "SINDI"},
+        {"quant_type", quant_type},
+    };
+    auto baseline_config = config;
+    baseline_config["quant_type"] = baseline_quant_type;
+
+    auto quantized = knowhere::IndexFactory::Instance()
+                         .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                         .value();
+    auto baseline = knowhere::IndexFactory::Instance()
+                        .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                        .value();
+    REQUIRE(quantized.Build(train_ds, config) == knowhere::Status::success);
+    REQUIRE(baseline.Build(train_ds, baseline_config) == knowhere::Status::success);
+    REQUIRE(quantized.Size() < baseline.Size());
+
+    const auto gt = knowhere::BruteForce::SearchSparse(train_ds, query_ds, config, nullptr);
+    REQUIRE(gt.has_value());
+    const auto result = quantized.Search(query_ds, config, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(GetKNNRecall(*gt.value(), *result.value()) >= 0.90f);
+
+    knowhere::BinarySet binary_set;
+    REQUIRE(quantized.Serialize(binary_set) == knowhere::Status::success);
+    auto restored = knowhere::IndexFactory::Instance()
+                        .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                        .value();
+    REQUIRE(restored.Deserialize(binary_set, config) == knowhere::Status::success);
+    const auto restored_result = restored.Search(query_ds, config, nullptr);
+    REQUIRE(restored_result.has_value());
+    for (int64_t i = 0; i < nq * topk; ++i) {
+        REQUIRE(restored_result.value()->GetIds()[i] == result.value()->GetIds()[i]);
+        REQUIRE(restored_result.value()->GetDistance()[i] == result.value()->GetDistance()[i]);
+    }
+}
+
+TEST_CASE("Test SINDI BM25 auto quantization uses only the configured overflow threshold", "[sparse][sindi][quant]") {
+    constexpr int32_t dim = 100;
+    const auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    const knowhere::Json config = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::TOPK, 1},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::BM25},
+        {knowhere::meta::BM25_K1, 1.2},
+        {knowhere::meta::BM25_B, 0.75},
+        {knowhere::meta::BM25_AVGDL, 100},
+        {knowhere::indexparam::INVERTED_INDEX_ALGO, "SINDI"},
+        {knowhere::indexparam::SEARCH_ALGO, "SINDI"},
+        {"quant_type", "auto"},
+    };
+
+    auto make_dense_sparse_dataset = [=](bool remove_one_posting, bool include_overflow) {
+        std::vector<std::map<int32_t, float>> data(dim);
+        for (int32_t row = 0; row < dim; ++row) {
+            for (int32_t d = 0; d < dim; ++d) {
+                data[row][d] = 1.0f;
+            }
+        }
+        if (remove_one_posting) {
+            data.back().erase(dim - 1);
+        }
+        if (include_overflow) {
+            data.front()[0] = 256.0f;
+        }
+        return GenSparseDataSet(data, dim);
+    };
+
+    auto serialized_quantization = [&](const knowhere::DataSetPtr& dataset, const knowhere::Json& build_config) {
+        auto index = knowhere::IndexFactory::Instance()
+                         .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                         .value();
+        REQUIRE(index.Build(dataset, build_config) == knowhere::Status::success);
+        knowhere::BinarySet binary_set;
+        REQUIRE(index.Serialize(binary_set) == knowhere::Status::success);
+        const auto binary = binary_set.GetByName(index.Type());
+        const auto sections = ReadSparseIndexSections(binary);
+        const bool has_sidecar =
+            FindSection(sections, knowhere::sparse::inverted::InvertedIndexSectionType::BM25_U8_OVERFLOWS) != nullptr;
+        const auto serialized_quant_type =
+            knowhere::sparse::inverted::peek_sindi_quant_type_from_index_data(binary->data.get(), binary->size);
+        REQUIRE(serialized_quant_type.has_value());
+        const bool uses_u8 = serialized_quant_type.value() == knowhere::sparse::inverted::SindiQuantType::BM25_U8;
+        REQUIRE((uses_u8 || serialized_quant_type.value() == knowhere::sparse::inverted::SindiQuantType::BM25_U16));
+
+        // Deserialize consumes the concrete representation persisted by Build(auto);
+        // it does not rerun the corpus threshold decision.
+        auto restored = knowhere::IndexFactory::Instance()
+                            .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                            .value();
+        REQUIRE(restored.Deserialize(binary_set, build_config) == knowhere::Status::success);
+
+        auto metadata_only_config = build_config;
+        metadata_only_config.erase("quant_type");
+        auto metadata_only_restored =
+            knowhere::IndexFactory::Instance()
+                .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                .value();
+        REQUIRE(metadata_only_restored.Deserialize(binary_set, metadata_only_config) == knowhere::Status::success);
+
+        const std::string tmp_file = "/tmp/knowhere_sindi_auto_quant_type_test";
+        WriteBinaryToFile(tmp_file, binary);
+        auto mmap_restored =
+            knowhere::IndexFactory::Instance()
+                .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                .value();
+        REQUIRE(mmap_restored.DeserializeFromFile(tmp_file, build_config) == knowhere::Status::success);
+        REQUIRE(std::remove(tmp_file.c_str()) == 0);
+
+        auto mismatched_config = build_config;
+        mismatched_config["quant_type"] = uses_u8 ? "u16" : "u8";
+        auto mismatched =
+            knowhere::IndexFactory::Instance()
+                .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                .value();
+        REQUIRE(mismatched.Deserialize(binary_set, mismatched_config) ==
+                knowhere::Status::invalid_serialized_index_type);
+        return std::pair{uses_u8, has_sidecar};
+    };
+
+    // The default is 0.0001 (0.01%). Equality is included.
+    const auto [equal_boundary_uses_u8, equal_boundary_has_sidecar] =
+        serialized_quantization(make_dense_sparse_dataset(false, true), config);
+    REQUIRE(equal_boundary_uses_u8);
+    REQUIRE(equal_boundary_has_sidecar);
+    const auto [above_boundary_uses_u8, above_boundary_has_sidecar] =
+        serialized_quantization(make_dense_sparse_dataset(true, true), config);
+    REQUIRE_FALSE(above_boundary_uses_u8);
+    REQUIRE_FALSE(above_boundary_has_sidecar);
+
+    // U8 remains identifiable and reloadable when there are no overflow values
+    // and therefore no overflow sidecar section.
+    const auto [no_overflow_uses_u8, no_overflow_has_sidecar] =
+        serialized_quantization(make_dense_sparse_dataset(false, false), config);
+    REQUIRE(no_overflow_uses_u8);
+    REQUIRE_FALSE(no_overflow_has_sidecar);
+
+    // The same corpus switches types when only the configured threshold changes.
+    auto relaxed_config = config;
+    relaxed_config[knowhere::indexparam::BM25_U8_MAX_OVERFLOW_RATIO] = 0.00011;
+    const auto [relaxed_uses_u8, relaxed_has_sidecar] =
+        serialized_quantization(make_dense_sparse_dataset(true, true), relaxed_config);
+    REQUIRE(relaxed_uses_u8);
+    REQUIRE(relaxed_has_sidecar);
+    auto zero_threshold_config = config;
+    zero_threshold_config[knowhere::indexparam::BM25_U8_MAX_OVERFLOW_RATIO] = 0.0;
+    const auto [zero_threshold_uses_u8, zero_threshold_has_sidecar] =
+        serialized_quantization(make_dense_sparse_dataset(false, true), zero_threshold_config);
+    REQUIRE_FALSE(zero_threshold_uses_u8);
+    REQUIRE_FALSE(zero_threshold_has_sidecar);
+}
+
+TEST_CASE("Test non-SINDI BM25 auto quantization resolves to u16", "[sparse][quant]") {
+    constexpr int32_t dim = 4;
+    const auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    const auto train_ds = GenSparseDataSet(
+        std::vector<std::map<int32_t, float>>{
+            {{0, 1.0f}, {1, 3.0f}},
+            {{0, 2.0f}, {2, 4.0f}},
+            {{1, 5.0f}, {3, 6.0f}},
+        },
+        dim);
+    const auto query_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.0f}, {1, 1.0f}}}, dim);
+    const knowhere::Json auto_config = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::TOPK, 3},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::BM25},
+        {knowhere::meta::BM25_K1, 1.2},
+        {knowhere::meta::BM25_B, 0.75},
+        {knowhere::meta::BM25_AVGDL, 2.0},
+        {knowhere::indexparam::INVERTED_INDEX_ALGO, "DAAT_MAXSCORE"},
+        {knowhere::indexparam::BM25_U8_MAX_OVERFLOW_RATIO, 1.0},
+        {"quant_type", "auto"},
+    };
+    auto u16_config = auto_config;
+    u16_config["quant_type"] = "u16";
+
+    auto auto_index = knowhere::IndexFactory::Instance()
+                          .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                          .value();
+    auto u16_index = knowhere::IndexFactory::Instance()
+                         .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                         .value();
+    REQUIRE(auto_index.Build(train_ds, auto_config) == knowhere::Status::success);
+    REQUIRE(u16_index.Build(train_ds, u16_config) == knowhere::Status::success);
+    REQUIRE(auto_index.Size() == u16_index.Size());
+
+    const auto auto_result = auto_index.Search(query_ds, auto_config, nullptr);
+    const auto u16_result = u16_index.Search(query_ds, u16_config, nullptr);
+    REQUIRE(auto_result.has_value());
+    REQUIRE(u16_result.has_value());
+    for (int64_t i = 0; i < 3; ++i) {
+        REQUIRE(auto_result.value()->GetIds()[i] == u16_result.value()->GetIds()[i]);
+        REQUIRE(auto_result.value()->GetDistance()[i] == u16_result.value()->GetDistance()[i]);
+    }
+}
+
+TEST_CASE("Test SINDI IP SQ8 quantization is unsupported", "[sparse][sindi][quant]") {
+    const auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    const auto train_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.0f}}}, 1);
+    const knowhere::Json config = {
+        {knowhere::meta::DIM, 1},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::IP},
+        {knowhere::indexparam::INVERTED_INDEX_ALGO, "SINDI"},
+        {"quant_type", "sq8"},
+    };
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                     .value();
+    REQUIRE(index.Build(train_ds, config) == knowhere::Status::invalid_args);
+}
+
+TEST_CASE("Test SINDI BM25 U8 restores overflow posting values", "[sparse][sindi][quant]") {
+    constexpr float k1 = 1.2f;
+    constexpr float unclamped_tf = 512.0f;
+    const auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    const auto train_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, unclamped_tf}}}, 1);
+    const auto query_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.0f}}}, 1);
+
+    const knowhere::Json config = {
+        {knowhere::meta::DIM, 1},
+        {knowhere::meta::TOPK, 1},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::BM25},
+        {knowhere::meta::BM25_K1, k1},
+        {knowhere::meta::BM25_B, 0.0},
+        {knowhere::meta::BM25_AVGDL, 1.0},
+        {knowhere::indexparam::INVERTED_INDEX_ALGO, "SINDI"},
+        {knowhere::indexparam::SEARCH_ALGO, "SINDI"},
+        {"quant_type", "u8"},
+    };
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                     .value();
+    REQUIRE(index.Build(train_ds, config) == knowhere::Status::success);
+
+    const auto result = index.Search(query_ds, config, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == 0);
+    const float expected = (k1 + 1.0f) * unclamped_tf / (unclamped_tf + k1);
+    REQUIRE(std::abs(result.value()->GetDistance()[0] - expected) < 1e-5f);
+
+    knowhere::BinarySet binary_set;
+    REQUIRE(index.Serialize(binary_set) == knowhere::Status::success);
+    const auto serialized_index = binary_set.GetByName(index.Type());
+    const auto sections = ReadSparseIndexSections(serialized_index);
+    const auto* overflow_section =
+        FindSection(sections, knowhere::sparse::inverted::InvertedIndexSectionType::BM25_U8_OVERFLOWS);
+    REQUIRE(overflow_section != nullptr);
+    REQUIRE(overflow_section->size == sizeof(uint32_t) * 2 + sizeof(uint16_t));
+    uint32_t overflow_count = 0;
+    uint16_t stored_tf = 0;
+    std::memcpy(&overflow_count, serialized_index->data.get() + overflow_section->offset, sizeof(overflow_count));
+    std::memcpy(&stored_tf,
+                serialized_index->data.get() + overflow_section->offset + sizeof(uint32_t) * (1 + overflow_count),
+                sizeof(stored_tf));
+    REQUIRE(overflow_count == 1);
+    REQUIRE(stored_tf == static_cast<uint16_t>(unclamped_tf));
+
+    auto restored = knowhere::IndexFactory::Instance()
+                        .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                        .value();
+    REQUIRE(restored.Deserialize(binary_set, config) == knowhere::Status::success);
+    const auto restored_result = restored.Search(query_ds, config, nullptr);
+    REQUIRE(restored_result.has_value());
+    REQUIRE(restored_result.value()->GetIds()[0] == 0);
+    REQUIRE(std::abs(restored_result.value()->GetDistance()[0] - expected) < 1e-5f);
+
+    // Legacy SINDI headers had zeroed reserved bytes. They remain loadable with
+    // an explicit concrete type, while auto correctly requires new metadata.
+    constexpr size_t kReservedOffset = sizeof(uint32_t) * 4;
+    std::memset(serialized_index->data.get() + kReservedOffset, 0,
+                sizeof(knowhere::sparse::inverted::SindiHeaderMetadata));
+    auto legacy_restored =
+        knowhere::IndexFactory::Instance()
+            .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+            .value();
+    REQUIRE(legacy_restored.Deserialize(binary_set, config) == knowhere::Status::success);
+    auto auto_config = config;
+    auto_config["quant_type"] = "auto";
+    auto legacy_auto = knowhere::IndexFactory::Instance()
+                           .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                           .value();
+    REQUIRE(legacy_auto.Deserialize(binary_set, auto_config) == knowhere::Status::invalid_args);
+}
+
+TEST_CASE("Test SINDI BM25 U8 and U16 saturate TF above uint16 range consistently", "[sparse][sindi][quant]") {
+    constexpr float k1 = 1.2f;
+    constexpr float saturated_tf = static_cast<float>(std::numeric_limits<uint16_t>::max());
+    const auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    const auto query_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.0f}}}, 1);
+
+    knowhere::Json u8_config = {
+        {knowhere::meta::DIM, 1},
+        {knowhere::meta::TOPK, 1},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::BM25},
+        {knowhere::meta::BM25_K1, k1},
+        {knowhere::meta::BM25_B, 0.0},
+        {knowhere::meta::BM25_AVGDL, 1.0},
+        {knowhere::indexparam::INVERTED_INDEX_ALGO, "SINDI"},
+        {knowhere::indexparam::SEARCH_ALGO, "SINDI"},
+        {"quant_type", "u8"},
+    };
+    auto u16_config = u8_config;
+    u16_config["quant_type"] = "u16";
+
+    for (const float input_tf : {saturated_tf, 65536.0f, 1000000.0f}) {
+        CAPTURE(input_tf);
+        const auto train_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, input_tf}}}, 1);
+        auto u8_index = knowhere::IndexFactory::Instance()
+                            .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                            .value();
+        auto u16_index =
+            knowhere::IndexFactory::Instance()
+                .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                .value();
+        REQUIRE(u8_index.Build(train_ds, u8_config) == knowhere::Status::success);
+        REQUIRE(u16_index.Build(train_ds, u16_config) == knowhere::Status::success);
+
+        const auto u8_result = u8_index.Search(query_ds, u8_config, nullptr);
+        const auto u16_result = u16_index.Search(query_ds, u16_config, nullptr);
+        REQUIRE(u8_result.has_value());
+        REQUIRE(u16_result.has_value());
+        REQUIRE(u8_result.value()->GetIds()[0] == 0);
+        REQUIRE(u16_result.value()->GetIds()[0] == 0);
+
+        const float expected = (k1 + 1.0f) * saturated_tf / (saturated_tf + k1);
+        REQUIRE(std::abs(u8_result.value()->GetDistance()[0] - expected) < 1e-5f);
+        REQUIRE(std::abs(u16_result.value()->GetDistance()[0] - expected) < 1e-5f);
+        REQUIRE(std::abs(u8_result.value()->GetDistance()[0] - u16_result.value()->GetDistance()[0]) < 1e-5f);
+    }
+}
+
+TEST_CASE("Test growable SINDI BM25 does not use U8", "[sparse][sindi][quant]") {
+    constexpr float k1 = 1.2f;
+    constexpr float overflow_tf = 1000000.0f;
+    constexpr float saturated_tf = static_cast<float>(std::numeric_limits<uint16_t>::max());
+    const auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    const auto train_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 10.0f}}}, 1);
+    const auto extra_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, overflow_tf}}}, 1);
+    const auto query_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.0f}}}, 1);
+    const knowhere::Json u8_config = {
+        {knowhere::meta::DIM, 1},
+        {knowhere::meta::TOPK, 2},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::BM25},
+        {knowhere::meta::BM25_K1, k1},
+        {knowhere::meta::BM25_B, 0.0},
+        {knowhere::meta::BM25_AVGDL, 1.0},
+        {knowhere::indexparam::INVERTED_INDEX_ALGO, "SINDI"},
+        {knowhere::indexparam::SEARCH_ALGO, "SINDI"},
+        {"quant_type", "u8"},
+    };
+    auto explicit_u8 =
+        knowhere::IndexFactory::Instance()
+            .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, version)
+            .value();
+    REQUIRE(explicit_u8.Build(train_ds, u8_config) == knowhere::Status::invalid_args);
+
+    // With no overflow in the training data, sealed SINDI would select u8. Growable
+    // SINDI must instead resolve auto directly to u16 and continue to support Add.
+    auto auto_config = u8_config;
+    auto_config["quant_type"] = "auto";
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, version)
+                     .value();
+    REQUIRE(index.Build(train_ds, auto_config) == knowhere::Status::success);
+    REQUIRE(index.Add(extra_ds, auto_config) == knowhere::Status::success);
+
+    const auto result = index.Search(query_ds, auto_config, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == 1);
+    const float expected = (k1 + 1.0f) * saturated_tf / (saturated_tf + k1);
+    REQUIRE(std::abs(result.value()->GetDistance()[0] - expected) < 1e-5f);
+}
+
 TEST_CASE("Test SINDI MPHF Section Uses Version 11 Layout", "[sparse][sindi]") {
     const auto version = GENERATE(10, 11);
     const auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);

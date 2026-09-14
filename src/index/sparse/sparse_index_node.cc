@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <boost/intrusive/pack_options.hpp>
 #include <cctype>
+#include <cmath>
 #include <exception>
 #include <optional>
 
@@ -109,7 +110,7 @@ class SparseInvertedIndexNode : public IndexNode {
 
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
-        auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
+        auto& cfg = static_cast<SparseInvertedIndexConfig&>(*config);
 
         // metric type validation
         if (!IsMetricType(cfg.metric_type.value(), metric::IP) &&
@@ -124,6 +125,8 @@ class SparseInvertedIndexNode : public IndexNode {
             }
         }
 
+        RETURN_IF_ERROR(ResolveAutoQuantTypeForTrain(dataset, cfg));
+
         // create index
         auto index_or = CreateIndex(cfg);
         if (!index_or.has_value()) {
@@ -137,6 +140,116 @@ class SparseInvertedIndexNode : public IndexNode {
         }
         index_ = std::move(index_or.value());
 
+        return Status::success;
+    }
+
+    Status
+    ResolveAutoQuantTypeForTrain(const DataSetPtr& dataset, SparseInvertedIndexConfig& cfg,
+                                 bool is_growable = false) const {
+        if (cfg.quant_type.value_or("") != "auto") {
+            return Status::success;
+        }
+        if (!IsMetricType(cfg.metric_type.value(), metric::BM25)) {
+            LOG_KNOWHERE_ERROR_ << "quant_type=auto is only supported for BM25";
+            return Status::invalid_args;
+        }
+
+        const auto algo = NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or(""));
+        if (algo != "SINDI" || is_growable) {
+            cfg.quant_type = "u16";
+            LOG_KNOWHERE_INFO_ << "BM25 quant_type=auto selected u16 for " << (is_growable ? "growable" : "non-SINDI")
+                               << " index";
+            return Status::success;
+        }
+        if (index_version_ < 10) {
+            LOG_KNOWHERE_ERROR_ << "SINDI BM25 quant_type=auto requires index version >= 10";
+            return Status::invalid_args;
+        }
+        if (dataset == nullptr || (dataset->GetRows() > 0 && dataset->GetTensor() == nullptr)) {
+            LOG_KNOWHERE_ERROR_ << "SINDI BM25 quant_type=auto requires a valid training dataset";
+            return Status::invalid_args;
+        }
+
+        uint64_t total_postings = 0;
+        uint64_t overflow_postings = 0;
+        const auto* rows = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
+        for (int64_t row_id = 0; row_id < dataset->GetRows(); ++row_id) {
+            const auto& row = rows[row_id];
+            total_postings += row.size();
+            for (size_t i = 0; i < row.size(); ++i) {
+                // Match the u16 baseline and restore-u8 sidecar semantics: values
+                // in [255, 256) truncate to 255 and do not need restoration.
+                if (row[i].val >= 256.0f) {
+                    ++overflow_postings;
+                }
+            }
+        }
+
+        const float configured_threshold = cfg.bm25_u8_max_overflow_ratio.value();
+        // The config framework stores ratios as float. Widen the inclusive
+        // boundary by one float ULP so decimal boundaries such as 1/10,000 are
+        // not rejected because 0.0001f is represented slightly below 0.0001.
+        const long double inclusive_threshold =
+            std::nextafter(configured_threshold, std::numeric_limits<float>::infinity());
+        const bool use_u8 = total_postings == 0 || static_cast<long double>(overflow_postings) <=
+                                                       inclusive_threshold * static_cast<long double>(total_postings);
+        cfg.quant_type = use_u8 ? "u8" : "u16";
+        const double overflow_ratio =
+            total_postings == 0 ? 0.0 : static_cast<double>(overflow_postings) / total_postings;
+        LOG_KNOWHERE_INFO_ << "SINDI BM25 quant_type=auto selected " << cfg.quant_type.value()
+                           << ": overflow_postings=" << overflow_postings << ", total_postings=" << total_postings
+                           << ", overflow_ratio=" << overflow_ratio
+                           << ", u8_max_overflow_ratio=" << configured_threshold;
+        return Status::success;
+    }
+
+    Status
+    ResolveQuantTypeForDeserialize(const uint8_t* data, size_t size,
+                                   std::optional<sparse::inverted::InvertedIndexEncoding> encoding,
+                                   SparseInvertedIndexConfig& cfg) const {
+        const auto serialized_quant_type = sparse::inverted::peek_sindi_quant_type_from_index_data(data, size);
+        if (!serialized_quant_type.has_value()) {
+            if (cfg.quant_type.value_or("") == "auto") {
+                LOG_KNOWHERE_ERROR_
+                    << "quant_type=auto cannot load a legacy index without persisted SINDI quantization metadata";
+                return Status::invalid_args;
+            }
+            return Status::success;
+        }
+        if (!encoding.has_value() || encoding.value() != sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS) {
+            LOG_KNOWHERE_ERROR_ << "SINDI quantization metadata found on a non-SINDI serialized index";
+            return Status::invalid_serialized_index_type;
+        }
+
+        std::string resolved_quant_type;
+        switch (serialized_quant_type.value()) {
+            case sparse::inverted::SindiQuantType::BM25_U8:
+                if (!IsMetricType(cfg.metric_type.value(), metric::BM25)) {
+                    return Status::invalid_serialized_index_type;
+                }
+                resolved_quant_type = "u8";
+                break;
+            case sparse::inverted::SindiQuantType::BM25_U16:
+                if (!IsMetricType(cfg.metric_type.value(), metric::BM25)) {
+                    return Status::invalid_serialized_index_type;
+                }
+                resolved_quant_type = "u16";
+                break;
+            default:
+                LOG_KNOWHERE_ERROR_ << "Unknown SINDI quantization type in serialized index: "
+                                    << static_cast<uint32_t>(serialized_quant_type.value());
+                return Status::invalid_serialized_index_type;
+        }
+
+        const auto requested_quant_type = cfg.quant_type.value_or("");
+        if (!requested_quant_type.empty() && requested_quant_type != "auto" &&
+            requested_quant_type != resolved_quant_type) {
+            LOG_KNOWHERE_ERROR_ << "Serialized SINDI quantization type " << resolved_quant_type
+                                << " conflicts with requested quant_type=" << requested_quant_type;
+            return Status::invalid_serialized_index_type;
+        }
+        cfg.quant_type = resolved_quant_type;
+        LOG_KNOWHERE_INFO_ << "Using serialized SINDI quantization type " << resolved_quant_type;
         return Status::success;
     }
 
@@ -326,6 +439,7 @@ class SparseInvertedIndexNode : public IndexNode {
                                    << " from serialized index data";
             }
         }
+        RETURN_IF_ERROR(ResolveQuantTypeForDeserialize(binary->data.get(), binary->size, encoding, cfg));
 
         // create or recreate index
         if (index_ != nullptr) {
@@ -381,6 +495,8 @@ class SparseInvertedIndexNode : public IndexNode {
                                    << " from index file " << filename;
             }
         }
+        RETURN_IF_ERROR(
+            ResolveQuantTypeForDeserialize(reinterpret_cast<const uint8_t*>(mapped_memory), map_size, encoding, cfg));
 
         // create or recreate index
         if (index_ != nullptr) {
@@ -611,10 +727,14 @@ class SparseInvertedIndexNode : public IndexNode {
                 auto window_size =
                     cfg.sindi_window_size.value_or(sparse::inverted::SindiInvertedIndexBM25::max_window_size);
                 IndexPtr index;
-                if (is_growable) {
-                    index = std::make_unique<sparse::inverted::GrowableSindiInvertedIndexBM25>(window_size);
+                if constexpr (std::is_same_v<QType, uint8_t>) {
+                    index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25U8>(window_size);
                 } else {
-                    index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25>(window_size);
+                    if (is_growable) {
+                        index = std::make_unique<sparse::inverted::GrowableSindiInvertedIndexBM25>(window_size);
+                    } else {
+                        index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25>(window_size);
+                    }
                 }
                 ConfigureSindiDimMapMphfWorkaround(index.get());
                 index->set_build_algo(algo);
@@ -649,6 +769,11 @@ class SparseInvertedIndexNode : public IndexNode {
         }
 
         auto qt = cfg.quant_type.value_or("");
+        if (qt == "auto") {
+            return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
+                Status::invalid_args, "quant_type=auto was not resolved before index creation");
+        }
+        const auto requested_algo = NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or(""));
         using sparse::inverted::IndexScorerType;
         if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
             // version < threshold forces fp32; version >= threshold defaults to fp16, user can override to fp32
@@ -659,6 +784,13 @@ class SparseInvertedIndexNode : public IndexNode {
                 return CreateIndexImpl<value_type, float, IndexScorerType::IP>(cfg, is_growable, encoding);
             }
         } else {
+            if (qt == "u8") {
+                if (index_version_ < 10 || requested_algo != "SINDI" || is_growable) {
+                    return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
+                        Status::invalid_args, "u8 quantization is only supported by sealed SINDI");
+                }
+                return CreateIndexImpl<value_type, uint8_t, IndexScorerType::BM25>(cfg, is_growable, encoding);
+            }
             // BM25 default: u16
             if (qt == "u32") {
                 return CreateIndexImpl<value_type, uint32_t, IndexScorerType::BM25>(cfg, is_growable, encoding);
@@ -688,6 +820,8 @@ class SparseInvertedIndexNode : public IndexNode {
             growable_sindi_ip->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
         } else if (auto* sindi_bm25 = dynamic_cast<sparse::inverted::SindiInvertedIndexBM25*>(index)) {
             sindi_bm25->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
+        } else if (auto* sindi_bm25_u8 = dynamic_cast<sparse::inverted::SindiInvertedIndexBM25U8*>(index)) {
+            sindi_bm25_u8->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
         } else if (auto* growable_sindi_bm25 = dynamic_cast<sparse::inverted::GrowableSindiInvertedIndexBM25*>(index)) {
             growable_sindi_bm25->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
         }
@@ -877,7 +1011,7 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
 
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
-        auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
+        auto& cfg = static_cast<SparseInvertedIndexConfig&>(*config);
 
         // metric type validation
         if (!IsMetricType(cfg.metric_type.value(), metric::IP) &&
@@ -892,8 +1026,13 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
             }
         }
 
+        RETURN_IF_ERROR(this->ResolveAutoQuantTypeForTrain(dataset, cfg, true));
+
         // create index
         auto index_or = this->CreateIndex(cfg, true);
+        if (!index_or.has_value()) {
+            return index_or.error();
+        }
 
         if (this->index_ != nullptr) {
             LOG_KNOWHERE_WARNING_

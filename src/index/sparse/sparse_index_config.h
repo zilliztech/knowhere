@@ -66,6 +66,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_STRING inverted_index_codec;
     CFG_STRING search_algo;
     CFG_STRING quant_type;
+    CFG_FLOAT bm25_u8_max_overflow_ratio;
     CFG_INT sindi_window_size;
 
     KNOWHERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
@@ -156,11 +157,21 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .for_deserialize()
             .for_deserialize_from_file();
         KNOWHERE_CONFIG_DECLARE_FIELD(quant_type)
-            .description("quantization type for posting list values: fp16/fp32 for IP, u16/u32 for BM25")
+            .description(
+                "quantization type for posting list values: fp16/fp32 for IP, u8/u16/u32/auto for BM25; u8 is "
+                "supported only by sealed SINDI; BM25 auto resolves to u8/u16 for sealed SINDI and u16 for other "
+                "indexes; new SINDI BM25 files persist the resolved concrete type")
             .allow_empty_without_default()
             .for_train()
             .for_deserialize()
             .for_deserialize_from_file();
+        KNOWHERE_CONFIG_DECLARE_FIELD(bm25_u8_max_overflow_ratio)
+            .description(
+                "maximum overflow-posting ratio at which SINDI BM25 quant_type=auto selects restore-u8; 0.0001 "
+                "means 0.01%")
+            .set_default(0.0001f)
+            .set_range(0.0f, 1.0f)
+            .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(sindi_window_size)
             .description("window size for sindi inverted index")
             .set_range(1024, 65535)
@@ -196,11 +207,23 @@ class SparseInvertedIndexConfig : public BaseConfig {
                     return Status::invalid_args;
                 }
             } else if (mt == metric::BM25) {
-                if (qt != "u16" && qt != "u32") {
+                if (qt != "u8" && qt != "u16" && qt != "u32" && qt != "auto") {
                     if (err_msg) {
-                        *err_msg = "quant_type for BM25 metric must be 'u16' or 'u32', got '" + qt + "'";
+                        *err_msg = "quant_type for BM25 metric must be 'u8', 'u16', 'u32', or 'auto', got '" + qt + "'";
                     }
                     return Status::invalid_args;
+                }
+                if (qt == "auto") {
+                    constexpr int kAutoResolutionTypes =
+                        PARAM_TYPE::TRAIN | PARAM_TYPE::DESERIALIZE | PARAM_TYPE::DESERIALIZE_FROM_FILE;
+                    if ((param_type & kAutoResolutionTypes) == 0) {
+                        if (err_msg) {
+                            *err_msg =
+                                "quant_type 'auto' is only valid while training or while loading a SINDI file that "
+                                "stores its resolved concrete type";
+                        }
+                        return Status::invalid_args;
+                    }
                 }
             }
         }
