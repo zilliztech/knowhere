@@ -27,6 +27,7 @@ class IvfConfig : public BaseConfig {
     CFG_INT nlist;
     CFG_INT nprobe;
     CFG_BOOL use_elkan;
+    CFG_BOOL use_super_kmeans;
     CFG_BOOL ensure_topk_full;  // internal config, used for temp index
     CFG_INT max_empty_result_buckets;
     KNOWHERE_DECLARE_CONFIG(IvfConfig) {
@@ -45,6 +46,12 @@ class IvfConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(use_elkan)
             .set_default(true)
             .description("whether to use elkan algorithm")
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(use_super_kmeans)
+            .set_default(true)
+            .description(
+                "use SuperKMeans for coarse quantizer training; fall back to Clustering below its minimum "
+                "dimension (32 by default)")
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(ensure_topk_full)
             .set_default(true)
@@ -311,6 +318,15 @@ class IvfSqConfig : public IvfConfig {
 };
 
 class IvfBinConfig : public IvfConfig {
+ public:
+    KNOWHERE_DECLARE_CONFIG(IvfBinConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(use_super_kmeans)
+            .set_default(false)
+            .description("not applicable to Binary IVF; binary coarse quantizer training uses Clustering")
+            .for_train();
+    }
+
+ private:
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
         if (param_type == PARAM_TYPE::TRAIN) {

@@ -18,6 +18,7 @@
 #include "catch2/generators/catch_generators.hpp"
 #include "faiss/Clustering.h"
 #include "faiss/IndexFlat.h"
+#include "faiss/SuperKMeans.h"
 #include "faiss/cppcontrib/knowhere/utils/binary_distances.h"
 #include "hnswlib/hnswalg.h"
 #include "knowhere/bitsetview.h"
@@ -142,4 +143,56 @@ TEST_CASE("Test Kmeans With Float Vector", "[float metrics]") {
         LOG_KNOWHERE_INFO_ << "recall: " << recall;
         REQUIRE(recall > kKnnRecallThreshold);
     }
+}
+
+// Spherical training must return the requested number of unit-normalized centroids.
+TEST_CASE("Test SuperKMeans Spherical", "[cluster]") {
+    const int d = 64;
+    const int k = 16;
+    const size_t n = 256;
+
+    std::mt19937 rng(42);
+    std::normal_distribution<float> dist(0.f, 1.f);
+    std::vector<float> x(n * d);
+    for (auto& v : x) {
+        v = dist(rng);
+    }
+
+    faiss::SuperKMeansParameters sp;
+    sp.seed = 42;
+    sp.niter = 2;
+    sp.spherical = true;
+    faiss::SuperKMeans sc(d, k, sp);
+    REQUIRE_NOTHROW(sc.train(n, x.data()));
+    REQUIRE(sc.centroids.size() == static_cast<size_t>(k * d));
+
+    // Centroids must be unit norm under spherical clustering.
+    for (int j = 0; j < k; ++j) {
+        float norm = 0.f;
+        for (int i = 0; i < d; ++i) {
+            norm += sc.centroids[j * d + i] * sc.centroids[j * d + i];
+        }
+        norm = std::sqrt(norm);
+        REQUIRE(norm == Catch::Approx(1.f).margin(1e-4));
+    }
+}
+
+TEST_CASE("Test SuperKMeans with 256 centroids", "[cluster]") {
+    constexpr int d = 64;
+    constexpr int k = 256;
+    constexpr size_t n = 1024;
+
+    std::mt19937 rng(43);
+    std::normal_distribution<float> dist(0.f, 1.f);
+    std::vector<float> x(n * d);
+    for (auto& v : x) {
+        v = dist(rng);
+    }
+
+    faiss::SuperKMeansParameters sp;
+    sp.seed = 43;
+    sp.niter = 2;
+    faiss::SuperKMeans clustering(d, k, sp);
+    REQUIRE_NOTHROW(clustering.train(n, x.data()));
+    REQUIRE(clustering.centroids.size() == static_cast<size_t>(k * d));
 }

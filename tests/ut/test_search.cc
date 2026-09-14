@@ -579,6 +579,47 @@ TEST_CASE("Test Mem Index With Float Vector", "[float metrics]") {
     }
 }
 
+TEST_CASE("Test IVF SuperKMeans opt-out and low-dimensional fallback", "[float metrics][superkmeans]") {
+    const auto name =
+        GENERATE(as<std::string>{}, knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, knowhere::IndexEnum::INDEX_FAISS_SCANN);
+    const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    constexpr int64_t nb = 256, nq = 4, topk = 5;
+    int64_t dim = 32;
+    knowhere::Json json{{knowhere::meta::METRIC_TYPE, knowhere::metric::IP},
+                        {knowhere::meta::TOPK, topk},
+                        {knowhere::meta::NUM_BUILD_THREAD, 1},
+                        {knowhere::indexparam::NLIST, 4},
+                        {knowhere::indexparam::NPROBE, 2}};
+
+    SECTION("Explicitly disable SuperKMeans") {
+        json[knowhere::indexparam::USE_SUPER_KMEANS] = false;
+    }
+    SECTION("Low-dimensional input with default SuperKMeans") {
+        dim = 16;
+    }
+    json[knowhere::meta::DIM] = dim;
+    if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN) {
+        json[knowhere::indexparam::WITH_RAW_DATA] = false;
+    }
+    CAPTURE(name, dim, json);
+
+    auto idx_expected = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version);
+    if (name == knowhere::IndexEnum::INDEX_FAISS_SCANN && !faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+        REQUIRE(idx_expected.error() == knowhere::Status::invalid_index_error);
+        return;
+    }
+    REQUIRE(idx_expected.has_value());
+    auto idx = idx_expected.value();
+    const auto train_ds = GenDataSet(nb, dim, kSeed);
+    const auto query_ds = GenDataSet(nq, dim, kSeed + 1);
+    REQUIRE(idx.Build(train_ds, json) == knowhere::Status::success);
+    REQUIRE(idx.Count() == nb);
+    auto results = idx.Search(query_ds, json, nullptr);
+    REQUIRE(results.has_value());
+    REQUIRE(results.value()->GetRows() == nq);
+    REQUIRE(results.value()->GetDim() == topk);
+}
+
 TEST_CASE("Test IVFPQFastScan early termination dispatch", "[ivfpq_fastscan][early_termination]") {
     constexpr int64_t nb = 1000;
     constexpr int64_t nq = 2;
