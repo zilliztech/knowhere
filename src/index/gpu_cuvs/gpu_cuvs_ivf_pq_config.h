@@ -38,6 +38,10 @@ struct GpuCuvsIvfPqConfig : public IvfPqConfig {
     CFG_FLOAT preferred_shmem_carveout;
 
     KNOWHERE_DECLARE_CONFIG(GpuCuvsIvfPqConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(use_super_kmeans)
+            .set_default(false)
+            .description("not applicable to cuVS IVF training")
+            .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(cache_dataset_on_device)
             .set_default(false)
             .description("cache dataset on device for refinement")

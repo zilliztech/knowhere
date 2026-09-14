@@ -31,6 +31,10 @@ struct GpuCuvsIvfFlatConfig : public IvfFlatConfig {
     CFG_FLOAT kmeans_trainset_fraction;
     CFG_BOOL adaptive_centers;
     KNOWHERE_DECLARE_CONFIG(GpuCuvsIvfFlatConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(use_super_kmeans)
+            .set_default(false)
+            .description("not applicable to cuVS IVF training")
+            .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(cache_dataset_on_device)
             .set_default(false)
             .description("cache dataset on device for refinement")
