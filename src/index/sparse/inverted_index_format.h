@@ -5,7 +5,9 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
+#include <optional>
 #include <vector>
 
 #include "io/memory_io.h"
@@ -18,6 +20,28 @@ inline constexpr size_t kInvertedIndexHeaderReservedBytes = 16;
 inline constexpr size_t kInvertedIndexFileHeaderSize = sizeof(uint32_t) * 4 + kInvertedIndexHeaderReservedBytes;
 inline constexpr size_t kInvertedIndexSectionCountSize = sizeof(uint32_t);
 
+// The first four reserved header bytes store the SINDI BM25 posting-value
+// representation. Zero is the legacy/default u16 representation, so old files
+// with an all-zero reserved header remain directly identifiable as u16.
+enum class SindiQuantType : uint32_t {
+    BM25_U16 = 0,
+    BM25_U8 = 1,
+};
+
+static_assert(sizeof(SindiQuantType) == sizeof(uint32_t));
+
+inline std::optional<SindiQuantType>
+peek_sindi_quant_type_from_index_data(const uint8_t* data, size_t size) {
+    constexpr size_t kReservedOffset = sizeof(uint32_t) * 4;
+    if (data == nullptr || size < kReservedOffset + sizeof(SindiQuantType)) {
+        return std::nullopt;
+    }
+
+    SindiQuantType quant_type{};
+    std::memcpy(&quant_type, data + kReservedOffset, sizeof(quant_type));
+    return quant_type;
+}
+
 enum class InvertedIndexSectionType : uint32_t {
     POSTING_LISTS = 0,
     METRIC_PARAMS = 1,
@@ -27,6 +51,7 @@ enum class InvertedIndexSectionType : uint32_t {
     BLOCK_MAX_SCORES = 5,
     PROMETHEUS_BUILD_STATS = 6,
     DIM_MAP_MPHF = 7,
+    BM25_U8_OVERFLOWS = 8,
 };
 
 struct InvertedIndexSectionHeader {
@@ -56,6 +81,7 @@ align_section_offset(uint64_t offset, InvertedIndexSectionType type) {
         case InvertedIndexSectionType::POSTING_LISTS:
             return align_offset(offset + sizeof(uint32_t), alignof(size_t)) - sizeof(uint32_t);
         case InvertedIndexSectionType::DIM_MAP_REVERSE:
+        case InvertedIndexSectionType::BM25_U8_OVERFLOWS:
             return align_offset(offset, alignof(uint32_t));
         case InvertedIndexSectionType::ROW_SUMS:
         case InvertedIndexSectionType::MAX_SCORES_PER_DIM:

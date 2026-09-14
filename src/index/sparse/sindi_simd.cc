@@ -37,6 +37,27 @@ bm25_accumulate_scalar_u16(float qval, const uint16_t* vals, const uint16_t* ids
     return max_val;
 }
 
+float
+bm25_accumulate_scalar_u8(float qval, const uint8_t* vals, const uint16_t* ids, int32_t num, float* out, float k1,
+                          float b, float avgdl, const float* row_sums) {
+    const float p1 = k1 + 1.0f;
+    const float p2 = k1 * (1.0f - b);
+    const float p3 = k1 * b / avgdl;
+
+    float max_val = 0.0f;
+    for (int32_t i = 0; i < num; ++i) {
+        float tf = static_cast<float>(vals[i]);
+        uint16_t docid = ids[i];
+        float dl = row_sums[docid];
+        float bm25_score = qval * p1 * tf / (tf + p2 + p3 * dl);
+        float new_val = (out[docid] += bm25_score);
+        if (new_val > max_val) {
+            max_val = new_val;
+        }
+    }
+    return max_val;
+}
+
 void
 batch_insert_scalar(const float* scores, size_t docid_start, size_t count,
                     knowhere::ResultMinHeap<float, uint32_t>& topk_q, float& threshold, const BitsetView& bitset) {
@@ -110,6 +131,35 @@ get_bm25_kernels() {
         }
 #endif
         k.accumulate = bm25_accumulate_scalar_u16;
+        k.batch_insert = batch_insert_scalar;
+        return k;
+    }();
+    return kernels;
+}
+
+const BM25U8Kernels&
+get_bm25_u8_kernels() {
+    static const BM25U8Kernels kernels = []() {
+        BM25U8Kernels k{};
+#if defined(__x86_64__)
+        if (faiss::cppcontrib::knowhere::cpu_support_avx512()) {
+            k.accumulate = bm25_accumulate_avx512_u8;
+            k.batch_insert = batch_insert_avx512;
+            return k;
+        }
+        if (faiss::cppcontrib::knowhere::cpu_support_avx2()) {
+            k.accumulate = bm25_accumulate_avx2_u8;
+            k.batch_insert = batch_insert_avx2;
+            return k;
+        }
+#elif defined(__aarch64__) && defined(KNOWHERE_USE_SVE)
+        if (faiss::cppcontrib::knowhere::supports_sve()) {
+            k.accumulate = bm25_accumulate_sve_u8;
+            k.batch_insert = batch_insert_sve;
+            return k;
+        }
+#endif
+        k.accumulate = bm25_accumulate_scalar_u8;
         k.batch_insert = batch_insert_scalar;
         return k;
     }();

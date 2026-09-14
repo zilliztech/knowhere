@@ -116,6 +116,69 @@ bm25_accumulate_avx2_u16(float qval, const uint16_t* vals, const uint16_t* ids, 
     return max_val;
 }
 
+float
+bm25_accumulate_avx2_u8(float qval, const uint8_t* vals, const uint16_t* ids, int32_t num, float* out, float k1,
+                        float b, float avgdl, const float* row_sums) {
+    const float p1 = k1 + 1.0f;
+    const float p2 = k1 * (1.0f - b);
+    const float p3 = k1 * b / avgdl;
+
+    int32_t i = 0;
+    const __m256 vqp1 = _mm256_set1_ps(qval * p1);
+    const __m256 vp2 = _mm256_set1_ps(p2);
+    const __m256 vp3 = _mm256_set1_ps(p3);
+    __m256 v_max = _mm256_setzero_ps();
+
+    for (; i + 8 <= num; i += 8) {
+        __m128i bytes = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(vals + i));
+        __m256i words = _mm256_cvtepu8_epi32(bytes);
+        __m256 tf_vec = _mm256_cvtepi32_ps(words);
+
+        __m128i idx16 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(ids + i));
+        __m256i v_idx = _mm256_cvtepu16_epi32(idx16);
+        __m256 dl_vec = _mm256_i32gather_ps(row_sums, v_idx, 4);
+
+        __m256 numerator = _mm256_mul_ps(tf_vec, vqp1);
+        __m256 denominator = _mm256_fmadd_ps(dl_vec, vp3, vp2);
+        denominator = _mm256_add_ps(tf_vec, denominator);
+        __m256 bm25_vec = _mm256_div_ps(numerator, denominator);
+
+        __m256 v_old = _mm256_i32gather_ps(out, v_idx, 4);
+        __m256 v_sum = _mm256_add_ps(v_old, bm25_vec);
+
+        alignas(32) uint32_t tmp_idx[8];
+        alignas(32) float tmp_sum[8];
+        _mm256_store_si256(reinterpret_cast<__m256i*>(tmp_idx), v_idx);
+        _mm256_store_ps(tmp_sum, v_sum);
+        out[tmp_idx[0]] = tmp_sum[0];
+        out[tmp_idx[1]] = tmp_sum[1];
+        out[tmp_idx[2]] = tmp_sum[2];
+        out[tmp_idx[3]] = tmp_sum[3];
+        out[tmp_idx[4]] = tmp_sum[4];
+        out[tmp_idx[5]] = tmp_sum[5];
+        out[tmp_idx[6]] = tmp_sum[6];
+        out[tmp_idx[7]] = tmp_sum[7];
+        v_max = _mm256_max_ps(v_max, v_sum);
+    }
+
+    __m128 v_max128 = _mm_max_ps(_mm256_castps256_ps128(v_max), _mm256_extractf128_ps(v_max, 1));
+    v_max128 = _mm_max_ps(v_max128, _mm_shuffle_ps(v_max128, v_max128, _MM_SHUFFLE(2, 3, 0, 1)));
+    v_max128 = _mm_max_ps(v_max128, _mm_shuffle_ps(v_max128, v_max128, _MM_SHUFFLE(1, 0, 3, 2)));
+    float max_val = _mm_cvtss_f32(v_max128);
+
+    for (; i < num; ++i) {
+        float tf = static_cast<float>(vals[i]);
+        uint16_t docid = ids[i];
+        float dl = row_sums[docid];
+        float bm25_score = qval * p1 * tf / (tf + p2 + p3 * dl);
+        float new_val = (out[docid] += bm25_score);
+        if (new_val > max_val) {
+            max_val = new_val;
+        }
+    }
+    return max_val;
+}
+
 void
 batch_insert_avx2(const float* scores, size_t docid_start, size_t count,
                   knowhere::ResultMinHeap<float, uint32_t>& topk_q, float& threshold, const BitsetView& bitset) {
