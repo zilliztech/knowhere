@@ -189,10 +189,10 @@ class SparseInvertedIndexNode : public IndexNode {
         // The config framework stores ratios as float. Widen the inclusive
         // boundary by one float ULP so decimal boundaries such as 1/10,000 are
         // not rejected because 0.0001f is represented slightly below 0.0001.
-        const long double inclusive_threshold =
-            std::nextafter(configured_threshold, std::numeric_limits<float>::infinity());
-        const bool use_u8 = total_postings == 0 || static_cast<long double>(overflow_postings) <=
-                                                       inclusive_threshold * static_cast<long double>(total_postings);
+        const double inclusive_threshold =
+            static_cast<double>(std::nextafter(configured_threshold, std::numeric_limits<float>::infinity()));
+        const bool use_u8 = total_postings == 0 || static_cast<double>(overflow_postings) <=
+                                                       inclusive_threshold * static_cast<double>(total_postings);
         cfg.quant_type = use_u8 ? "u8" : "u16";
         const double overflow_ratio =
             total_postings == 0 ? 0.0 : static_cast<double>(overflow_postings) / total_postings;
