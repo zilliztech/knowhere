@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -28,6 +29,9 @@
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "faiss/cppcontrib/knowhere/IndexHNSW.h"
+#include "faiss/cppcontrib/knowhere/index_io.h"
+#include "io/memory_io.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
@@ -2543,5 +2547,69 @@ TEST_CASE("HNSW RangeSearch BF path with empty bitset", "[faiss_hnsw][range_sear
         // After the fix, the BF path is exhaustive and returns a result set
         // that covers the FLAT oracle.
         REQUIRE(hnsw_total > 0);
+    }
+}
+
+// Regression for knowhere#1816: an absent bitset means all vectors are
+// eligible, so a graph-search shortage must still trigger enabled fallback.
+TEST_CASE("HNSW top-k fallback with an empty bitset", "[faiss_hnsw][fallback][regression]") {
+    const int64_t nb = 256;
+    const int64_t dim = 16;
+    const int64_t k = 10;
+    const std::string type = knowhere::IndexEnum::INDEX_HNSW;
+    const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    auto data = GenDataSet(nb, dim, 35);
+    auto query = GenDataSet(1, dim, 36);
+    // Keep k well below the threshold that selects brute force before HNSW.
+    knowhere::Json conf = {
+        {"dim", dim}, {"metric_type", knowhere::metric::L2},  {"M", 16}, {"efConstruction", 96}, {"k", k},
+        {"ef", 64},   {"disable_fallback_brute_force", false}};
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(type, version).value();
+    REQUIRE(index.Build(data, conf) == knowhere::Status::success);
+
+    // Isolate the entry point while preserving all stored vectors. This forces
+    // a deterministic shortage instead of relying on weak build parameters.
+    knowhere::BinarySet binary;
+    REQUIRE(index.Serialize(binary) == knowhere::Status::success);
+    const auto blob = binary.GetByName(type);
+    REQUIRE(blob != nullptr);
+    knowhere::MemoryIOReader reader(blob->data.get(), blob->size);
+    std::unique_ptr<faiss::Index> stored(faiss::cppcontrib::knowhere::read_index(&reader));
+    auto* hnsw = dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(stored.get());
+    REQUIRE(hnsw != nullptr);
+    REQUIRE(hnsw->ntotal == nb);
+    REQUIRE(hnsw->hnsw.entry_point >= 0);
+
+    // -1 is the normal end-of-neighbor-list sentinel. Levels and offsets stay valid.
+    std::fill(hnsw->hnsw.neighbors.begin(), hnsw->hnsw.neighbors.end(), -1);
+    knowhere::MemoryIOWriter writer;
+    faiss::cppcontrib::knowhere::write_index(stored.get(), &writer);
+    binary.Append(type, std::shared_ptr<uint8_t[]>(writer.data()), writer.tellg());
+    REQUIRE(index.Deserialize(binary, conf) == knowhere::Status::success);
+
+    // Knowhere always allocates k result slots; count actual hits, not slots.
+    auto count_hits = [&](const knowhere::BitsetView& bitset) {
+        auto result = index.Search(query, conf, bitset);
+        REQUIRE(result.has_value());
+        const auto* ids = result.value()->GetIds();
+        return std::count_if(ids, ids + k, [](int64_t id) { return id >= 0; });
+    };
+
+    SECTION("Empty bitset with fallback disabled leaves the graph shortage") {
+        // Prove HNSW ran: only the isolated entry point is reachable.
+        conf["disable_fallback_brute_force"] = true;
+        REQUIRE(count_hits(knowhere::BitsetView{}) == 1);
+    }
+
+    SECTION("Empty bitset with fallback enabled returns k hits") {
+        // The bug treated the absent bitmap as zero eligible vectors and
+        // skipped fallback. All nb stored vectors are actually eligible.
+        REQUIRE(count_hits(knowhere::BitsetView{}) == k);
+    }
+
+    SECTION("Explicit all-pass bitset with fallback enabled returns k hits") {
+        // An explicit zero bitmap and an absent bitmap both mean no filtering.
+        std::vector<uint8_t> bits((nb + 7) / 8, 0);
+        REQUIRE(count_hits(knowhere::BitsetView(bits.data(), nb)) == k);
     }
 }
