@@ -153,6 +153,10 @@ class SparseInvertedIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "quant_type=auto is only supported for BM25";
             return Status::invalid_args;
         }
+        if (index_version_ < kBm25AutoU8MinVersion) {
+            LOG_KNOWHERE_ERROR_ << "BM25 quant_type=auto requires index version >= " << kBm25AutoU8MinVersion;
+            return Status::invalid_args;
+        }
 
         const auto algo = NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or(""));
         if (algo != "SINDI" || is_growable) {
@@ -160,10 +164,6 @@ class SparseInvertedIndexNode : public IndexNode {
             LOG_KNOWHERE_INFO_ << "BM25 quant_type=auto selected u16 for " << (is_growable ? "growable" : "non-SINDI")
                                << " index";
             return Status::success;
-        }
-        if (index_version_ < 10) {
-            LOG_KNOWHERE_ERROR_ << "SINDI BM25 quant_type=auto requires index version >= 10";
-            return Status::invalid_args;
         }
         if (dataset == nullptr || (dataset->GetRows() > 0 && dataset->GetTensor() == nullptr)) {
             LOG_KNOWHERE_ERROR_ << "SINDI BM25 quant_type=auto requires a valid training dataset";
@@ -209,10 +209,10 @@ class SparseInvertedIndexNode : public IndexNode {
                                    SparseInvertedIndexConfig& cfg) const {
         const auto serialized_quant_type = sparse::inverted::peek_sindi_quant_type_from_index_data(data, size);
         if (!serialized_quant_type.has_value()) {
-            if (cfg.quant_type.value_or("") == "auto") {
-                LOG_KNOWHERE_ERROR_
-                    << "quant_type=auto cannot load a legacy index without persisted SINDI quantization metadata";
-                return Status::invalid_args;
+            if (IsMetricType(cfg.metric_type.value(), metric::BM25)) {
+                // Metadata-free BM25 indexes predate u8 support and always use u16.
+                cfg.quant_type = "u16";
+                LOG_KNOWHERE_INFO_ << "No persisted quantization metadata; using legacy BM25 u16";
             }
             return Status::success;
         }
@@ -241,13 +241,6 @@ class SparseInvertedIndexNode : public IndexNode {
                 return Status::invalid_serialized_index_type;
         }
 
-        const auto requested_quant_type = cfg.quant_type.value_or("");
-        if (!requested_quant_type.empty() && requested_quant_type != "auto" &&
-            requested_quant_type != resolved_quant_type) {
-            LOG_KNOWHERE_ERROR_ << "Serialized SINDI quantization type " << resolved_quant_type
-                                << " conflicts with requested quant_type=" << requested_quant_type;
-            return Status::invalid_serialized_index_type;
-        }
         cfg.quant_type = resolved_quant_type;
         LOG_KNOWHERE_INFO_ << "Using serialized SINDI quantization type " << resolved_quant_type;
         return Status::success;
@@ -410,7 +403,7 @@ class SparseInvertedIndexNode : public IndexNode {
         if (this->version_use_raw_data()) {
             RETURN_IF_ERROR(index_->convert_to_raw_data(writer));
         } else {
-            ConfigureSindiDimMapMphfWorkaround(index_.get());
+            ConfigureSindiSerialization(index_.get());
             RETURN_IF_ERROR(index_->serialize(writer));
         }
         std::shared_ptr<uint8_t[]> data(writer.data());
@@ -708,7 +701,7 @@ class SparseInvertedIndexNode : public IndexNode {
                 } else {
                     index = std::make_unique<sparse::inverted::SindiInvertedIndexIP>(window_size);
                 }
-                ConfigureSindiDimMapMphfWorkaround(index.get());
+                ConfigureSindiSerialization(index.get());
                 index->set_build_algo(algo);
                 index->set_build_scorer(sparse::inverted::IndexScorerConfig{
                     .scorer_type = sparse::inverted::IndexScorerType::IP,
@@ -736,7 +729,7 @@ class SparseInvertedIndexNode : public IndexNode {
                         index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25>(window_size);
                     }
                 }
-                ConfigureSindiDimMapMphfWorkaround(index.get());
+                ConfigureSindiSerialization(index.get());
                 index->set_build_algo(algo);
                 index->set_build_scorer(sparse::inverted::IndexScorerConfig{
                     .scorer_type = sparse::inverted::IndexScorerType::BM25,
@@ -785,9 +778,9 @@ class SparseInvertedIndexNode : public IndexNode {
             }
         } else {
             if (qt == "u8") {
-                if (index_version_ < 10 || requested_algo != "SINDI" || is_growable) {
+                if (index_version_ < kBm25AutoU8MinVersion || requested_algo != "SINDI" || is_growable) {
                     return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
-                        Status::invalid_args, "u8 quantization is only supported by sealed SINDI");
+                        Status::invalid_args, "u8 quantization requires sealed SINDI with index version >= 11");
                 }
                 return CreateIndexImpl<value_type, uint8_t, IndexScorerType::BM25>(cfg, is_growable, encoding);
             }
@@ -806,7 +799,7 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     void
-    ConfigureSindiDimMapMphfWorkaround(sparse::inverted::InvertedIndex<value_type>* index) const {
+    ConfigureSindiSerialization(sparse::inverted::InvertedIndex<value_type>* index) const {
         if (index == nullptr) {
             return;
         }
@@ -820,14 +813,17 @@ class SparseInvertedIndexNode : public IndexNode {
             growable_sindi_ip->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
         } else if (auto* sindi_bm25 = dynamic_cast<sparse::inverted::SindiInvertedIndexBM25*>(index)) {
             sindi_bm25->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
+            sindi_bm25->set_write_quantization_metadata(index_version_ >= kBm25AutoU8MinVersion);
         } else if (auto* sindi_bm25_u8 = dynamic_cast<sparse::inverted::SindiInvertedIndexBM25U8*>(index)) {
             sindi_bm25_u8->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
+            sindi_bm25_u8->set_write_quantization_metadata(index_version_ >= kBm25AutoU8MinVersion);
         } else if (auto* growable_sindi_bm25 = dynamic_cast<sparse::inverted::GrowableSindiInvertedIndexBM25*>(index)) {
             growable_sindi_bm25->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
         }
     }
 
  private:
+    static constexpr int32_t kBm25AutoU8MinVersion = 11;
     static constexpr int32_t kSindiMphfSectionMinVersion = 11;
 
     /**

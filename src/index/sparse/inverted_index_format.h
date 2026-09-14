@@ -20,10 +20,9 @@ inline constexpr size_t kInvertedIndexHeaderReservedBytes = 16;
 inline constexpr size_t kInvertedIndexFileHeaderSize = sizeof(uint32_t) * 4 + kInvertedIndexHeaderReservedBytes;
 inline constexpr size_t kInvertedIndexSectionCountSize = sizeof(uint32_t);
 
-// New SINDI BM25 files use the beginning of the reserved header bytes to record the
-// concrete posting-value representation. The magic keeps all-zero legacy
-// headers distinguishable, so those files continue to rely on the external
-// concrete quant_type supplied at load time.
+// SINDI BM25 files for index version >= 11 use the beginning of the reserved
+// header bytes to record the concrete posting-value representation. All-zero
+// legacy headers identify the u16 representation used before u8 support.
 inline constexpr uint32_t kSindiHeaderMetadataMagic = 0x51444E53;  // "SNDQ" in little-endian byte order.
 
 enum class SindiQuantType : uint32_t {

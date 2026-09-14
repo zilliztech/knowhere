@@ -159,12 +159,10 @@ class SparseInvertedIndexConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(quant_type)
             .description(
                 "quantization type for posting list values: fp16/fp32 for IP, u8/u16/u32/auto for BM25; u8 is "
-                "supported only by sealed SINDI; BM25 auto resolves to u8/u16 for sealed SINDI and u16 for other "
-                "indexes; new SINDI BM25 files persist the resolved concrete type")
+                "supported only by sealed SINDI with index version >= 11; BM25 auto requires index version >= 11 "
+                "and resolves to u8/u16 for sealed SINDI or u16 for other indexes")
             .allow_empty_without_default()
-            .for_train()
-            .for_deserialize()
-            .for_deserialize_from_file();
+            .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(bm25_u8_max_overflow_ratio)
             .description(
                 "maximum overflow-posting ratio at which SINDI BM25 quant_type=auto selects restore-u8; 0.0001 "
@@ -180,7 +178,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
     }
 
     Status
-    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+    CheckAndAdjust(PARAM_TYPE /*param_type*/, std::string* err_msg) override {
         if (inverted_index_algo.has_value() && !IsSupportedSparseInvertedIndexAlgo(inverted_index_algo.value())) {
             return HandleError(
                 err_msg,
@@ -212,18 +210,6 @@ class SparseInvertedIndexConfig : public BaseConfig {
                         *err_msg = "quant_type for BM25 metric must be 'u8', 'u16', 'u32', or 'auto', got '" + qt + "'";
                     }
                     return Status::invalid_args;
-                }
-                if (qt == "auto") {
-                    constexpr int kAutoResolutionTypes =
-                        PARAM_TYPE::TRAIN | PARAM_TYPE::DESERIALIZE | PARAM_TYPE::DESERIALIZE_FROM_FILE;
-                    if ((param_type & kAutoResolutionTypes) == 0) {
-                        if (err_msg) {
-                            *err_msg =
-                                "quant_type 'auto' is only valid while training or while loading a SINDI file that "
-                                "stores its resolved concrete type";
-                        }
-                        return Status::invalid_args;
-                    }
                 }
             }
         }

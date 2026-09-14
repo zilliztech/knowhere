@@ -115,6 +115,11 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     }
 
     void
+    set_write_quantization_metadata(bool enabled) {
+        write_quantization_metadata_ = enabled;
+    }
+
+    void
     encode_window_nnzs(bool parallel) {
         const size_t dim_count = this->nr_inner_dims_;
         plists_window_nnzs_flat_.clear();
@@ -866,11 +871,13 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             writer.write(&this->nr_inner_dims_, sizeof(uint32_t));
             auto reserved = std::array<uint8_t, kInvertedIndexHeaderReservedBytes>();
             if constexpr (is_bm25) {
-                const SindiHeaderMetadata header_metadata{
-                    .magic = kSindiHeaderMetadataMagic,
-                    .quant_type = serialized_quant_type(),
-                };
-                std::memcpy(reserved.data(), &header_metadata, sizeof(header_metadata));
+                if (write_quantization_metadata_) {
+                    const SindiHeaderMetadata header_metadata{
+                        .magic = kSindiHeaderMetadataMagic,
+                        .quant_type = serialized_quant_type(),
+                    };
+                    std::memcpy(reserved.data(), &header_metadata, sizeof(header_metadata));
+                }
             }
             writer.write(reserved.data(), reserved.size());
 
@@ -1948,6 +1955,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     std::span<const float> row_sums_span_;
 
     bool legacy_dim_map_mphf_trailer_workaround_{true};
+    bool write_quantization_metadata_{true};
     uint32_t window_size_{max_window_size};
     uint32_t nr_windows_{0};
 

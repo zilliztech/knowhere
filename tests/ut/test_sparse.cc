@@ -1545,6 +1545,42 @@ TEST_CASE("Test SINDI Index Requires Version 10", "[sparse][sindi]") {
     REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::invalid_args);
 }
 
+TEST_CASE("Test SINDI BM25 U8 and auto require version 11", "[sparse][sindi][quant]") {
+    constexpr int32_t version = 10;
+    const auto train_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.0f}}}, 1);
+    knowhere::Json config = {
+        {knowhere::meta::DIM, 1},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::BM25},
+        {knowhere::meta::BM25_K1, 1.2},
+        {knowhere::meta::BM25_B, 0.75},
+        {knowhere::meta::BM25_AVGDL, 1.0},
+        {knowhere::indexparam::INVERTED_INDEX_ALGO, "SINDI"},
+        {"quant_type", "u8"},
+    };
+
+    auto u8_index = knowhere::IndexFactory::Instance()
+                        .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                        .value();
+    REQUIRE(u8_index.Build(train_ds, config) == knowhere::Status::invalid_args);
+
+    config["quant_type"] = "auto";
+    auto auto_index = knowhere::IndexFactory::Instance()
+                          .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                          .value();
+    REQUIRE(auto_index.Build(train_ds, config) == knowhere::Status::invalid_args);
+
+    config["quant_type"] = "u16";
+    auto u16_index = knowhere::IndexFactory::Instance()
+                         .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                         .value();
+    REQUIRE(u16_index.Build(train_ds, config) == knowhere::Status::success);
+    knowhere::BinarySet binary_set;
+    REQUIRE(u16_index.Serialize(binary_set) == knowhere::Status::success);
+    const auto binary = binary_set.GetByName(u16_index.Type());
+    REQUIRE_FALSE(knowhere::sparse::inverted::peek_sindi_quant_type_from_index_data(binary->data.get(), binary->size)
+                      .has_value());
+}
+
 TEST_CASE("Test SINDI BM25 U8 posting value quantization", "[sparse][sindi][quant]") {
     const std::string metric = knowhere::metric::BM25;
     const std::string quant_type = "u8";
@@ -1593,7 +1629,9 @@ TEST_CASE("Test SINDI BM25 U8 posting value quantization", "[sparse][sindi][quan
     auto restored = knowhere::IndexFactory::Instance()
                         .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
                         .value();
-    REQUIRE(restored.Deserialize(binary_set, config) == knowhere::Status::success);
+    auto load_config = config;
+    load_config.erase("quant_type");
+    REQUIRE(restored.Deserialize(binary_set, load_config) == knowhere::Status::success);
     const auto restored_result = restored.Search(query_ds, config, nullptr);
     REQUIRE(restored_result.has_value());
     for (int64_t i = 0; i < nq * topk; ++i) {
@@ -1650,20 +1688,14 @@ TEST_CASE("Test SINDI BM25 auto quantization uses only the configured overflow t
         const bool uses_u8 = serialized_quant_type.value() == knowhere::sparse::inverted::SindiQuantType::BM25_U8;
         REQUIRE((uses_u8 || serialized_quant_type.value() == knowhere::sparse::inverted::SindiQuantType::BM25_U16));
 
-        // Deserialize consumes the concrete representation persisted by Build(auto);
-        // it does not rerun the corpus threshold decision.
+        // Deserialize consumes the concrete representation persisted by Build(auto)
+        // without accepting quant_type as an external load parameter.
+        auto load_config = build_config;
+        load_config.erase("quant_type");
         auto restored = knowhere::IndexFactory::Instance()
                             .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
                             .value();
-        REQUIRE(restored.Deserialize(binary_set, build_config) == knowhere::Status::success);
-
-        auto metadata_only_config = build_config;
-        metadata_only_config.erase("quant_type");
-        auto metadata_only_restored =
-            knowhere::IndexFactory::Instance()
-                .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
-                .value();
-        REQUIRE(metadata_only_restored.Deserialize(binary_set, metadata_only_config) == knowhere::Status::success);
+        REQUIRE(restored.Deserialize(binary_set, load_config) == knowhere::Status::success);
 
         const std::string tmp_file = "/tmp/knowhere_sindi_auto_quant_type_test";
         WriteBinaryToFile(tmp_file, binary);
@@ -1671,17 +1703,8 @@ TEST_CASE("Test SINDI BM25 auto quantization uses only the configured overflow t
             knowhere::IndexFactory::Instance()
                 .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
                 .value();
-        REQUIRE(mmap_restored.DeserializeFromFile(tmp_file, build_config) == knowhere::Status::success);
+        REQUIRE(mmap_restored.DeserializeFromFile(tmp_file, load_config) == knowhere::Status::success);
         REQUIRE(std::remove(tmp_file.c_str()) == 0);
-
-        auto mismatched_config = build_config;
-        mismatched_config["quant_type"] = uses_u8 ? "u16" : "u8";
-        auto mismatched =
-            knowhere::IndexFactory::Instance()
-                .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
-                .value();
-        REQUIRE(mismatched.Deserialize(binary_set, mismatched_config) ==
-                knowhere::Status::invalid_serialized_index_type);
         return std::pair{uses_u8, has_sidecar};
     };
 
@@ -1826,28 +1849,73 @@ TEST_CASE("Test SINDI BM25 U8 restores overflow posting values", "[sparse][sindi
     auto restored = knowhere::IndexFactory::Instance()
                         .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
                         .value();
-    REQUIRE(restored.Deserialize(binary_set, config) == knowhere::Status::success);
+    auto load_config = config;
+    load_config.erase("quant_type");
+    REQUIRE(restored.Deserialize(binary_set, load_config) == knowhere::Status::success);
     const auto restored_result = restored.Search(query_ds, config, nullptr);
     REQUIRE(restored_result.has_value());
     REQUIRE(restored_result.value()->GetIds()[0] == 0);
     REQUIRE(std::abs(restored_result.value()->GetDistance()[0] - expected) < 1e-5f);
+}
 
-    // Legacy SINDI headers had zeroed reserved bytes. They remain loadable with
-    // an explicit concrete type, while auto correctly requires new metadata.
-    constexpr size_t kReservedOffset = sizeof(uint32_t) * 4;
-    std::memset(serialized_index->data.get() + kReservedOffset, 0,
-                sizeof(knowhere::sparse::inverted::SindiHeaderMetadata));
-    auto legacy_restored =
+TEST_CASE("Test SINDI BM25 loads legacy metadata-free U16 index", "[sparse][sindi][quant]") {
+    constexpr int64_t dim = 4;
+    constexpr int64_t topk = 2;
+    constexpr int32_t version = 10;
+    const auto train_ds = GenSparseDataSet(
+        std::vector<std::map<int32_t, float>>{
+            {{0, 2.0f}, {1, 5.0f}},
+            {{0, 3.0f}, {2, 7.0f}},
+            {{1, 4.0f}, {3, 6.0f}},
+        },
+        dim);
+    const auto query_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.0f}, {1, 1.0f}}}, dim);
+    const knowhere::Json u16_config = {
+        {knowhere::meta::DIM, dim},
+        {knowhere::meta::TOPK, topk},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::BM25},
+        {knowhere::meta::BM25_K1, 1.2},
+        {knowhere::meta::BM25_B, 0.75},
+        {knowhere::meta::BM25_AVGDL, 9.0},
+        {knowhere::indexparam::INVERTED_INDEX_ALGO, "SINDI"},
+        {knowhere::indexparam::SEARCH_ALGO, "SINDI"},
+        {"quant_type", "u16"},
+    };
+
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                     .value();
+    REQUIRE(index.Build(train_ds, u16_config) == knowhere::Status::success);
+    const auto expected = index.Search(query_ds, u16_config, nullptr);
+    REQUIRE(expected.has_value());
+
+    knowhere::BinarySet binary_set;
+    REQUIRE(index.Serialize(binary_set) == knowhere::Status::success);
+    const auto binary = binary_set.GetByName(index.Type());
+    REQUIRE_FALSE(knowhere::sparse::inverted::peek_sindi_quant_type_from_index_data(binary->data.get(), binary->size)
+                      .has_value());
+
+    auto load_config = u16_config;
+    load_config.erase("quant_type");
+    auto restored = knowhere::IndexFactory::Instance()
+                        .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                        .value();
+    REQUIRE(restored.Deserialize(binary_set, load_config) == knowhere::Status::success);
+    const auto actual = restored.Search(query_ds, u16_config, nullptr);
+    REQUIRE(actual.has_value());
+    for (int64_t i = 0; i < topk; ++i) {
+        REQUIRE(actual.value()->GetIds()[i] == expected.value()->GetIds()[i]);
+        REQUIRE(actual.value()->GetDistance()[i] == expected.value()->GetDistance()[i]);
+    }
+
+    const std::string tmp_file = "/tmp/knowhere_sindi_legacy_u16_quant_type_test";
+    WriteBinaryToFile(tmp_file, binary);
+    auto mmap_restored =
         knowhere::IndexFactory::Instance()
             .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
             .value();
-    REQUIRE(legacy_restored.Deserialize(binary_set, config) == knowhere::Status::success);
-    auto auto_config = config;
-    auto_config["quant_type"] = "auto";
-    auto legacy_auto = knowhere::IndexFactory::Instance()
-                           .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
-                           .value();
-    REQUIRE(legacy_auto.Deserialize(binary_set, auto_config) == knowhere::Status::invalid_args);
+    REQUIRE(mmap_restored.DeserializeFromFile(tmp_file, load_config) == knowhere::Status::success);
+    REQUIRE(std::remove(tmp_file.c_str()) == 0);
 }
 
 TEST_CASE("Test SINDI BM25 U8 and U16 saturate TF above uint16 range consistently", "[sparse][sindi][quant]") {
