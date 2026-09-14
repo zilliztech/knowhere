@@ -55,8 +55,42 @@ Cluster<T>::Assign(const DataSet& dataset) noexcept {
 
 template <typename T>
 inline expected<DataSetPtr>
+Cluster<T>::Assign(const DataSet& dataset, const Json& json) noexcept {
+    return GuardedCall([&]() -> expected<DataSetPtr> {
+        auto cfg = this->node->CreateConfig();
+        std::string msg;
+        auto status = LoadConfig(cfg.get(), json, knowhere::CLUSTER, "Assign", &msg);
+        if (status != Status::success) {
+            return expected<DataSetPtr>::Err(status, msg);
+        }
+        return this->node->Assign(dataset, *cfg);
+    });
+}
+
+template <typename T>
+inline expected<DataSetPtr>
+Cluster<T>::BuildCompactionPlan(const DataSet& assignment, const Json& json) noexcept {
+    return GuardedCall([&]() -> expected<DataSetPtr> {
+        auto cfg = this->node->CreateConfig();
+        std::string msg;
+        auto status = LoadConfig(cfg.get(), json, knowhere::CLUSTER, "BuildCompactionPlan", &msg);
+        if (status != Status::success) {
+            return expected<DataSetPtr>::Err(status, msg);
+        }
+        return this->node->BuildCompactionPlan(assignment, *cfg);
+    });
+}
+
+template <typename T>
+inline expected<DataSetPtr>
 Cluster<T>::GetCentroids() const noexcept {
     return GuardedCall([&]() { return this->node->GetCentroids(); });
+}
+
+template <typename T>
+inline Status
+Cluster<T>::SetCentroids(const DataSet& centroids) noexcept {
+    return GuardedCall([&]() { return this->node->SetCentroids(centroids); });
 }
 
 template <typename T>
