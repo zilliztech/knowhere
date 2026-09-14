@@ -79,11 +79,48 @@ extern int (*fvec_madd_and_argmin)(size_t, const float*, float, const float*, fl
 extern void (*fvec_inner_product_batch_4)(const float*, const float*, const float*, const float*, const float*,
                                           const size_t, float&, float&, float&, float&);
 
+/// Compute 8 inner products while loading the query stream once. Specialized
+/// for SVE; other targets fall back to two selected batch-4 kernels.
+extern void (*fvec_inner_product_batch_8)(
+        const float*,
+        const float*,
+        const float*,
+        const float*,
+        const float*,
+        const float*,
+        const float*,
+        const float*,
+        const float*,
+        const size_t,
+        float*);
+
+/// Compute exactly 2 or 3 inner products. Generic targets dispatch to the
+/// selected single-vector kernel; SVE targets interleave independent streams.
+extern void (*fvec_inner_product_batch_2)(
+        const float*, const float*, const float*, const size_t, float&, float&);
+extern void (*fvec_inner_product_batch_3)(
+        const float*, const float*, const float*, const float*, const size_t, float&, float&, float&);
+
 /// Special version of L2sqr that computes 4 distances
 /// between x and yi, which is performance oriented.
 /// todo aguzhva: bring non-ref versions
 extern void (*fvec_L2sqr_batch_4)(const float*, const float*, const float*, const float*, const float*, const size_t,
                                   float&, float&, float&, float&);
+
+/// Compute 8 squared-L2 distances while loading the query stream once on SVE.
+/// Other targets fall back to two selected batch-4 kernels.
+extern void (*fvec_L2sqr_batch_8)(
+        const float*,
+        const float*,
+        const float*,
+        const float*,
+        const float*,
+        const float*,
+        const float*,
+        const float*,
+        const float*,
+        const size_t,
+        float*);
 
 // for hnsw sq, obsolete
 extern int32_t (*ivec_inner_product)(const int8_t*, const int8_t*, size_t);

@@ -18,6 +18,7 @@
 #include <faiss/utils/extra_distances.h>
 #include <faiss/utils/prefetch.h>
 #include <faiss/utils/sorting.h>
+#include "simd/hook.h"
 #include <omp.h>
 #include <cstring>
 
@@ -135,6 +136,46 @@ struct FlatL2Dis : FlatCodesDistanceComputer {
         q = x;
     }
 
+    void distances_batch_2(
+            const idx_t idx0,
+            const idx_t idx1,
+            float& dis0,
+            float& dis1) final override {
+        const float* __restrict y0 =
+                reinterpret_cast<const float*>(codes + idx0 * code_size);
+        const float* __restrict y1 =
+                reinterpret_cast<const float*>(codes + idx1 * code_size);
+        fvec_L2sqr_batch_2<SL>(q, y0, y1, d, dis0, dis1);
+    }
+
+    void distances_batch_3(
+            const idx_t idx0,
+            const idx_t idx1,
+            const idx_t idx2,
+            float& dis0,
+            float& dis1,
+            float& dis2) final override {
+        const float* __restrict y0 =
+                reinterpret_cast<const float*>(codes + idx0 * code_size);
+        const float* __restrict y1 =
+                reinterpret_cast<const float*>(codes + idx1 * code_size);
+        const float* __restrict y2 =
+                reinterpret_cast<const float*>(codes + idx2 * code_size);
+        fvec_L2sqr_batch_3<SL>(q, y0, y1, y2, d, dis0, dis1, dis2);
+    }
+
+    bool supports_tail_distance_batches() const final override {
+        return true;
+    }
+
+    bool supports_distance_batch_8() const final override {
+        return d >= 128;
+    }
+
+    bool should_prefetch_graph_offsets() const final override {
+        return d < 896;
+    }
+
     // compute four distances
     void distances_batch_4(
             const idx_t idx0,
@@ -164,6 +205,53 @@ struct FlatL2Dis : FlatCodesDistanceComputer {
         dis1 = dp1;
         dis2 = dp2;
         dis3 = dp3;
+    }
+
+    void distances_batch_8(
+            const idx_t idx0,
+            const idx_t idx1,
+            const idx_t idx2,
+            const idx_t idx3,
+            const idx_t idx4,
+            const idx_t idx5,
+            const idx_t idx6,
+            const idx_t idx7,
+            float& dis0,
+            float& dis1,
+            float& dis2,
+            float& dis3,
+            float& dis4,
+            float& dis5,
+            float& dis6,
+            float& dis7) final override {
+        const idx_t ids[8] = {
+                idx0, idx1, idx2, idx3, idx4, idx5, idx6, idx7};
+        const float* ys[8];
+        for (size_t lane = 0; lane < 8; ++lane) {
+            ys[lane] = reinterpret_cast<const float*>(
+                    codes + ids[lane] * code_size);
+        }
+        float dis[8] = {};
+        faiss::cppcontrib::knowhere::fvec_L2sqr_batch_8(
+                q,
+                ys[0],
+                ys[1],
+                ys[2],
+                ys[3],
+                ys[4],
+                ys[5],
+                ys[6],
+                ys[7],
+                d,
+                dis);
+        dis0 = dis[0];
+        dis1 = dis[1];
+        dis2 = dis[2];
+        dis3 = dis[3];
+        dis4 = dis[4];
+        dis5 = dis[5];
+        dis6 = dis[6];
+        dis7 = dis[7];
     }
 
     void partial_dot_product_batch_4(
