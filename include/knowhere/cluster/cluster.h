@@ -123,7 +123,16 @@ class Cluster {
     Assign(const DataSet& dataset) noexcept;
 
     expected<DataSetPtr>
+    Assign(const DataSet& dataset, const Json& json) noexcept;
+
+    expected<DataSetPtr>
+    BuildCompactionPlan(const DataSet& assignment, const Json& json) noexcept;
+
+    expected<DataSetPtr>
     GetCentroids() const noexcept;
+
+    Status
+    SetCentroids(const DataSet& centroids) noexcept;
 
     std::string
     Type() const noexcept;
