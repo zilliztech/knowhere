@@ -110,7 +110,7 @@ class SparseInvertedIndexNode : public IndexNode {
 
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
-        auto& cfg = static_cast<SparseInvertedIndexConfig&>(*config);
+        auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
 
         // metric type validation
         if (!IsMetricType(cfg.metric_type.value(), metric::IP) &&
@@ -1005,7 +1005,7 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
 
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
-        auto& cfg = static_cast<SparseInvertedIndexConfig&>(*config);
+        auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
 
         // metric type validation
         if (!IsMetricType(cfg.metric_type.value(), metric::IP) &&
