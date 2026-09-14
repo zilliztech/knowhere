@@ -1577,8 +1577,8 @@ TEST_CASE("Test SINDI BM25 U8 and auto require version 11", "[sparse][sindi][qua
     knowhere::BinarySet binary_set;
     REQUIRE(u16_index.Serialize(binary_set) == knowhere::Status::success);
     const auto binary = binary_set.GetByName(u16_index.Type());
-    REQUIRE_FALSE(knowhere::sparse::inverted::peek_sindi_quant_type_from_index_data(binary->data.get(), binary->size)
-                      .has_value());
+    REQUIRE(knowhere::sparse::inverted::peek_sindi_quant_type_from_index_data(binary->data.get(), binary->size) ==
+            knowhere::sparse::inverted::SindiQuantType::BM25_U16);
 }
 
 TEST_CASE("Test SINDI BM25 U8 posting value quantization", "[sparse][sindi][quant]") {
@@ -1858,7 +1858,7 @@ TEST_CASE("Test SINDI BM25 U8 restores overflow posting values", "[sparse][sindi
     REQUIRE(std::abs(restored_result.value()->GetDistance()[0] - expected) < 1e-5f);
 }
 
-TEST_CASE("Test SINDI BM25 loads legacy metadata-free U16 index", "[sparse][sindi][quant]") {
+TEST_CASE("Test SINDI BM25 loads legacy zero quant type as U16", "[sparse][sindi][quant]") {
     constexpr int64_t dim = 4;
     constexpr int64_t topk = 2;
     constexpr int32_t version = 10;
@@ -1892,8 +1892,8 @@ TEST_CASE("Test SINDI BM25 loads legacy metadata-free U16 index", "[sparse][sind
     knowhere::BinarySet binary_set;
     REQUIRE(index.Serialize(binary_set) == knowhere::Status::success);
     const auto binary = binary_set.GetByName(index.Type());
-    REQUIRE_FALSE(knowhere::sparse::inverted::peek_sindi_quant_type_from_index_data(binary->data.get(), binary->size)
-                      .has_value());
+    REQUIRE(knowhere::sparse::inverted::peek_sindi_quant_type_from_index_data(binary->data.get(), binary->size) ==
+            knowhere::sparse::inverted::SindiQuantType::BM25_U16);
 
     auto load_config = u16_config;
     load_config.erase("quant_type");

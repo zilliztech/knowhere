@@ -115,11 +115,6 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     }
 
     void
-    set_write_quantization_metadata(bool enabled) {
-        write_quantization_metadata_ = enabled;
-    }
-
-    void
     encode_window_nnzs(bool parallel) {
         const size_t dim_count = this->nr_inner_dims_;
         plists_window_nnzs_flat_.clear();
@@ -871,13 +866,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             writer.write(&this->nr_inner_dims_, sizeof(uint32_t));
             auto reserved = std::array<uint8_t, kInvertedIndexHeaderReservedBytes>();
             if constexpr (is_bm25) {
-                if (write_quantization_metadata_) {
-                    const SindiHeaderMetadata header_metadata{
-                        .magic = kSindiHeaderMetadataMagic,
-                        .quant_type = serialized_quant_type(),
-                    };
-                    std::memcpy(reserved.data(), &header_metadata, sizeof(header_metadata));
-                }
+                const auto quant_type = serialized_quant_type();
+                std::memcpy(reserved.data(), &quant_type, sizeof(quant_type));
             }
             writer.write(reserved.data(), reserved.size());
 
@@ -1049,12 +1039,14 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 reader.read(&this->nr_inner_dims_, sizeof(uint32_t));
                 std::array<uint8_t, kInvertedIndexHeaderReservedBytes> reserved{};
                 reader.read(reserved.data(), reserved.size());
-                SindiHeaderMetadata header_metadata{};
-                std::memcpy(&header_metadata, reserved.data(), sizeof(header_metadata));
-                if (header_metadata.magic == kSindiHeaderMetadataMagic) {
-                    if constexpr (!is_bm25) {
+                uint32_t serialized_quant_type_raw = 0;
+                std::memcpy(&serialized_quant_type_raw, reserved.data(), sizeof(serialized_quant_type_raw));
+                if constexpr (is_bm25) {
+                    if (serialized_quant_type_raw != static_cast<uint32_t>(serialized_quant_type())) {
                         return Status::invalid_serialized_index_type;
-                    } else if (header_metadata.quant_type != serialized_quant_type()) {
+                    }
+                } else {
+                    if (serialized_quant_type_raw != 0) {
                         return Status::invalid_serialized_index_type;
                     }
                 }
@@ -1955,7 +1947,6 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     std::span<const float> row_sums_span_;
 
     bool legacy_dim_map_mphf_trailer_workaround_{true};
-    bool write_quantization_metadata_{true};
     uint32_t window_size_{max_window_size};
     uint32_t nr_windows_{0};
 

@@ -20,36 +20,26 @@ inline constexpr size_t kInvertedIndexHeaderReservedBytes = 16;
 inline constexpr size_t kInvertedIndexFileHeaderSize = sizeof(uint32_t) * 4 + kInvertedIndexHeaderReservedBytes;
 inline constexpr size_t kInvertedIndexSectionCountSize = sizeof(uint32_t);
 
-// SINDI BM25 files for index version >= 11 use the beginning of the reserved
-// header bytes to record the concrete posting-value representation. All-zero
-// legacy headers identify the u16 representation used before u8 support.
-inline constexpr uint32_t kSindiHeaderMetadataMagic = 0x51444E53;  // "SNDQ" in little-endian byte order.
-
+// The first four reserved header bytes store the SINDI BM25 posting-value
+// representation. Zero is the legacy/default u16 representation, so old files
+// with an all-zero reserved header remain directly identifiable as u16.
 enum class SindiQuantType : uint32_t {
+    BM25_U16 = 0,
     BM25_U8 = 1,
-    BM25_U16 = 2,
 };
 
-struct SindiHeaderMetadata {
-    uint32_t magic;
-    SindiQuantType quant_type;
-};
-
-static_assert(sizeof(SindiHeaderMetadata) <= kInvertedIndexHeaderReservedBytes);
+static_assert(sizeof(SindiQuantType) == sizeof(uint32_t));
 
 inline std::optional<SindiQuantType>
 peek_sindi_quant_type_from_index_data(const uint8_t* data, size_t size) {
     constexpr size_t kReservedOffset = sizeof(uint32_t) * 4;
-    if (data == nullptr || size < kReservedOffset + sizeof(SindiHeaderMetadata)) {
+    if (data == nullptr || size < kReservedOffset + sizeof(SindiQuantType)) {
         return std::nullopt;
     }
 
-    SindiHeaderMetadata metadata{};
-    std::memcpy(&metadata, data + kReservedOffset, sizeof(metadata));
-    if (metadata.magic != kSindiHeaderMetadataMagic) {
-        return std::nullopt;
-    }
-    return metadata.quant_type;
+    SindiQuantType quant_type{};
+    std::memcpy(&quant_type, data + kReservedOffset, sizeof(quant_type));
+    return quant_type;
 }
 
 enum class InvertedIndexSectionType : uint32_t {

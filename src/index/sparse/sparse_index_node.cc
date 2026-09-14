@@ -207,17 +207,17 @@ class SparseInvertedIndexNode : public IndexNode {
     ResolveQuantTypeForDeserialize(const uint8_t* data, size_t size,
                                    std::optional<sparse::inverted::InvertedIndexEncoding> encoding,
                                    SparseInvertedIndexConfig& cfg) const {
-        const auto serialized_quant_type = sparse::inverted::peek_sindi_quant_type_from_index_data(data, size);
-        if (!serialized_quant_type.has_value()) {
-            if (IsMetricType(cfg.metric_type.value(), metric::BM25)) {
-                // Metadata-free BM25 indexes predate u8 support and always use u16.
-                cfg.quant_type = "u16";
-                LOG_KNOWHERE_INFO_ << "No persisted quantization metadata; using legacy BM25 u16";
-            }
+        if (!IsMetricType(cfg.metric_type.value(), metric::BM25)) {
             return Status::success;
         }
+
         if (!encoding.has_value() || encoding.value() != sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS) {
-            LOG_KNOWHERE_ERROR_ << "SINDI quantization metadata found on a non-SINDI serialized index";
+            cfg.quant_type = "u16";
+            return Status::success;
+        }
+
+        const auto serialized_quant_type = sparse::inverted::peek_sindi_quant_type_from_index_data(data, size);
+        if (!serialized_quant_type.has_value()) {
             return Status::invalid_serialized_index_type;
         }
 
@@ -813,10 +813,8 @@ class SparseInvertedIndexNode : public IndexNode {
             growable_sindi_ip->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
         } else if (auto* sindi_bm25 = dynamic_cast<sparse::inverted::SindiInvertedIndexBM25*>(index)) {
             sindi_bm25->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
-            sindi_bm25->set_write_quantization_metadata(index_version_ >= kBm25AutoU8MinVersion);
         } else if (auto* sindi_bm25_u8 = dynamic_cast<sparse::inverted::SindiInvertedIndexBM25U8*>(index)) {
             sindi_bm25_u8->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
-            sindi_bm25_u8->set_write_quantization_metadata(index_version_ >= kBm25AutoU8MinVersion);
         } else if (auto* growable_sindi_bm25 = dynamic_cast<sparse::inverted::GrowableSindiInvertedIndexBM25*>(index)) {
             growable_sindi_bm25->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
         }
