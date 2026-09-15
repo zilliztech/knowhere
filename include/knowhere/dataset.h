@@ -19,10 +19,12 @@
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <stdexcept>
 #include <utility>
 #include <variant>
 
 #include "comp/index_param.h"
+#include "knowhere/comp/search_hint.h"
 #include "knowhere/range_util.h"
 #include "knowhere/sparse_utils.h"
 
@@ -75,6 +77,31 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
  public:
     using Var = std::variant<const float*, const size_t*, const int64_t*, const void*, int64_t, std::string, std::any>;
     DataSet() = default;
+    void
+    SetSearchHints(BatchSearchHints hints) {
+        auto owned = std::make_shared<const BatchSearchHints>(std::move(hints));
+        std::unique_lock lock(mutex_);
+        data_[kSearchHintsField] = Var(std::in_place_type<std::any>, std::move(owned));
+    }
+
+    std::shared_ptr<const BatchSearchHints>
+    GetSearchHints() const {
+        std::shared_lock lock(mutex_);
+        auto it = data_.find(kSearchHintsField);
+        if (it == data_.end())
+            return nullptr;
+        auto holder = std::get_if<std::any>(&it->second);
+        auto hints = std::any_cast<std::shared_ptr<const BatchSearchHints>>(holder);
+        if (hints == nullptr)
+            throw std::invalid_argument("invalid typed search hints");
+        return *hints;
+    }
+
+    void
+    ClearSearchHints() {
+        std::unique_lock lock(mutex_);
+        data_.erase(kSearchHintsField);
+    }
     ~DataSet() {
         if (!is_owner) {
             return;

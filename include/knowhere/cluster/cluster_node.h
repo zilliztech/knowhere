@@ -14,6 +14,7 @@
 
 #include "knowhere/binaryset.h"
 #include "knowhere/bitsetview.h"
+#include "knowhere/cluster/compaction_result.h"
 #include "knowhere/config.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
@@ -28,9 +29,7 @@ class ClusterNode : public Object {
     virtual expected<DataSetPtr>
     Train(const DataSet& dataset, const Config& cfg) = 0;
 
-    // cluster assign, return id_mapping and optional distance.
-    // Legacy callers may read id_mapping from tensor; callers that need
-    // distance should read ids and distance.
+    // Legacy assignment returns uint32 centroid IDs in TENSOR.
     virtual expected<DataSetPtr>
     Assign(const DataSet& dataset) = 0;
 
@@ -40,12 +39,18 @@ class ClusterNode : public Object {
         return Assign(dataset);
     }
 
-    // build a compaction plan from assignment result.
+    // Explicit extension: int64 IDS and float squared-L2 DISTANCE to the chosen
+    // centroid. An approximate assignment need not select the exact nearest one.
     virtual expected<DataSetPtr>
-    BuildCompactionPlan(const DataSet& assignment, const Config& cfg) {
-        (void)assignment;
-        (void)cfg;
-        return expected<DataSetPtr>::Err(Status::not_implemented, "BuildCompactionPlan is not implemented");
+    AssignWithDistance(const DataSet& /*dataset*/, const Config& /*cfg*/) {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "AssignWithDistance not implemented");
+    }
+
+    // Counts are indexed by centroid ID, avoiding an O(N) assignment array.
+    // Returns an owned typed result; row bounds are soft for indivisible buckets.
+    virtual expected<CompactionResult>
+    BuildCompactionPlan(const std::vector<uint64_t>& /*centroid_counts*/, const Config& /*cfg*/) {
+        return expected<CompactionResult>::Err(Status::not_implemented, "BuildCompactionPlan not implemented");
     }
 
     // return centroids, must be called after trained
