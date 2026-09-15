@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>io.knowhere</groupId>
+  <artifactId>knowhere-jni</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <name>Knowhere Java bindings</name>
+  <description>Java 11 bindings for the Knowhere C API</description>
+  <url>https://github.com/zilliztech/knowhere</url>
+  <licenses><license><name>Apache License 2.0</name><url>https://www.apache.org/licenses/LICENSE-2.0</url></license></licenses>
+  <properties>
+    <maven.compiler.release>11</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+  <dependencies>
+    <dependency><groupId>junit</groupId><artifactId>junit</artifactId><version>4.13.2</version><scope>test</scope></dependency>
+  </dependencies>
+  <build>
+    <resources>
+      <resource><directory>src/main/resources</directory></resource>
+      <resource><directory>target/native-resources</directory></resource>
+      <resource><directory>..</directory><includes><include>LICENSE</include></includes><targetPath>META-INF</targetPath></resource>
+    </resources>
+    <plugins>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.13.0</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.2.5</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId><version>3.4.2</version>
+        <configuration><excludes><exclude>native/**</exclude></excludes></configuration>
+      </plugin>
+    </plugins>
+  </build>
+  <profiles>
+    <profile>
+      <id>native-package</id>
+      <activation><property><name>native.platform</name></property></activation>
+      <build><plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-enforcer-plugin</artifactId><version>3.5.0</version>
+        <executions><execution>
+          <id>require-native-resources</id><goals><goal>enforce</goal></goals>
+          <configuration><rules>
+            <requireProperty><property>native.platform</property><regex>linux-(aarch64|x86_64)</regex></requireProperty>
+            <requireFilesExist><files><file>${project.basedir}/target/native-resources/native/knowhere/1/${native.platform}/manifest.properties</file></files></requireFilesExist>
+          </rules></configuration>
+        </execution></executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId><version>3.4.2</version>
+        <executions><execution>
+          <id>native-platform-jar</id><phase>package</phase><goals><goal>jar</goal></goals>
+          <configuration>
+            <classifier>${native.platform}</classifier>
+            <includes><include>native/knowhere/1/${native.platform}/**</include></includes>
+            <excludes combine.self="override" />
+          </configuration>
+        </execution></executions>
+      </plugin></plugins></build>
+    </profile>
+  </profiles>
+</project>

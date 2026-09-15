@@ -31,6 +31,9 @@ class KnowhereConan(ConanFile):
         "cardinal_version_force_checkout": [True, False],
         "with_profiler": [True, False],
         "with_ut": [True, False],
+        "with_c_api": [True, False],
+        "with_jni": [True, False],
+        "with_c_api_tests": [True, False],
         "with_benchmark": [True, False],
         "with_coverage": [True, False],
         "with_faiss_tests": [True, False],
@@ -48,6 +51,9 @@ class KnowhereConan(ConanFile):
         "cardinal_version_force_checkout": False,
         "with_profiler": False,
         "with_ut": False,
+        "with_c_api": False,
+        "with_jni": False,
+        "with_c_api_tests": False,
         "glog/*:shared": True,
         "glog/*:with_gflags": True,
         "gtest/*:build_gmock": True,
@@ -74,6 +80,14 @@ class KnowhereConan(ConanFile):
         "src/*",
         "thirdparty/*",
         "tests/ut/*",
+        "tests/c_api/*",
+        "java/src/*",
+        "java/scripts/*",
+        "java/tests/*",
+        "java/CMakeLists.txt",
+        "java/pom.xml",
+        "java/README.md",
+        "cmake/*",
         "include/*",
         "CMakeLists.txt",
         "*.cmake",
@@ -108,6 +122,8 @@ class KnowhereConan(ConanFile):
             self.options["libcurl"].with_ssl = "openssl"
 
     def configure(self):
+        if self.options.with_jni:
+            self.options.with_c_api = True
         if self.options.shared:
             self.options.rm_safe("fPIC")
         if self.settings.os == "Linux" and str(self.settings.arch) in self._openblas_dynamic_arches:
@@ -215,6 +231,9 @@ class KnowhereConan(ConanFile):
         tc.variables["WITH_CUVS"] = self.options.with_cuvs
         tc.variables["WITH_PROFILER"] = self.options.with_profiler
         tc.variables["WITH_UT"] = self.options.with_ut
+        tc.variables["WITH_C_API"] = self.options.with_c_api
+        tc.variables["WITH_JNI"] = self.options.with_jni
+        tc.variables["WITH_C_API_TESTS"] = self.options.with_c_api_tests
         tc.variables["WITH_BENCHMARK"] = self.options.with_benchmark
         tc.variables["WITH_COVERAGE"] = self.options.with_coverage
         tc.variables["WITH_FAISS_TESTS"] = self.options.with_faiss_tests
@@ -291,3 +310,12 @@ class KnowhereConan(ConanFile):
         self.cpp_info.components["libknowhere"].set_property(
             "pkg_config_name", "libknowhere"
         )
+
+        if self.options.with_c_api:
+            self.cpp_info.components["libknowhere_c"].libs = ["knowhere_c"]
+            self.cpp_info.components["libknowhere_c"].requires = ["libknowhere"]
+            self.cpp_info.components["libknowhere_c"].set_property("cmake_target_name", "Knowhere::c_api")
+        if self.options.with_jni:
+            self.cpp_info.components["libknowhere_jni"].libs = ["knowhere_jni"]
+            self.cpp_info.components["libknowhere_jni"].requires = ["libknowhere_c"]
+            self.cpp_info.components["libknowhere_jni"].set_property("cmake_target_name", "Knowhere::jni")

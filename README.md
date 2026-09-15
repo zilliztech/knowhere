@@ -90,6 +90,12 @@ $ pip3 install python/dist/pyknowhere-*-manylinux*.whl
 
 For more options (clean build, verbose, custom Python binary), see `python/build_portable_wheel.sh -h`.
 
+## C and Java Bindings
+
+Optional C ABI and Java 11 JNI bindings expose indexes, brute-force search and
+named index blobs without a framework dependency. See [java/README.md](java/README.md)
+for build options, platform JAR packaging, ownership rules and tests.
+
 ## Contributing
 
 ### Pre-Commit

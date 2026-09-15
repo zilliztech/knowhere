@@ -1,0 +1,102 @@
+name: C and Java bindings
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/knowhere-jni]
+  pull_request:
+    paths:
+      - "include/**"
+      - "src/**"
+      - "thirdparty/**"
+      - "cmake/**"
+      - "java/**"
+      - "tests/c_api/**"
+      - "CMakeLists.txt"
+      - "conanfile.py"
+      - ".github/workflows/jni.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jni-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    env:
+      CC: gcc-12
+      CXX: g++-12
+      FC: gfortran-12
+      OMP_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-12 g++-12 gfortran-12 ccache libaio-dev patchelf ninja-build autoconf automake libtool pkg-config
+          python -m pip install conan==2.28.1 cmake==3.28.1
+      - uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: jni-ubuntu22-gcc12-conan2.28.1-${{ hashFiles('conanfile.py') }}
+      - name: Configure Conan
+        run: |
+          conan profile detect --force
+          cat > "$HOME/.conan2/profiles/jni" <<'PROFILE'
+          include(default)
+          [platform_tool_requires]
+          cmake/3.28.1
+          PROFILE
+          conan remote add default-conan-local2 https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local2 --force
+      - name: Build native bindings
+        run: |
+          conan install . -of build -pr:h jni -pr:b jni \
+            -s compiler.cppstd=20 -s:b compiler.cppstd=20 -s build_type=Release \
+            -o '&:with_c_api=True' -o '&:with_jni=True' -o '&:with_c_api_tests=True' \
+            -o '&:with_diskann=True' -c tools.build:jobs=2 --build=missing
+          cmake -S . -B build/Release -DCMAKE_TOOLCHAIN_FILE="$PWD/build/Release/generators/conan_toolchain.cmake"
+          cmake --build build/Release --parallel 2
+      - name: Test C ABI and JNI
+        run: |
+          ctest --test-dir build/Release --output-on-failure
+          mvn -B -f java/pom.xml test -Dtest=KnowhereTest,DiskAnnIT -DargLine=-Xcheck:jni \
+            -Dknowhere.native.path="$PWD/build/Release/java/libknowhere_jni.so"
+          python -m unittest discover -s java/tests -v
+      - name: Package platform libraries
+        run: |
+          python java/scripts/bundle_native.py --library "$PWD/build/Release/java/libknowhere_jni.so" \
+            --output "$PWD/java/target/native-resources" --platform linux-x86_64
+          test ! -s java/target/native-resources/native/knowhere/1/linux-x86_64/missing-licenses.txt
+          mvn -B -f java/pom.xml package -Dnative.platform=linux-x86_64 -DskipTests
+      - name: Test packaged libraries on clean JREs
+        run: |
+          smoke=$(mktemp -d)
+          mkdir -p "$smoke/io/knowhere"
+          cp java/target/knowhere-jni-*.jar "$smoke/"
+          cp java/target/test-classes/io/knowhere/PackageSmoke.class "$smoke/io/knowhere/"
+          for version in 11 17 21; do
+            docker run --rm -v "$smoke:/smoke:ro" -w /smoke "eclipse-temurin:$version-jre-jammy" \
+              java -Xcheck:jni -cp '/smoke/*:/smoke' io.knowhere.PackageSmoke
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jni-linux-x86_64
+          path: |
+            build/Release/Testing/Temporary/*.log
+            java/target/surefire-reports/
+            java/target/*.jar
+            java/target/native-resources/native/knowhere/1/linux-x86_64/manifest.properties
+            java/target/native-resources/native/knowhere/1/linux-x86_64/missing-licenses.txt
