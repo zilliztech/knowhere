@@ -317,9 +317,9 @@ if(WITH_FAISS_TESTS)
 endif()
 
 install(TARGETS knowhere
-        DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
+        DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/knowhere"
-        DESTINATION "${CMAKE_INSTALL_PREFIX}/include")
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 
 if(WITH_C_API)
   include(cmake/binding_licenses.cmake)
