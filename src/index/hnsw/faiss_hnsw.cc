@@ -3267,9 +3267,16 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
             return Status::invalid_args;
         }
 
+        // Consume the pending build before either add can mutate it. On any
+        // error (including a partial add or a failed graph copy), local owners
+        // destroy both halves and the live index remains empty. A retry must
+        // Train/Build again; matching graph/code counts cannot detect duplicate
+        // rows from retrying a partially completed Add.
+        auto pending_index = std::move(indexes[0]);
+        auto pending_rabitq = std::move(tmp_index_rabitq[0]);
         try {
             LOG_KNOWHERE_INFO_ << "Adding " << dataset->GetRows() << " rows to exact HNSW graph";
-            auto status = add_to_index(indexes[0].get(), dataset, data_format);
+            auto status = add_to_index(pending_index.get(), dataset, data_format);
             if (status != Status::success) {
                 return status;
             }
@@ -3279,20 +3286,20 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
             // leave graph/refine construction and the common add API unchanged.
             if (data_format == DataFormatEnum::fp32) {
                 faiss::cppcontrib::knowhere::rabitq_build::add_in_blocks(
-                    *tmp_index_rabitq[0], dataset->GetRows(), static_cast<const float*>(dataset->GetTensor()));
+                    *pending_rabitq, dataset->GetRows(), static_cast<const float*>(dataset->GetTensor()));
             } else {
                 // Non-FP32 conversion already feeds storage in 4096-row blocks.
-                status = add_to_index(tmp_index_rabitq[0].get(), dataset, data_format);
+                status = add_to_index(pending_rabitq.get(), dataset, data_format);
             }
             if (status != Status::success) {
                 return status;
             }
 
             faiss::cppcontrib::knowhere::IndexRefine* index_refine =
-                dynamic_cast<faiss::cppcontrib::knowhere::IndexRefine*>(indexes[0].get());
+                dynamic_cast<faiss::cppcontrib::knowhere::IndexRefine*>(pending_index.get());
             auto* index_hnsw = index_refine != nullptr
                                    ? dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(index_refine->base_index)
-                                   : dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(indexes[0].get());
+                                   : dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(pending_index.get());
             if (index_hnsw == nullptr) {
                 LOG_KNOWHERE_ERROR_ << "HNSW_RABITQ build produced an unexpected base index";
                 return Status::invalid_index_error;
@@ -3313,7 +3320,7 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
             // Validate the replacement before relinquishing either owner so a
             // malformed storage cannot leave the exact graph half-finalized.
             auto* flat_storage = index_hnsw->storage;
-            index_hnsw_rabitq->storage = tmp_index_rabitq[0].get();
+            index_hnsw_rabitq->storage = pending_rabitq.get();
             index_hnsw_rabitq->own_fields = false;
             if (is_cosine) {
                 dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSWRaBitQCosine*>(index_hnsw_rabitq.get())
@@ -3322,13 +3329,14 @@ class BaseFaissRegularIndexHNSWRaBitQNode : public BaseFaissRegularIndexHNSWNode
                 index_hnsw_rabitq->check_storage_compatibility();
             }
             index_hnsw_rabitq->own_fields = true;
-            tmp_index_rabitq[0].release();
+            pending_rabitq.release();
             index_hnsw->storage = nullptr;
             delete flat_storage;
 
             if (index_refine != nullptr) {
                 delete index_refine->base_index;
                 index_refine->base_index = index_hnsw_rabitq.release();
+                indexes[0] = std::move(pending_index);
             } else {
                 indexes[0] = std::move(index_hnsw_rabitq);
             }

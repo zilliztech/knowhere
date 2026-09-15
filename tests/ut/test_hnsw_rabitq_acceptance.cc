@@ -30,6 +30,7 @@
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
+#include "index/hnsw/impl/IndexConditionalWrapper.h"
 #include "index/hnsw/impl/IndexHNSWWrapper.h"
 #include "index/hnsw/impl/RaBitQSearchParameters.h"
 #include "io/memory_io.h"
@@ -346,7 +347,7 @@ TEST_CASE("RaBitQ original COSINE and normalized IP real-data metric diagnostic"
     }
 }
 
-TEST_CASE("RaBitQ same-index full distances agree across available SIMD levels", "[hnsw_rabitq_acceptance]") {
+TEST_CASE("RaBitQ brute-force full distances agree across available SIMD levels", "[hnsw_rabitq_acceptance]") {
     struct RestoreLevel {
         faiss::SIMDLevel level = faiss::SIMDConfig::get_level();
         ~RestoreLevel() {
@@ -366,7 +367,10 @@ TEST_CASE("RaBitQ same-index full distances agree across available SIMD levels",
             REQUIRE(index.Build(base, cfg) == knowhere::Status::success);
             for (int qb : {0, 4, 8}) {
                 cfg["rbq_bits_query"] = qb;
-                faiss::SIMDConfig::set_level(faiss::SIMDLevel::NONE);
+                const auto reference_level = faiss::SIMDConfig::is_simd_level_available(faiss::SIMDLevel::NONE)
+                                                 ? faiss::SIMDLevel::NONE
+                                                 : restore.level;
+                faiss::SIMDConfig::set_level(reference_level);
                 auto reference = index.Search(query, cfg, nullptr);
                 REQUIRE(reference.has_value());
                 std::vector<float> distances(128);
@@ -391,6 +395,176 @@ TEST_CASE("RaBitQ same-index full distances agree across available SIMD levels",
                 }
             }
         }
+}
+
+TEST_CASE("RaBitQ initial Add is single-use and rebuilding replaces rows", "[hnsw_rabitq_acceptance]") {
+    auto base = GenDataSet(128, 33, 29153);
+    for (const auto* metric : {"L2", "IP", "COSINE"}) {
+        for (bool refine : {false, true}) {
+            CAPTURE(metric, refine);
+            knowhere::Json cfg = {{"dim", 33},        {"metric_type", metric},
+                                  {"M", 16},          {"efConstruction", 100},
+                                  {"ef", 64},         {"k", 10},
+                                  {"rbq_bits", 4},    {"num_build_thread", 1},
+                                  {"refine", refine}, {"refine_type", "FP32"}};
+            auto index = knowhere::IndexFactory::Instance()
+                             .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW_RABITQ,
+                                                     knowhere::Version::GetCurrentVersion().VersionNumber())
+                             .value();
+            REQUIRE(index.Train(base, cfg) == knowhere::Status::success);
+            REQUIRE(index.Add(base, cfg) == knowhere::Status::success);
+            REQUIRE(index.Count() == 128);
+            REQUIRE(index.Add(base, cfg) != knowhere::Status::success);
+            REQUIRE(index.Count() == 128);
+            REQUIRE(index.Build(base, cfg) == knowhere::Status::success);
+            REQUIRE(index.Count() == 128);
+            knowhere::BinarySet binary;
+            REQUIRE(index.Serialize(binary) == knowhere::Status::success);
+        }
+    }
+}
+
+TEST_CASE("RaBitQ graph recall and range search across available SIMD levels", "[hnsw_rabitq_acceptance]") {
+    struct RestoreLevel {
+        faiss::SIMDLevel level = faiss::SIMDConfig::get_level();
+        ~RestoreLevel() {
+            faiss::SIMDConfig::set_level(level);
+        }
+    } restore;
+    std::vector<faiss::SIMDLevel> levels{restore.level};
+    for (auto level : {faiss::SIMDLevel::NONE, faiss::SIMDLevel::AVX2, faiss::SIMDLevel::AVX512}) {
+        if (faiss::SIMDConfig::is_simd_level_available(level) &&
+            std::find(levels.begin(), levels.end(), level) == levels.end())
+            levels.push_back(level);
+    }
+    if (levels.size() == 1)
+        WARN("Only one SIMD level is available: graph functionality, not cross-level agreement, is tested");
+
+    constexpr int n = 1024, d = 65, nq = 8, k = 10, ef = 128;
+    auto base = GenDataSet(n, d, 29151);
+    auto query = GenDataSet(nq, d, 29152);
+    auto* x = const_cast<float*>(static_cast<const float*>(base->GetTensor()));
+    auto* q = const_cast<float*>(static_cast<const float*>(query->GetTensor()));
+    for (int i = 0; i < n * d; ++i) x[i] -= 50.0f;
+    for (int i = 0; i < nq * d; ++i) q[i] -= 50.0f;
+    faiss::fvec_renorm_L2(d, n, x);
+    faiss::fvec_renorm_L2(d, nq, q);
+    const std::vector<float> normalized(x, x + n * d);
+    for (const auto* metric : {"L2", "IP", "COSINE"}) {
+        const bool l2 = std::string(metric) == "L2";
+        const bool cosine = std::string(metric) == "COSINE";
+        for (int i = 0; i < n; ++i)
+            for (int j = 0; j < d; ++j) x[i * d + j] = normalized[i * d + j] * (cosine ? 1 + i % 7 : 1);
+        faiss::IndexFlat exact(d, l2 ? faiss::METRIC_L2 : faiss::METRIC_INNER_PRODUCT);
+        exact.add(n, normalized.data());
+        std::vector<faiss::idx_t> gt(nq * n);
+        std::vector<float> gt_dist(nq * n);
+        exact.search(nq, q, n, gt_dist.data(), gt.data());
+        for (int bits : {1, 4, 8, 9}) {
+            faiss::SIMDConfig::set_level(restore.level);
+            knowhere::Json cfg = {
+                {"dim", d},         {"metric_type", metric}, {"M", 24}, {"efConstruction", 200}, {"ef", ef}, {"k", k},
+                {"rbq_bits", bits}, {"num_build_thread", 1}};
+            auto index = knowhere::IndexFactory::Instance()
+                             .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW_RABITQ,
+                                                     knowhere::Version::GetCurrentVersion().VersionNumber())
+                             .value();
+            REQUIRE(index.Build(base, cfg) == knowhere::Status::success);
+            knowhere::BinarySet binary;
+            REQUIRE(index.Serialize(binary) == knowhere::Status::success);
+            const auto blob = binary.binary_map_.begin()->second;
+            faiss::VectorIOReader reader;
+            reader.data.assign(blob->data.get(), blob->data.get() + blob->size);
+            std::unique_ptr<faiss::Index> graph(faiss::cppcontrib::knowhere::read_index(&reader));
+            knowhere::FaissHnswRaBitQConfig route;
+            route.k = k;
+            route.ef = ef;
+            for (int excluded : {0, n / 4}) {
+                std::vector<uint8_t> mask(n / 8, 0);
+                for (int i = 0; i < excluded; ++i) mask[i / 8] |= uint8_t(1u << (i % 8));
+                knowhere::BitsetView filter = excluded ? knowhere::BitsetView(mask.data(), n) : knowhere::BitsetView{};
+                filter.set_filter_count(excluded);
+                // Use the same routing predicates as the production entrypoints.
+                REQUIRE(knowhere::WhetherPerformBruteForceSearch(graph.get(), route, filter) == false);
+                REQUIRE(knowhere::WhetherPerformBruteForceRangeSearch(graph.get(), route, filter) == false);
+                std::vector<std::set<int64_t>> expected(nq);
+                for (int row = 0; row < nq; ++row)
+                    for (int j = 0; j < n && expected[row].size() < k; ++j)
+                        if (gt[row * n + j] >= excluded)
+                            expected[row].insert(gt[row * n + j]);
+                for (int qb : {0, 4, 8}) {
+                    cfg["rbq_bits_query"] = qb;
+                    double first_recall = -1;
+                    for (auto level : levels) {
+                        CAPTURE(metric, bits, qb, excluded, static_cast<int>(level));
+                        faiss::SIMDConfig::set_level(level);
+                        auto result = index.Search(query, cfg, filter);
+                        REQUIRE(result.has_value());
+                        int hits = 0;
+                        for (int row = 0; row < nq; ++row) {
+                            std::set<int64_t> ids;
+                            for (int j = 0; j < k; ++j) {
+                                const auto id = result.value()->GetIds()[row * k + j];
+                                REQUIRE(id >= excluded);
+                                REQUIRE(id < n);
+                                REQUIRE(ids.insert(id).second);
+                                hits += expected[row].count(id);
+                            }
+                        }
+                        const double recall = double(hits) / (nq * k);
+                        CAPTURE(recall);
+                        // Conservative fixture-specific floors, not a universal
+                        // RaBitQ accuracy claim. Catch candidate-set regressions
+                        // independently of per-ID distance agreement.
+                        REQUIRE(recall >= (bits == 1 ? 0.15 : bits == 4 ? 0.65 : 0.85));
+                        if (first_recall < 0)
+                            first_recall = recall;
+                        else
+                            REQUIRE(std::abs(recall - first_recall) <= 0.05);
+
+                        if (bits == 1 || qb != 4)
+                            continue;
+                        // Exhaustive full-code distances define range boundaries;
+                        // the actual RangeSearch below must take the graph path.
+                        auto all_cfg = cfg;
+                        all_cfg["k"] = n;
+                        all_cfg["ef"] = n;
+                        auto one = knowhere::GenDataSet(1, d, q);
+                        one->SetIsOwner(false);
+                        auto all = index.Search(one, all_cfg, nullptr);
+                        REQUIRE(all.has_value());
+                        const auto* scores = all.value()->GetDistance();
+                        const float radius = (scores[63] + scores[64]) * 0.5f;
+                        const float inner = (scores[7] + scores[8]) * 0.5f;
+                        std::set<int64_t> range_expected;
+                        std::vector<float> score_by_id(n);
+                        for (int j = 0; j < n; ++j) {
+                            const auto id = all.value()->GetIds()[j];
+                            score_by_id[id] = scores[j];
+                            if (id >= excluded && (l2 ? scores[j] < radius && scores[j] >= inner
+                                                      : scores[j] > radius && scores[j] <= inner))
+                                range_expected.insert(id);
+                        }
+                        REQUIRE_FALSE(range_expected.empty());
+                        auto range_cfg = cfg;
+                        range_cfg["radius"] = radius;
+                        range_cfg["range_filter"] = inner;
+                        auto range = index.RangeSearch(one, range_cfg, filter);
+                        REQUIRE(range.has_value());
+                        std::set<int64_t> actual;
+                        for (size_t j = 0; j < range.value()->GetLims()[1]; ++j) {
+                            const auto id = range.value()->GetIds()[j];
+                            REQUIRE(actual.insert(id).second);
+                            REQUIRE(range_expected.count(id) == 1);
+                            REQUIRE(range.value()->GetDistance()[j] ==
+                                    Catch::Approx(score_by_id[id]).epsilon(1e-5).margin(1e-4));
+                        }
+                        REQUIRE(double(actual.size()) / range_expected.size() >= 0.75);
+                    }
+                }
+            }
+        }
+    }
 }
 
 TEST_CASE("RaBitQ advertised refiners rerank the requested expanded candidate set", "[hnsw_rabitq_acceptance]") {
@@ -981,7 +1155,8 @@ TEST_CASE("RaBitQ filtered results and exhausted iterators match full-code refer
     }
 }
 
-TEST_CASE("RaBitQ range boundaries and range_filter match full-code reference", "[hnsw_rabitq_acceptance]") {
+TEST_CASE("RaBitQ brute-force range boundaries and range_filter match full-code reference",
+          "[hnsw_rabitq_acceptance]") {
     constexpr int n = 128, d = 33;
     auto base = GenDataSet(n, d, 1911);
     auto query = GenDataSet(1, d, 1912);
