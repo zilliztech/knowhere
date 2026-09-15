@@ -95,12 +95,14 @@ jobs:
           cmake --build build/Release --parallel 2
       - name: Test C ABI and JNI
         run: |
+          source build/Release/generators/conanrun.sh
           ctest --test-dir build/Release --output-on-failure
           mvn -B -f java/pom.xml test -Dtest=KnowhereTest,DiskAnnIT -DargLine=-Xcheck:jni \
             -Dknowhere.native.path="$PWD/build/Release/java/libknowhere_jni.so"
           python -m unittest discover -s java/tests -v
       - name: Package platform libraries
         run: |
+          source build/Release/generators/conanrun.sh
           python java/scripts/bundle_native.py --library "$PWD/build/Release/java/libknowhere_jni.so" \
             --output "$PWD/java/target/native-resources" --platform linux-x86_64
           mvn -B -f java/pom.xml package -Dnative.platform=linux-x86_64 -DskipTests

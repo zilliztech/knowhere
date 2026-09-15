@@ -28,10 +28,16 @@ conan install . -of build --build=missing \
 cmake -S . -B build/Release -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE="$PWD/build/Release/generators/conan_toolchain.cmake"
 cmake --build build/Release --parallel 2
+. build/Release/generators/conanrun.sh
 ctest --test-dir build/Release --output-on-failure
 mvn -f java/pom.xml test -DargLine=-Xcheck:jni \
   -Dknowhere.native.path="$PWD/build/Release/java/libknowhere_jni.so"
 ```
+
+Activate the generated Conan run environment when testing or collecting libraries
+from a build or installation tree. Some Conan shared libraries have transitive
+dependencies without their own RUNPATH. The packaged-JAR smoke tests deliberately
+run without that build environment.
 
 For a C-only build, omit `with_jni`. The public header is
 `include/knowhere/c_api.h`; link with `libknowhere_c`. Neither a JDK nor JNI
@@ -55,6 +61,7 @@ CMake generates the JNI header directly from the Java declarations with
 The ordinary Java JAR and platform JAR are built separately:
 
 ```sh
+. build/Release/generators/conanrun.sh
 python3 java/scripts/bundle_native.py \
   --library "$PWD/build/Release/java/libknowhere_jni.so" \
   --output "$PWD/java/target/native-resources" --platform linux-aarch64
