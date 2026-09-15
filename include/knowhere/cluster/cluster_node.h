@@ -40,7 +40,8 @@ class ClusterNode : public Object {
     }
 
     // Explicit extension: int64 IDS and float squared-L2 DISTANCE to the chosen
-    // centroid. An approximate assignment need not select the exact nearest one.
+    // centroid. Index-based assignment forwards the index search distance, which
+    // may be approximate, and need not select the exact nearest centroid.
     virtual expected<DataSetPtr>
     AssignWithDistance(const DataSet& /*dataset*/, const Config& /*cfg*/) {
         return expected<DataSetPtr>::Err(Status::not_implemented, "AssignWithDistance not implemented");
