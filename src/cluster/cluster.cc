@@ -69,15 +69,29 @@ Cluster<T>::Assign(const DataSet& dataset, const Json& json) noexcept {
 
 template <typename T>
 inline expected<DataSetPtr>
-Cluster<T>::BuildCompactionPlan(const DataSet& assignment, const Json& json) noexcept {
+Cluster<T>::AssignWithDistance(const DataSet& dataset, const Json& json) noexcept {
     return GuardedCall([&]() -> expected<DataSetPtr> {
+        auto cfg = this->node->CreateConfig();
+        std::string msg;
+        auto status = LoadConfig(cfg.get(), json, knowhere::CLUSTER, "AssignWithDistance", &msg);
+        if (status != Status::success) {
+            return expected<DataSetPtr>::Err(status, msg);
+        }
+        return this->node->AssignWithDistance(dataset, *cfg);
+    });
+}
+
+template <typename T>
+inline expected<CompactionResult>
+Cluster<T>::BuildCompactionPlan(const std::vector<uint64_t>& centroid_counts, const Json& json) noexcept {
+    return GuardedCall([&]() -> expected<CompactionResult> {
         auto cfg = this->node->CreateConfig();
         std::string msg;
         auto status = LoadConfig(cfg.get(), json, knowhere::CLUSTER, "BuildCompactionPlan", &msg);
         if (status != Status::success) {
-            return expected<DataSetPtr>::Err(status, msg);
+            return expected<CompactionResult>::Err(status, msg);
         }
-        return this->node->BuildCompactionPlan(assignment, *cfg);
+        return this->node->BuildCompactionPlan(centroid_counts, *cfg);
     });
 }
 
