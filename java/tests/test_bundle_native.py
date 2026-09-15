@@ -164,7 +164,15 @@ class BundleNativeTest(unittest.TestCase):
         self.assertLess(names.index("libgcc_s.so.1"), names.index("libknowhere_jni.so"))
         self.assertNotIn("libgcc_s.so.1", self.manifest()["missingLicenses"].split(","))
         source = Path(run(["gcc", "-print-file-name=libgcc_s.so.1"]).stdout.strip()).resolve()
-        owner = run(["dpkg-query", "-S", str(source)]).stdout.strip().split(": ", 1)[0]
+        # dpkg may register /lib even when the file resolves below /usr/lib.
+        records = run(["dpkg-query", "-S", "*/" + source.name]).stdout.splitlines()
+        owners = set()
+        for record in records:
+            owner, separator, filename = record.partition(": ")
+            if separator and Path(filename).resolve() == source:
+                owners.add(owner)
+        self.assertEqual(len(owners), 1, "Expected one package owning the resolved runtime library")
+        owner = owners.pop()
         copyright_source = Path("/usr/share/doc") / owner.split(":", 1)[0] / "copyright"
         copyright_copy = self.destination / "licenses" / "libgcc_s.so.1" / "dpkg" / owner / "copyright"
         self.assertEqual(copyright_copy.read_bytes(), copyright_source.read_bytes())
