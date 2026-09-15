@@ -428,38 +428,33 @@ IndexNodeWithDataViewRefiner<DataType, BaseIndexNode>::AddEmbList(const DataSetP
     auto sub_metric_type = sub_metric_type_or.value();
     config.metric_type = sub_metric_type;
 
-    // 2. update emb list offset and id map
-    size_t old_num_el = emb_list_offset_->num_el();
-    size_t old_rows_cnt = Count();
-    size_t new_rows_cnt = old_rows_cnt + num_rows;
+    // 2. validate the complete appended offset window before updating the id map.
+    const auto append_el_count = GetEmbListCount(dataset);
     {
         FairWriteLockGuard guard(*this->base_index_lock_);
-        size_t idx = 0;
-        if (lims[0] != emb_list_offset_->offset[old_num_el]) {
-            LOG_KNOWHERE_WARNING_ << "emb list offset is not continuous";
+        const auto old_num_rows = emb_list_offset_->offset.back();
+        const auto old_num_el = emb_list_offset_->num_el();
+        const auto new_num_rows = old_num_rows + num_rows;
+        if (lims[0] != old_num_rows || lims[append_el_count] != new_num_rows) {
+            LOG_KNOWHERE_WARNING_ << "emb list offsets do not match the appended vector range";
             return Status::emb_list_inner_error;
         }
-        idx++;
-        internal_offset_to_most_external_id_.resize(new_rows_cnt);
-        while (lims[idx] < new_rows_cnt) {
-            if (lims[idx] < lims[idx - 1]) {
-                LOG_KNOWHERE_WARNING_ << "emb list offset is not increasing";
+        for (size_t i = 1; i <= append_el_count; ++i) {
+            if (lims[i] < lims[i - 1]) {
+                LOG_KNOWHERE_WARNING_ << "emb list offsets must be nondecreasing";
                 return Status::emb_list_inner_error;
             }
-            emb_list_offset_->offset.push_back(lims[idx]);
-            auto cur_el_id = old_num_el + idx - 1;
-            std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], lims[idx] - lims[idx - 1],
-                        cur_el_id);
-            idx++;
         }
-        if (lims[idx] != new_rows_cnt) {
-            LOG_KNOWHERE_WARNING_ << "emb list offset should end with the total_cnt of the whole index";
-            return Status::emb_list_inner_error;
+        internal_offset_to_most_external_id_.resize(new_num_rows);
+        for (size_t i = 1; i <= append_el_count; ++i) {
+            emb_list_offset_->offset.push_back(lims[i]);
+            std::fill_n(internal_offset_to_most_external_id_.begin() + lims[i - 1], lims[i] - lims[i - 1],
+                        old_num_el + i - 1);
         }
-        emb_list_offset_->offset.push_back(new_rows_cnt);
-        auto cur_el_id = old_num_el + idx - 1;
-        std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], new_rows_cnt - lims[idx - 1],
-                    cur_el_id);
+    }
+
+    if (num_rows == 0) {
+        return Status::success;
     }
 
     // 3. add to index

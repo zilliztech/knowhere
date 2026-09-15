@@ -519,7 +519,9 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
     LOG_KNOWHERE_INFO_ << "Read emb_list offset from file: " << input_file_path << ", size: " << offset.size()
                        << ", first offset: " << offset.front() << ", last offset: " << offset.back();
 
-    auto build_status = BuildEmbList(dataset, std::move(cfg), offset.data(), offset.back(), use_knowhere_build_pool);
+    // File-backed builds may have no DataSet; the file provides the complete list count.
+    auto build_status =
+        BuildEmbList(dataset, std::move(cfg), offset.data(), offset.back(), offset.size() - 1, use_knowhere_build_pool);
     if (build_status != Status::success) {
         LOG_KNOWHERE_ERROR_ << "Failed to build base index.";
         return build_status;

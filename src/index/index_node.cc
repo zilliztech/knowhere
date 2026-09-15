@@ -211,7 +211,7 @@ IndexNode::SearchEmbList(const DataSetPtr dataset, std::unique_ptr<Config> cfg, 
         return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "missing emb_list offset, could not search");
     }
     auto num_q_vecs = static_cast<size_t>(dataset->GetRows());
-    EmbListOffset query_emb_list_offset(lims, num_q_vecs);
+    EmbListOffset query_emb_list_offset(lims, num_q_vecs, GetEmbListCount(dataset));
     auto num_q_el = query_emb_list_offset.num_el();
     auto& config = static_cast<BaseConfig&>(*cfg);
     auto metric_type = config.metric_type.value();

@@ -14,25 +14,35 @@
 #include <algorithm>
 #include <cstddef>
 #include <numeric>
+#include <stdexcept>
 #include <vector>
 
 #include "knowhere/bitsetview.h"
+#include "knowhere/dataset.h"
 
 namespace knowhere {
 
 class EmbListOffset {
  public:
-    EmbListOffset(const size_t* lims, size_t rows) {
-        size_t idx = 0;
-        assert(lims[idx] == 0);
-        assert(rows > 0);
-        while (lims[idx] < rows) {
-            assert(idx == 0 || lims[idx] >= lims[idx - 1]);
-            offset.push_back(lims[idx]);
-            idx++;
+    EmbListOffset(const size_t* lims, size_t rows, size_t num_el) {
+        if (lims == nullptr) {
+            throw std::invalid_argument("emb_list offsets must not be null");
         }
-        assert(lims[idx] == rows);
-        offset.push_back(lims[idx]);
+        if (num_el == 0) {
+            throw std::invalid_argument("emb_list count must be greater than zero");
+        }
+        if (lims[0] != 0) {
+            throw std::invalid_argument("emb_list offsets must start at zero");
+        }
+        offset.assign(lims, lims + num_el + 1);
+        if (offset.back() != rows) {
+            throw std::invalid_argument("emb_list offsets must end at the flattened vector count");
+        }
+        for (size_t i = 1; i < offset.size(); ++i) {
+            if (offset[i] < offset[i - 1]) {
+                throw std::invalid_argument("emb_list offsets must be nondecreasing");
+            }
+        }
     }
 
     EmbListOffset(std::vector<size_t>& offset_) {
@@ -82,6 +92,18 @@ class EmbListOffset {
 
     std::vector<size_t> offset;
 };
+
+inline size_t
+GetEmbListCount(const DataSetPtr& dataset) {
+    if (dataset == nullptr) {
+        throw std::invalid_argument("emb_list dataset must not be null");
+    }
+    const auto num_el = dataset->Get<int64_t>(meta::EMB_LIST_COUNT);
+    if (num_el <= 0) {
+        throw std::invalid_argument("emb_list dataset must provide a positive EMB_LIST_COUNT");
+    }
+    return static_cast<size_t>(num_el);
+}
 
 inline std::vector<size_t>
 convert_lims_to_vector(const size_t* lims, size_t rows) {

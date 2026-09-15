@@ -116,6 +116,7 @@ constexpr const char* DIM_MAX_SCORE_RATIO = "dim_max_score_ratio";
 // emb list meta
 constexpr const char* EMB_LIST_META = "EMB_LIST_META";
 constexpr const char* EMB_LIST_OFFSET = "EMB_LIST_OFFSET";
+constexpr const char* EMB_LIST_COUNT = "EMB_LIST_COUNT";
 };  // namespace meta
 
 namespace indexparam {

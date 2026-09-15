@@ -358,7 +358,7 @@ class IndexNode : public Object {
 
     virtual Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                 bool use_knowhere_build_pool = true) {
+                 size_t num_el, bool use_knowhere_build_pool = true) {
         // 1. split metric_type to el_metric_type and sub_metric_type
         auto& config = static_cast<BaseConfig&>(*cfg);
         auto original_metric_type = config.metric_type.value();
@@ -383,7 +383,7 @@ class IndexNode : public Object {
         RETURN_IF_ERROR(Build(dataset, cfg, use_knowhere_build_pool));
 
         // 3. create emb_list_offset
-        emb_list_offset_ = std::make_unique<EmbListOffset>(lims, num_rows);
+        emb_list_offset_ = std::make_unique<EmbListOffset>(lims, num_rows, num_el);
 
         // 4. Set the mapping from base index internal vector IDs to emb_list IDs.
         // When using emb_list, all filtering bitset checks are performed at the emb_list level,
@@ -411,7 +411,8 @@ class IndexNode : public Object {
             return Status::emb_list_inner_error;
         }
 
-        return BuildEmbList(dataset, std::move(cfg), lims, dataset->GetRows(), use_knowhere_build_pool);
+        return BuildEmbList(dataset, std::move(cfg), lims, dataset->GetRows(), GetEmbListCount(dataset),
+                            use_knowhere_build_pool);
     }
 
     virtual Status
