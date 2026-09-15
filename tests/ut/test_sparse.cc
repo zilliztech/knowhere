@@ -1224,13 +1224,30 @@ TEST_CASE("Test DSP Concurrent Search Reuses Workspaces", "[float metrics][spars
 
 TEST_CASE("Test DSP Safe Mode Matches Brute Force", "[float metrics][sparse][dsp]") {
     using Catch::Approx;
-    constexpr int64_t nb = 2000;
-    constexpr int64_t nq = 10;
     constexpr int32_t dim = 300;
-    const int64_t topk = GENERATE(10, 100, 1000);
+    int64_t topk = 0;
+    knowhere::DataSetPtr train_ds;
+    knowhere::DataSetPtr query_ds;
+    SECTION("Random sparse vectors") {
+        topk = GENERATE(10, 100, 1000);
+        train_ds = GenSparseDataSet(2000, dim, 0.95f);
+        query_ds = GenSparseDataSet(10, dim, 0.97f);
+    }
+    SECTION("Kth score differs by one ULP between accumulation orders") {
+        topk = 2;
+        // These documents assign internal dimensions in order 1, 2, 0. For document 1, brute force sums
+        // (1 + 2^-24) + 2^-24 = 1, while DSP sums (2^-24 + 2^-24) + 1 = 1 + 2^-23.
+        train_ds =
+            GenSparseDataSet({{{1, 0.25f}, {2, 0.25f}}, {{0, 1.0f}, {1, 0x1p-24f}, {2, 0x1p-24f}}, {{0, 2.0f}}}, dim);
+        query_ds = GenSparseDataSet({{{0, 1.0f}, {1, 1.0f}, {2, 1.0f}}}, dim);
+    }
+    SECTION("Equal scores straddle the top-k boundary") {
+        topk = 2;
+        train_ds = GenSparseDataSet({{{0, 2.0f}}, {{0, 1.0f}}, {{0, 1.0f}}}, dim);
+        query_ds = GenSparseDataSet({{{0, 1.0f}}}, dim);
+    }
+    const int64_t nq = query_ds->GetRows();
     INFO("topk=" << topk);
-    const auto train_ds = GenSparseDataSet(nb, dim, 0.95f);
-    const auto query_ds = GenSparseDataSet(nq, dim, 0.97f);
 
     knowhere::Json json = {
         {knowhere::meta::DIM, dim},
@@ -1258,6 +1275,9 @@ TEST_CASE("Test DSP Safe Mode Matches Brute Force", "[float metrics][sparse][dsp
     const auto* expected_scores = expected.value()->GetDistance();
     const auto* actual_ids = actual.value()->GetIds();
     const auto* actual_scores = actual.value()->GetDistance();
+    const auto* base = static_cast<const knowhere::sparse::SparseRow<float>*>(train_ds->GetTensor());
+    const auto* queries = static_cast<const knowhere::sparse::SparseRow<float>*>(query_ds->GetTensor());
+    constexpr double score_epsilon = 0.00001;
     for (int64_t query = 0; query < nq; ++query) {
         const int64_t offset = query * topk;
         int64_t positive_count = 0;
@@ -1270,24 +1290,28 @@ TEST_CASE("Test DSP Safe Mode Matches Brute Force", "[float metrics][sparse][dsp
         // emits positive-score matches. Compare the sorted scores only where a positive match exists. The two paths
         // accumulate floats in a different order, hence the same relative tolerance used by the brute-force tests;
         // tied IDs may legitimately appear in a different order.
+        std::unordered_set<int64_t> actual_positive_ids;
         for (int64_t rank = 0; rank < positive_count; ++rank) {
-            REQUIRE(actual_scores[offset + rank] == Approx(expected_scores[offset + rank]).epsilon(0.00001));
+            const auto id = actual_ids[offset + rank];
+            CAPTURE(rank, id);
+            REQUIRE(id >= 0);
+            REQUIRE(id < train_ds->GetRows());
+            REQUIRE(actual_positive_ids.insert(id).second);
+            REQUIRE(actual_scores[offset + rank] == Approx(expected_scores[offset + rank]).epsilon(score_epsilon));
+            REQUIRE(actual_scores[offset + rank] == Approx(queries[query].dot(base[id])).epsilon(score_epsilon));
         }
 
-        // IDs above the kth-score tie boundary are unique members of the exact top-k result. IDs at the boundary may
-        // be exchanged with other equal-score documents, so comparing them would make this assertion tie-sensitive.
+        // Every reference ID clearly above the kth score must be present. Use the same tolerance as the score
+        // checks for boundary ties, and test membership without classifying DSP scores against the reference
+        // cutoff: rounding alone can put the same kth document above that cutoff in DSP's accumulation order.
         const float kth_score = expected_scores[offset + topk - 1];
-        std::unordered_set<int64_t> expected_strict_ids;
-        std::unordered_set<int64_t> actual_strict_ids;
-        for (int64_t rank = 0; rank < topk; ++rank) {
-            if (expected_scores[offset + rank] > kth_score) {
-                expected_strict_ids.insert(expected_ids[offset + rank]);
-            }
-            if (actual_ids[offset + rank] >= 0 && actual_scores[offset + rank] > kth_score) {
-                actual_strict_ids.insert(actual_ids[offset + rank]);
+        for (int64_t rank = 0; rank < positive_count; ++rank) {
+            const float score = expected_scores[offset + rank];
+            if (score > kth_score && score != Approx(kth_score).epsilon(score_epsilon)) {
+                CAPTURE(rank, expected_ids[offset + rank], score, kth_score);
+                REQUIRE(actual_positive_ids.count(expected_ids[offset + rank]) == 1);
             }
         }
-        REQUIRE(actual_strict_ids == expected_strict_ids);
     }
 }
 
