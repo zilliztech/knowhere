@@ -97,8 +97,9 @@ jobs:
         run: |
           source build/Release/generators/conanrun.sh
           ctest --test-dir build/Release --output-on-failure
-          mvn -B -f java/pom.xml test -Dtest=KnowhereTest,DiskAnnIT -DargLine=-Xcheck:jni \
-            -Dknowhere.native.path="$PWD/build/Release/java/libknowhere_jni.so"
+          LD_PRELOAD="$JAVA_HOME/lib/libjsig.so" mvn -B -f java/pom.xml test -Dtest=KnowhereTest,DiskAnnIT -DargLine=-Xcheck:jni \
+            -Dknowhere.native.path="$PWD/build/Release/java/libknowhere_jni.so" 2>&1 | tee build/verification/jni-maven.log
+          python java/scripts/check_jni_diagnostics.py build/verification/jni-maven.log java/target/surefire-reports
           python -m unittest discover -s java/tests -v
       - name: Package platform libraries
         run: |
@@ -114,8 +115,9 @@ jobs:
           cp java/target/test-classes/io/knowhere/PackageSmoke.class "$smoke/io/knowhere/"
           for version in 11 17 21; do
             docker run --rm -v "$smoke:/smoke:ro" -w /smoke "eclipse-temurin:$version-jre-jammy" \
-              java -Xcheck:jni -cp '/smoke/*:/smoke' io.knowhere.PackageSmoke
+              sh -c 'LD_PRELOAD="$JAVA_HOME/lib/libjsig.so" exec java -Xcheck:jni -cp "/smoke/*:/smoke" io.knowhere.PackageSmoke' 2>&1 | tee "build/verification/jre-$version.log"
           done
+          python java/scripts/check_jni_diagnostics.py build/verification/jre-*.log
       - name: Check distribution license material
         run: |
           report=java/target/native-resources/native/knowhere/1/linux-x86_64/missing-licenses.txt

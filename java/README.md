@@ -30,7 +30,7 @@ cmake -S . -B build/Release -DCMAKE_BUILD_TYPE=Release \
 cmake --build build/Release --parallel 2
 . build/Release/generators/conanrun.sh
 ctest --test-dir build/Release --output-on-failure
-mvn -f java/pom.xml test -DargLine=-Xcheck:jni \
+LD_PRELOAD="$JAVA_HOME/lib/libjsig.so" mvn -f java/pom.xml test -DargLine=-Xcheck:jni \
   -Dknowhere.native.path="$PWD/build/Release/java/libknowhere_jni.so"
 ```
 
@@ -50,8 +50,26 @@ Those files must remain available until their indexes close. A normal in-memory
 index rejects `buildFromFile`; DiskANN rejects the vector-buffer `build` entry.
 Run the DiskANN JNI test explicitly with
 `mvn -f java/pom.xml test -Dtest=KnowhereTest,DiskAnnIT -DargLine=-Xcheck:jni`
-and the same `knowhere.native.path` property. On macOS, use the `.dylib`
+and the same `knowhere.native.path` property and signal-chaining environment. On macOS, use the `.dylib`
 extension for the development library.
+
+The shared Folly dependency installs a SIGPIPE handler at library load time.
+For HotSpot on Linux, preload the **same JRE's** `libjsig.so` before starting
+Java, including test JVMs. This enables HotSpot's supported
+[signal chaining](https://docs.oracle.com/en/java/javase/15/vm/signal-chaining.html)
+and preserves the JVM's handler. It is a runtime requirement, not an optional
+way to suppress JNI diagnostics. Do not bundle another JDK's `libjsig` into the
+platform JAR. Consumers use:
+
+```sh
+LD_PRELOAD="$JAVA_HOME/lib/libjsig.so" java -cp 'knowhere-jni.jar:knowhere-jni-linux-aarch64.jar:app.jar' com.example.Main
+```
+
+For macOS development, use `DYLD_FORCE_FLAT_NAMESPACE=1` and
+`DYLD_INSERT_LIBRARIES="$JAVA_HOME/lib/libjsig.dylib"` before starting Java.
+Loading `libjsig` after JVM initialization does not establish signal chaining.
+JDK 16 and later may report Folly's use of the deprecated `signal()` chaining
+entry point; the runtime checks still verify that JVM handlers remain installed.
 
 For AddressSanitizer, use a separate output directory and add
 `-o '&:with_asan=True'`. Do not package sanitizer libraries for release use.
@@ -92,7 +110,7 @@ no silent fallback to `java.library.path`. An explicit absolute
 packaged resources. It is not needed by consumers of the two JARs.
 
 `io.knowhere.PackageSmoke` in the test sources uses only the API, platform JAR
-and JRE. Run it in an environment without the source tree, Conan cache or build
+and JRE, with the JRE's signal-chaining library preloaded. Run it in an environment without the source tree, Conan cache or build
 library paths to verify the resulting package. Its checks perform real FLAT
 build/serialize/deserialize/search and brute-force calls.
 
