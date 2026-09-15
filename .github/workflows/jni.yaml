@@ -73,9 +73,25 @@ jobs:
         with:
           path: ~/.conan2
           key: ${{ steps.conan-cache.outputs.cache-primary-key }}
+      - name: Record build provenance
+        run: |
+          mkdir -p build/verification
+          {
+            git rev-parse HEAD
+            gcc-12 --version
+            ldd --version
+            java -version 2>&1
+            conan --version
+            cmake --version
+            lscpu
+          } > build/verification/toolchain.txt
+          conan graph info . -pr:h jni -pr:b jni --no-remote --format=json \
+            -s compiler.cppstd=20 -s:b compiler.cppstd=20 -s build_type=Release \
+            -o '&:with_c_api=True' -o '&:with_jni=True' -o '&:with_c_api_tests=True' \
+            -o '&:with_diskann=True' > build/verification/conan-graph.json
       - name: Build native bindings
         run: |
-          cmake -S . -B build/Release -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$PWD/build/Release/generators/conan_toolchain.cmake"
+          cmake -S . -B build/Release -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_TOOLCHAIN_FILE="$PWD/build/Release/generators/conan_toolchain.cmake"
           cmake --build build/Release --parallel 2
       - name: Test C ABI and JNI
         run: |
@@ -112,6 +128,9 @@ jobs:
           name: jni-linux-x86_64
           path: |
             build/Release/Testing/Temporary/*.log
+            build/Release/CMakeCache.txt
+            build/Release/compile_commands.json
+            build/verification/
             java/target/surefire-reports/
             java/target/*.jar
             java/target/native-resources/native/knowhere/1/linux-x86_64/manifest.properties
