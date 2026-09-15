@@ -10,7 +10,7 @@
 #include <memory>
 #include <string>
 
-#include "diskann/pq_flash_index.h"
+#include "index/diskann/navigation_store.h"
 
 namespace faiss {
 struct Index;
@@ -21,7 +21,7 @@ struct RandomRotationMatrix;
 
 namespace knowhere {
 
-class RaBitQStore {
+class RaBitQStore final : public NavigationStore {
  public:
     static std::string
     SidecarFilename(const std::string& index_prefix);
@@ -36,14 +36,17 @@ class RaBitQStore {
     RaBitQStore&
     operator=(const RaBitQStore&) = delete;
 
-    std::unique_ptr<diskann::ApproxDistanceComputer>
+    std::unique_ptr<diskann::NavigationDistanceComputer>
     CreateDistanceComputer(bool probabilistic_refinement, uint8_t query_bits = 4) const;
 
-    int64_t
-    Count() const;
+    std::unique_ptr<diskann::NavigationDistanceComputer>
+    CreateDistanceComputer(const DiskANNConfig& config) const override;
 
     int64_t
-    Dimension() const;
+    Count() const override;
+
+    int64_t
+    Dimension() const override;
 
     uint8_t
     Bits() const;
@@ -52,7 +55,7 @@ class RaBitQStore {
     CodeSize() const;
 
     size_t
-    MemorySize() const;
+    MemorySize() const override;
 
  private:
     void

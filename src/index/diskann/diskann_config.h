@@ -204,13 +204,22 @@ class DiskANNConfig : public BaseConfig {
     }
 };
 
-class DiskANNRaBitQConfig : public DiskANNConfig {
+// Codec selection and codec-specific knobs are validated at this boundary;
+// the disk graph searcher receives only a query-local distance computer.
+class DiskANNNavigationConfig : public DiskANNConfig {
  public:
+    CFG_STRING navigation_codec;
     CFG_INT rbq_bits;
     CFG_INT rbq_bits_query;
     CFG_STRING rbq_refine_mode;
 
-    KNOWHERE_DECLARE_CONFIG(DiskANNRaBitQConfig) {
+    KNOWHERE_DECLARE_CONFIG(DiskANNNavigationConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(navigation_codec)
+            .description("resident navigation codec: PQ or RABITQ")
+            .set_default("PQ")
+            .for_train()
+            .for_deserialize()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(rbq_bits)
             .description("number of RaBitQ bits per database vector dimension")
             .set_default(1)
@@ -223,8 +232,9 @@ class DiskANNRaBitQConfig : public DiskANNConfig {
             .set_range(0, 8)
             .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(rbq_refine_mode)
-            .description("RaBitQ multi-bit refinement mode: probabilistic enables error-window pruning; full always "
-                         "computes the complete RaBitQ distance")
+            .description(
+                "RaBitQ multi-bit refinement mode: probabilistic enables error-window pruning; full always "
+                "computes the complete RaBitQ distance")
             .set_default("probabilistic")
             .for_search()
             .for_range_search()
@@ -236,6 +246,13 @@ class DiskANNRaBitQConfig : public DiskANNConfig {
         const auto base_status = DiskANNConfig::CheckAndAdjust(param_type, err_msg);
         if (base_status != Status::success) {
             return base_status;
+        }
+        const auto codec = navigation_codec.value_or("PQ");
+        if (codec == "PQ") {
+            return Status::success;
+        }
+        if (codec != "RABITQ") {
+            return HandleError(err_msg, "unsupported DiskANN navigation codec", Status::invalid_args);
         }
         const auto metric = metric_type.value_or(knowhere::metric::L2);
         if (metric != knowhere::metric::L2 && metric != knowhere::metric::IP) {
@@ -252,10 +269,26 @@ class DiskANNRaBitQConfig : public DiskANNConfig {
         if (disk_pq_dims.value_or(0) != 0) {
             return HandleError(err_msg, "DISKANN_RABITQ requires disk_pq_dims=0", Status::invalid_args);
         }
-        if (warm_up.value_or(false)) {
-            return HandleError(err_msg, "DISKANN_RABITQ does not support warm_up", Status::invalid_args);
-        }
         return Status::success;
+    }
+};
+
+class DiskANNRaBitQConfig : public DiskANNNavigationConfig {
+ public:
+    KNOWHERE_DECLARE_CONFIG(DiskANNRaBitQConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(navigation_codec)
+            .description("DISKANN_RABITQ fixes the navigation codec to RABITQ")
+            .set_default("RABITQ")
+            .for_train()
+            .for_deserialize()
+            .for_static();
+    }
+    Status
+    CheckAndAdjust(PARAM_TYPE type, std::string* error) override {
+        if (navigation_codec.value_or("RABITQ") != "RABITQ") {
+            return HandleError(error, "DISKANN_RABITQ requires navigation_codec=RABITQ", Status::invalid_args);
+        }
+        return DiskANNNavigationConfig::CheckAndAdjust(type, error);
     }
 };
 }  // namespace knowhere

@@ -183,13 +183,16 @@ namespace diskann {
 	virtual ~PQDataGetter() {}
   };
 
-  // Optional query-local navigation distance implementation. Ordinary
-  // DiskANN leaves this null and uses its resident PQ codes. Knowhere's
-  // DISKANN_RABITQ supplies one instance per query because the distance
-  // computer owns transformed-query scratch and is not thread-safe.
-  class ApproxDistanceComputer {
+  // Optional query-local navigation scorer. Null preserves resident PQ.
+  // Query inputs and thresholds are in DiskANN prepared space, with smaller
+  // scores preferred. A valid threshold is a snapshot of the full candidate
+  // pool, shared by this batch; the scorer must not modify search state.
+  // A scorer may return +infinity to explicitly reject a candidate under its
+  // configured approximate policy. That value is not an exact distance.
+  // Each scorer owns its query scratch and is not shared across queries.
+  class NavigationDistanceComputer {
    public:
-    virtual ~ApproxDistanceComputer() = default;
+    virtual ~NavigationDistanceComputer() = default;
     virtual void set_query(const float* query) = 0;
     virtual void compute_distances(const unsigned* ids, _u64 n_ids,
                                    float* distances, float threshold,
@@ -227,7 +230,7 @@ namespace diskann {
         const knowhere::feder::diskann::FederResultUniq &feder = nullptr,
         knowhere::BitsetView                             bitset_view = nullptr,
         const float                                      filter_ratio = -1.0f,
-        ApproxDistanceComputer*                          approx_distance_computer = nullptr);
+        NavigationDistanceComputer*                          approx_distance_computer = nullptr);
 
     void calc_dist_by_ids(const T *query, const int64_t *ids, const int64_t n,
                           float *const output_dists);
@@ -311,7 +314,7 @@ namespace diskann {
         const knowhere::feder::diskann::FederResultUniq &feder,
         knowhere::BitsetView                             bitset_view,
 		PQDataGetter* pq_data_getter,
-        ApproxDistanceComputer* approx_distance_computer = nullptr);
+        NavigationDistanceComputer* approx_distance_computer = nullptr);
 
     // Assign the index of ids to its corresponding sector and if it is in
     // cache, write to the output_data

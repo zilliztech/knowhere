@@ -11,6 +11,8 @@
 
 #include "knowhere/feder/DiskANN.h"
 
+#include <folly/ScopeGuard.h>
+
 #include <cstdint>
 #include <fstream>
 #include <limits>
@@ -23,7 +25,7 @@
 #include "filemanager/FileManager.h"
 #include "fmt/core.h"
 #include "index/diskann/diskann_config.h"
-#include "index/diskann/rabitq_store.h"
+#include "index/diskann/navigation_store.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/context.h"
 #include "knowhere/dataset.h"
@@ -113,6 +115,16 @@ class DiskANNIndexNode : public IndexNode {
     static Status
     StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
         auto& base_cfg = static_cast<const BaseConfig&>(cfg);
+        if (UsesExternalNavigation(static_cast<const DiskANNConfig&>(cfg))) {
+            if (!std::is_same_v<DataType, float>) {
+                msg = "external DiskANN navigation currently requires FP32 data";
+                return Status::invalid_args;
+            }
+            if (base_cfg.emb_list_strategy.has_value() || base_cfg.emb_list_offset_file_path.has_value()) {
+                msg = "external DiskANN navigation does not support embedding-list mode";
+                return Status::not_implemented;
+            }
+        }
         auto strategy = base_cfg.emb_list_strategy.value_or("");
         if (strategy == meta::EMB_LIST_STRATEGY_MUVERA || strategy == meta::EMB_LIST_STRATEGY_LEMUR) {
             msg = "DiskANN only supports TokenANN strategy, got '" + strategy + "'";
@@ -168,7 +180,7 @@ class DiskANNIndexNode : public IndexNode {
 
     static std::unique_ptr<BaseConfig>
     StaticCreateConfig() {
-        return std::make_unique<DiskANNConfig>();
+        return std::make_unique<DiskANNNavigationConfig>();
     }
 
     std::unique_ptr<BaseConfig>
@@ -202,8 +214,8 @@ class DiskANNIndexNode : public IndexNode {
             return 0;
         }
         auto size = pq_flash_index_->cal_size();
-        if (rabitq_store_ != nullptr) {
-            size += rabitq_store_->MemorySize();
+        if (navigation_store_ != nullptr) {
+            size += navigation_store_->MemorySize();
         }
         return size;
     }
@@ -229,11 +241,6 @@ class DiskANNIndexNode : public IndexNode {
  protected:
     expected<DataSetPtr>
     GetVectorByStorageIds(const DataSetPtr dataset, milvus::OpContext* op_context) const override;
-
-    virtual bool
-    IsRaBitQ() const {
-        return false;
-    }
 
  private:
     class iterator : public IndexIterator {
@@ -293,7 +300,7 @@ class DiskANNIndexNode : public IndexNode {
     std::atomic_bool is_prepared_;
     std::shared_ptr<milvus::FileManager> file_manager_;
     std::unique_ptr<diskann::PQFlashIndex<DataType>> pq_flash_index_;
-    std::unique_ptr<RaBitQStore> rabitq_store_;
+    std::unique_ptr<NavigationStore> navigation_store_;
     std::atomic_int64_t dim_;
     std::atomic_int64_t count_;
     std::shared_ptr<ThreadPool> search_pool_;
@@ -304,28 +311,6 @@ class DiskANNIndexNode : public IndexNode {
 namespace knowhere {
 namespace {
 static constexpr float kCacheExpansionRate = 1.2;
-
-bool
-HasFilteredBits(const BitsetView& bitset) {
-    if (bitset.empty()) {
-        return false;
-    }
-
-    const auto* data = bitset.data();
-    const auto full_bytes = bitset.size() / 8;
-    for (size_t i = 0; i < full_bytes; ++i) {
-        if (data[i] != 0) {
-            return true;
-        }
-    }
-
-    const auto remaining_bits = bitset.size() % 8;
-    if (remaining_bits == 0) {
-        return false;
-    }
-    const auto valid_bits_mask = static_cast<uint8_t>((1u << remaining_bits) - 1u);
-    return (data[full_bytes] & valid_bits_mask) != 0;
-}
 
 Status
 ReadEmbListOffsetFromFile(const std::string& file_path, std::vector<size_t>& offsets) {
@@ -431,7 +416,7 @@ GetOptionalFilenames(const std::string& prefix) {
 }
 
 inline bool
-AnyIndexFileExist(const std::string& index_prefix) {
+AnyIndexFileExist(const std::string& index_prefix, const DiskANNConfig& config) {
     auto file_exist = [](std::vector<std::string> filenames) -> bool {
         for (auto& filename : filenames) {
             if (file_exists(filename)) {
@@ -441,7 +426,7 @@ AnyIndexFileExist(const std::string& index_prefix) {
         return false;
     };
     return file_exist(GetNecessaryFilenames(index_prefix, diskann::INNER_PRODUCT, true, true)) ||
-           file_exist(GetOptionalFilenames(index_prefix)) || file_exists(RaBitQStore::SidecarFilename(index_prefix));
+           file_exist(GetOptionalFilenames(index_prefix)) || file_exist(NavigationFiles(config, index_prefix));
 }
 
 inline bool
@@ -464,7 +449,11 @@ template <typename DataType>
 Status
 DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) {
     assert(file_manager_ != nullptr);
-    auto build_conf = static_cast<const DiskANNConfig&>(*cfg);
+    const auto& build_conf = static_cast<const DiskANNConfig&>(*cfg);
+    const bool external_navigation = UsesExternalNavigation(build_conf);
+    if (external_navigation && !std::is_same_v<DataType, float>) {
+        return Status::invalid_args;
+    }
     if (!CheckMetric(build_conf.metric_type.value())) {
         LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << build_conf.metric_type.value();
         return Status::invalid_metric_type;
@@ -473,7 +462,7 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
         LOG_KNOWHERE_ERROR_ << "DiskANN file path for build is empty." << std::endl;
         return Status::invalid_param_in_json;
     }
-    if (AnyIndexFileExist(build_conf.index_prefix.value())) {
+    if (AnyIndexFileExist(build_conf.index_prefix.value(), build_conf)) {
         LOG_KNOWHERE_ERROR_ << "This index prefix already has index files." << std::endl;
         return Status::disk_file_error;
     }
@@ -527,7 +516,7 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
                                                        static_cast<uint32_t>(num_nodes_to_cache),
                                                        build_conf.shuffle_build.value()};
     diskann_internal_build_config.keep_preprocessed_base =
-        IsRaBitQ() && diskann_metric == diskann::Metric::INNER_PRODUCT;
+        external_navigation && diskann_metric == diskann::Metric::INNER_PRODUCT;
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
         int res = diskann::build_disk_index<DataType>(diskann_internal_build_config);
         if (res != 0)
@@ -535,20 +524,11 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
                                         -1);
     }));
 
-    if (IsRaBitQ()) {
-        const auto* rabitq_conf = dynamic_cast<const DiskANNRaBitQConfig*>(cfg.get());
-        if (rabitq_conf == nullptr) {
-            LOG_KNOWHERE_ERROR_ << "DISKANN_RABITQ received an unexpected config type";
-            return Status::invalid_args;
-        }
+    if (external_navigation) {
         try {
-            const auto sidecar_path = RaBitQStore::SidecarFilename(index_prefix_);
-            const auto sidecar_source = diskann_metric == diskann::Metric::INNER_PRODUCT
-                ? index_prefix_ + "_prepped_base.bin"
-                : data_path;
-            LOG_KNOWHERE_INFO_ << "Building DiskANN RaBitQ sidecar: " << sidecar_path;
-            RaBitQStore::BuildFromFloatBin(sidecar_source, sidecar_path,
-                                           static_cast<uint8_t>(rabitq_conf->rbq_bits.value()));
+            const auto sidecar_source =
+                diskann_metric == diskann::Metric::INNER_PRODUCT ? index_prefix_ + "_prepped_base.bin" : data_path;
+            BuildNavigationStore(build_conf, sidecar_source, index_prefix_);
             if (diskann_metric == diskann::Metric::INNER_PRODUCT) {
                 std::error_code error;
                 std::filesystem::remove(sidecar_source, error);
@@ -558,7 +538,7 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
                 std::error_code error;
                 std::filesystem::remove(index_prefix_ + "_prepped_base.bin", error);
             }
-            LOG_KNOWHERE_ERROR_ << "Failed to build DiskANN RaBitQ sidecar: " << e.what();
+            LOG_KNOWHERE_ERROR_ << "Failed to build DiskANN navigation sidecar: " << e.what();
             return Status::diskann_inner_error;
         }
     }
@@ -576,8 +556,7 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
             return Status::disk_file_error;
         }
     }
-    if (IsRaBitQ()) {
-        const auto sidecar_path = RaBitQStore::SidecarFilename(index_prefix_);
+    for (const auto& sidecar_path : NavigationFiles(build_conf, index_prefix_)) {
         if (!AddFile(sidecar_path)) {
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << sidecar_path << ".";
             return Status::disk_file_error;
@@ -600,7 +579,7 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
         // If not emb_list metric type, use the default build method
         return Build(dataset, std::move(cfg), use_knowhere_build_pool);
     }
-    if (IsRaBitQ()) {
+    if (UsesExternalNavigation(static_cast<const DiskANNConfig&>(*cfg))) {
         LOG_KNOWHERE_ERROR_ << "DISKANN_RABITQ does not support embedding-list mode";
         return Status::not_implemented;
     }
@@ -660,13 +639,25 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
 template <typename DataType>
 Status
 DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) {
-    auto prep_conf = static_cast<const DiskANNConfig&>(*cfg);
+    const auto& prep_conf = static_cast<const DiskANNConfig&>(*cfg);
+    const bool external_navigation = UsesExternalNavigation(prep_conf);
+    if (external_navigation && !std::is_same_v<DataType, float>) {
+        return Status::invalid_args;
+    }
     if (!CheckMetric(prep_conf.metric_type.value())) {
         return Status::invalid_metric_type;
     }
     if (is_prepared_.load()) {
         return Status::success;
     }
+    const auto rollback = folly::makeGuard([this]() {
+        if (!is_prepared_.load()) {
+            navigation_store_.reset();
+            pq_flash_index_.reset();
+            count_.store(-1);
+            dim_.store(-1);
+        }
+    });
     if (!(prep_conf.index_prefix.has_value())) {
         LOG_KNOWHERE_ERROR_ << "DiskANN file path for deserialize is empty." << std::endl;
         return Status::invalid_param_in_json;
@@ -688,7 +679,7 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
     // Load file from file manager.
     for (auto& filename : GetNecessaryFilenames(
              index_prefix_, need_norm,
-             prep_conf.search_cache_budget_gb.value() > 0 && !prep_conf.use_bfs_cache.value() && !IsRaBitQ(),
+             prep_conf.search_cache_budget_gb.value() > 0 && !prep_conf.use_bfs_cache.value() && !external_navigation,
              prep_conf.warm_up.value())) {
         if (!LoadFile(filename)) {
             return Status::disk_file_error;
@@ -704,10 +695,9 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
             return Status::disk_file_error;
         }
     }
-    if (IsRaBitQ()) {
-        const auto sidecar_path = RaBitQStore::SidecarFilename(index_prefix_);
+    for (const auto& sidecar_path : NavigationFiles(prep_conf, index_prefix_)) {
         if (!LoadFile(sidecar_path)) {
-            LOG_KNOWHERE_ERROR_ << "Failed to load DiskANN RaBitQ sidecar " << sidecar_path;
+            LOG_KNOWHERE_ERROR_ << "Failed to load DiskANN navigation sidecar " << sidecar_path;
             return Status::disk_file_error;
         }
     }
@@ -722,7 +712,7 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
 
     pq_flash_index_ = std::make_unique<diskann::PQFlashIndex<DataType>>(reader, diskann_metric);
     auto disk_ann_call = [&]() {
-        int res = pq_flash_index_->load(search_pool_->size(), index_prefix_.c_str(), !IsRaBitQ());
+        int res = pq_flash_index_->load(search_pool_->size(), index_prefix_.c_str(), !external_navigation);
         if (res != 0) {
             throw diskann::ANNException("pq_flash_index_->load returned non-zero value: " + std::to_string(res), -1);
         }
@@ -740,18 +730,19 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         dim_.store(pq_flash_index_->get_data_dim());
     }
 
-    if (IsRaBitQ()) {
+    navigation_store_.reset();
+    if (external_navigation) {
         try {
-            rabitq_store_ = std::make_unique<RaBitQStore>(RaBitQStore::SidecarFilename(index_prefix_));
-            if (rabitq_store_->Count() != static_cast<int64_t>(pq_flash_index_->get_num_points()) ||
-                rabitq_store_->Dimension() != static_cast<int64_t>(pq_flash_index_->get_data_dim())) {
-                LOG_KNOWHERE_ERROR_ << "DiskANN graph and RaBitQ sidecar metadata do not match";
-                rabitq_store_.reset();
+            navigation_store_ = LoadNavigationStore(prep_conf, index_prefix_);
+            if (navigation_store_->Count() != static_cast<int64_t>(pq_flash_index_->get_num_points()) ||
+                navigation_store_->Dimension() != static_cast<int64_t>(pq_flash_index_->get_data_dim())) {
+                LOG_KNOWHERE_ERROR_ << "DiskANN graph and navigation sidecar metadata do not match";
+                navigation_store_.reset();
                 return Status::invalid_index_error;
             }
         } catch (const std::exception& e) {
-            LOG_KNOWHERE_ERROR_ << "Failed to initialize DiskANN RaBitQ sidecar: " << e.what();
-            rabitq_store_.reset();
+            LOG_KNOWHERE_ERROR_ << "Failed to initialize DiskANN navigation sidecar: " << e.what();
+            navigation_store_.reset();
             return Status::invalid_index_error;
         }
     }
@@ -787,9 +778,9 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         }
         if (num_nodes_to_cache > 0) {
             LOG_KNOWHERE_INFO_ << "Caching " << num_nodes_to_cache << " sample nodes around medoid(s).";
-            if (prep_conf.use_bfs_cache.value() || IsRaBitQ()) {
-                if (IsRaBitQ() && !prep_conf.use_bfs_cache.value()) {
-                    LOG_KNOWHERE_INFO_ << "DISKANN_RABITQ uses BFS cache generation because navigation PQ is not "
+            if (prep_conf.use_bfs_cache.value() || external_navigation) {
+                if (external_navigation && !prep_conf.use_bfs_cache.value()) {
+                    LOG_KNOWHERE_INFO_ << "External navigation uses BFS cache generation because navigation PQ is not "
                                           "resident";
                 }
                 LOG_KNOWHERE_INFO_ << "Use bfs to generate cache list";
@@ -853,9 +844,10 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         futures.reserve(warmup_num);
         for (uint64_t i = 0; i < warmup_num; ++i) {
             futures.emplace_back(search_pool_->push([&, index = i]() {
-                pq_flash_index_->cached_beam_search(warmup + (index * warmup_aligned_dim), 1, warmup_L,
-                                                    warmup_result_ids_64.data() + (index * 1),
-                                                    warmup_result_dists.data() + (index * 1), 4);
+                auto navigation = navigation_store_ ? navigation_store_->CreateDistanceComputer(prep_conf) : nullptr;
+                pq_flash_index_->cached_beam_search(
+                    warmup + (index * warmup_aligned_dim), 1, warmup_L, warmup_result_ids_64.data() + (index * 1),
+                    warmup_result_dists.data() + (index * 1), 4, false, nullptr, nullptr, {}, -1.0f, navigation.get());
             }));
         }
 
@@ -886,7 +878,7 @@ DiskANNIndexNode<DataType>::DeserializeEmbListIfNeed(const BinarySet& binset, st
         // If not emb_list metric type, use the default deserialize method
         return Deserialize(binset, std::move(cfg));
     }
-    if (IsRaBitQ()) {
+    if (UsesExternalNavigation(static_cast<const DiskANNConfig&>(*cfg))) {
         LOG_KNOWHERE_ERROR_ << "DISKANN_RABITQ does not support embedding-list mode";
         return Status::not_implemented;
     }
@@ -951,16 +943,16 @@ template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
 DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                                         bool use_knowhere_search_pool, milvus::OpContext* op_context) const {
-    if (IsRaBitQ()) {
-        return expected<std::vector<IndexNode::IteratorPtr>>::Err(
-            Status::not_implemented, "DISKANN_RABITQ does not support iterator search");
+    if (navigation_store_ || UsesExternalNavigation(static_cast<const DiskANNConfig&>(*cfg))) {
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented,
+                                                                  "DISKANN_RABITQ does not support iterator search");
     }
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "DiskANN not loaded");
     }
 
-    auto search_conf = static_cast<const DiskANNConfig&>(*cfg);
+    const auto& search_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(search_conf.metric_type.value())) {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::invalid_metric_type,
                                                                   "unsupported metric type");
@@ -1005,7 +997,7 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
         return expected<DataSetPtr>::Err(Status::empty_index, "DiskANN not loaded");
     }
 
-    auto search_conf = static_cast<const DiskANNConfig&>(*cfg);
+    const auto& search_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(search_conf.metric_type.value())) {
         return expected<DataSetPtr>::Err(Status::invalid_metric_type, "unsupported metric type");
     }
@@ -1016,22 +1008,6 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
     auto nq = dataset->GetRows();
     auto dim = dataset->GetDim();
     auto xq = static_cast<const DataType*>(dataset->GetTensor());
-
-    bool rbq_probabilistic_refinement = true;
-    uint8_t rbq_query_bits = 4;
-    if (IsRaBitQ()) {
-        if (HasFilteredBits(bitset_)) {
-            return expected<DataSetPtr>::Err(Status::not_implemented,
-                                             "DISKANN_RABITQ does not support bitset search");
-        }
-        const auto* rabitq_conf = dynamic_cast<const DiskANNRaBitQConfig*>(cfg.get());
-        if (rabitq_conf == nullptr || rabitq_store_ == nullptr) {
-            return expected<DataSetPtr>::Err(Status::invalid_args,
-                                             "DISKANN_RABITQ config or sidecar is not initialized");
-        }
-        rbq_probabilistic_refinement = rabitq_conf->rbq_refine_mode.value() == "probabilistic";
-        rbq_query_bits = static_cast<uint8_t>(rabitq_conf->rbq_bits_query.value_or(4));
-    }
 
     feder::diskann::FederResultUniq feder_result;
     if (search_conf.trace_visit.value()) {
@@ -1053,12 +1029,10 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
         futures.emplace_back(search_pool_->push([&, index = row, p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
             knowhere::checkCancellation(op_context);
             auto& stats = query_stats[index];
-            auto approx_distance_computer = IsRaBitQ() ? rabitq_store_->CreateDistanceComputer(
-                                                            rbq_probabilistic_refinement, rbq_query_bits)
-                                                       : nullptr;
+            auto navigation = navigation_store_ ? navigation_store_->CreateDistanceComputer(search_conf) : nullptr;
             pq_flash_index_->cached_beam_search(xq + (index * dim), k, lsearch, p_id_ptr + (index * k),
                                                 p_dist_ptr + (index * k), beamwidth, false, &stats, feder_result,
-                                                bitset_, filter_ratio, approx_distance_computer.get());
+                                                bitset_, filter_ratio, navigation.get());
 #ifdef NOT_COMPILE_FOR_SWIG
             knowhere_diskann_search_hops.Observe(stats.n_hops);
 #endif
@@ -1069,7 +1043,7 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
         return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
     }
 
-    if (IsRaBitQ()) {
+    if (navigation_store_) {
         uint64_t estimates = 0;
         uint64_t refinements = 0;
         uint64_t pruned = 0;
@@ -1079,7 +1053,7 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
             pruned += stats.n_approx_pruned;
         }
         const double prune_ratio = estimates == 0 ? 0.0 : static_cast<double>(pruned) / estimates;
-        LOG_KNOWHERE_DEBUG_ << "DiskANN RaBitQ refinement stats: queries=" << nq << ", estimates=" << estimates
+        LOG_KNOWHERE_DEBUG_ << "DiskANN navigation refinement stats: queries=" << nq << ", estimates=" << estimates
                             << ", full_distances=" << refinements << ", pruned=" << pruned
                             << ", prune_ratio=" << prune_ratio;
     }
@@ -1284,12 +1258,6 @@ class DiskANNRaBitQIndexNode : public DiskANNIndexNode<DataType> {
     std::string
     Type() const override {
         return knowhere::IndexEnum::INDEX_DISKANN_RABITQ;
-    }
-
- protected:
-    bool
-    IsRaBitQ() const override {
-        return true;
     }
 };
 

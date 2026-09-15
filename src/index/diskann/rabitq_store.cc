@@ -5,6 +5,14 @@
 
 #include "index/diskann/rabitq_store.h"
 
+#include <faiss/IndexPreTransform.h>
+#include <faiss/IndexRaBitQ.h>
+#include <faiss/VectorTransform.h>
+#include <faiss/cppcontrib/knowhere/impl/RaBitQBuildUtils.h>
+#include <faiss/cppcontrib/knowhere/index_io.h>
+#include <faiss/impl/RaBitQUtils.h>
+#include <faiss/impl/RaBitQuantizer.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -16,15 +24,8 @@
 #include <system_error>
 #include <vector>
 
-#include <faiss/IndexPreTransform.h>
-#include <faiss/IndexRaBitQ.h>
-#include <faiss/VectorTransform.h>
-#include <faiss/cppcontrib/knowhere/index_io.h>
-#include <faiss/cppcontrib/knowhere/impl/RaBitQBuildUtils.h>
-#include <faiss/impl/RaBitQUtils.h>
-#include <faiss/impl/RaBitQuantizer.h>
-
 #include "diskann/utils.h"
+#include "index/diskann/diskann_config.h"
 
 namespace knowhere {
 namespace {
@@ -90,10 +91,10 @@ apply_rotation_single_query(const faiss::RandomRotationMatrix* rotation, const f
     }
 }
 
-class RaBitQApproxDistanceComputer final : public diskann::ApproxDistanceComputer {
+class RaBitQNavigationDistanceComputer final : public diskann::NavigationDistanceComputer {
  public:
-    RaBitQApproxDistanceComputer(const faiss::RandomRotationMatrix* rotation, const faiss::IndexRaBitQ* rabitq,
-                                 bool probabilistic_refinement, uint8_t query_bits)
+    RaBitQNavigationDistanceComputer(const faiss::RandomRotationMatrix* rotation, const faiss::IndexRaBitQ* rabitq,
+                                     bool probabilistic_refinement, uint8_t query_bits)
         : rotation_(rotation),
           rabitq_(rabitq),
           probabilistic_refinement_(probabilistic_refinement),
@@ -135,30 +136,23 @@ class RaBitQApproxDistanceComputer final : public diskann::ApproxDistanceCompute
         std::array<_u64, 4> refine_positions{};
         size_t pending_refinements = 0;
         const auto flush_refinements = [&]() {
-            distance_computer_->distances_batch_4(
-                refine_ids[0], refine_ids[1], refine_ids[2], refine_ids[3],
-                distances[refine_positions[0]], distances[refine_positions[1]], distances[refine_positions[2]],
-                distances[refine_positions[3]]);
+            distance_computer_->distances_batch_4(refine_ids[0], refine_ids[1], refine_ids[2], refine_ids[3],
+                                                  distances[refine_positions[0]], distances[refine_positions[1]],
+                                                  distances[refine_positions[2]], distances[refine_positions[3]]);
             pending_refinements = 0;
         };
 
-        for (_u64 i = 0; i < n_ids; ++i) {
-            const uint8_t* code = rabitq_->codes.data() + static_cast<size_t>(ids[i]) * rabitq_->code_size;
-            const float estimate = rabitq_distance_computer_->distance_to_code_1bit(code);
-            const size_t code_body_size = (static_cast<size_t>(rabitq_->d) + 7) / 8;
-            const auto* factors = reinterpret_cast<const faiss::rabitq_utils::SignBitFactorsWithError*>(
-                code + code_body_size);
+        const auto process_estimate = [&](_u64 i, const uint8_t* code, float estimate) {
             if (stats != nullptr) {
                 ++stats->n_approx_estimates;
             }
-            if (!faiss::rabitq_utils::should_refine_candidate(estimate, factors->f_error,
-                                                              rabitq_distance_computer_->g_error, threshold, false)) {
+            if (!rabitq_distance_computer_->should_refine(code, estimate, threshold, false)) {
                 distances[i] = std::numeric_limits<float>::infinity();
                 if (stats != nullptr) {
                     ++stats->n_approx_pruned;
                     ++stats->n_cmps_saved;
                 }
-                continue;
+                return;
             }
             refine_ids[pending_refinements] = ids[i];
             refine_positions[pending_refinements] = i;
@@ -169,6 +163,25 @@ class RaBitQApproxDistanceComputer final : public diskann::ApproxDistanceCompute
             if (pending_refinements == 4) {
                 flush_refinements();
             }
+        };
+
+        // Batch independent estimates, then retain the original neighbor order
+        // and the caller's threshold snapshot when deciding which codes to refine.
+        _u64 i = 0;
+        for (; i + 4 <= n_ids; i += 4) {
+            std::array<const uint8_t*, 4> codes{};
+            std::array<float, 4> estimates{};
+            for (size_t j = 0; j < 4; ++j) {
+                codes[j] = rabitq_->codes.data() + static_cast<size_t>(ids[i + j]) * rabitq_->code_size;
+            }
+            rabitq_distance_computer_->distance_to_code_1bit_batch_4(codes.data(), estimates.data());
+            for (size_t j = 0; j < 4; ++j) {
+                process_estimate(i + j, codes[j], estimates[j]);
+            }
+        }
+        for (; i < n_ids; ++i) {
+            const uint8_t* code = rabitq_->codes.data() + static_cast<size_t>(ids[i]) * rabitq_->code_size;
+            process_estimate(i, code, rabitq_distance_computer_->distance_to_code_1bit(code));
         }
         for (size_t i = 0; i < pending_refinements; ++i) {
             const auto id = refine_ids[i];
@@ -248,9 +261,8 @@ RaBitQStore::BuildFromFloatBin(const std::string& data_path, const std::string& 
     ForEachFloatBinBlock(data_path, rows, dim, [&](const float* block, size_t block_rows) {
         // Preserve DiskANN's existing input-block boundaries while sharing
         // the same bounded storage population utility as HNSW.
-        faiss::cppcontrib::knowhere::rabitq_build::add_in_blocks(
-            *pretransform, static_cast<faiss::idx_t>(block_rows), block,
-            static_cast<faiss::idx_t>(BlockRows(dim)));
+        faiss::cppcontrib::knowhere::rabitq_build::add_in_blocks(*pretransform, static_cast<faiss::idx_t>(block_rows),
+                                                                 block, static_cast<faiss::idx_t>(BlockRows(dim)));
     });
     if (pretransform->ntotal != static_cast<faiss::idx_t>(rows)) {
         throw std::runtime_error("RaBitQ sidecar point count mismatch after encoding");
@@ -282,8 +294,7 @@ RaBitQStore::Validate() {
         throw std::runtime_error("DiskANN RaBitQ sidecar must be an IndexPreTransform with one transform");
     }
     rotation_ = dynamic_cast<const faiss::RandomRotationMatrix*>(pretransform_->chain[0]);
-    if (rotation_ == nullptr || !rotation_->is_trained || rotation_->d_in <= 0 ||
-        rotation_->d_in != rotation_->d_out) {
+    if (rotation_ == nullptr || !rotation_->is_trained || rotation_->d_in <= 0 || rotation_->d_in != rotation_->d_out) {
         throw std::runtime_error("DiskANN RaBitQ sidecar has an invalid random rotation");
     }
     const auto rotation_dim = static_cast<size_t>(rotation_->d_in);
@@ -296,17 +307,16 @@ RaBitQStore::Validate() {
         throw std::runtime_error("DiskANN RaBitQ sidecar has an invalid RaBitQ leaf");
     }
     if (pretransform_->metric_type != faiss::METRIC_L2 || rabitq_->metric_type != faiss::METRIC_L2 ||
-        rabitq_->rabitq.metric_type != faiss::METRIC_L2 ||
-        pretransform_->d != rotation_->d_in || rabitq_->d != rotation_->d_out ||
-        pretransform_->ntotal != rabitq_->ntotal) {
+        rabitq_->rabitq.metric_type != faiss::METRIC_L2 || pretransform_->d != rotation_->d_in ||
+        rabitq_->d != rotation_->d_out || pretransform_->ntotal != rabitq_->ntotal) {
         throw std::runtime_error("DiskANN RaBitQ sidecar metadata is inconsistent");
     }
-    if (rabitq_->ntotal < 0 || rabitq_->rabitq.nb_bits < 1 || rabitq_->rabitq.nb_bits > 9 ||
-        rabitq_->qb > 8 || rabitq_->centered) {
+    if (rabitq_->ntotal < 0 || rabitq_->rabitq.nb_bits < 1 || rabitq_->rabitq.nb_bits > 9 || rabitq_->qb > 8 ||
+        rabitq_->centered) {
         throw std::runtime_error("DiskANN RaBitQ sidecar quantizer metadata is inconsistent");
     }
-    const auto expected_code_size = rabitq_->rabitq.compute_code_size(
-        static_cast<size_t>(rabitq_->d), rabitq_->rabitq.nb_bits);
+    const auto expected_code_size =
+        rabitq_->rabitq.compute_code_size(static_cast<size_t>(rabitq_->d), rabitq_->rabitq.nb_bits);
     const auto point_count = static_cast<size_t>(rabitq_->ntotal);
     if (rabitq_->code_size != expected_code_size || rabitq_->rabitq.code_size != expected_code_size ||
         expected_code_size == 0 || point_count > std::numeric_limits<size_t>::max() / expected_code_size ||
@@ -316,12 +326,33 @@ RaBitQStore::Validate() {
     }
 }
 
-std::unique_ptr<diskann::ApproxDistanceComputer>
+std::unique_ptr<diskann::NavigationDistanceComputer>
+RaBitQStore::CreateDistanceComputer(const DiskANNConfig& config) const {
+    const auto* navigation = dynamic_cast<const DiskANNNavigationConfig*>(&config);
+    if (!navigation) {
+        throw std::invalid_argument("RaBitQ navigation requires query configuration");
+    }
+    const auto query_metric = config.metric_type.value_or(metric::L2);
+    if (query_metric != metric::L2 && query_metric != metric::IP) {
+        throw std::invalid_argument("RaBitQ navigation currently supports L2 and IP");
+    }
+    const auto mode = navigation->rbq_refine_mode.value_or("probabilistic");
+    if (mode != "probabilistic" && mode != "full") {
+        throw std::invalid_argument("invalid RaBitQ refinement mode");
+    }
+    const auto qb = navigation->rbq_bits_query.value_or(4);
+    if (qb < 0 || qb > 8) {
+        throw std::invalid_argument("RaBitQ query bits must be in [0, 8]");
+    }
+    return CreateDistanceComputer(mode == "probabilistic", static_cast<uint8_t>(qb));
+}
+
+std::unique_ptr<diskann::NavigationDistanceComputer>
 RaBitQStore::CreateDistanceComputer(bool probabilistic_refinement, uint8_t query_bits) const {
     if (query_bits > 8) {
         throw std::invalid_argument("RaBitQ query bits must be in [0, 8]");
     }
-    return std::make_unique<RaBitQApproxDistanceComputer>(rotation_, rabitq_, probabilistic_refinement, query_bits);
+    return std::make_unique<RaBitQNavigationDistanceComputer>(rotation_, rabitq_, probabilistic_refinement, query_bits);
 }
 
 int64_t

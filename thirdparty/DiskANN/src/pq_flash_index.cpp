@@ -970,8 +970,11 @@ namespace diskann {
       const knowhere::feder::diskann::FederResultUniq &feder,
       knowhere::BitsetView                             bitset_view,
 	  PQDataGetter* pq_data_getter,
-      ApproxDistanceComputer* approx_distance_computer) {
-    if (approx_distance_computer == nullptr && this->data == nullptr) {
+      NavigationDistanceComputer* approx_distance_computer) {
+    // AiSAQ supplies its own disk-backed PQDataGetter; resident codes are
+    // required only when this index is itself the PQ provider.
+    if (approx_distance_computer == nullptr && pq_data_getter == this &&
+        this->data == nullptr) {
       throw ANNException(
           "resident navigation PQ data is unavailable and no external "
           "distance computer was supplied",
@@ -1130,7 +1133,7 @@ namespace diskann {
       float *distances, const _u64 beam_width, const bool use_reorder_data,
       QueryStats *stats, const knowhere::feder::diskann::FederResultUniq &feder,
       knowhere::BitsetView bitset_view, const float filter_ratio_in,
-      ApproxDistanceComputer* approx_distance_computer) {
+      NavigationDistanceComputer* approx_distance_computer) {
     if (approx_distance_computer == nullptr && this->data == nullptr) {
       throw ANNException(
           "resident navigation PQ data is unavailable and no external "
@@ -1146,15 +1149,24 @@ namespace diskann {
       this->thread_data.wait_for_push_notify();
       data = this->thread_data.pop();
     }
+    // Return query resources on every exit, including exceptions from an
+    // external scorer. Otherwise a failed query permanently consumes a slot.
+    const auto return_scratch = [this](ThreadData<T>* slot) {
+      this->thread_data.push(*slot);
+      this->thread_data.push_notify_all();
+    };
+    std::unique_ptr<ThreadData<T>, decltype(return_scratch)> scratch_guard(&data, return_scratch);
     auto query_norm_opt = init_thread_data(data, query1);
     if (!query_norm_opt.has_value()) {
       // return an empty answer when calcu a zero point
-      this->thread_data.push(data);
-      this->thread_data.push_notify_all();
       return;
     }
     float query_norm = query_norm_opt.value();
-    auto  ctx = this->reader->get_ctx();
+    auto ctx = this->reader->get_ctx();
+    const auto return_context = [this](decltype(ctx)* context) {
+      this->reader->put_ctx(*context);
+    };
+    std::unique_ptr<decltype(ctx), decltype(return_context)> context_guard(&ctx, return_context);
 
     if (approx_distance_computer != nullptr) {
       approx_distance_computer->set_query(
@@ -1183,9 +1195,6 @@ namespace diskann {
         // like on every other exit from this function. Leaking them here
         // permanently shrinks the thread_data pool: after max_nthreads such
         // queries every subsequent search blocks in wait_for_push_notify().
-        this->thread_data.push(data);
-        this->thread_data.push_notify_all();
-        this->reader->put_ctx(ctx);
         return;
       }
 
@@ -1193,9 +1202,6 @@ namespace diskann {
         brute_force_beam_search(data, query_norm, k_search, indices, distances,
                                 beam_width, ctx, stats, feder, bitset_view, this,
                                 approx_distance_computer);
-        this->thread_data.push(data);
-        this->thread_data.push_notify_all();
-        this->reader->put_ctx(ctx);
         return;
       }
     }
@@ -1205,9 +1211,6 @@ namespace diskann {
       brute_force_beam_search(data, query_norm, k_search, indices, distances,
                               beam_width, ctx, stats, feder, bitset_view, this,
                               approx_distance_computer);
-      this->thread_data.push(data);
-      this->thread_data.push_notify_all();
-      this->reader->put_ctx(ctx);
       return;
     }
 
@@ -1595,9 +1598,6 @@ namespace diskann {
       }
     }
 
-    this->thread_data.push(data);
-    this->thread_data.push_notify_all();
-    this->reader->put_ctx(ctx);
 
     if (stats != nullptr) {
       stats->total_us = (double) query_timer.elapsed();
