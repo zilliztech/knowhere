@@ -8,7 +8,12 @@ from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
 from conan.tools.gnu import PkgConfigDeps
 from conan.errors import ConanInvalidConfiguration
+from conan.errors import ConanException
 import os
+import hashlib
+import json
+import shutil
+from pathlib import Path
 
 
 class KnowhereConan(ConanFile):
@@ -31,6 +36,9 @@ class KnowhereConan(ConanFile):
         "cardinal_version_force_checkout": [True, False],
         "with_profiler": [True, False],
         "with_ut": [True, False],
+        "with_c_api": [True, False],
+        "with_jni": [True, False],
+        "with_c_api_tests": [True, False],
         "with_benchmark": [True, False],
         "with_coverage": [True, False],
         "with_faiss_tests": [True, False],
@@ -48,6 +56,9 @@ class KnowhereConan(ConanFile):
         "cardinal_version_force_checkout": False,
         "with_profiler": False,
         "with_ut": False,
+        "with_c_api": False,
+        "with_jni": False,
+        "with_c_api_tests": False,
         "glog/*:shared": True,
         "glog/*:with_gflags": True,
         "gtest/*:build_gmock": True,
@@ -74,8 +85,17 @@ class KnowhereConan(ConanFile):
         "src/*",
         "thirdparty/*",
         "tests/ut/*",
+        "tests/c_api/*",
+        "java/src/*",
+        "java/scripts/*",
+        "java/tests/*",
+        "java/CMakeLists.txt",
+        "java/pom.xml",
+        "java/README.md",
+        "cmake/*",
         "include/*",
         "CMakeLists.txt",
+        "LICENSE",
         "*.cmake",
         "conanfile.py",
     )
@@ -108,6 +128,8 @@ class KnowhereConan(ConanFile):
             self.options["libcurl"].with_ssl = "openssl"
 
     def configure(self):
+        if self.options.with_jni:
+            self.options.with_c_api = True
         if self.options.shared:
             self.options.rm_safe("fPIC")
         if self.settings.os == "Linux" and str(self.settings.arch) in self._openblas_dynamic_arches:
@@ -185,6 +207,8 @@ class KnowhereConan(ConanFile):
         cmake_layout(self, build_folder="")
 
     def generate(self):
+        if self.options.with_c_api or self.options.with_jni:
+            self._collect_host_licenses()
         tc = CMakeToolchain(self)
         tc.variables["CMAKE_POSITION_INDEPENDENT_CODE"] = self.options.get_safe(
             "fPIC", True
@@ -215,6 +239,9 @@ class KnowhereConan(ConanFile):
         tc.variables["WITH_CUVS"] = self.options.with_cuvs
         tc.variables["WITH_PROFILER"] = self.options.with_profiler
         tc.variables["WITH_UT"] = self.options.with_ut
+        tc.variables["WITH_C_API"] = self.options.with_c_api
+        tc.variables["WITH_JNI"] = self.options.with_jni
+        tc.variables["WITH_C_API_TESTS"] = self.options.with_c_api_tests
         tc.variables["WITH_BENCHMARK"] = self.options.with_benchmark
         tc.variables["WITH_COVERAGE"] = self.options.with_coverage
         tc.variables["WITH_FAISS_TESTS"] = self.options.with_faiss_tests
@@ -258,6 +285,58 @@ class KnowhereConan(ConanFile):
         pc = PkgConfigDeps(self)
         pc.generate()
 
+    def _collect_host_licenses(self):
+        # DT_NEEDED cannot describe static or header-only dependencies. Preserve
+        # every host package's license documents beside the binding build output.
+        destination = Path(self.build_folder) / "licenses" / "conan"
+        if destination.exists():
+            shutil.rmtree(destination)
+        destination.mkdir(parents=True)
+        inventory = []
+        missing = []
+        # Follow the original compile/runtime edges of each package, including
+        # headers already embedded in a cached static dependency. The root's
+        # .host view omits those, while indiscriminately including skipped nodes
+        # would also report unused dependencies.
+        pending = list(self.dependencies.host.values())
+        host_dependencies = {}
+        while pending:
+            dependency = pending.pop()
+            reference = dependency.ref.repr_notime()
+            if reference in host_dependencies:
+                continue
+            host_dependencies[reference] = dependency
+            for requirement, child in dependency.dependencies.filter(
+                    {"build": False, "test": False, "direct": True}).items():
+                if requirement.headers or requirement.libs or requirement.run:
+                    pending.append(child)
+        for reference, dependency in sorted(host_dependencies.items()):
+            directory = str(dependency.ref.name) + "-" + hashlib.sha256(reference.encode("utf-8")).hexdigest()[:16]
+            package_folder = dependency.package_folder
+            if not package_folder and dependency.pref:
+                # Skipped packages can still exist locally. Use the public,
+                # read-only cache API; never infer a package path from a name.
+                from conan.api.conan_api import ConanAPI
+                try:
+                    package_folder = ConanAPI().cache.package_path(dependency.pref)
+                except ConanException:
+                    package_folder = None
+            license_root = Path(package_folder) / "licenses" if package_folder else None
+            documents = sorted(path for path in license_root.rglob("*") if path.is_file()) if license_root else []
+            inventory.append({"reference": reference, "directory": directory,
+                              "files": [path.relative_to(license_root).as_posix() for path in documents]})
+            if not documents:
+                missing.append(reference)
+                self.output.warning("License documents require follow-up for host dependency: " + reference)
+            for source in documents:
+                target = destination / directory / source.relative_to(license_root)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
+        (destination / "dependencies.json").write_text(
+            json.dumps(inventory, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        (destination / "missing-licenses.txt").write_text(
+            "".join(reference + "\n" for reference in missing), encoding="utf-8")
+
     def build(self):
         # files.apply_conandata_patches(self)
         cmake = CMake(self)
@@ -291,3 +370,12 @@ class KnowhereConan(ConanFile):
         self.cpp_info.components["libknowhere"].set_property(
             "pkg_config_name", "libknowhere"
         )
+
+        if self.options.with_c_api:
+            self.cpp_info.components["libknowhere_c"].libs = ["knowhere_c"]
+            self.cpp_info.components["libknowhere_c"].requires = ["libknowhere"]
+            self.cpp_info.components["libknowhere_c"].set_property("cmake_target_name", "Knowhere::c_api")
+        if self.options.with_jni:
+            self.cpp_info.components["libknowhere_jni"].libs = ["knowhere_jni"]
+            self.cpp_info.components["libknowhere_jni"].requires = ["libknowhere_c"]
+            self.cpp_info.components["libknowhere_jni"].set_property("cmake_target_name", "Knowhere::jni")
