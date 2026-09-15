@@ -180,6 +180,80 @@ class BundleNativeTest(unittest.TestCase):
             self.assertEqual((destination / "LICENSE").read_bytes(), (self.root / "LICENSE").read_bytes())
             self.assertEqual((destination / "NOTICE").read_bytes(), (self.root / "NOTICE").read_bytes())
 
+    def test_copies_build_licenses_for_static_and_header_dependencies(self):
+        repository = SCRIPT.parents[2]
+        fixture = self.root / "license-project"
+        fixture.mkdir()
+        (fixture / "CMakeLists.txt").write_text(
+            'cmake_minimum_required(VERSION 3.20)\nproject(LicenseFixture NONE)\n'
+            'include("' + str(repository / "cmake" / "binding_licenses.cmake") + '")\n'
+            'knowhere_collect_binding_licenses("' + str(repository) + '" "${CMAKE_BINARY_DIR}" ON)\n',
+            encoding="utf-8",
+        )
+        env = clean_environment()
+        env["CONAN_HOME"] = str(self.root / "conan-home")
+        def conan(*arguments):
+            result = subprocess.run(["conan"] + list(arguments), env=env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return result
+        conan("profile", "detect")
+        for name, kind in (("fixture-headers", "header-library"), ("fixture-unused", "header-library"),
+                           ("fixture-static", "static-library"), ("fixture-missing", "header-library")):
+            recipe = self.root / name
+            recipe.mkdir()
+            (recipe / "LICENSE").write_text(name + " license\n", encoding="utf-8")
+            (recipe / "conanfile.py").write_text(
+                'from conan import ConanFile\nfrom conan.tools.files import copy\nimport os\n'
+                'class Fixture(ConanFile):\n'
+                '    name = "' + name + '"\n    version = "1.0"\n'
+                '    package_type = "' + kind + '"\n    exports_sources = "LICENSE"\n'
+                + ('    def requirements(self):\n'
+                   '        self.requires("fixture-headers/1.0")\n'
+                   '        self.requires("fixture-unused/1.0", headers=False, libs=False, run=False)\n'
+                   if name == "fixture-static" else "")
+                + '    def package(self):\n'
+                + ('        pass\n' if name in ("fixture-missing", "fixture-unused") else
+                   '        copy(self, "LICENSE", self.source_folder, os.path.join(self.package_folder, "licenses"))\n'),
+                encoding="utf-8",
+            )
+            conan("create", str(recipe), "--no-remote")
+        (fixture / "conanfile.py").write_text(
+            'from conan import ConanFile\nimport importlib.util\n'
+            'spec = importlib.util.spec_from_file_location("knowhere_recipe", ' + repr(str(repository / "conanfile.py")) + ')\n'
+            'module = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n'
+            'class FixtureConsumer(ConanFile):\n'
+            '    requires = "fixture-static/1.0", "fixture-missing/1.0"\n'
+            '    def generate(self):\n        module.KnowhereConan._collect_host_licenses(self)\n',
+            encoding="utf-8",
+        )
+        result = conan("install", str(fixture), "--output-folder", str(self.source), "--no-remote")
+        self.assertIn("License documents require follow-up for host dependency: fixture-missing/1.0", result.stderr)
+        run(["cmake", "-S", str(fixture), "-B", str(self.source)])
+        packaged = self.package()
+        self.assertIn("License files require follow-up", packaged.stdout)
+        self.assertIn(self.library.name, self.manifest()["missingLicenses"].split(","))
+        root_missing = (self.destination / "missing-licenses.txt").read_text(encoding="utf-8")
+        self.assertIn("build dependency: fixture-missing/1.0#", root_missing)
+        self.assertNotIn("fixture-unused", root_missing)
+        prefix = self.destination / "licenses" / self.library.name
+        for relative in ("LICENSE", "thirdparty/faiss/LICENSE", "thirdparty/faiss/THIRD_PARTY_NOTICES",
+                         "thirdparty/hnswlib/LICENSE", "thirdparty/DiskANN/LICENSE", "thirdparty/DiskANN/NOTICE.txt"):
+            self.assertEqual((prefix / "source" / relative).read_bytes(), (repository / relative).read_bytes())
+        inventory = json.loads((prefix / "conan" / "dependencies.json").read_text(encoding="utf-8"))
+        self.assertEqual({entry["reference"].split("/", 1)[0] for entry in inventory},
+                         {"fixture-static", "fixture-headers", "fixture-missing"})
+        for entry in inventory:
+            name = entry["reference"].split("/", 1)[0]
+            if name == "fixture-missing":
+                self.assertEqual(entry["files"], [])
+                continue
+            self.assertEqual((prefix / "conan" / entry["directory"] / "LICENSE").read_text(encoding="utf-8"),
+                             name + " license\n")
+        missing = (prefix / "conan" / "missing-licenses.txt").read_text(encoding="utf-8")
+        self.assertTrue(missing.startswith("fixture-missing/1.0#"), missing)
+        self.assertEqual(len(missing.splitlines()), 1)
+        self.assertFalse((prefix / "source" / "missing-licenses.txt").exists())
+
     def test_reports_missing_license_files(self):
         shutil.rmtree(self.source / "licenses")
         result = self.package()
@@ -241,7 +315,7 @@ class BundleNativeTest(unittest.TestCase):
 if __name__ == "__main__":
     if sys.platform != "linux" or PLATFORM is None:
         raise SystemExit("Tests require Linux aarch64 or x86_64 with gcc, readelf, ldd, and patchelf.")
-    for tool in ("gcc", "readelf", "ldd", "patchelf"):
+    for tool in ("gcc", "readelf", "ldd", "patchelf", "cmake", "conan"):
         if shutil.which(tool) is None:
             raise SystemExit("Missing required tool: " + tool)
     unittest.main(verbosity=2)

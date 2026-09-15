@@ -67,7 +67,16 @@ closure, sets copied libraries' RPATH to `$ORIGIN`, and writes SHA-256 checksums
 It leaves the original build libraries untouched. The platform JAR contains
 `native/knowhere/1/<platform>/manifest.properties` and the libraries. The API JAR
 excludes those resources. Preserve dependencies' licenses with the package and
-resolve any missing-license report before distributing it.
+resolve any missing-license report before distributing it. The build also
+collects licenses for statically linked and header-only dependencies; the ELF
+dependency list alone cannot identify them.
+
+The pinned `milvus-common/1.0.0-b589c5a` source currently omits the LICENSE and
+NOTICE files referenced by its recipe and source headers. Its bundled
+`flat_hash_map` additionally declares the Boost Software License. This missing
+upstream material is reported in `missing-licenses.txt`; supplying only an
+Apache license text does not resolve that report. Complete the upstream
+license package before distributing native artifacts.
 
 The API loader validates the manifest and checksums before loading libraries in
 dependency order. Each JVM extracts into its own temporary directory. There is

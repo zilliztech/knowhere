@@ -322,6 +322,8 @@ install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/knowhere"
         DESTINATION "${CMAKE_INSTALL_PREFIX}/include")
 
 if(WITH_C_API)
+  include(cmake/binding_licenses.cmake)
+  knowhere_collect_binding_licenses("${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}" "${WITH_DISKANN}")
   add_library(knowhere_c SHARED src/c_api/c_api.cc)
   target_link_libraries(knowhere_c PRIVATE knowhere)
   target_include_directories(knowhere_c PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

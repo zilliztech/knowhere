@@ -87,7 +87,6 @@ jobs:
         run: |
           python java/scripts/bundle_native.py --library "$PWD/build/Release/java/libknowhere_jni.so" \
             --output "$PWD/java/target/native-resources" --platform linux-x86_64
-          test ! -s java/target/native-resources/native/knowhere/1/linux-x86_64/missing-licenses.txt
           mvn -B -f java/pom.xml package -Dnative.platform=linux-x86_64 -DskipTests
       - name: Test packaged libraries on clean JREs
         run: |
@@ -99,6 +98,14 @@ jobs:
             docker run --rm -v "$smoke:/smoke:ro" -w /smoke "eclipse-temurin:$version-jre-jammy" \
               java -Xcheck:jni -cp '/smoke/*:/smoke' io.knowhere.PackageSmoke
           done
+      - name: Check distribution license material
+        run: |
+          report=java/target/native-resources/native/knowhere/1/linux-x86_64/missing-licenses.txt
+          if test -s "$report"; then
+            cat "$report"
+            echo "::error::Native runtime verification completed, but dependency license material is incomplete."
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -323,6 +323,12 @@ def license_sources(source: Path):
 def copy_licenses(source: Path, name: str, staging: Path, epoch: int):
     files = license_sources(source)
     missing = []
+    # Build-time inventories cover static and header-only dependencies which
+    # cannot appear in DT_NEEDED. Preserve and surface their missing documents.
+    for relative, document in files.items():
+        if Path(relative).name == MISSING_LICENSES:
+            missing.extend("build dependency: " + line.strip() for line in
+                           document.read_text(encoding="utf-8").splitlines() if line.strip())
     pending = list(files.values())
     examined = set()
     while pending:
