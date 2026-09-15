@@ -76,14 +76,15 @@ For AddressSanitizer, use a separate output directory and add
 
 CMake generates the JNI header directly from the Java declarations with
 `javac --release 11 -h`, then compiles the implementation against that header.
-The ordinary Java JAR and platform JAR are built separately:
+After the tests above pass, build the ordinary Java JAR and platform JAR
+separately without repeating those tests:
 
 ```sh
 . build/Release/generators/conanrun.sh
 python3 java/scripts/bundle_native.py \
   --library "$PWD/build/Release/java/libknowhere_jni.so" \
   --output "$PWD/java/target/native-resources" --platform linux-aarch64
-mvn -f java/pom.xml package -Dnative.platform=linux-aarch64
+mvn -f java/pom.xml package -Dnative.platform=linux-aarch64 -DskipTests
 ```
 
 Use `linux-x86_64` on x86-64. Build on the target architecture. The packager
