@@ -103,8 +103,10 @@ upstream material is reported in `missing-licenses.txt`; supplying only an
 Apache license text does not resolve that report. Complete the upstream
 license package before distributing native artifacts.
 
-The API loader validates the manifest and checksums before loading libraries in
-dependency order. Each JVM extracts into its own temporary directory. There is
+The API loader validates the manifest and all library checksums, extracts the
+complete closure, and loads only the manifest's JNI entry library. The system
+linker loads its dependencies as one group; preloading individual dependencies
+is incorrect when a dependency references symbols exported by Knowhere itself. Each JVM extracts into its own temporary directory. There is
 no silent fallback to `java.library.path`. An explicit absolute
 `-Dknowhere.native.path=...` selects a local development library instead of the
 packaged resources. It is not needed by consumers of the two JARs.

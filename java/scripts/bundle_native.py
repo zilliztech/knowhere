@@ -20,6 +20,8 @@ Requires readelf, ldd, and patchelf on a compatible Linux host. LD_LIBRARY_PATH
 may locate build dependencies; no source file is modified. The output has a
 flat directory, a checksum manifest, and a private ownership marker. Replacing
 an existing bundle requires an intact bundle previously written by this tool.
+The entryLibrary manifest field identifies the root library to load after all
+library files have been verified and extracted together.
 Replacement uses Linux renameat2(RENAME_EXCHANGE), never a delete-then-copy.
 Conan-style licenses directories, source-root LICENSE/NOTICE documents, and
 dpkg-owned copyright/common-license files are copied under licenses/<library-name>.
@@ -373,6 +375,8 @@ def validate_owned_directory(destination: Path, target_platform: str) -> None:
         raise BundleError("Existing bundle has an invalid library list: %s" % destination)
     for name in names:
         validate_name(name)
+    if manifest.get("entryLibrary") not in names:
+        raise BundleError("Existing bundle has an invalid or missing entry library: %s" % destination)
     expected = set(names) | {MANIFEST, OWNER_FILE, LICENSE_INDEX, MISSING_LICENSES}
     files, directories = file_inventory(destination)
     license_index = destination / LICENSE_INDEX
@@ -454,7 +458,8 @@ def publish(closure: Closure, output: Path, target_platform: str) -> Path:
             validate_owned_directory(destination, target_platform)
         with tempfile.TemporaryDirectory(prefix="." + target_platform + ".bundle-", dir=parent) as temporary:
             staging = Path(temporary)
-            properties = ["cAbiVersion=" + ABI_VERSION, "platform=" + target_platform, "libraries=" + ",".join(order)]
+            properties = ["cAbiVersion=" + ABI_VERSION, "platform=" + target_platform,
+                          "entryLibrary=" + closure.root_name, "libraries=" + ",".join(order)]
             license_files = {}
             missing_licenses = []
             missing_license_details = []

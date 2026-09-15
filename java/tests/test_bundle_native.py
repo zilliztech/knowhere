@@ -100,6 +100,8 @@ class BundleNativeTest(unittest.TestCase):
         self.package()
         manifest = self.manifest()
         self.assertEqual(manifest["cAbiVersion"], "1")
+        self.assertEqual(manifest["entryLibrary"], self.library.name)
+        self.assertIn(manifest["entryLibrary"], manifest["libraries"].split(","))
         self.assertEqual(manifest["libraries"], "libfixture_dep.so.7,libknowhere_jni.so")
         self.assertEqual(manifest["missingLicenses"], "")
         license_index = json.loads((self.destination / "license-files.json").read_text(encoding="utf-8"))
@@ -124,7 +126,7 @@ class BundleNativeTest(unittest.TestCase):
         result = run([sys.executable, "-c", "import ctypes,sys; "
                       "library=ctypes.CDLL(sys.argv[1]); "
                       "library.fixture_answer.restype=ctypes.c_int; "
-                      "print(library.fixture_answer())", str(self.destination / self.library.name)], cwd="/")
+                      "print(library.fixture_answer())", str(self.destination / manifest["entryLibrary"])], cwd="/")
         self.assertEqual(result.stdout.strip(), "42")
 
     def test_rejects_wrong_architecture(self):
@@ -280,6 +282,21 @@ class BundleNativeTest(unittest.TestCase):
         result = self.package(success=False)
         self.assertIn("modified", result.stderr.lower())
         self.assertEqual(digest(changed), changed_digest)
+
+    def test_rejects_missing_or_unknown_entry_library(self):
+        self.package()
+        path = self.destination / "manifest.properties"
+        original = path.read_text(encoding="utf-8")
+        for entry in (None, "unlisted.so", "../outside.so"):
+            with self.subTest(entry=entry):
+                lines = [line for line in original.splitlines() if not line.startswith("entryLibrary=")]
+                if entry is not None:
+                    lines.append("entryLibrary=" + entry)
+                modified = "\n".join(lines) + "\n"
+                path.write_text(modified, encoding="utf-8")
+                result = self.package(success=False)
+                self.assertIn("entry", result.stderr.lower())
+                self.assertEqual(path.read_text(encoding="utf-8"), modified)
 
     def test_rejects_same_name_with_different_content(self):
         branches = []

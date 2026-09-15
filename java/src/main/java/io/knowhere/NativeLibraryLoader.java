@@ -18,8 +18,6 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
 
@@ -95,7 +93,9 @@ final class NativeLibraryLoader {
         Properties properties = new Properties();
         properties.load(new ByteArrayInputStream(manifest));
         String libraries = properties.getProperty("libraries");
-        if (!"1".equals(properties.getProperty("cAbiVersion")) || libraries == null || libraries.isEmpty()) {
+        String entryLibrary = properties.getProperty("entryLibrary");
+        if (!"1".equals(properties.getProperty("cAbiVersion")) || libraries == null || libraries.isEmpty()
+                || entryLibrary == null || !entryLibrary.equals("libknowhere_jni.so")) {
             throw new IOException("Invalid Knowhere native manifest");
         }
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -105,7 +105,7 @@ final class NativeLibraryLoader {
         // Each JVM owns an extraction directory; no process can observe another's partial files.
         Path directory = Files.createTempDirectory(cache, "process-");
         directory.toFile().deleteOnExit();
-        List<Path> extracted = new ArrayList<Path>();
+        Path entry = null;
         for (String library : libraries.split(",", -1)) {
             if (!library.matches("[A-Za-z0-9_+.-]+") || library.equals(".") || library.equals("..")) {
                 throw new IOException("Invalid library name in native manifest");
@@ -132,10 +132,18 @@ final class NativeLibraryLoader {
             Path destination = directory.resolve(library);
             Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE);
             destination.toFile().deleteOnExit();
-            extracted.add(destination);
+            if (library.equals(entryLibrary)) {
+                if (entry != null) {
+                    throw new IOException("Duplicate JNI entry library in native manifest");
+                }
+                entry = destination;
+            }
         }
-        for (Path library : extracted) {
-            System.load(library.toAbsolutePath().toString());
+        if (entry == null) {
+            throw new IOException("JNI entry library is absent from the native manifest");
         }
+        // ELF resolves symbols across the complete dependency group. Loading each
+        // dependency separately can fail on symbols supplied by libknowhere itself.
+        System.load(entry.toAbsolutePath().toString());
     }
 }
