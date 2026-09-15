@@ -25,7 +25,7 @@ From the repository root:
 conan install . -of build --build=missing \
   -s compiler.cppstd=20 -s:b compiler.cppstd=20 \
   -o '&:with_c_api=True' -o '&:with_jni=True' -o '&:with_c_api_tests=True'
-cmake -S . -B build/Release \
+cmake -S . -B build/Release -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE="$PWD/build/Release/generators/conan_toolchain.cmake"
 cmake --build build/Release --parallel 2
 ctest --test-dir build/Release --output-on-failure
