@@ -53,6 +53,20 @@ BitwiseAndDotProductResult bitwise_and_dot_product_with_popcount(
         size_t size,
         size_t qb);
 
+template <SIMDLevel SL = SINGLE_SIMD_LEVEL>
+inline void bitwise_q4_batch_4(
+        const uint8_t* query, const uint8_t* const* data, size_t size,
+        BitwiseAndDotProductResult* results) {
+    for (size_t i = 0; i < 4; ++i) {
+        results[i] = bitwise_and_dot_product_with_popcount<SL>(query, data[i], size, 4);
+    }
+}
+
+template <>
+void bitwise_q4_batch_4<SIMDLevel::AVX512>(
+        const uint8_t* query, const uint8_t* const* data, size_t size,
+        BitwiseAndDotProductResult* results);
+
 /**
  * Compute dot product between query and binary data using popcount on XOR.
  *
@@ -131,6 +145,14 @@ void quantize_query_values(
 
 // NONE specializations — scalar fallbacks
 
+// RaBitQ codes and query bit planes are byte-aligned, including their tails.
+// memcpy preserves the unaligned load contract without pointer-alignment UB.
+inline uint64_t load_u64_unaligned(const uint8_t* ptr) {
+    uint64_t value;
+    std::memcpy(&value, ptr, sizeof(value));
+    return value;
+}
+
 template <>
 inline uint64_t bitwise_and_dot_product<SIMDLevel::NONE>(
         const uint8_t* query,
@@ -140,9 +162,9 @@ inline uint64_t bitwise_and_dot_product<SIMDLevel::NONE>(
     uint64_t sum = 0;
     size_t offset = 0;
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *(const uint64_t*)(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         for (int j = 0; j < qb; j++) {
-            const auto qv = *(const uint64_t*)(query + j * size + offset);
+            const auto qv = load_u64_unaligned(query + j * size + offset);
             sum += popcount64(qv & yv) << j;
         }
     }
@@ -167,10 +189,10 @@ inline BitwiseAndDotProductResult bitwise_and_dot_product_with_popcount<
     uint64_t popcount_sum = 0;
     size_t offset = 0;
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *(const uint64_t*)(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         popcount_sum += popcount64(yv);
         for (int j = 0; j < qb; j++) {
-            const auto qv = *(const uint64_t*)(query + j * size + offset);
+            const auto qv = load_u64_unaligned(query + j * size + offset);
             dot_product += popcount64(qv & yv) << j;
         }
     }
@@ -194,9 +216,9 @@ inline uint64_t bitwise_xor_dot_product<SIMDLevel::NONE>(
     uint64_t sum = 0;
     size_t offset = 0;
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *(const uint64_t*)(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         for (int j = 0; j < qb; j++) {
-            const auto qv = *(const uint64_t*)(query + j * size + offset);
+            const auto qv = load_u64_unaligned(query + j * size + offset);
             sum += popcount64(qv ^ yv) << j;
         }
     }
@@ -215,7 +237,7 @@ inline uint64_t popcount<SIMDLevel::NONE>(const uint8_t* data, size_t size) {
     uint64_t sum = 0;
     size_t offset = 0;
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = *(const uint64_t*)(data + offset);
+        const auto yv = load_u64_unaligned(data + offset);
         sum += popcount64(yv);
     }
     for (; offset < size; ++offset) {
@@ -357,6 +379,15 @@ inline float ip_scalar(
         size_t ex_bits,
         float cb) {
     float result = 0.0f;
+    if (ex_bits == 8) {
+        // RBQ9 is byte-aligned, including the last dimension. Do not require
+        // trailing factor bytes for the scalar reference or SIMD tail.
+        for (size_t i = start; i < d; ++i) {
+            const int sb = (sign_bits[i / 8] >> (i % 8)) & 1;
+            result += rotated_q[i] * (static_cast<float>((sb << 8) + ex_code[i]) + cb);
+        }
+        return result;
+    }
     const int sign_shift = static_cast<int>(ex_bits);
     const uint64_t code_mask = (1ULL << ex_bits) - 1;
     for (size_t i = start; i < d; i++) {
