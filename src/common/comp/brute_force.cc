@@ -152,8 +152,7 @@ BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset
         }
     }
     // if emb_list, nq = num of emb_list; if not, nq = num of query vectors
-    auto nq = metric_is_emb_list ? EmbListOffset(query_emb_list_offset, query_dataset->GetRows()).num_el()
-                                 : query_dataset->GetRows();
+    auto nq = metric_is_emb_list ? GetEmbListCount(query_dataset) : static_cast<size_t>(query_dataset->GetRows());
     int topk = cfg.k.value();
     auto labels = std::make_unique<int64_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
@@ -503,8 +502,10 @@ BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_
         }
         auto el_sub_metric_type = el_sub_metric_type_or.value();
 
-        auto base_el_offset = EmbListOffset(base_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET), nb);
-        auto query_el_offset = EmbListOffset(query_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET), nq);
+        auto base_el_offset = EmbListOffset(base_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET), nb,
+                                            GetEmbListCount(base_dataset));
+        auto query_el_offset = EmbListOffset(query_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET), nq,
+                                             GetEmbListCount(query_dataset));
         auto num_query_el = query_el_offset.num_el();
 
         auto pool = ThreadPool::GetGlobalSearchThreadPool();
@@ -779,7 +780,8 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
             larger_is_closer = false;
         }
 
-        auto query_el_offset = EmbListOffset(query_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET), nq);
+        auto query_el_offset = EmbListOffset(query_dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET), nq,
+                                             GetEmbListCount(query_dataset));
         auto num_query_el = query_el_offset.num_el();
 
         auto pool = ThreadPool::GetGlobalSearchThreadPool();

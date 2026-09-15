@@ -76,10 +76,10 @@ class IvfIndexNode : public IndexNode {
     }
     Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                 bool use_knowhere_build_pool) override {
+                 size_t num_el, bool use_knowhere_build_pool) override {
         if constexpr (std::is_same_v<IndexType, faiss::IndexIVFFlat> ||
                       std::is_same_v<IndexType, faiss::IndexIVFFlatCC>) {
-            return IndexNode::BuildEmbList(dataset, std::move(cfg), lims, num_rows, use_knowhere_build_pool);
+            return IndexNode::BuildEmbList(dataset, std::move(cfg), lims, num_rows, num_el, use_knowhere_build_pool);
         }
 
         LOG_KNOWHERE_ERROR_ << "BuildEmbList not implemented for current index type";
@@ -807,40 +807,33 @@ IvfIndexNode<DataType, IndexType>::AddEmbList(const DataSetPtr dataset, std::sha
     auto sub_metric_type = sub_metric_type_or.value();
     config.metric_type = sub_metric_type;
 
-    // 2. update emb_list_offset and id map
+    // 2. validate the complete appended offset window before updating the id map.
+    const auto append_el_count = GetEmbListCount(dataset);
     {
         FairWriteLockGuard guard(*this->base_index_lock_);
-        auto old_num_rows = Count();
-        auto old_num_el = emb_list_offset_->num_el();
-        auto dataset_rows = dataset->GetRows();
-        auto new_num_rows = old_num_rows + dataset_rows;
-        if (lims[0] != old_num_rows) {
-            LOG_KNOWHERE_WARNING_ << "lims[0] is not equal to the total_cnt of the old index";
+        const auto old_num_rows = emb_list_offset_->offset.back();
+        const auto old_num_el = emb_list_offset_->num_el();
+        const auto new_num_rows = old_num_rows + num_rows;
+        if (lims[0] != old_num_rows || lims[append_el_count] != new_num_rows) {
+            LOG_KNOWHERE_WARNING_ << "emb list offsets do not match the appended vector range";
             return Status::emb_list_inner_error;
         }
-        size_t idx = 1;
-        internal_offset_to_most_external_id_.resize(new_num_rows);
-        while (lims[idx] < new_num_rows) {
-            if (lims[idx] < lims[idx - 1]) {
-                LOG_KNOWHERE_WARNING_ << "lims is not increasing, lims[" << idx << "] = " << lims[idx] << " < lims["
-                                      << idx - 1 << "] = " << lims[idx - 1];
+        for (size_t i = 1; i <= append_el_count; ++i) {
+            if (lims[i] < lims[i - 1]) {
+                LOG_KNOWHERE_WARNING_ << "emb list offsets must be nondecreasing";
                 return Status::emb_list_inner_error;
             }
-            emb_list_offset_->offset.push_back(lims[idx]);
-            auto cur_el_id = old_num_el + idx - 1;
-            std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], lims[idx] - lims[idx - 1],
-                        cur_el_id);
-            idx++;
         }
-        if (lims[idx] != new_num_rows) {
-            LOG_KNOWHERE_WARNING_ << "lims should end with the total_cnt of the new index, lims[" << idx
-                                  << "] = " << lims[idx] << " != " << new_num_rows;
-            return Status::emb_list_inner_error;
+        internal_offset_to_most_external_id_.resize(new_num_rows);
+        for (size_t i = 1; i <= append_el_count; ++i) {
+            emb_list_offset_->offset.push_back(lims[i]);
+            std::fill_n(internal_offset_to_most_external_id_.begin() + lims[i - 1], lims[i] - lims[i - 1],
+                        old_num_el + i - 1);
         }
-        emb_list_offset_->offset.push_back(new_num_rows);
-        auto cur_el_id = old_num_el + idx - 1;
-        std::fill_n(internal_offset_to_most_external_id_.begin() + lims[idx - 1], new_num_rows - lims[idx - 1],
-                    cur_el_id);
+    }
+
+    if (num_rows == 0) {
+        return Status::success;
     }
 
     // 3. add to index

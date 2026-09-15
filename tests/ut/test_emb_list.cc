@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -2177,4 +2178,83 @@ TEST_CASE("Test brute force anniterator on chunk", "[on_chunk]") {
             }
         }
     }
+}
+
+TEST_CASE("Embedding-list offsets use explicit counts", "[emb_list][trailing_empty]") {
+    std::array<size_t, 4> lims = {0, 1, 1, 1};
+    std::array<float, 2> tensor = {1.0f, 0.0f};
+    auto dataset = knowhere::GenDataSet(1, 2, tensor.data());
+    dataset->Set(knowhere::meta::EMB_LIST_OFFSET, static_cast<const size_t*>(lims.data()));
+    dataset->Set(knowhere::meta::NQ, int64_t{99});
+    REQUIRE_THROWS_AS(knowhere::GetEmbListCount(dataset), std::invalid_argument);
+    dataset->Set(knowhere::meta::EMB_LIST_COUNT, int64_t{3});
+
+    auto converted = knowhere::data_type_conversion<knowhere::fp32, knowhere::fp16>(*dataset);
+    REQUIRE(knowhere::GetEmbListCount(converted) == 3);
+    auto converted_lims = converted->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+    REQUIRE(std::vector<size_t>(converted_lims, converted_lims + 4) == std::vector<size_t>{0, 1, 1, 1});
+    REQUIRE(knowhere::EmbListOffset(lims.data(), 1, 3).num_el() == 3);
+
+    std::array<size_t, 4> empty_lims = {0, 0, 0, 0};
+    REQUIRE(knowhere::EmbListOffset(empty_lims.data(), 0, 3).num_el() == 3);
+    REQUIRE_THROWS_AS(knowhere::EmbListOffset(nullptr, 1, 3), std::invalid_argument);
+    REQUIRE_THROWS_AS(knowhere::EmbListOffset(lims.data(), 1, 0), std::invalid_argument);
+    REQUIRE_THROWS_AS(knowhere::EmbListOffset(lims.data(), 2, 3), std::invalid_argument);
+    std::array<size_t, 4> decreasing_lims = {0, 2, 1, 1};
+    REQUIRE_THROWS_AS(knowhere::EmbListOffset(decreasing_lims.data(), 1, 3), std::invalid_argument);
+}
+
+TEST_CASE("Growing EmbList retains trailing empty list ids", "[emb_list][trailing_empty]") {
+    constexpr int64_t dim = 2;
+    auto make_dataset = [](int64_t rows, float* tensor, const size_t* offsets, int64_t count) {
+        auto dataset = knowhere::GenDataSet(rows, dim, tensor);
+        dataset->Set(knowhere::meta::EMB_LIST_OFFSET, offsets);
+        dataset->Set(knowhere::meta::EMB_LIST_COUNT, count);
+        return dataset;
+    };
+    std::array<float, 64 * dim> base_tensor{};
+    for (size_t i = 0; i < base_tensor.size(); ++i) {
+        base_tensor[i] = static_cast<float>(i);
+    }
+    std::array<size_t, 4> base_lims = {0, 64, 64, 64};
+    auto base = make_dataset(64, base_tensor.data(), base_lims.data(), 3);
+    knowhere::Json conf = {{knowhere::meta::DIM, dim},
+                           {knowhere::meta::METRIC_TYPE, knowhere::metric::MAX_SIM_L2},
+                           {knowhere::meta::TOPK, 1},
+                           {knowhere::indexparam::NLIST, 1},
+                           {knowhere::indexparam::NPROBE, 1}};
+    auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, version)
+                     .value();
+    REQUIRE(index.Build(base, conf, false) == knowhere::Status::success);
+
+    std::array<float, 2> appended_tensor = {100.0f, 100.0f};
+    std::array<size_t, 4> appended_lims = {64, 65, 65, 65};
+    auto appended = make_dataset(1, appended_tensor.data(), appended_lims.data(), 3);
+    REQUIRE(index.Add(appended, conf, false) == knowhere::Status::success);
+    std::array<size_t, 3> empty_lims = {65, 65, 65};
+    auto empty = make_dataset(0, appended_tensor.data(), empty_lims.data(), 2);
+    REQUIRE(index.Add(empty, conf, false) == knowhere::Status::success);
+
+    std::array<float, 2> last_tensor = {200.0f, 200.0f};
+    std::array<size_t, 2> last_lims = {65, 66};
+    auto last = make_dataset(1, last_tensor.data(), last_lims.data(), 1);
+    REQUIRE(index.Add(last, conf, false) == knowhere::Status::success);
+    std::array<size_t, 2> query_lims = {0, 1};
+    auto query = make_dataset(1, last_tensor.data(), query_lims.data(), 1);
+    auto result = index.Search(query, conf, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == 8);
+    REQUIRE(result.value()->GetDistance()[0] == 0.0f);
+
+    knowhere::BinarySet serialized;
+    REQUIRE(index.Serialize(serialized) == knowhere::Status::success);
+    auto metadata = serialized.GetByName(knowhere::meta::EMB_LIST_META);
+    REQUIRE(metadata != nullptr);
+    const std::vector<size_t> expected_offsets = {0, 64, 64, 64, 65, 65, 65, 65, 65, 66};
+    REQUIRE(metadata->size == (expected_offsets.size() + 1) * sizeof(size_t));
+    std::vector<size_t> offsets(expected_offsets.size());
+    std::memcpy(offsets.data(), metadata->data.get() + sizeof(size_t), offsets.size() * sizeof(size_t));
+    REQUIRE(offsets == expected_offsets);
 }
