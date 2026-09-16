@@ -120,9 +120,6 @@ build/serialize/deserialize/search and brute-force calls.
 The [C and Java bindings workflow](../.github/workflows/jni.yaml) runs the
 Linux x86-64 native tests, DiskANN round trip and clean JRE 11/17/21 package
 checks. It tests the bindings independently of any artifact publication.
-Dependency license gaps are reported and retained as CI artifacts. They do not
-fail this runtime-validation workflow; artifact publication must check that
-the missing-license report is empty before distributing native artifacts.
 
 ## Java usage
 
