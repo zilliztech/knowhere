@@ -71,6 +71,7 @@ EXTRA_COMPILE_ARGS = ["-fPIC", "-std=gnu++17"]
 EXTRA_LINK_ARGS = [
     "-lknowhere",
     "-lmilvus-common",
+    "-Wl,-rpath,$ORIGIN",
     f"-Wl,-rpath,{BUILD_DIR}",
     f"-Wl,-rpath,{MILVUS_COMMON_LIB_DIR}",
 ]

@@ -154,7 +154,7 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
                                                                   knowhere::BitsetViewIDSelector>;
 
                 searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       *bw_idselector, kAlpha,       params};
+                                       *bw_idselector, kAlpha,       params, params->use_adaptive_filter};
 
                 local_stats = searcher.search(k, distances + i * k, labels + i * k);
             } else {
@@ -167,7 +167,7 @@ IndexHNSWWrapper::search(idx_t n, const float* __restrict x, idx_t k, float* __r
                                                                   knowhere::BitsetViewIDSelector>;
 
                 searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       *bw_idselector, kAlpha,       params};
+                                       *bw_idselector, kAlpha,       params, params->use_adaptive_filter};
 
                 local_stats = searcher.search(k, distances + i * k, labels + i * k);
             }
@@ -321,7 +321,7 @@ IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_
                                                                   knowhere::BitsetViewIDSelector>;
 
                 searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       *bw_idselector, kAlpha,       params};
+                                       *bw_idselector, kAlpha,       params, params->use_adaptive_filter};
 
                 local_stats = searcher.range_search(radius, &res_min);
             } else {
@@ -334,7 +334,7 @@ IndexHNSWWrapper::range_search(idx_t n, const float* __restrict x, float radius_
                                                                   knowhere::BitsetViewIDSelector>;
 
                 searcher_type searcher{hnsw,           *(dis.get()), graph_visitor, bitset_visited_nodes,
-                                       *bw_idselector, kAlpha,       params};
+                                       *bw_idselector, kAlpha,       params, params->use_adaptive_filter};
 
                 local_stats = searcher.range_search(radius, &res_min);
             }

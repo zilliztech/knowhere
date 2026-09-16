@@ -33,7 +33,7 @@ struct HnswSearchThresholds {
 // This may be applicable in case of very large topk values or
 //   extremely high filtering levels.
 std::optional<bool>
-WhetherPerformBruteForceSearch(const faiss::Index* index, const BaseConfig& cfg, const BitsetView& bitset);
+WhetherPerformBruteForceSearch(const faiss::Index* index, const FaissHnswConfig& cfg, const BitsetView& bitset);
 
 // Decides whether a brute force should be used instead of a regular HNSW range search.
 // This may be applicable in case of very large topk values or

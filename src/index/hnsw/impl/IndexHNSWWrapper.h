@@ -29,6 +29,8 @@ struct SearchParametersHNSWWrapper : public faiss::cppcontrib::knowhere::SearchP
     knowhere::feder::hnsw::FederResult* feder = nullptr;
     // filtering parameter
     float kAlpha = 1.0f;
+    // Use a predicate-aware local one/two-hop traversal instead of KAlpha.
+    bool use_adaptive_filter = false;
 
     inline ~SearchParametersHNSWWrapper() {
     }
