@@ -145,14 +145,6 @@ void quantize_query_values(
 
 // NONE specializations — scalar fallbacks
 
-// RaBitQ codes and query bit planes are byte-aligned, including their tails.
-// memcpy preserves the unaligned load contract without pointer-alignment UB.
-inline uint64_t load_u64_unaligned(const uint8_t* ptr) {
-    uint64_t value;
-    std::memcpy(&value, ptr, sizeof(value));
-    return value;
-}
-
 template <>
 inline uint64_t bitwise_and_dot_product<SIMDLevel::NONE>(
         const uint8_t* query,
@@ -162,9 +154,11 @@ inline uint64_t bitwise_and_dot_product<SIMDLevel::NONE>(
     uint64_t sum = 0;
     size_t offset = 0;
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = load_u64_unaligned(data + offset);
+        uint64_t yv;
+        std::memcpy(&yv, data + offset, sizeof(yv));
         for (int j = 0; j < qb; j++) {
-            const auto qv = load_u64_unaligned(query + j * size + offset);
+            uint64_t qv;
+            std::memcpy(&qv, query + j * size + offset, sizeof(qv));
             sum += popcount64(qv & yv) << j;
         }
     }
@@ -189,10 +183,12 @@ inline BitwiseAndDotProductResult bitwise_and_dot_product_with_popcount<
     uint64_t popcount_sum = 0;
     size_t offset = 0;
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = load_u64_unaligned(data + offset);
+        uint64_t yv;
+        std::memcpy(&yv, data + offset, sizeof(yv));
         popcount_sum += popcount64(yv);
         for (int j = 0; j < qb; j++) {
-            const auto qv = load_u64_unaligned(query + j * size + offset);
+            uint64_t qv;
+            std::memcpy(&qv, query + j * size + offset, sizeof(qv));
             dot_product += popcount64(qv & yv) << j;
         }
     }
@@ -216,9 +212,11 @@ inline uint64_t bitwise_xor_dot_product<SIMDLevel::NONE>(
     uint64_t sum = 0;
     size_t offset = 0;
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = load_u64_unaligned(data + offset);
+        uint64_t yv;
+        std::memcpy(&yv, data + offset, sizeof(yv));
         for (int j = 0; j < qb; j++) {
-            const auto qv = load_u64_unaligned(query + j * size + offset);
+            uint64_t qv;
+            std::memcpy(&qv, query + j * size + offset, sizeof(qv));
             sum += popcount64(qv ^ yv) << j;
         }
     }
@@ -237,7 +235,8 @@ inline uint64_t popcount<SIMDLevel::NONE>(const uint8_t* data, size_t size) {
     uint64_t sum = 0;
     size_t offset = 0;
     for (size_t step = 64 / 8; offset + step <= size; offset += step) {
-        const auto yv = load_u64_unaligned(data + offset);
+        uint64_t yv;
+        std::memcpy(&yv, data + offset, sizeof(yv));
         sum += popcount64(yv);
     }
     for (; offset < size; ++offset) {
