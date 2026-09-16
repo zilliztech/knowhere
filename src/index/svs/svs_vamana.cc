@@ -167,6 +167,9 @@ class SvsVamanaIndexNode : public IndexNode {
                 }));
             }
             WaitAllSuccess(futs);
+        } catch (const folly::FutureCancellation& e) {
+            LOG_KNOWHERE_INFO_ << "cancelled by the caller: " << e.what();
+            return expected<DataSetPtr>::Err(Status::cancelled, e.what());
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
@@ -243,6 +246,9 @@ class SvsVamanaIndexNode : public IndexNode {
             auto res = GenResultDataSet(nq, std::move(range_search_result));
             MapSearchResultIdsToOutIds(res);
             return res;
+        } catch (const folly::FutureCancellation& e) {
+            LOG_KNOWHERE_INFO_ << "cancelled by the caller: " << e.what();
+            return expected<DataSetPtr>::Err(Status::cancelled, e.what());
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "error inner faiss: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());

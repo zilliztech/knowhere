@@ -1840,10 +1840,11 @@ TEST_CASE("Test DiskANN Search Cancellation", "[diskann][cancellation]") {
 
         auto results = diskann.Search(query_ds, search_gen(), nullptr, &op_context);
         REQUIRE(!results.has_value());
-        // DISKANN returns diskann_inner_error, AISAQ returns aisaq_error
-        auto expected_error =
-            (index_type == "AISAQ") ? knowhere::Status::aisaq_error : knowhere::Status::diskann_inner_error;
-        REQUIRE((results.error() == expected_error || results.error() == knowhere::Status::cardinal_inner_error));
+        // A cancellation the caller asked for is reported as such, not as a
+        // DiskANN or AiSAQ engine failure. Cardinal still reports its own
+        // inner error until the matching change lands there.
+        REQUIRE((results.error() == knowhere::Status::cancelled ||
+                 results.error() == knowhere::Status::cardinal_inner_error));
     }
 
     SECTION("Test Search without cancellation should succeed") {
