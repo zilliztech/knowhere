@@ -33,25 +33,23 @@ public class DiskAnnIT {
         try {
             int rows = 1000;
             int dimensions = 32;
+            int queries = 20;
+            int topK = 5;
             Path source = directory.resolve("raw.bin");
             Path prefix = directory.resolve("index");
+            ByteBuffer base = KnowhereTest.bytes(rows * dimensions * Float.BYTES);
             ByteBuffer fileData = ByteBuffer.allocate(8 + rows * dimensions * Float.BYTES)
                     .order(ByteOrder.nativeOrder());
             fileData.putInt(rows).putInt(dimensions);
             Random random = new Random(42);
             for (int row = 0; row < rows; row++) {
                 for (int column = 0; column < dimensions; column++) {
-                    float value = 0f;
-                    if (row == 1 && column == 0) {
-                        value = 1f;
-                    } else if (row == 2 && column == 1) {
-                        value = 2f;
-                    } else if (row >= 3) {
-                        value = 10f + random.nextFloat();
-                    }
+                    float value = random.nextFloat();
+                    base.putFloat(value);
                     fileData.putFloat(value);
                 }
             }
+            base.flip();
             fileData.flip();
             try (FileChannel file = FileChannel.open(source, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
                 while (fileData.hasRemaining()) {
@@ -74,21 +72,20 @@ public class DiskAnnIT {
                 data.close();
                 assertEquals(rows, loaded.rows());
                 assertEquals(dimensions, loaded.dimensions());
-                ByteBuffer query = KnowhereTest.bytes(dimensions * Float.BYTES);
-                ByteBuffer ids = KnowhereTest.bytes(16);
-                ByteBuffer distances = KnowhereTest.bytes(8);
+                ByteBuffer query = KnowhereTest.bytes(queries * dimensions * Float.BYTES);
+                for (int row = 0; row < queries; row++) {
+                    for (int column = 0; column < dimensions; column++) {
+                        query.putFloat(base.getFloat((row * 17 * dimensions + column) * Float.BYTES) + 0.001f);
+                    }
+                }
+                query.flip();
                 String search = "{" + common + ",\"search_list_size\":1000,\"beamwidth\":4}";
-                loaded.search(query, 1, dimensions, 2, null, 0, ids, distances, search);
-                assertEquals(0, ids.getLong(0));
-                assertEquals(1, ids.getLong(8));
-                assertEquals(0f, distances.getFloat(0), 0f);
-                assertEquals(1f, distances.getFloat(4), 0f);
-                ByteBuffer excluded = KnowhereTest.bytes((rows + 7) / 8).put(0, (byte) 1);
-                loaded.search(query, 1, dimensions, 2, excluded, rows, ids, distances, search);
-                assertEquals(1, ids.getLong(0));
-                assertEquals(2, ids.getLong(8));
-                assertEquals(1f, distances.getFloat(0), 0f);
-                assertEquals(4f, distances.getFloat(4), 0f);
+                assertSearch(loaded, base, rows, query, queries, dimensions, topK, null, search);
+                ByteBuffer excluded = KnowhereTest.bytes((rows + 7) / 8);
+                for (int row = 0; row < 100; row++) {
+                    excluded.put(row / 8, (byte) (excluded.get(row / 8) | (1 << (row % 8))));
+                }
+                assertSearch(loaded, base, rows, query, queries, dimensions, topK, excluded, search);
             }
         } finally {
             List<Path> paths = new ArrayList<Path>();
@@ -103,6 +100,55 @@ public class DiskAnnIT {
                 Files.delete(path);
             }
         }
+    }
+
+    private static void assertSearch(KnowhereIndex index, ByteBuffer base, int rows, ByteBuffer query,
+            int queries, int dimensions, int topK, ByteBuffer excluded, String parameters) {
+        ByteBuffer expectedIds = KnowhereTest.bytes(queries * topK * Long.BYTES);
+        ByteBuffer expectedDistances = KnowhereTest.bytes(queries * topK * Float.BYTES);
+        ByteBuffer ids = KnowhereTest.bytes(expectedIds.capacity());
+        ByteBuffer distances = KnowhereTest.bytes(expectedDistances.capacity());
+        long bits = excluded == null ? 0 : rows;
+        Knowhere.bruteForce(DType.FLOAT32, base, rows, query, queries, dimensions, topK,
+                excluded, bits, expectedIds, expectedDistances, "{\"metric_type\":\"L2\"}");
+        index.search(query, queries, dimensions, topK, excluded, bits, ids, distances, parameters);
+        int hits = 0;
+        for (int row = 0; row < queries; row++) {
+            float previousDistance = -1f;
+            for (int k = 0; k < topK; k++) {
+                int offset = row * topK + k;
+                long id = ids.getLong(offset * Long.BYTES);
+                assertTrue("Invalid row ID: " + id, id >= 0 && id < rows);
+                if (excluded != null) {
+                    assertEquals("Excluded row returned: " + id,
+                            0, excluded.get((int) id / 8) & (1 << ((int) id % 8)));
+                }
+                for (int earlier = 0; earlier < k; earlier++) {
+                    assertNotEquals("Duplicate row ID", id, ids.getLong((row * topK + earlier) * Long.BYTES));
+                }
+                float distance = distances.getFloat(offset * Float.BYTES);
+                double squaredDistance = 0;
+                for (int column = 0; column < dimensions; column++) {
+                    double difference = (double) query.getFloat((row * dimensions + column) * Float.BYTES)
+                            - base.getFloat(((int) id * dimensions + column) * Float.BYTES);
+                    squaredDistance += difference * difference;
+                }
+                assertEquals("Distance does not match row " + id, squaredDistance, distance, 0.0001);
+                assertTrue("Distances are not sorted", distance >= previousDistance);
+                previousDistance = distance;
+                for (int truth = 0; truth < topK; truth++) {
+                    if (id == expectedIds.getLong((row * topK + truth) * Long.BYTES)) {
+                        hits++;
+                        break;
+                    }
+                }
+            }
+        }
+        // DiskANN is approximate; isolated points need not be reachable from its graph entry point.
+        // Follow the native DiskANN tests: compare recall with brute force on distributed samples.
+        assertTrue("DiskANN recall: " + hits + "/" + queries * topK, hits >= queries * topK * 0.95);
+        System.out.println("DiskANN " + (excluded == null ? "unfiltered" : "filtered")
+                + " recall: " + hits + "/" + queries * topK);
     }
 
     private static String quoted(Path path) {

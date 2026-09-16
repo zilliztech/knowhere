@@ -185,7 +185,10 @@ zero for the supplied base batch.
 The tests exercise five dtypes with FLAT/BIN_FLAT and brute force, HNSW and
 IVF_FLAT round trips, filtering, exact fixed examples, invalid inputs, Unicode
 blob names, input retention, chunk bounds, double close and concurrent close.
-DiskANN has a separate local-file test when enabled. The packager tests compile
+DiskANN has a separate local-file test when enabled. It checks recall against
+brute force on uniformly distributed samples, plus IDs, distances and exclusions;
+its approximate graph does not guarantee exact neighbors for isolated points.
+The packager tests compile
 small real ELF libraries to exercise dependency resolution and relocation;
 those tests do not substitute for the Knowhere native tests or packaged JNI
 smoke test. Only combinations that pass the native tests on a target platform
