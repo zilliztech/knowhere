@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2020 Zilliz. All rights reserved.
+// Copyright (C) 2019-2026 Zilliz. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance
 // with the License. You may obtain a copy of the License at
@@ -13,25 +13,30 @@
 #define SEARCH_HINT_H
 
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 namespace knowhere {
 
-// SearchHint is a global-index head-index hint for a graph search: the local row
-// range of a matched centroid within the segment being searched (id_offset = start
-// row, id_range = row count) and the query-to-centroid distance. The graph index
-// uses these as entry-point seeds (and an ordering/bound signal) for the query.
-//
-// This is the shared on-the-wire type carried in the query DataSet under
-// kSearchHintsField as std::vector<std::vector<SearchHint>> (outer = per query).
-// Producers and consumers must use this exact definition for the std::any
-// round-trip to succeed.
+// Request-only hints; offsets are public (segment) row IDs, not index storage IDs.
 struct SearchHint {
-    int32_t id_offset = 0;
-    int32_t id_range = 0;
+    int64_t offset = 0;
+    int64_t count = 0;
+    // Finite query-to-centroid distance: smaller values prioritize graph seeds.
+    // This is not the distance to an individual row; BF ignores it.
     float id_distance = 0.0f;
 };
 
-// DataSet meta key for per-query search hints.
+struct QuerySearchHints {
+    std::vector<SearchHint> ranges;
+};
+
+// One optional entry per query: nullopt preserves ordinary search; empty ranges
+// are an explicit hint with no candidates. Searchers interpret ranges internally.
+using BatchSearchHints = std::vector<std::optional<QuerySearchHints>>;
+
+// The single DataSet payload is std::shared_ptr<const BatchSearchHints>.
+// Use DataSet::SetSearchHints/GetSearchHints to write/read its immutable snapshot.
 constexpr const char* kSearchHintsField = "search_hints";
 
 }  // namespace knowhere
