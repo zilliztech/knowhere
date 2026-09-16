@@ -27,6 +27,9 @@ jobs:
   linux-x86_64:
     runs-on: ubuntu-22.04
     timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash
     env:
       CC: gcc-12
       CXX: g++-12
