@@ -39,9 +39,9 @@ class Utf8 {
             throw std::bad_alloc();
         }
         struct Release {
-            JNIEnv* env;
-            jstring input;
-            const jchar* data;
+            JNIEnv* env = nullptr;
+            jstring input = nullptr;
+            const jchar* data = nullptr;
             ~Release() {
                 env->ReleaseStringChars(input, data);
             }
@@ -152,8 +152,8 @@ Call(JNIEnv* env, T failure, Function function) noexcept {
 }
 
 struct Region {
-    void* data;
-    uint64_t bytes;
+    void* data = nullptr;
+    uint64_t bytes = 0;
     Region(JNIEnv* env, jobject buffer, bool writable = false) {
         if (buffer == nullptr) {
             throw std::invalid_argument("A direct ByteBuffer is required");

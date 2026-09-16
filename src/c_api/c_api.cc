@@ -31,7 +31,7 @@ class Failure : public std::runtime_error {
  public:
     Failure(int32_t code, const std::string& message) : std::runtime_error(message), code(code) {
     }
-    int32_t code;
+    int32_t code = 0;
 };
 
 void
@@ -90,8 +90,8 @@ Boundary(F&& action) noexcept {
 struct IndexResource {
     enum class State { Empty, Failed, Ready };
     std::mutex mutex;
-    int32_t dtype;
-    bool file_build;
+    int32_t dtype = 0;
+    bool file_build = false;
     State state = State::Empty;
     // Keep retained storage alive until after the index destructor runs.
     std::shared_ptr<uint8_t[]> build_data;
