@@ -39,10 +39,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      # Build and run the JUnit suite on the minimum supported JDK. The packaged
+      # JARs are then exercised on every supported LTS runtime below.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "11"
       - name: Install build tools
         run: |
           sudo apt-get update
@@ -114,9 +116,14 @@ jobs:
           mkdir -p "$smoke/io/knowhere"
           cp java/target/knowhere-jni-*.jar "$smoke/"
           cp java/target/test-classes/io/knowhere/PackageSmoke.class "$smoke/io/knowhere/"
-          for version in 11 17 21; do
-            docker run --rm -v "$smoke:/smoke:ro" -w /smoke "eclipse-temurin:$version-jre-jammy" \
-              sh -c 'LD_PRELOAD="$JAVA_HOME/lib/libjsig.so" exec java -Xcheck:jni -cp "/smoke/*:/smoke" io.knowhere.PackageSmoke' 2>&1 | tee "build/verification/jre-$version.log"
+          for version in 11 17 21 25; do
+            native_access=""
+            if [ "$version" -ge 24 ]; then
+              # JEP 472: JDK 24+ warns when class-path code loads JNI libraries without native access.
+              native_access="--enable-native-access=ALL-UNNAMED"
+            fi
+            docker run --rm -e NATIVE_ACCESS="$native_access" -v "$smoke:/smoke:ro" -w /smoke "eclipse-temurin:$version-jre-jammy" \
+              sh -c 'LD_PRELOAD="$JAVA_HOME/lib/libjsig.so" exec java -Xcheck:jni $NATIVE_ACCESS -cp "/smoke/*:/smoke" io.knowhere.PackageSmoke' 2>&1 | tee "build/verification/jre-$version.log"
           done
           python java/scripts/check_jni_diagnostics.py build/verification/jre-*.log
       - uses: actions/upload-artifact@v4

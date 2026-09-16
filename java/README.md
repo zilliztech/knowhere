@@ -71,6 +71,16 @@ Loading `libjsig` after JVM initialization does not establish signal chaining.
 JDK 16 and later may report Folly's use of the deprecated `signal()` chaining
 entry point; the runtime checks still verify that JVM handlers remain installed.
 
+## Supported Java versions
+
+The API JAR contains Java 11 bytecode (`javac --release 11`) and works unchanged
+on later runtimes; the packaged JARs are verified on Temurin 11, 17, 21 and 25.
+On JDK 24 and later, loading a JNI library is a restricted operation
+([JEP 472](https://openjdk.org/jeps/472)). Start the JVM with
+`--enable-native-access=ALL-UNNAMED` (or name the module that contains
+`io.knowhere` when it is on the module path); otherwise the JVM prints a warning
+at load time, and a future release will refuse the call.
+
 For AddressSanitizer, use a separate output directory and add
 `-o '&:with_asan=True'`. Do not package sanitizer libraries for release use.
 
@@ -118,7 +128,7 @@ library paths to verify the resulting package. Its checks perform real FLAT
 build/serialize/deserialize/search and brute-force calls.
 
 The [C and Java bindings workflow](../.github/workflows/jni.yaml) runs the
-Linux x86-64 native tests, DiskANN round trip and clean JRE 11/17/21 package
+Linux x86-64 native tests, DiskANN round trip and clean JRE 11/17/21/25 package
 checks. It tests the bindings independently of any artifact publication.
 
 ## Java usage
