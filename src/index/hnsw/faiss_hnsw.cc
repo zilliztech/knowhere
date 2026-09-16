@@ -1370,6 +1370,10 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
         if (indexes.size() > 1) {
             PrepareBitsetForSubIndex(bitset, index_id);
         }
+        // An absent bitset means no filtering, but has zero size and count.
+        // Use the selected index's population unless the prepared view filters it.
+        const size_t eligible_count =
+            bitset.empty() ? static_cast<size_t>(indexes[index_id]->ntotal) : bitset.size() - bitset.count();
 
         feder::hnsw::FederResultUniq feder_result;
         if (hnsw_cfg.trace_visit.value()) {
@@ -1469,7 +1473,7 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
                             }
                             real_topk++;
                         }
-                        if (std::cmp_less(real_topk, k) && real_topk < bitset.size() - bitset.count() &&
+                        if (std::cmp_less(real_topk, k) && real_topk < eligible_count &&
                             bf_index_wrapper_ptr != nullptr && !hnsw_cfg.disable_fallback_brute_force.value()) {
                             LOG_KNOWHERE_WARNING_ << "required topk: " << k
                                                   << ", but the actual num of results got from hnsw: " << real_topk
