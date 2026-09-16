@@ -34,8 +34,6 @@ jobs:
       CC: gcc-12
       CXX: g++-12
       FC: gfortran-12
-      OMP_NUM_THREADS: "2"
-      OPENBLAS_NUM_THREADS: "2"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -95,7 +93,7 @@ jobs:
       - name: Build native bindings
         run: |
           cmake -S . -B build/Release -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_TOOLCHAIN_FILE="$PWD/build/Release/generators/conan_toolchain.cmake"
-          cmake --build build/Release --parallel 2
+          cmake --build build/Release --parallel "$(nproc)"
       - name: Test C ABI and JNI
         run: |
           source build/Release/generators/conanrun.sh
