@@ -15,36 +15,38 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <faiss/cppcontrib/knowhere/utils/hamming.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/io.h>
 #include <faiss/impl/io_macros.h>
-#include <faiss/cppcontrib/knowhere/utils/hamming.h>
 
 #include <faiss/cppcontrib/knowhere/invlists/InvertedListsIOHook.h>
 #include <faiss/cppcontrib/knowhere/invlists/OnDiskInvertedLists.h>
 
 #include <faiss/IndexAdditiveQuantizer.h>
-#include <faiss/IndexIVFRaBitQ.h>
 #include <faiss/IndexIVFPQFastScan.h>
-#include <faiss/impl/RaBitQuantizer.h>
+#include <faiss/IndexIVFRaBitQ.h>
+#include <faiss/IndexPQ.h>
+#include <faiss/IndexPreTransform.h>
+#include <faiss/IndexRaBitQ.h>
+#include <faiss/IndexScalarQuantizer.h>
+#include <faiss/VectorTransform.h>
 #include <faiss/cppcontrib/knowhere/IndexBinaryScalarQuantizer.h>
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 #include <faiss/cppcontrib/knowhere/IndexFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSW.h>
 #include <faiss/cppcontrib/knowhere/IndexHNSWBinary.h>
+#include <faiss/cppcontrib/knowhere/IndexHNSWRaBitQ.h>
 #include <faiss/cppcontrib/knowhere/IndexIVF.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFPQ.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFPQFastScan.h>
 #include <faiss/cppcontrib/knowhere/IndexIVFRaBitQ.h>
-#include <faiss/IndexPQ.h>
-#include <faiss/IndexPreTransform.h>
 #include <faiss/cppcontrib/knowhere/IndexRefine.h>
 #include <faiss/cppcontrib/knowhere/IndexSQ4Uniform.h>
 #include <faiss/cppcontrib/knowhere/IndexScaNN.h>
 #include <faiss/cppcontrib/knowhere/IndexScalarQuantizer.h>
-#include <faiss/IndexScalarQuantizer.h>
-#include <faiss/VectorTransform.h>
+#include <faiss/impl/RaBitQuantizer.h>
 
 #include <faiss/cppcontrib/knowhere/IndexBinaryFlat.h>
 #include <faiss/cppcontrib/knowhere/IndexBinaryIVF.h>
@@ -58,10 +60,7 @@
 #include <cstring>
 #include <memory>
 
-
-
 namespace faiss::cppcontrib::knowhere {
-
 
 uint32_t read_value(IOReader* f) {
     uint32_t h;
@@ -685,6 +684,41 @@ static void read_RaBitQuantizer(
     }
 }
 
+static void finalize_and_validate_RaBitQ_index(::faiss::IndexRaBitQ* idxq) {
+    FAISS_THROW_IF_NOT_MSG(
+            idxq->metric_type == METRIC_L2 ||
+                    idxq->metric_type == METRIC_INNER_PRODUCT,
+            "IndexRaBitQ only supports L2 and inner product metrics");
+    FAISS_THROW_IF_NOT_MSG(
+            idxq->rabitq.d == static_cast<size_t>(idxq->d) &&
+                    idxq->rabitq.metric_type == idxq->metric_type,
+            "IndexRaBitQ quantizer metadata mismatch");
+    FAISS_THROW_IF_NOT_MSG(
+            idxq->rabitq.nb_bits >= 1 && idxq->rabitq.nb_bits <= 9,
+            "IndexRaBitQ nb_bits must be in [1, 9]");
+
+    const size_t expected_code_size =
+            idxq->rabitq.compute_code_size(idxq->d, idxq->rabitq.nb_bits);
+    FAISS_THROW_IF_NOT_MSG(
+            idxq->rabitq.code_size == expected_code_size,
+            "IndexRaBitQ quantizer code size mismatch");
+    idxq->code_size = expected_code_size;
+    FAISS_THROW_IF_NOT_MSG(
+            idxq->codes.size() ==
+                    static_cast<size_t>(idxq->ntotal) * expected_code_size,
+            "IndexRaBitQ codes size mismatch");
+    FAISS_THROW_IF_NOT_MSG(
+            (!idxq->is_trained && idxq->center.empty()) ||
+                    idxq->center.size() == static_cast<size_t>(idxq->d),
+            "IndexRaBitQ center size mismatch");
+    FAISS_THROW_IF_NOT_FMT(
+            idxq->qb <= 8,
+            "invalid RaBitQ qb=%d (must be in [0, 8])",
+            idxq->qb);
+    // The V1 cppcontrib wire format intentionally has no centered field.
+    idxq->centered = false;
+}
+
 static void read_direct_map(DirectMap* dm, IOReader* f) {
     char maintain_direct_map;
     READ1(maintain_direct_map);
@@ -1082,6 +1116,17 @@ Index* read_index(IOReader* f, int io_flags) {
         } else {
             idx = idxs;
         }
+    } else if (
+            h == fourcc("Ixrq") || h == fourcc("Ixrr")) {
+        auto idxq = std::make_unique<::faiss::IndexRaBitQ>();
+        read_index_header(idxq.get(), f);
+        read_RaBitQuantizer(
+                &idxq->rabitq, f, /*multi_bit=*/h != fourcc("Ixrq"));
+        READVECTOR(idxq->codes);
+        READVECTOR(idxq->center);
+        READ1(idxq->qb);
+        finalize_and_validate_RaBitQ_index(idxq.get());
+        idx = idxq.release();
     } else if (h == fourcc("IvSQ")) { // legacy
         IndexIVFScalarQuantizer* ivsc = new IndexIVFScalarQuantizer();
         std::vector<std::vector<idx_t>> ids;
@@ -1108,8 +1153,25 @@ Index* read_index(IOReader* f, int io_flags) {
             h == fourcc("IvPQ") || h == fourcc("IvQR") || h == fourcc("IwPQ") ||
             h == fourcc("IwQR")) {
         idx = read_ivfpq(f, h, io_flags);
+    } else if (h == fourcc(kRaBitQPreTransformCosineFourcc)) {
+        auto owner = std::make_unique<IndexPreTransformRaBitQCosine>();
+        auto* ixpt = owner.get();
+        ixpt->own_fields = true;
+        read_index_header(ixpt, f);
+        int nt;
+        READ1(nt);
+        FAISS_THROW_IF_NOT_MSG(
+                nt >= 0, "negative transform count in cosine RaBitQ storage");
+        for (int i = 0; i < nt; i++) {
+            ixpt->chain.push_back(read_VectorTransform(f));
+        }
+        ixpt->index = read_index(f, io_flags);
+        READVECTOR(ixpt->inverse_norms_storage.inverse_l2_norms);
+        ixpt->validate_norms();
+        idx = owner.release();
     } else if (h == fourcc("IxPT")) {
-        IndexPreTransform* ixpt = new IndexPreTransform();
+        auto owner = std::make_unique<IndexPreTransform>();
+        auto* ixpt = owner.get();
         ixpt->own_fields = true;
         read_index_header(ixpt, f);
         int nt;
@@ -1122,7 +1184,7 @@ Index* read_index(IOReader* f, int io_flags) {
             ixpt->chain.push_back(read_VectorTransform(f));
         }
         ixpt->index = read_index(f, io_flags);
-        idx = ixpt;
+        idx = owner.release();
     } else if (h == fourcc("Imiq")) {
         MultiIndexQuantizer* imiq = new MultiIndexQuantizer();
         read_index_header(imiq, f);
@@ -1161,11 +1223,22 @@ Index* read_index(IOReader* f, int io_flags) {
         idxrf->own_refine_index = true;
         idx = idxrf;
     } else if (
-            h == fourcc("IHNf") || h == fourcc("IHNp") || h == fourcc("IHNs") ||
-            h == fourcc("IHN2") || h == fourcc("IHNc") || h == fourcc("IHN9") ||
-            h == fourcc("IHN8") || h == fourcc("IHNa") || h == fourcc("IHNb") ||
-            h == fourcc("IHN7") || h == fourcc("IHN6") || h == fourcc("IHN5")) {
+            h == fourcc(kHnswRaBitQFourcc) ||
+            h == fourcc(kHnswRaBitQCosineFourcc) || h == fourcc("IHNf") ||
+            h == fourcc("IHNp") || h == fourcc("IHNs") || h == fourcc("IHN2") ||
+            h == fourcc("IHNc") || h == fourcc("IHN9") || h == fourcc("IHN8") ||
+            h == fourcc("IHNa") || h == fourcc("IHNb") || h == fourcc("IHN7") ||
+            h == fourcc("IHN6") || h == fourcc("IHN5")) {
         IndexHNSW* idxhnsw = nullptr;
+        std::unique_ptr<IndexHNSW> idxhnsw_rabitq_owner;
+        if (h == fourcc(kHnswRaBitQFourcc)) {
+            idxhnsw_rabitq_owner = std::make_unique<IndexHNSWRaBitQ>();
+            idxhnsw = idxhnsw_rabitq_owner.get();
+        }
+        if (h == fourcc(kHnswRaBitQCosineFourcc)) {
+            idxhnsw_rabitq_owner = std::make_unique<IndexHNSWRaBitQCosine>();
+            idxhnsw = idxhnsw_rabitq_owner.get();
+        }
         if (h == fourcc("IHNf"))
             idxhnsw = new IndexHNSWFlat();
         if (h == fourcc("IHNp"))
@@ -1198,6 +1271,13 @@ Index* read_index(IOReader* f, int io_flags) {
         read_HNSW(&idxhnsw->hnsw, f);
         idxhnsw->storage = read_index(f, io_flags);
         idxhnsw->own_fields = idxhnsw->storage != nullptr;
+        if (h == fourcc(kHnswRaBitQFourcc)) {
+            dynamic_cast<IndexHNSWRaBitQ*>(idxhnsw)->check_storage_compatibility();
+        }
+        if (h == fourcc(kHnswRaBitQCosineFourcc)) {
+            dynamic_cast<IndexHNSWRaBitQCosine*>(idxhnsw)
+                    ->check_cosine_storage_compatibility();
+        }
         if (h == fourcc("IHNp") && !(io_flags & IO_FLAG_PQ_SKIP_SDC_TABLE)) {
             dynamic_cast<IndexPQ*>(idxhnsw->storage)->pq.compute_sdc_table();
         }
@@ -1222,7 +1302,7 @@ Index* read_index(IOReader* f, int io_flags) {
             delete idxhnsw;
             idxhnsw = newh;
         }
-        idx = idxhnsw;
+        idx = idxhnsw_rabitq_owner ? idxhnsw_rabitq_owner.release() : idxhnsw;
     } else if (h == fourcc("IwPf")) {
         ::faiss::IndexIVFPQFastScan* ivpq = new ::faiss::IndexIVFPQFastScan();
         read_ivf_header(ivpq, f);
@@ -1484,4 +1564,4 @@ IndexBinary* read_index_binary(const char* fname, int io_flags) {
     }
 }
 
-}
+} // namespace faiss::cppcontrib::knowhere

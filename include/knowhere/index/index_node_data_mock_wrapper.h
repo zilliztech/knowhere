@@ -76,6 +76,11 @@ class IndexNodeDataMockWrapper : public IndexNode {
         return index_node_->HasRawData(metric_type);
     }
 
+    bool
+    IsIndexRefineEnabled() const override {
+        return index_node_->IsIndexRefineEnabled();
+    }
+
     expected<DataSetPtr>
     GetIndexMeta(std::unique_ptr<Config> cfg) const override {
         return index_node_->GetIndexMeta(std::move(cfg));

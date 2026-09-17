@@ -187,6 +187,15 @@ class NeighborSetDoublePopList {
                (invalid_ns_->has_next() && invalid_ns_->cur().distance < valid_ns_->at_search_back_dist());
     }
 
+    // A tightened valid-result threshold can hide already queued filtered
+    // bridges. Iterators must retain them even though this search is finished.
+    void
+    save_pending(IteratorMinHeap& pending) {
+        while (invalid_ns_->has_next()) {
+            pending.push(invalid_ns_->pop());
+        }
+    }
+
     inline const Neighbor&
     operator[](size_t i) {
         return (*valid_ns_)[i];
