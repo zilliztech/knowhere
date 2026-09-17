@@ -186,6 +186,19 @@ test_invalid(void) {
     }
     query.dimensions = 0;
     CHECK(knowhere_bruteforce(&base, &query, NULL, &result, "{}") == KNOWHERE_INVALID_ARGUMENT);
+    /* A wrapped rows * row_bytes or count * sizeof product must fail instead of passing the capacity check. */
+    query.dimensions = 2;
+    query.rows = INT64_MAX;
+    query.bytes = UINT64_MAX;
+    query.data = data;
+    CHECK(knowhere_bruteforce(&base, &query, NULL, &result, "{}") == KNOWHERE_INVALID_ARGUMENT);
+    CHECK(strstr(knowhere_last_error(), "overflow") != NULL);
+    query.rows = 1;
+    query.bytes = 8;
+    result.top_k = INT64_MAX;
+    CHECK(knowhere_bruteforce(&base, &query, NULL, &result, "{}") == KNOWHERE_INVALID_ARGUMENT);
+    CHECK(strstr(knowhere_last_error(), "overflow") != NULL);
+    result.top_k = 2;
 }
 
 static void

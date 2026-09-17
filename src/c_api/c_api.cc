@@ -154,12 +154,21 @@ Close(std::unordered_map<uint64_t, std::shared_ptr<T>>& registry, uint64_t handl
     // Destruction is outside the registry lock. An in-flight call owns another reference.
 }
 
+// Byte counts become int64_t rows/offsets and size_t allocations, so both limits apply.
 uint64_t
-Multiply(uint64_t left, uint64_t right) {
-    Require(right == 0 || left <= std::numeric_limits<uint64_t>::max() / right, "buffer size multiplication overflow");
-    const uint64_t size = left * right;
-    Require(size <= std::numeric_limits<size_t>::max() && size <= INT64_MAX, "buffer size exceeds addressable range");
+CheckSize(uint64_t size) {
+    Require(size <= INT64_MAX && size <= std::numeric_limits<size_t>::max(), "buffer size exceeds addressable range");
     return size;
+}
+
+// Shapes and capacities arrive from the caller unchecked. If rows * row_bytes wrapped
+// around, CheckBuffer would accept a buffer that is too small and the copy behind it
+// would run past the caller's memory, so every size product is checked here first.
+uint64_t
+CheckedBytes(uint64_t left, uint64_t right) {
+    uint64_t size = 0;
+    Require(!__builtin_mul_overflow(left, right, &size), "buffer size multiplication overflow");
+    return CheckSize(size);
 }
 
 uint64_t
@@ -193,8 +202,8 @@ CheckVectors(const knowhere_vectors* vectors) {
     Require(vectors->dtype != KNOWHERE_BIN1 || vectors->dimensions % 8 == 0,
             "binary vector dimensions must be divisible by eight");
     const uint64_t row_bytes =
-        vectors->dtype == KNOWHERE_BIN1 ? vectors->dimensions / 8 : Multiply(vectors->dimensions, element);
-    const uint64_t bytes = Multiply(vectors->rows, row_bytes);
+        vectors->dtype == KNOWHERE_BIN1 ? vectors->dimensions / 8 : CheckedBytes(vectors->dimensions, element);
+    const uint64_t bytes = CheckedBytes(vectors->rows, row_bytes);
     CheckBuffer(vectors->data, vectors->bytes, bytes, element);
     return bytes;
 }
@@ -214,9 +223,9 @@ SearchParameters(knowhere::Json& json, int64_t rows, const knowhere_search_resul
         Require(k.is_number_integer() && k == result->top_k, "JSON k conflicts with result.top_k");
     }
     json[knowhere::meta::TOPK] = result->top_k;
-    const uint64_t count = Multiply(rows, result->top_k);
-    CheckBuffer(result->ids, result->ids_bytes, Multiply(count, sizeof(int64_t)), alignof(int64_t));
-    CheckBuffer(result->distances, result->distances_bytes, Multiply(count, sizeof(float)), alignof(float));
+    const uint64_t count = CheckedBytes(rows, result->top_k);
+    CheckBuffer(result->ids, result->ids_bytes, CheckedBytes(count, sizeof(int64_t)), alignof(int64_t));
+    CheckBuffer(result->distances, result->distances_bytes, CheckedBytes(count, sizeof(float)), alignof(float));
     return count;
 }
 
@@ -437,7 +446,7 @@ knowhere_index_deserialize(knowhere_index_handle handle, knowhere_binary_set_han
             for (const auto& entry : binary->data.binary_map_) {
                 const auto& blob = entry.second;
                 Require(blob != nullptr && blob->size >= 0, "invalid serialized binary entry");
-                const uint64_t size = Multiply(blob->size, 1);
+                const uint64_t size = CheckSize(blob->size);
                 Require(size == 0 || blob->data != nullptr, "serialized binary entry has no data");
                 std::shared_ptr<uint8_t[]> bytes(new uint8_t[size]);
                 if (size != 0) {
@@ -547,7 +556,7 @@ knowhere_binary_set_allocate(knowhere_binary_set_handle handle, const char* name
         auto resource = Get(binary_sets, handle, 0);
         std::lock_guard<std::mutex> lock(resource->mutex);
         Require(name != nullptr && name[0] != '\0', "binary entry name must not be empty");
-        Multiply(length, 1);
+        CheckSize(length);
         std::shared_ptr<uint8_t[]> data(new uint8_t[length]());
         resource->data.Append(name, data, length);
     });
