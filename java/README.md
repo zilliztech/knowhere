@@ -34,6 +34,9 @@ LD_PRELOAD="$JAVA_HOME/lib/libjsig.so" mvn -f java/pom.xml test -DargLine=-Xchec
   -Dknowhere.native.path="$PWD/build/Release/java/libknowhere_jni.so"
 ```
 
+The equivalent Makefile shortcut is `make WITH_JNI=True WITH_C_API_TESTS=True`,
+followed by `make test-c-api` for the C tests.
+
 Activate the generated Conan run environment when testing or collecting libraries
 from a build or installation tree. Some Conan shared libraries have transitive
 dependencies without their own RUNPATH. The packaged-JAR smoke tests deliberately

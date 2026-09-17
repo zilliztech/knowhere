@@ -57,6 +57,9 @@ $ make WITH_GPU=True WITH_UT=True
 # Debug build
 $ make WITH_DEBUG=True
 
+# C ABI and Java JNI bindings with the C tests (see java/README.md)
+$ make WITH_JNI=True WITH_C_API_TESTS=True
+
 # Custom compiler via Conan profile (e.g. clang, gcc-15)
 $ make CONAN_PROFILE=clang14
 ```
