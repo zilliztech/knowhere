@@ -2557,6 +2557,11 @@ TEST_CASE("HNSW top-k fallback with an empty bitset", "[faiss_hnsw][fallback][re
     const int64_t dim = 16;
     const int64_t k = 10;
     const std::string type = knowhere::IndexEnum::INDEX_HNSW;
+#ifdef KNOWHERE_WITH_CARDINAL
+    const std::string factory_type = "HNSW_DEPRECATED";
+#else
+    const std::string factory_type = type;
+#endif
     const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
     auto data = GenDataSet(nb, dim, 35);
     auto query = GenDataSet(1, dim, 36);
@@ -2564,7 +2569,7 @@ TEST_CASE("HNSW top-k fallback with an empty bitset", "[faiss_hnsw][fallback][re
     knowhere::Json conf = {
         {"dim", dim}, {"metric_type", knowhere::metric::L2},  {"M", 16}, {"efConstruction", 96}, {"k", k},
         {"ef", 64},   {"disable_fallback_brute_force", false}};
-    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(type, version).value();
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(factory_type, version).value();
     REQUIRE(index.Build(data, conf) == knowhere::Status::success);
 
     // Isolate the entry point while preserving all stored vectors. This forces
