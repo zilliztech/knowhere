@@ -16,12 +16,16 @@ operations are outside this interface.
 Use the repository's normal C++20/Conan 2 prerequisites, plus a JDK 11 or later
 and Maven. On Linux the platform packaging step also requires Python 3,
 `readelf`, `ldd` and `patchelf`. Configure `JAVA_HOME` when CMake cannot find the
-selected JDK. The example uses Conan 2.28.1 and CMake 3.28.1. Older dependency
-recipes may fail with CMake 4.
+selected JDK. The example uses Conan 2.28.1 and works with CMake 3.28 or CMake 4
+(verified with 4.4.3). Some dependency recipes still declare a
+`cmake_minimum_required` below 3.5, which CMake 4 rejects, so export
+`CMAKE_POLICY_VERSION_MINIMUM=3.5` before `conan install` when CMake 4 is on the
+PATH. The Makefile shortcut below sets it for you.
 
 From the repository root:
 
 ```sh
+export CMAKE_POLICY_VERSION_MINIMUM=3.5   # only needed with CMake 4
 conan install . -of build --build=missing \
   -s compiler.cppstd=20 -s:b compiler.cppstd=20 \
   -o '&:with_c_api=True' -o '&:with_jni=True' -o '&:with_c_api_tests=True'
