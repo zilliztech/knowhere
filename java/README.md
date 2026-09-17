@@ -57,7 +57,13 @@ Those files must remain available until their indexes close. A normal in-memory
 index rejects `buildFromFile`; DiskANN rejects the vector-buffer `build` entry.
 Run the DiskANN JNI test explicitly with
 `mvn -f java/pom.xml test -Dtest=KnowhereTest,DiskAnnIT -DargLine=-Xcheck:jni`
-and the same `knowhere.native.path` property and signal-chaining environment. On macOS, use the `.dylib`
+and the same `knowhere.native.path` property and signal-chaining environment.
+OSS DiskANN reports exact distances and the DiskANN tests check them to 1e-4.
+A Cardinal build (`with_cardinal=True`) searches with PQ8 and refines with RBQ8,
+so its reported distances carry quantization error; the C test then applies a
+relative tolerance through `KNOWHERE_WITH_CARDINAL`, and `DiskAnnIT` needs
+`-Dknowhere.test.approximateDistances=true` in `argLine` to do the same.
+Recall and result ordering are checked identically for both engines. On macOS, use the `.dylib`
 extension for the development library.
 
 The shared Folly dependency installs a SIGPIPE handler at library load time.

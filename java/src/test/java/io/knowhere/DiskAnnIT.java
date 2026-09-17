@@ -27,6 +27,15 @@ import static org.junit.Assert.*;
 
 /** Explicitly run with -Dtest=KnowhereTest,DiskAnnIT against a DiskANN-enabled library. */
 public class DiskAnnIT {
+    /**
+     * OSS DiskANN reports exact distances. A Cardinal build searches with PQ8 and refines with RBQ8,
+     * so its distances carry quantization error (at most 0.0124 in squared L2 on this test data,
+     * including near-zero distances); the build passes this property for that engine.
+     */
+    private static final boolean APPROXIMATE_DISTANCES = Boolean.getBoolean("knowhere.test.approximateDistances");
+    private static final double DISTANCE_ABSOLUTE_TOLERANCE = APPROXIMATE_DISTANCES ? 0.05 : 0.0001;
+    private static final double DISTANCE_RELATIVE_TOLERANCE = APPROXIMATE_DISTANCES ? 0.02 : 0.0;
+
     @Test
     public void buildAndReloadLocalDiskIndexThroughJni() throws IOException {
         Path directory = Files.createTempDirectory("knowhere-java-diskann-");
@@ -133,7 +142,8 @@ public class DiskAnnIT {
                             - base.getFloat(((int) id * dimensions + column) * Float.BYTES);
                     squaredDistance += difference * difference;
                 }
-                assertEquals("Distance does not match row " + id, squaredDistance, distance, 0.0001);
+                assertEquals("Distance does not match row " + id, squaredDistance, distance,
+                        DISTANCE_ABSOLUTE_TOLERANCE + DISTANCE_RELATIVE_TOLERANCE * squaredDistance);
                 assertTrue("Distances are not sorted", distance >= previousDistance);
                 previousDistance = distance;
                 for (int truth = 0; truth < topK; truth++) {

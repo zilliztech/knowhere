@@ -38,6 +38,17 @@
         }                                                                                               \
     } while (0)
 #define OK(expression) CHECK((expression) == KNOWHERE_SUCCESS)
+/* OSS DiskANN reports exact distances. Cardinal's DiskANN searches with PQ8 and refines
+ * with RBQ8, so its reported distances carry quantization error: on this test data the
+ * largest deviation measured was 0.0124 in squared L2, including near-zero distances, so
+ * the absolute term carries the tolerance and the relative term covers larger distances. */
+#ifdef KNOWHERE_WITH_CARDINAL
+#define DISTANCE_ABSOLUTE_TOLERANCE 0.05
+#define DISTANCE_RELATIVE_TOLERANCE 0.02
+#else
+#define DISTANCE_ABSOLUTE_TOLERANCE 1e-4
+#define DISTANCE_RELATIVE_TOLERANCE 0.0
+#endif
 
 static void
 check_search_results(const float* data, const float* queries, const knowhere_search_result* result,
@@ -58,8 +69,11 @@ check_search_results(const float* data, const float* queries, const knowhere_sea
                 const double delta = (double)queries[query * DIMENSIONS + column] - data[id * DIMENSIONS + column];
                 expected_distance += delta * delta;
             }
-            CHECK(result->distances[offset] >= expected_distance - 1e-4);
-            CHECK(result->distances[offset] <= expected_distance + 1e-4);
+            {
+                const double tolerance = DISTANCE_ABSOLUTE_TOLERANCE + DISTANCE_RELATIVE_TOLERANCE * expected_distance;
+                CHECK(result->distances[offset] >= expected_distance - tolerance);
+                CHECK(result->distances[offset] <= expected_distance + tolerance);
+            }
             if (rank > 0) {
                 CHECK(result->distances[offset - 1] <= result->distances[offset]);
             }
