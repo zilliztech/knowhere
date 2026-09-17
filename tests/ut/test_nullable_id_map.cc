@@ -21,6 +21,7 @@
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <random>
 #include <set>
 #include <string>
 #include <system_error>
@@ -30,12 +31,14 @@
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
+#include "catch2/generators/catch_generators.hpp"
 #include "filemanager/impl/LocalFileManager.h"
 #include "index/data_view_dense_index/data_view_dense_index.h"
 #include "knowhere/binaryset.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
+#include "knowhere/config.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/id_map.h"
@@ -47,6 +50,7 @@
 #include "knowhere/object.h"
 #include "knowhere/thread_pool.h"
 #include "knowhere/version.h"
+#include "simd/hook.h"
 #include "utils.h"
 
 #if __has_include(<filesystem>)
@@ -3757,6 +3761,129 @@ TEST_CASE("Nullable growing Index keeps visible prefix as a filter boundary", "[
     REQUIRE(node->last_search_bitset.count == 3);
     REQUIRE(node->last_search_bitset.need_filter);
     REQUIRE(node->last_search_bitset.filtered_in_ids == std::vector<int>{4, 5, 6});
+}
+
+TEST_CASE("Growing search preserves the prepared public ID boundary", "[growing_search_boundary]") {
+    const auto index_type = GENERATE(as<std::string>{}, knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC,
+                                     knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR);
+    const bool nullable = GENERATE(false, true);
+    const auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE);
+    CAPTURE(index_type, nullable, metric);
+    const bool scann = index_type == knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR;
+    if (scann && !faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+        SKIP("SCANN_DVR requires PQ fast scan support");
+    }
+
+    constexpr int64_t dim = 16;
+    constexpr int64_t initial_rows = 512;
+    const int64_t public_rows = nullable ? initial_rows * 2 : initial_rows;
+    const int64_t appended_public_id = nullable ? public_rows + 1 : public_rows;
+
+    // The backing store includes the future row from the start, so the data-view
+    // callback remains valid across Add. Only the first initial_rows are built.
+    std::vector<float> storage((initial_rows + 1) * dim, 0.0f);
+    std::mt19937 rng(51941);
+    std::uniform_real_distribution<float> value(-1.0f, 1.0f);
+    for (int64_t row = 0; row < initial_rows; ++row) {
+        for (int64_t column = 1; column < dim; ++column) {
+            storage[row * dim + column] = value(rng);
+        }
+    }
+    // All old rows are orthogonal to the query. The appended row is an exact
+    // match, making its selection independent of ties among old rows.
+    storage[initial_rows * dim] = 1.0f;
+    std::vector<float> query_data(dim, 0.0f);
+    query_data[0] = 1.0f;
+    auto query = knowhere::GenDataSet(1, dim, query_data.data());
+    auto initial = knowhere::GenDataSet(initial_rows, dim, storage.data());
+    auto appended = knowhere::GenDataSet(1, dim, storage.data() + initial_rows * dim);
+
+    auto valid = std::make_unique<bool[]>(public_rows);
+    const bool appended_valid[] = {false, true};
+    if (nullable) {
+        for (int64_t row = 0; row < public_rows; ++row) {
+            valid[row] = row % 2 == 0;
+        }
+        initial->SetIdMapData(knowhere::IdMapData::FromValidData(valid.get(), public_rows));
+        appended->SetIdMapData(knowhere::IdMapData::FromValidData(appended_valid, 2));
+    }
+
+    knowhere::Json json;
+    json[knowhere::meta::DIM] = dim;
+    json[knowhere::meta::METRIC_TYPE] = metric;
+    json[knowhere::meta::TOPK] = 1;
+    json[knowhere::indexparam::NLIST] = 1;
+    json[knowhere::indexparam::NPROBE] = 1;
+    if (scann) {
+        json[knowhere::indexparam::SUB_DIM] = 2;
+        // Refine every possible candidate, removing approximate recall as a
+        // reason the newly added exact match could be absent from the control.
+        json[knowhere::indexparam::REFINE_RATIO] = static_cast<float>(initial_rows + 1);
+    } else {
+        json[knowhere::indexparam::SSIZE] = 48;
+    }
+
+    knowhere::ViewDataOp data_view = [&storage](size_t id) { return storage.data() + id * dim; };
+    auto data_view_pack = knowhere::Pack(data_view);
+    auto created = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
+        index_type, knowhere::Version::GetCurrentVersion().VersionNumber(), data_view_pack);
+    REQUIRE(created.has_value());
+    auto index = std::move(created.value());
+    if (nullable) {
+        index.SetIdMapType(knowhere::IdMap::Type::GROWING);
+    }
+    REQUIRE(index.Build(initial, json) == knowhere::Status::success);
+
+    std::vector<uint8_t> bits((public_rows + 7) / 8, 0);
+    knowhere::BitsetView control_view(bits.data(), public_rows);
+    knowhere::BitsetView bounded_view(bits.data(), public_rows);
+    bounded_view.set_require_id_boundary(true);
+    auto control = index.Node()->PrepareBitset(control_view);
+    auto bounded = index.Node()->PrepareBitset(bounded_view);
+    REQUIRE(control.has_value());
+    REQUIRE(bounded.has_value());
+    REQUIRE(control.value().bitset.count() == 0);
+    REQUIRE(bounded.value().bitset.count() == 0);
+    REQUIRE(control.value().bitset.empty());
+    REQUIRE_FALSE(bounded.value().bitset.empty());
+
+    auto initial_result = index.Search(query, json, bounded_view);
+    REQUIRE(initial_result.has_value());
+    REQUIRE(initial_result.value()->GetIds()[0] >= 0);
+    REQUIRE(initial_result.value()->GetIds()[0] < public_rows);
+
+    // Exercise a legal prepare/add/search ordering without racing threads or
+    // recomputing counts after Add. Calling Index::Search here would prepare a
+    // fresh view and would therefore test a different ordering.
+    REQUIRE(index.Add(appended, json) == knowhere::Status::success);
+    auto search_prepared = [&](const knowhere::BitsetView& bitset) {
+        auto cfg = index.Node()->CreateConfig();
+        auto search_json = json;
+        REQUIRE(knowhere::Config::FormatAndCheck(*cfg, search_json) == knowhere::Status::success);
+        cfg->CaptureRawJson(search_json);
+        REQUIRE(knowhere::Config::Load(*cfg, search_json, knowhere::SEARCH) == knowhere::Status::success);
+        return index.Node()->Search(query, std::move(cfg), bitset, nullptr);
+    };
+
+    auto unbounded_result = search_prepared(control.value().bitset);
+    REQUIRE(unbounded_result.has_value());
+    REQUIRE(unbounded_result.value()->GetIds()[0] == appended_public_id);
+
+    auto bounded_result = search_prepared(bounded.value().bitset);
+    REQUIRE(bounded_result.has_value());
+    const auto id = bounded_result.value()->GetIds()[0];
+    REQUIRE(id >= 0);
+    REQUIRE(id < public_rows);
+    if (nullable) {
+        REQUIRE(id % 2 == 0);
+    }
+
+    // The public entry point also accepts the boundary requirement and copies
+    // it into its newly prepared view after growth.
+    auto public_result = index.Search(query, json, bounded_view);
+    REQUIRE(public_result.has_value());
+    REQUIRE(public_result.value()->GetIds()[0] >= 0);
+    REQUIRE(public_result.value()->GetIds()[0] < public_rows);
 }
 
 TEST_CASE("Nullable Index exact bitset count filters rows outside visible bitset", "[nullable][bitset][api]") {
