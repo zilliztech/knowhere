@@ -124,6 +124,31 @@ public class KnowhereTest {
     }
 
     @Test
+    public void threadPoolsResizeBeforeAndAfterSearches() {
+        assertThrows(KnowhereException.class, new ThrowingRunnable() {
+            public void run() { Knowhere.resizeSearchThreadPool(0); }
+        });
+        assertThrows(KnowhereException.class, new ThrowingRunnable() {
+            public void run() { Knowhere.resizeBuildThreadPool(-1); }
+        });
+        Knowhere.resizeSearchThreadPool(3);
+        assertEquals(3, Knowhere.searchThreadPoolSize());
+        Knowhere.resizeBuildThreadPool(2);
+        assertEquals(2, Knowhere.buildThreadPoolSize());
+        ByteBuffer ids = bytes(32);
+        ByteBuffer distances = bytes(16);
+        Knowhere.bruteForce(DType.FLOAT32, floats(0, 0, 1, 0, 0, 2), 3,
+                floats(0, 0, 0, 2), 2, 2, 2, null, 0, ids, distances, L2);
+        assertEquals(0, ids.getLong(0));
+        assertEquals(1, ids.getLong(8));
+        assertEquals(2, ids.getLong(16));
+        assertEquals(0, ids.getLong(24));
+        assertEquals(4f, distances.getFloat(12), 0f);
+        Knowhere.resizeSearchThreadPool(5);
+        assertEquals(5, Knowhere.searchThreadPoolSize());
+    }
+
+    @Test
     public void invalidNativeInputsProduceExceptions() {
         assertThrows(KnowhereException.class, new ThrowingRunnable() {
             public void run() { Knowhere.createIndex("UNKNOWN", DType.FLOAT32, Knowhere.currentIndexVersion()); }

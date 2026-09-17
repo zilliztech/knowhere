@@ -21,6 +21,7 @@
 
 #include "filemanager/impl/LocalFileManager.h"
 #include "knowhere/comp/brute_force.h"
+#include "knowhere/comp/knowhere_config.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/version.h"
 
@@ -39,6 +40,13 @@ Require(bool valid, const char* message) {
     if (!valid) {
         throw Failure(KNOWHERE_INVALID_ARGUMENT, message);
     }
+}
+
+size_t
+ThreadCount(int64_t threads) {
+    Require(threads >= 1 && threads <= std::numeric_limits<int32_t>::max(),
+            "thread pool size must be between 1 and INT32_MAX");
+    return static_cast<size_t>(threads);
 }
 
 int32_t
@@ -314,6 +322,32 @@ knowhere_index_version_current(void) {
 int32_t
 knowhere_index_version_maximum(void) {
     return knowhere::Version::GetMaximumVersion().VersionNumber();
+}
+
+int32_t
+knowhere_search_thread_pool_resize(int64_t threads) {
+    return Boundary([&] { knowhere::KnowhereConfig::SetSearchThreadPoolSize(ThreadCount(threads)); });
+}
+
+int32_t
+knowhere_search_thread_pool_size(int64_t* output) {
+    return Boundary([&] {
+        Require(output != nullptr, "output is required");
+        *output = static_cast<int64_t>(knowhere::KnowhereConfig::GetSearchThreadPoolSize());
+    });
+}
+
+int32_t
+knowhere_build_thread_pool_resize(int64_t threads) {
+    return Boundary([&] { knowhere::KnowhereConfig::SetBuildThreadPoolSize(ThreadCount(threads)); });
+}
+
+int32_t
+knowhere_build_thread_pool_size(int64_t* output) {
+    return Boundary([&] {
+        Require(output != nullptr, "output is required");
+        *output = static_cast<int64_t>(knowhere::KnowhereConfig::GetBuildThreadPoolSize());
+    });
 }
 
 int32_t

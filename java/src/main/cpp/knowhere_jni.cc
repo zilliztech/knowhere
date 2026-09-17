@@ -228,6 +228,42 @@ JNIEXPORT jint JNICALL
 Java_io_knowhere_NativeBindings_maximumIndexVersion(JNIEnv*, jclass) {
     return knowhere_index_version_maximum();
 }
+JNIEXPORT void JNICALL
+Java_io_knowhere_NativeBindings_resizeSearchThreadPool(JNIEnv* env, jclass, jint threads) {
+    Call(env, 0, [&] {
+        CheckStatus(env, knowhere_search_thread_pool_resize(threads));
+        return 0;
+    });
+}
+JNIEXPORT jint JNICALL
+Java_io_knowhere_NativeBindings_searchThreadPoolSize(JNIEnv* env, jclass) {
+    return Call(env, jint{0}, [&]() -> jint {
+        int64_t output = 0;
+        CheckStatus(env, knowhere_search_thread_pool_size(&output));
+        if (output > std::numeric_limits<jint>::max()) {
+            throw std::length_error("Thread pool size exceeds the Java int limit");
+        }
+        return static_cast<jint>(output);
+    });
+}
+JNIEXPORT void JNICALL
+Java_io_knowhere_NativeBindings_resizeBuildThreadPool(JNIEnv* env, jclass, jint threads) {
+    Call(env, 0, [&] {
+        CheckStatus(env, knowhere_build_thread_pool_resize(threads));
+        return 0;
+    });
+}
+JNIEXPORT jint JNICALL
+Java_io_knowhere_NativeBindings_buildThreadPoolSize(JNIEnv* env, jclass) {
+    return Call(env, jint{0}, [&]() -> jint {
+        int64_t output = 0;
+        CheckStatus(env, knowhere_build_thread_pool_size(&output));
+        if (output > std::numeric_limits<jint>::max()) {
+            throw std::length_error("Thread pool size exceeds the Java int limit");
+        }
+        return static_cast<jint>(output);
+    });
+}
 JNIEXPORT jlong JNICALL
 Java_io_knowhere_NativeBindings_indexCreate(JNIEnv* env, jclass, jstring type, jint dtype, jint version) {
     return Call(env, jlong{0}, [&]() -> jlong {

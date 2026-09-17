@@ -33,6 +33,32 @@ public final class Knowhere {
         return NativeBindings.maximumIndexVersion();
     }
 
+    /**
+     * Creates the process-wide search pool with {@code threads} threads, or resizes it. Index
+     * search and brute force run one single-threaded task per query row on this pool, so a pool
+     * that was never sized is created on first use with the hardware thread count. Only a call
+     * before the first search replaces that default; later calls resize the live pool. Valid
+     * sizes are 1 to {@link Integer#MAX_VALUE}.
+     */
+    public static void resizeSearchThreadPool(int threads) {
+        NativeBindings.resizeSearchThreadPool(threads);
+    }
+
+    /** Current search pool size, or 0 while the pool does not exist yet. */
+    public static int searchThreadPoolSize() {
+        return NativeBindings.searchThreadPoolSize();
+    }
+
+    /** Creates or resizes the process-wide build pool used by index builds; same rules as search. */
+    public static void resizeBuildThreadPool(int threads) {
+        NativeBindings.resizeBuildThreadPool(threads);
+    }
+
+    /** Current build pool size, or 0 while the pool does not exist yet. */
+    public static int buildThreadPoolSize() {
+        return NativeBindings.buildThreadPoolSize();
+    }
+
     /** Creates an owned index. Type, element encoding and index format version are separate. */
     public static KnowhereIndex createIndex(String type, DType dtype, int indexVersion) {
         return new KnowhereIndex(Objects.requireNonNull(type, "type"),

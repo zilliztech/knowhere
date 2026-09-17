@@ -26,6 +26,10 @@ final class NativeBindings {
     static native int minimumIndexVersion();
     static native int currentIndexVersion();
     static native int maximumIndexVersion();
+    static native void resizeSearchThreadPool(int threads);
+    static native int searchThreadPoolSize();
+    static native void resizeBuildThreadPool(int threads);
+    static native int buildThreadPoolSize();
     static native long indexCreate(String type, int dtype, int version);
     static native void indexDestroy(long handle);
     static native void indexBuild(long handle, ByteBuffer data, long rows, int dimension, int dtype, String parameters);

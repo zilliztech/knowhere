@@ -1,7 +1,7 @@
 # Knowhere C and Java bindings
 
 The optional bindings expose index creation, build, search, serialization,
-deserialization and brute-force search. `libknowhere_jni` calls the standalone
+deserialization, brute-force search and thread pool sizing. `libknowhere_jni` calls the standalone
 `libknowhere_c` ABI, which calls Knowhere. The Java API targets Java 11 and has no
 Spark, Scala, Arrow or Hadoop dependency. Both build options default to off.
 
@@ -197,11 +197,35 @@ zero for the supplied base batch.
   version when restoring saved index blobs; the current version is not evidence
   that every historical Milvus index format is readable.
 
+## Thread pools
+
+Index search and brute force schedule one single-threaded task per query row on
+Knowhere's process-wide search pool: a call with one query occupies one pool
+thread, and a call with `queryRows` queries occupies up to `queryRows` threads.
+Index builds run on the build pool. A pool that was never sized is created on
+first use with the machine's hardware thread count and is shared by every caller
+in the process. Size the pools before the first search or build when the
+process already schedules its own parallelism, for example one search per Spark
+task:
+
+```java
+Knowhere.resizeSearchThreadPool(executorCores);
+Knowhere.resizeBuildThreadPool(executorCores);
+```
+
+`resize*` creates the pool at that size or resizes the live pool; valid sizes are
+1 to `Integer.MAX_VALUE`. `searchThreadPoolSize()` and `buildThreadPoolSize()`
+return 0 until the pool exists. The C entry points are
+`knowhere_search_thread_pool_resize`, `knowhere_search_thread_pool_size`,
+`knowhere_build_thread_pool_resize` and `knowhere_build_thread_pool_size`. SIMD
+selection, BLAS thresholds and logging stay at Knowhere's defaults.
+
 ## Verification coverage
 
 The tests exercise five dtypes with FLAT/BIN_FLAT and brute force, HNSW and
 IVF_FLAT round trips, filtering, exact fixed examples, invalid inputs, Unicode
-blob names, input retention, chunk bounds, double close and concurrent close.
+blob names, input retention, chunk bounds, double close, concurrent close and
+thread pool sizing before and after searches.
 DiskANN has a separate local-file test when enabled. It checks recall against
 brute force on uniformly distributed samples, plus IDs, distances and exclusions;
 its approximate graph does not guarantee exact neighbors for isolated points.

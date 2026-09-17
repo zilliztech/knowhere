@@ -241,6 +241,42 @@ test_failed_initialization(void) {
     OK(knowhere_index_destroy(index));
 }
 
+static void
+test_thread_pools(void) {
+    float data[6] = {0, 0, 1, 0, 0, 2};
+    float queries[4] = {0, 0, 0, 2};
+    knowhere_vectors base = {data, sizeof(data), 3, 2, KNOWHERE_FP32};
+    knowhere_vectors query = {queries, sizeof(queries), 2, 2, KNOWHERE_FP32};
+    int64_t ids[4] = {-1, -1, -1, -1};
+    float distances[4] = {-1, -1, -1, -1};
+    knowhere_search_result result = {ids, sizeof(ids), distances, sizeof(distances), 2};
+    int64_t size = -1;
+    /* Nothing has searched or built yet, so the lazily created pools do not exist. */
+    OK(knowhere_search_thread_pool_size(&size));
+    CHECK(size == 0);
+    OK(knowhere_build_thread_pool_size(&size));
+    CHECK(size == 0);
+    CHECK(knowhere_search_thread_pool_size(NULL) == KNOWHERE_INVALID_ARGUMENT);
+    CHECK(knowhere_search_thread_pool_resize(0) == KNOWHERE_INVALID_ARGUMENT);
+    CHECK(knowhere_search_thread_pool_resize(-1) == KNOWHERE_INVALID_ARGUMENT);
+    CHECK(knowhere_search_thread_pool_resize((int64_t)INT32_MAX + 1) == KNOWHERE_INVALID_ARGUMENT);
+    CHECK(knowhere_build_thread_pool_resize(0) == KNOWHERE_INVALID_ARGUMENT);
+    OK(knowhere_search_thread_pool_resize(3));
+    OK(knowhere_search_thread_pool_size(&size));
+    CHECK(size == 3);
+    /* Two queries become two tasks on the sized pool and still return exact results. */
+    OK(knowhere_bruteforce(&base, &query, NULL, &result, "{\"metric_type\":\"L2\"}"));
+    CHECK(ids[0] == 0 && ids[1] == 1 && ids[2] == 2 && ids[3] == 0);
+    CHECK(distances[0] == 0 && distances[1] == 1 && distances[2] == 0 && distances[3] == 4);
+    /* Resizing a live pool takes effect immediately. */
+    OK(knowhere_search_thread_pool_resize(5));
+    OK(knowhere_search_thread_pool_size(&size));
+    CHECK(size == 5);
+    OK(knowhere_build_thread_pool_resize(2));
+    OK(knowhere_build_thread_pool_size(&size));
+    CHECK(size == 2);
+}
+
 int
 main(void) {
     float fp32[] = {0, 0, 1, 0, 0, 2};
@@ -251,6 +287,7 @@ main(void) {
     CHECK(knowhere_c_abi_version() == 1);
     CHECK(knowhere_index_version_minimum() <= knowhere_index_version_current());
     CHECK(knowhere_index_version_current() <= knowhere_index_version_maximum());
+    test_thread_pools();
     test_binary_set();
     test_invalid();
     test_failed_initialization();

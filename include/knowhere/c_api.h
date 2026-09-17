@@ -112,6 +112,24 @@ knowhere_index_version_current(void);
 KNOWHERE_C_API int32_t
 knowhere_index_version_maximum(void);
 
+/* Process-wide thread pools. Index search and brute force schedule one task per
+ * query row on the search pool and run each task single-threaded, so a call
+ * with one query occupies one pool thread; Build runs on the build pool. A pool
+ * that was never sized is created on first use with the hardware thread count.
+ * Resize creates the pool at the given size or resizes the existing pool; it is
+ * safe at any time, but only a call before the first search or build replaces
+ * the default. threads must be in [1, INT32_MAX]. The size accessors report 0
+ * while the pool does not exist yet and require a non-null output.
+ */
+KNOWHERE_C_API int32_t
+knowhere_search_thread_pool_resize(int64_t threads);
+KNOWHERE_C_API int32_t
+knowhere_search_thread_pool_size(int64_t* output);
+KNOWHERE_C_API int32_t
+knowhere_build_thread_pool_resize(int64_t threads);
+KNOWHERE_C_API int32_t
+knowhere_build_thread_pool_size(int64_t* output);
+
 /* Create any index/dtype combination registered in this Knowhere build. Index
  * versions outside the advertised inclusive range are unsupported. DISKANN and
  * INDEX_CARDINAL_TIERED receive a LocalFileManager. All handle outputs are zero
