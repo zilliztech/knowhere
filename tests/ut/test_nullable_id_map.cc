@@ -1454,6 +1454,11 @@ SupportsModeBuild(const IndexRow& row, Mode mode) {
 bool
 SupportsScenario(const IndexRow& row, const Scenario& scenario) {
     const auto& caps = row.caps;
+    if ((row.index_type == knowhere::IndexEnum::INDEX_FAISS_SCANN ||
+         row.index_type == knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR) &&
+        !faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+        return false;
+    }
     if (row.index_type == knowhere::IndexEnum::INDEX_HNSW && !row.requires_current_version && VersionForRow(row) < 6 &&
         scenario.nullable_ratio != NullableRatio::R0) {
         return false;
@@ -4665,6 +4670,9 @@ TEST_CASE("Nullable DataView cosine uses internal source ids and internal norms"
 }
 
 TEST_CASE("Nullable SCANN_DVR emb-list cosine rerank maps calc-dist ids", "[nullable][scann_dvr][emblist]") {
+    if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+        SKIP("SCANN requires PQ fast-scan SIMD support");
+    }
     IndexRow row{"SCANN_DVR", knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, DataKind::DenseFp32};
     Scenario scenario;
     scenario.mode = Mode::EmbList;
@@ -4731,6 +4739,9 @@ TEST_CASE("Nullable SCANN_DVR emb-list cosine rerank maps calc-dist ids", "[null
 }
 
 TEST_CASE("Nullable SCANN_DVR calc-dist APIs keep public and storage ids separate", "[nullable][scann_dvr][api]") {
+    if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+        SKIP("SCANN requires PQ fast-scan SIMD support");
+    }
     IndexRow row{"SCANN_DVR", knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, DataKind::DenseFp32};
     Scenario scenario;
     scenario.mode = Mode::Vector;
@@ -5114,6 +5125,9 @@ TEST_CASE("Nullable TokenANN GetEmbListByIds uses logical ids", "[nullable][embl
 
 TEST_CASE("Nullable SCANN_DVR TokenANN GetEmbListByIds reports unsupported raw retrieve",
           "[nullable][scann_dvr][emblist][api]") {
+    if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+        SKIP("SCANN requires PQ fast-scan SIMD support");
+    }
     IndexRow row{"SCANN_DVR", knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, DataKind::DenseFp32};
     Scenario scenario;
     scenario.mode = Mode::EmbList;

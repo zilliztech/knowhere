@@ -155,6 +155,11 @@ bool
 supports_sve();
 #endif
 
+#if defined(__loongarch__)
+bool
+cpu_support_lasx();
+#endif
+
 void
 fvec_hook(std::string&);
 

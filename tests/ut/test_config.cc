@@ -20,6 +20,7 @@
 #include "knowhere/config.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/version.h"
+#include "simd/hook.h"
 #ifdef KNOWHERE_WITH_DISKANN
 #include "index/diskann/diskann_config.h"
 #endif
@@ -222,7 +223,15 @@ TEST_CASE("Test config json parse", "[config]") {
         CHECK(s == knowhere::Status::invalid_value_in_json);
 
         s = knowhere::Config::FormatAndCheck(scann_dvr_config, build_json2);
-        checkBuildConfig(knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, build_json2);
+        if (faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+            checkBuildConfig(knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, build_json2);
+        } else {
+            std::string msg;
+            CHECK(knowhere::IndexStaticFaced<float>::ConfigCheck(knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR,
+                                                                 knowhere::Version::GetCurrentVersion().VersionNumber(),
+                                                                 build_json2,
+                                                                 msg) == knowhere::Status::invalid_instruction_set);
+        }
         CHECK(s == knowhere::Status::success);
     }
 
