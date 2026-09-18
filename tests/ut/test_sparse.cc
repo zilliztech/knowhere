@@ -82,7 +82,8 @@ ReadSparseIndexSections(const knowhere::BinaryPtr& binary) {
     REQUIRE(file_format_version == knowhere::sparse::inverted::kInvertedIndexFileFormatVersion);
     reader.advance(sizeof(uint32_t) * 2);
     reader.read(&nr_inner_dims, sizeof(uint32_t));
-    reader.advance(knowhere::sparse::inverted::kInvertedIndexHeaderReservedBytes);
+    reader.advance(sizeof(knowhere::sparse::inverted::InvertedIndexQuantType) +
+                   knowhere::sparse::inverted::kInvertedIndexHeaderReservedBytes);
     reader.read(&nr_sections, sizeof(uint32_t));
 
     return {nr_inner_dims, knowhere::sparse::inverted::read_section_headers(reader, nr_sections)};
@@ -1641,7 +1642,7 @@ TEST_CASE("Sparse posting quantization is restored and validated on reload", "[s
     REQUIRE(peek_quant_type_from_index_data(binary->data.get(), binary->size) == expected_type);
     if (legacy) {
         // Reproduce an existing index with no posting-type metadata, independently of its version.
-        std::memset(binary->data.get() + kInvertedIndexQuantTypeOffset, 0, kInvertedIndexHeaderReservedBytes);
+        std::memset(binary->data.get() + kInvertedIndexQuantTypeOffset, 0, sizeof(InvertedIndexQuantType));
     }
     Json load_config = config;
     load_config.erase("inverted_index_codec");
@@ -1801,7 +1802,7 @@ TEST_CASE("Sparse indexes retain their default types with and without metadata",
     REQUIRE(posting_type.has_value());
     REQUIRE(posting_type.value() != InvertedIndexQuantType::UNSPECIFIED);
     if (legacy) {
-        std::memset(binary->data.get() + kInvertedIndexQuantTypeOffset, 0, kInvertedIndexHeaderReservedBytes);
+        std::memset(binary->data.get() + kInvertedIndexQuantTypeOffset, 0, sizeof(InvertedIndexQuantType));
     }
     auto load_config = config;
     load_config.erase("inverted_index_codec");
@@ -2173,7 +2174,7 @@ TEST_CASE("Test SINDI BM25 loads legacy zero quant type as U16", "[sparse][sindi
     const auto binary = binary_set.GetByName(index.Type());
     // Reproduce a legacy file with no posting-type metadata.
     std::memset(binary->data.get() + knowhere::sparse::inverted::kInvertedIndexQuantTypeOffset, 0,
-                knowhere::sparse::inverted::kInvertedIndexHeaderReservedBytes);
+                sizeof(knowhere::sparse::inverted::InvertedIndexQuantType));
     REQUIRE(knowhere::sparse::inverted::peek_quant_type_from_index_data(binary->data.get(), binary->size) ==
             knowhere::sparse::inverted::InvertedIndexQuantType::UNSPECIFIED);
 

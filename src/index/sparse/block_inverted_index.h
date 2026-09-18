@@ -1101,7 +1101,9 @@ BlockInvertedIndex<DType, QType, MetricType>::serialize(MemoryIOWriter& writer) 
     writer.write(&this->nr_rows_, sizeof(uint32_t));
     writer.write(&this->max_dim_, sizeof(uint32_t));
     writer.write(&this->nr_inner_dims_, sizeof(uint32_t));
-    const auto reserved = make_inverted_index_reserved_header<QType>();
+    const auto quant_type = posting_quant_type<QType>();
+    writer.write(&quant_type, sizeof(quant_type));
+    const std::array<uint8_t, kInvertedIndexHeaderReservedBytes> reserved{};
     writer.write(reserved.data(), reserved.size());
 
     uint32_t nr_sections = 2;  // base sections: posting lists and dim map reverse
@@ -1208,11 +1210,12 @@ BlockInvertedIndex<DType, QType, MetricType>::deserialize(MemoryIOReader& reader
         reader.read(&this->nr_rows_, sizeof(uint32_t));
         reader.read(&this->max_dim_, sizeof(uint32_t));
         reader.read(&this->nr_inner_dims_, sizeof(uint32_t));
-        std::array<uint8_t, kInvertedIndexHeaderReservedBytes> reserved{};
-        reader.read(reserved.data(), reserved.size());
-        if (!validate_inverted_index_reserved_header<QType>(reserved)) {
+        InvertedIndexQuantType quant_type{};
+        reader.read(&quant_type, sizeof(quant_type));
+        if (!validate_posting_quant_type<QType>(quant_type)) {
             return Status::invalid_serialized_index_type;
         }
+        reader.advance(kInvertedIndexHeaderReservedBytes);
 
         return Status::success;
     };

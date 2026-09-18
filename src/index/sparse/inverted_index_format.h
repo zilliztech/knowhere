@@ -18,11 +18,13 @@
 namespace knowhere::sparse::inverted {
 
 inline constexpr uint32_t kInvertedIndexFileFormatVersion = 1;
-inline constexpr size_t kInvertedIndexHeaderReservedBytes = 16;
-inline constexpr size_t kInvertedIndexFileHeaderSize = sizeof(uint32_t) * 4 + kInvertedIndexHeaderReservedBytes;
+inline constexpr size_t kInvertedIndexHeaderReservedBytes = 12;
+inline constexpr size_t kInvertedIndexFileHeaderSize = sizeof(uint32_t) * 5 + kInvertedIndexHeaderReservedBytes;
 inline constexpr size_t kInvertedIndexSectionCountSize = sizeof(uint32_t);
 
-// The first reserved word records the posting type for every encoding.
+static_assert(kInvertedIndexFileHeaderSize == 32);
+
+// The posting type consumes the first four bytes of the original reserved header.
 // Zero identifies legacy files that need build parameters or version defaults.
 inline constexpr size_t kInvertedIndexQuantTypeOffset = sizeof(uint32_t) * 4;
 enum class InvertedIndexQuantType : uint32_t {
@@ -54,19 +56,8 @@ posting_quant_type() {
 }
 
 template <typename QType>
-std::array<uint8_t, kInvertedIndexHeaderReservedBytes>
-make_inverted_index_reserved_header() {
-    std::array<uint8_t, kInvertedIndexHeaderReservedBytes> reserved{};
-    const auto quant_type = posting_quant_type<QType>();
-    std::memcpy(reserved.data(), &quant_type, sizeof(quant_type));
-    return reserved;
-}
-
-template <typename QType>
 bool
-validate_inverted_index_reserved_header(const std::array<uint8_t, kInvertedIndexHeaderReservedBytes>& reserved) {
-    InvertedIndexQuantType quant_type{};
-    std::memcpy(&quant_type, reserved.data(), sizeof(quant_type));
+validate_posting_quant_type(InvertedIndexQuantType quant_type) {
     return quant_type == InvertedIndexQuantType::UNSPECIFIED || quant_type == posting_quant_type<QType>();
 }
 
