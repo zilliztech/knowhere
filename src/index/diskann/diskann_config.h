@@ -129,13 +129,15 @@ class DiskANNConfig : public BaseConfig {
             .set_default(0)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .for_train()
-            .for_deserialize();
+            .for_deserialize()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_cache_budget_gb)
             .description("the size of cached nodes in GB.")
             .set_default(0)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .for_train()
-            .for_deserialize();
+            .for_deserialize()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(warm_up)
             .description("should do warm up before search.")
             .set_default(false)
@@ -236,9 +238,7 @@ class DiskANNNavigationConfig : public DiskANNConfig {
                 "RaBitQ multi-bit refinement mode: probabilistic enables error-window pruning; full always "
                 "computes the complete RaBitQ distance")
             .set_default("probabilistic")
-            .for_search()
-            .for_range_search()
-            .for_iterator();
+            .for_search();
     }
 
     Status

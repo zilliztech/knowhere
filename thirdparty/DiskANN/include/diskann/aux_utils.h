@@ -43,8 +43,6 @@ namespace diskann {
 
   double get_memory_budget(const std::string &mem_budget_str);
   double get_memory_budget(double search_ram_budget_in_gb);
-  size_t get_num_pq_chunks(double pq_code_size_limit, size_t points_num,
-                           size_t dim);
   void   add_new_file_to_single_index(std::string index_file,
                                       std::string new_file);
 

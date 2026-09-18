@@ -1607,17 +1607,6 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     }
 }
 
-size_t get_num_pq_chunks(double pq_code_size_limit, size_t points_num,
-                         size_t dim) {
-    if (points_num == 0 || dim == 0) {
-      return 0;
-    }
-    size_t num_pq_chunks =
-        static_cast<size_t>(std::floor(pq_code_size_limit / points_num));
-    num_pq_chunks = std::max<size_t>(num_pq_chunks, 1);
-    return std::min(num_pq_chunks, dim);
-}
-
 template<typename T>
   int build_disk_index(BuildConfig &config) {
     if (!knowhere::KnowhereFloatTypeCheck<T>::value &&
@@ -1744,13 +1733,12 @@ template<typename T>
                         << " Indexing ram budget: " << indexing_ram_budget
                         << "(GiB)";
 
-    // The ordinary PQFlashIndex scratch space is dimension-sized, so an
-    // in-memory navigation code may safely use up to one chunk per input
-    // dimension. AiSAQ's on-disk layout and loader retain a 512-chunk limit.
-    const size_t requested_pq_chunks = get_num_pq_chunks(pq_code_size_limit, points_num, dim);
-    const size_t num_pq_chunks = config.aisaq_mode
-        ? std::min(requested_pq_chunks, static_cast<size_t>(diskann::defaults::MAX_PQ_CHUNKS))
-        : requested_pq_chunks;
+    size_t num_pq_chunks =
+        (size_t) (std::floor)(_u64(pq_code_size_limit / points_num));
+
+    num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
+    num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
+    num_pq_chunks = num_pq_chunks > diskann::defaults::MAX_PQ_CHUNKS ? diskann::defaults::MAX_PQ_CHUNKS : num_pq_chunks;
 
     LOG_KNOWHERE_INFO_ << "Compressing " << dim << "-dimensional data into "
                        << num_pq_chunks << " bytes per vector.";

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "index/diskann/navigation_store.h"
 
+#include <limits>
 #include <stdexcept>
 
 #include "index/diskann/diskann_config.h"
@@ -25,6 +26,19 @@ ExternalConfig(const DiskANNConfig& config) {
 bool
 UsesExternalNavigation(const DiskANNConfig& config) {
     return ExternalConfig(config) != nullptr;
+}
+
+uint64_t
+EstimateNavigationMemory(const DiskANNConfig& config, int64_t rows, int64_t dim) {
+    const auto* navigation = ExternalConfig(config);
+    if (!navigation) {
+        return 0;
+    }
+    if (dim <= 0 || dim >= std::numeric_limits<int>::max()) {
+        throw std::invalid_argument("invalid DiskANN navigation dimension");
+    }
+    const auto prepared_dim = dim + (config.metric_type.value_or(metric::L2) == metric::IP ? 1 : 0);
+    return RaBitQStore::EstimateMemorySize(rows, prepared_dim, static_cast<uint8_t>(navigation->rbq_bits.value_or(1)));
 }
 
 std::vector<std::string>

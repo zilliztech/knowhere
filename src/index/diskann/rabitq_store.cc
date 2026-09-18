@@ -381,4 +381,21 @@ RaBitQStore::MemorySize() const {
            rotation_->A.size() * sizeof(float) + rotation_->b.size() * sizeof(float);
 }
 
+uint64_t
+RaBitQStore::EstimateMemorySize(int64_t rows, int64_t prepared_dim, uint8_t rbq_bits) {
+    if (rows <= 0 || prepared_dim <= 0 || prepared_dim > std::numeric_limits<int>::max() || rbq_bits < 1 ||
+        rbq_bits > 9) {
+        throw std::invalid_argument("invalid RaBitQ resource estimate dimensions or bits");
+    }
+    const uint64_t d = static_cast<uint64_t>(prepared_dim);
+    const uint64_t code_size = faiss::RaBitQuantizer().compute_code_size(d, rbq_bits);
+    // d is bounded by the transform's int dimension; d*(d+1)*sizeof(float)
+    // fits uint64_t. Includes the square rotation and the global centroid.
+    const uint64_t model_bytes = d * (d + 1) * sizeof(float);
+    if (static_cast<uint64_t>(rows) > (std::numeric_limits<uint64_t>::max() - model_bytes) / code_size) {
+        throw std::overflow_error("RaBitQ resource estimate overflows uint64_t");
+    }
+    return static_cast<uint64_t>(rows) * code_size + model_bytes;
+}
+
 }  // namespace knowhere

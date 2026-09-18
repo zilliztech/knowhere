@@ -29,6 +29,10 @@ class RaBitQStore final : public NavigationStore {
     static void
     BuildFromFloatBin(const std::string& data_path, const std::string& sidecar_path, uint8_t rbq_bits);
 
+    // Persistent codes and model only; excludes graph-engine scratch and node cache.
+    static uint64_t
+    EstimateMemorySize(int64_t rows, int64_t prepared_dim, uint8_t rbq_bits);
+
     explicit RaBitQStore(const std::string& sidecar_path);
     ~RaBitQStore();
 

@@ -31,6 +31,8 @@ class NavigationStore {
 // search parameters. New codecs are added here, not to cached_beam_search.
 bool
 UsesExternalNavigation(const DiskANNConfig& config);
+uint64_t
+EstimateNavigationMemory(const DiskANNConfig& config, int64_t rows, int64_t dim);
 std::vector<std::string>
 NavigationFiles(const DiskANNConfig& config, const std::string& prefix);
 void
