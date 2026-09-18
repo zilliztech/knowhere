@@ -127,6 +127,13 @@ class BitsetView {
         filtered_count_ = filter_count;
     }
 
+    // Keep test()'s ID bounds even when the current filter count is zero.
+    // Callers whose search can observe later appends must retain this check.
+    void
+    set_require_id_boundary(bool require_id_boundary) {
+        require_id_boundary_ = require_id_boundary;
+    }
+
     bool
     has_out_ids() const {
         return out_ids_count_ != 0;
@@ -457,6 +464,9 @@ class BitsetView {
 
     bool
     has_id_boundary_filter_() const {
+        if (require_id_boundary_) {
+            return true;
+        }
         if (vector_count_ == 0) {
             return false;
         }
@@ -473,6 +483,7 @@ class BitsetView {
     // Backend-vector count filtered out by bits_.
     // std::nullopt means unknown; 0 means known empty filtering.
     std::optional<size_t> filtered_count_ = std::nullopt;
+    bool require_id_boundary_ = false;
 
     // Contiguous backend id window into the public bitset.
     size_t id_offset_ = 0;

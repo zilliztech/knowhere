@@ -189,6 +189,57 @@ TEST_CASE("BitsetView counts only valid filtered bits with valid bitmap", "[bits
     REQUIRE_FALSE(bitset.empty());
 }
 
+TEST_CASE("BitsetView retains a required ID boundary with zero filtered vectors", "[bitset][count]") {
+    auto bits = MakeBitmap(5, {});
+    knowhere::BitsetView bitset(bits.data(), 5);
+    bitset.set_require_id_boundary(true);
+    bitset.count_filtered_bits(0, 5);
+
+    REQUIRE(bitset.count() == 0);
+    REQUIRE(bitset.size() == 5);
+    REQUIRE(bitset.filter_ratio() == 0.0F);
+    REQUIRE_FALSE(bitset.empty());
+    REQUIRE_FALSE(bitset.test(4));
+    REQUIRE(bitset.test(5));
+
+    auto copied = bitset;
+    REQUIRE_FALSE(copied.empty());
+    knowhere::BitsetView assigned;
+    assigned = bitset;
+    REQUIRE_FALSE(assigned.empty());
+
+    // Immutable callers can still opt into the zero-filter fast path.
+    copied.set_require_id_boundary(false);
+    REQUIRE(copied.empty());
+    REQUIRE_FALSE(bitset.empty());
+}
+
+TEST_CASE("BitsetView retains its mapped boundary after an append", "[bitset][count][id_map]") {
+    auto bits = MakeBitmap(5, {});
+    auto valid = MakeBitmap(5, {0, 2, 4});
+    auto ids = MakeIdArray({0, 2, 4}, knowhere::IdArray::Type::APPEND_ARRAY);
+    knowhere::BitsetView bitset(bits.data(), 5);
+    bitset.set_out_ids(ids.Prefix(3), 3);
+    bitset.set_require_id_boundary(true);
+    bitset.count_filtered_bits(0, 5, valid.data());
+
+    const int32_t appended = 5;
+    ids.Append(&appended, 1);
+    REQUIRE(bitset.out_ids_count() == 3);
+    REQUIRE(bitset.size() == 3);
+    REQUIRE(bitset.count() == 0);
+    REQUIRE_FALSE(bitset.empty());
+    REQUIRE_FALSE(bitset.test(2));
+    REQUIRE(bitset.test(3));
+}
+
+TEST_CASE("BitsetView boundary requirement preserves an absent filter", "[bitset]") {
+    knowhere::BitsetView bitset;
+    bitset.set_require_id_boundary(true);
+    REQUIRE(bitset.empty());
+    REQUIRE(bitset.count() == 0);
+}
+
 TEST_CASE("BitsetView counts append valid bitmap", "[bitset][count][id_map]") {
     auto bits = MakeBitmap(8, {2, 5});
     auto valid_bytes = MakeBitmap(8, {1, 2, 4, 5, 7});
