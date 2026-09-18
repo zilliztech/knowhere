@@ -84,3 +84,6 @@ docs/superpowers/
 
 # Test artifacts (Catch2 tests write serialized indexes into CWD)
 *.index
+
+# Java build output
+java/target/
