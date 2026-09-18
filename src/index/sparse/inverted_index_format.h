@@ -8,37 +8,66 @@
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <type_traits>
 #include <vector>
 
 #include "io/memory_io.h"
 #include "knowhere/log.h"
+#include "knowhere/operands.h"
 
 namespace knowhere::sparse::inverted {
 
 inline constexpr uint32_t kInvertedIndexFileFormatVersion = 1;
-inline constexpr size_t kInvertedIndexHeaderReservedBytes = 16;
-inline constexpr size_t kInvertedIndexFileHeaderSize = sizeof(uint32_t) * 4 + kInvertedIndexHeaderReservedBytes;
+inline constexpr size_t kInvertedIndexHeaderReservedBytes = 12;
+inline constexpr size_t kInvertedIndexFileHeaderSize = sizeof(uint32_t) * 5 + kInvertedIndexHeaderReservedBytes;
 inline constexpr size_t kInvertedIndexSectionCountSize = sizeof(uint32_t);
 
-// The first four reserved header bytes store the SINDI BM25 posting-value
-// representation. Zero is the legacy/default u16 representation, so old files
-// with an all-zero reserved header remain directly identifiable as u16.
-enum class SindiQuantType : uint32_t {
-    BM25_U16 = 0,
-    BM25_U8 = 1,
+static_assert(kInvertedIndexFileHeaderSize == 32);
+
+// The posting type consumes the first four bytes of the original reserved header.
+// Zero identifies legacy files that need build parameters or version defaults.
+inline constexpr size_t kInvertedIndexQuantTypeOffset = sizeof(uint32_t) * 4;
+enum class InvertedIndexQuantType : uint32_t {
+    UNSPECIFIED = 0,
+    IP_FP16 = 1,
+    IP_FP32 = 2,
+    BM25_U8 = 3,
+    BM25_U16 = 4,
+    BM25_U32 = 5,
 };
 
-static_assert(sizeof(SindiQuantType) == sizeof(uint32_t));
+static_assert(sizeof(InvertedIndexQuantType) == sizeof(uint32_t));
 
-inline std::optional<SindiQuantType>
-peek_sindi_quant_type_from_index_data(const uint8_t* data, size_t size) {
-    constexpr size_t kReservedOffset = sizeof(uint32_t) * 4;
-    if (data == nullptr || size < kReservedOffset + sizeof(SindiQuantType)) {
+template <typename QType>
+constexpr InvertedIndexQuantType
+posting_quant_type() {
+    if constexpr (std::is_same_v<QType, knowhere::fp16>) {
+        return InvertedIndexQuantType::IP_FP16;
+    } else if constexpr (std::is_same_v<QType, float>) {
+        return InvertedIndexQuantType::IP_FP32;
+    } else if constexpr (std::is_same_v<QType, uint8_t>) {
+        return InvertedIndexQuantType::BM25_U8;
+    } else if constexpr (std::is_same_v<QType, uint16_t>) {
+        return InvertedIndexQuantType::BM25_U16;
+    } else {
+        static_assert(std::is_same_v<QType, uint32_t>);
+        return InvertedIndexQuantType::BM25_U32;
+    }
+}
+
+template <typename QType>
+bool
+validate_posting_quant_type(InvertedIndexQuantType quant_type) {
+    return quant_type == InvertedIndexQuantType::UNSPECIFIED || quant_type == posting_quant_type<QType>();
+}
+
+inline std::optional<InvertedIndexQuantType>
+peek_quant_type_from_index_data(const uint8_t* data, size_t size) {
+    if (data == nullptr || size < kInvertedIndexFileHeaderSize) {
         return std::nullopt;
     }
-
-    SindiQuantType quant_type{};
-    std::memcpy(&quant_type, data + kReservedOffset, sizeof(quant_type));
+    InvertedIndexQuantType quant_type{};
+    std::memcpy(&quant_type, data + kInvertedIndexQuantTypeOffset, sizeof(quant_type));
     return quant_type;
 }
 

@@ -9,8 +9,14 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <unistd.h>
+
+#include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <future>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -41,6 +47,23 @@ WriteBinaryToFile(const std::string& filename, const knowhere::BinaryPtr binary)
 
 namespace {
 
+struct SparseQuantIndexFile {
+    char path[64] = "/tmp/knowhere_sparse_quant_XXXXXX";
+
+    explicit SparseQuantIndexFile(const knowhere::BinaryPtr& binary) {
+        const auto fd = mkstemp(path);
+        REQUIRE(fd >= 0);
+        close(fd);
+        std::ofstream file(path, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(binary->data.get()), binary->size);
+        REQUIRE(file.good());
+    }
+
+    ~SparseQuantIndexFile() {
+        std::remove(path);
+    }
+};
+
 struct SparseIndexSections {
     uint32_t nr_inner_dims;
     std::vector<knowhere::sparse::inverted::InvertedIndexSectionHeader> section_headers;
@@ -59,7 +82,8 @@ ReadSparseIndexSections(const knowhere::BinaryPtr& binary) {
     REQUIRE(file_format_version == knowhere::sparse::inverted::kInvertedIndexFileFormatVersion);
     reader.advance(sizeof(uint32_t) * 2);
     reader.read(&nr_inner_dims, sizeof(uint32_t));
-    reader.advance(knowhere::sparse::inverted::kInvertedIndexHeaderReservedBytes);
+    reader.advance(sizeof(knowhere::sparse::inverted::InvertedIndexQuantType) +
+                   knowhere::sparse::inverted::kInvertedIndexHeaderReservedBytes);
     reader.read(&nr_sections, sizeof(uint32_t));
 
     return {nr_inner_dims, knowhere::sparse::inverted::read_section_headers(reader, nr_sections)};
@@ -1545,6 +1569,260 @@ TEST_CASE("Test SINDI Index Requires Version 10", "[sparse][sindi]") {
     REQUIRE(idx.Build(train_ds, build_json) == knowhere::Status::invalid_args);
 }
 
+TEST_CASE("Sparse posting quantization is restored and validated on reload", "[sparse][quant_type]") {
+    using namespace knowhere;
+    using namespace knowhere::sparse::inverted;
+    const auto quant_type =
+        GENERATE(std::string("fp32"), std::string("fp16"), std::string("u32"), std::string("u16"), std::string("u8"));
+    const auto codec = quant_type == "u8"
+                           ? std::string("sindi")
+                           : GENERATE(std::string("block_streamvbyte"), std::string("block_maskedvbyte"),
+                                      std::string("block_adaptive"), std::string(""), std::string("sindi"));
+    const int version = quant_type == "u8" ? 11 : GENERATE(10, 11);
+    const bool legacy = quant_type == "u8" ? false : GENERATE(false, true);
+    const auto load_mode =
+        legacy
+            ? GENERATE(std::string("matching"), std::string("legacy_incompatible"), std::string("legacy_unsupported"))
+            : GENERATE(std::string("omitted"), std::string("matching"), std::string("different"), std::string("auto"),
+                       std::string("incompatible"), std::string("unsupported"), std::string("invalid"),
+                       std::string("wrong_metric"));
+    const bool use_mmap = GENERATE(false, true);
+    CAPTURE(quant_type, codec, version, legacy, load_mode, use_mmap);
+
+    const bool is_ip = quant_type == "fp32" || quant_type == "fp16";
+    constexpr int nb = 3000;
+    constexpr int topk = 10;
+    auto rows = std::make_unique<sparse::SparseRow<float>[]>(nb);
+    for (int i = 0; i < nb; ++i) {
+        rows[i] = sparse::SparseRow<float>(4);
+        rows[i].set_at(0, 1, is_ip ? static_cast<float>(std::pow(1.003, nb - i)) : 100000.0F - 10 * i);
+        rows[i].set_at(1, 2, 1.0F);
+        rows[i].set_at(2, 3, is_ip ? 0.5F : 2.0F);
+        rows[i].set_at(3, 4, is_ip ? 0.25F : 3.0F);
+    }
+    auto dataset = GenDataSet(nb, 5, rows.get());
+    dataset->SetIsSparse(true);
+    sparse::SparseRow<float> query(1);
+    query.set_at(0, 1, 1.0F);
+    auto query_ds = GenDataSet(1, 5, &query);
+    query_ds->SetIsSparse(true);
+
+    Json config = {{"metric_type", is_ip ? metric::IP : metric::BM25},
+                   {"inverted_index_algo", codec == "sindi" ? "SINDI" : "DAAT_MAXSCORE"},
+                   {"quant_type", quant_type},
+                   {"k", topk},
+                   {"bm25_k1", 1.2F},
+                   {"bm25_b", 0.75F},
+                   {"bm25_avgdl", 100000.0F}};
+    if (codec != "sindi") {
+        config["inverted_index_codec"] = codec;
+    }
+    const auto make_index = [version] {
+        return IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version).value();
+    };
+    auto built = make_index();
+    REQUIRE(built.Build(dataset, config) == Status::success);
+    auto expected = built.Search(query_ds, config, nullptr);
+    REQUIRE(expected.has_value());
+    if (is_ip) {
+        for (int i = 0; i < topk; ++i) {
+            REQUIRE(expected.value()->GetIds()[i] == i);
+        }
+    }
+
+    BinarySet binary_set;
+    REQUIRE(built.Serialize(binary_set) == Status::success);
+    auto binary = binary_set.GetByName(built.Type());
+    const auto expected_type =
+        is_ip ? (quant_type == "fp32" && codec != "sindi" ? InvertedIndexQuantType::IP_FP32
+                                                          : InvertedIndexQuantType::IP_FP16)
+              : (quant_type == "u8" ? InvertedIndexQuantType::BM25_U8
+                                    : (quant_type == "u32" && codec != "sindi" ? InvertedIndexQuantType::BM25_U32
+                                                                               : InvertedIndexQuantType::BM25_U16));
+    REQUIRE(peek_quant_type_from_index_data(binary->data.get(), binary->size) == expected_type);
+    if (legacy) {
+        // Reproduce an existing index with no posting-type metadata, independently of its version.
+        std::memset(binary->data.get() + kInvertedIndexQuantTypeOffset, 0, sizeof(InvertedIndexQuantType));
+    }
+    Json load_config = config;
+    load_config.erase("inverted_index_codec");
+    if (load_mode == "omitted") {
+        load_config.erase("quant_type");
+    } else if (load_mode == "different") {
+        load_config["quant_type"] =
+            is_ip ? (quant_type == "fp32" ? "fp16" : "fp32") : (quant_type == "u32" ? "u16" : "u32");
+    } else if (load_mode == "auto") {
+        load_config["quant_type"] = "auto";
+    } else if (load_mode == "incompatible" || load_mode == "legacy_incompatible") {
+        load_config["quant_type"] = is_ip ? "u16" : "fp32";
+    } else if (load_mode == "unsupported" || load_mode == "legacy_unsupported") {
+        load_config["quant_type"] = "not_a_quant_type";
+    } else if (load_mode == "invalid") {
+        const uint32_t invalid_quant_type = 99;
+        std::memcpy(binary->data.get() + kInvertedIndexQuantTypeOffset, &invalid_quant_type,
+                    sizeof(invalid_quant_type));
+    } else if (load_mode == "wrong_metric") {
+        load_config.erase("quant_type");
+        load_config["metric_type"] = is_ip ? metric::BM25 : metric::IP;
+    }
+
+    auto loaded = make_index();
+    std::unique_ptr<SparseQuantIndexFile> file;
+    auto expected_status =
+        load_mode == "invalid" || load_mode == "wrong_metric" ? Status::invalid_serialized_index_type : Status::success;
+    if (load_mode == "legacy_incompatible" || load_mode == "legacy_unsupported") {
+        expected_status = Status::invalid_args;
+    }
+    if (use_mmap) {
+        file = std::make_unique<SparseQuantIndexFile>(binary);
+        REQUIRE(loaded.DeserializeFromFile(file->path, load_config) == expected_status);
+    } else {
+        REQUIRE(loaded.Deserialize(binary_set, load_config) == expected_status);
+    }
+    if (expected_status != Status::success) {
+        return;
+    }
+    auto actual = loaded.Search(query_ds, config, nullptr);
+    REQUIRE(actual.has_value());
+    for (int i = 0; i < topk; ++i) {
+        REQUIRE(actual.value()->GetIds()[i] == expected.value()->GetIds()[i]);
+        REQUIRE(actual.value()->GetDistance()[i] == expected.value()->GetDistance()[i]);
+    }
+}
+
+TEST_CASE("Sparse auto quantization persists its resolved type", "[sparse][quant_type]") {
+    using namespace knowhere;
+    using namespace knowhere::sparse::inverted;
+    const auto codec = GENERATE(std::string("block_streamvbyte"), std::string("block_maskedvbyte"),
+                                std::string("block_adaptive"), std::string(""), std::string("sindi"));
+    const auto threshold = GENERATE(0.0F, 1.0F);
+    const auto load_quant_type = GENERATE(std::string(""), std::string("auto"), std::string("u32"));
+    const bool use_mmap = GENERATE(false, true);
+    CAPTURE(codec, threshold, load_quant_type, use_mmap);
+
+    sparse::SparseRow<float> rows[3];
+    for (int i = 0; i < 3; ++i) {
+        rows[i] = sparse::SparseRow<float>(1);
+        rows[i].set_at(0, 1, 256.0F + i);
+    }
+    auto dataset = GenDataSet(3, 2, rows);
+    dataset->SetIsSparse(true);
+    auto query_ds = GenDataSet(1, 2, rows);
+    query_ds->SetIsSparse(true);
+    Json config = {{"metric_type", metric::BM25},
+                   {"inverted_index_algo", codec == "sindi" ? "SINDI" : "DAAT_MAXSCORE"},
+                   {"quant_type", "auto"},
+                   {"bm25_u8_max_overflow_ratio", threshold},
+                   {"k", 3},
+                   {"bm25_k1", 1.2F},
+                   {"bm25_b", 0.0F},
+                   {"bm25_avgdl", 256.0F}};
+    if (codec != "sindi") {
+        config["inverted_index_codec"] = codec;
+    }
+    const auto make_index = [] {
+        return IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+    };
+    auto built = make_index();
+    REQUIRE(built.Build(dataset, config) == Status::success);
+    const auto expected = built.Search(query_ds, config, nullptr);
+    REQUIRE(expected.has_value());
+    BinarySet binary_set;
+    REQUIRE(built.Serialize(binary_set) == Status::success);
+    const auto binary = binary_set.GetByName(built.Type());
+    const auto expected_type =
+        codec == "sindi" && threshold == 1.0F ? InvertedIndexQuantType::BM25_U8 : InvertedIndexQuantType::BM25_U16;
+    REQUIRE(peek_quant_type_from_index_data(binary->data.get(), binary->size) == expected_type);
+
+    auto load_config = config;
+    load_config.erase("inverted_index_codec");
+    load_config.erase("quant_type");
+    if (!load_quant_type.empty()) {
+        load_config["quant_type"] = load_quant_type;
+    }
+    // Reload must restore the build decision even if the auto threshold changes.
+    load_config["bm25_u8_max_overflow_ratio"] = 1.0F - threshold;
+    auto loaded = make_index();
+    std::unique_ptr<SparseQuantIndexFile> file;
+    if (use_mmap) {
+        file = std::make_unique<SparseQuantIndexFile>(binary);
+        REQUIRE(loaded.DeserializeFromFile(file->path, load_config) == Status::success);
+    } else {
+        REQUIRE(loaded.Deserialize(binary_set, load_config) == Status::success);
+    }
+    const auto actual = loaded.Search(query_ds, config, nullptr);
+    REQUIRE(actual.has_value());
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(actual.value()->GetIds()[i] == expected.value()->GetIds()[i]);
+        REQUIRE(actual.value()->GetDistance()[i] == expected.value()->GetDistance()[i]);
+    }
+}
+
+TEST_CASE("Sparse indexes retain their default types with and without metadata", "[sparse][quant_type]") {
+    using namespace knowhere;
+    using namespace knowhere::sparse::inverted;
+    const auto quant_type = GENERATE(std::string("fp16"), std::string("u16"));
+    const auto codec = GENERATE(std::string("block_streamvbyte"), std::string("block_maskedvbyte"),
+                                std::string("block_adaptive"), std::string(""), std::string("sindi"));
+    const bool use_mmap = GENERATE(false, true);
+    const int version = codec == "sindi" ? GENERATE(10, 11) : GENERATE(8, 9, 10, 11);
+    const bool legacy = GENERATE(false, true);
+    CAPTURE(quant_type, codec, version, legacy, use_mmap);
+
+    sparse::SparseRow<float> rows[3];
+    for (int i = 0; i < 3; ++i) {
+        rows[i] = sparse::SparseRow<float>(1);
+        rows[i].set_at(0, 1, 256.0F + i);
+    }
+    auto dataset = GenDataSet(3, 2, rows);
+    dataset->SetIsSparse(true);
+    auto query_ds = GenDataSet(1, 2, rows);
+    query_ds->SetIsSparse(true);
+    Json config = {{"metric_type", quant_type == "fp16" ? metric::IP : metric::BM25},
+                   {"inverted_index_algo", codec == "sindi" ? "SINDI" : "DAAT_MAXSCORE"},
+                   {"quant_type", quant_type},
+                   {"k", 3},
+                   {"bm25_k1", 1.2F},
+                   {"bm25_b", 0.0F},
+                   {"bm25_avgdl", 256.0F}};
+    if (codec != "sindi") {
+        config["inverted_index_codec"] = codec;
+    }
+    const auto make_index = [version] {
+        return IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version).value();
+    };
+    auto built = make_index();
+    REQUIRE(built.Build(dataset, config) == Status::success);
+    const auto expected = built.Search(query_ds, config, nullptr);
+    REQUIRE(expected.has_value());
+    BinarySet binary_set;
+    REQUIRE(built.Serialize(binary_set) == Status::success);
+    const auto binary = binary_set.GetByName(built.Type());
+    const auto posting_type = peek_quant_type_from_index_data(binary->data.get(), binary->size);
+    REQUIRE(posting_type.has_value());
+    REQUIRE(posting_type.value() != InvertedIndexQuantType::UNSPECIFIED);
+    if (legacy) {
+        std::memset(binary->data.get() + kInvertedIndexQuantTypeOffset, 0, sizeof(InvertedIndexQuantType));
+    }
+    auto load_config = config;
+    load_config.erase("inverted_index_codec");
+    load_config.erase("quant_type");
+    auto loaded = make_index();
+    std::unique_ptr<SparseQuantIndexFile> file;
+    if (use_mmap) {
+        file = std::make_unique<SparseQuantIndexFile>(binary);
+        REQUIRE(loaded.DeserializeFromFile(file->path, load_config) == Status::success);
+    } else {
+        REQUIRE(loaded.Deserialize(binary_set, load_config) == Status::success);
+    }
+    const auto actual = loaded.Search(query_ds, config, nullptr);
+    REQUIRE(actual.has_value());
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(actual.value()->GetIds()[i] == expected.value()->GetIds()[i]);
+        REQUIRE(actual.value()->GetDistance()[i] == expected.value()->GetDistance()[i]);
+    }
+}
+
 TEST_CASE("Test SINDI BM25 U8 and auto require version 11", "[sparse][sindi][quant]") {
     constexpr int32_t version = 10;
     const auto train_ds = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.0f}}}, 1);
@@ -1577,8 +1855,8 @@ TEST_CASE("Test SINDI BM25 U8 and auto require version 11", "[sparse][sindi][qua
     knowhere::BinarySet binary_set;
     REQUIRE(u16_index.Serialize(binary_set) == knowhere::Status::success);
     const auto binary = binary_set.GetByName(u16_index.Type());
-    REQUIRE(knowhere::sparse::inverted::peek_sindi_quant_type_from_index_data(binary->data.get(), binary->size) ==
-            knowhere::sparse::inverted::SindiQuantType::BM25_U16);
+    REQUIRE(knowhere::sparse::inverted::peek_quant_type_from_index_data(binary->data.get(), binary->size) ==
+            knowhere::sparse::inverted::InvertedIndexQuantType::BM25_U16);
 }
 
 TEST_CASE("Test SINDI BM25 U8 posting value quantization", "[sparse][sindi][quant]") {
@@ -1683,13 +1961,15 @@ TEST_CASE("Test SINDI BM25 auto quantization uses only the configured overflow t
         const bool has_sidecar =
             FindSection(sections, knowhere::sparse::inverted::InvertedIndexSectionType::BM25_U8_OVERFLOWS) != nullptr;
         const auto serialized_quant_type =
-            knowhere::sparse::inverted::peek_sindi_quant_type_from_index_data(binary->data.get(), binary->size);
+            knowhere::sparse::inverted::peek_quant_type_from_index_data(binary->data.get(), binary->size);
         REQUIRE(serialized_quant_type.has_value());
-        const bool uses_u8 = serialized_quant_type.value() == knowhere::sparse::inverted::SindiQuantType::BM25_U8;
-        REQUIRE((uses_u8 || serialized_quant_type.value() == knowhere::sparse::inverted::SindiQuantType::BM25_U16));
+        const bool uses_u8 =
+            serialized_quant_type.value() == knowhere::sparse::inverted::InvertedIndexQuantType::BM25_U8;
+        REQUIRE(
+            (uses_u8 || serialized_quant_type.value() == knowhere::sparse::inverted::InvertedIndexQuantType::BM25_U16));
 
         // Deserialize consumes the concrete representation persisted by Build(auto)
-        // without accepting quant_type as an external load parameter.
+        // without requiring quant_type as an external load parameter.
         auto load_config = build_config;
         load_config.erase("quant_type");
         auto restored = knowhere::IndexFactory::Instance()
@@ -1892,8 +2172,11 @@ TEST_CASE("Test SINDI BM25 loads legacy zero quant type as U16", "[sparse][sindi
     knowhere::BinarySet binary_set;
     REQUIRE(index.Serialize(binary_set) == knowhere::Status::success);
     const auto binary = binary_set.GetByName(index.Type());
-    REQUIRE(knowhere::sparse::inverted::peek_sindi_quant_type_from_index_data(binary->data.get(), binary->size) ==
-            knowhere::sparse::inverted::SindiQuantType::BM25_U16);
+    // Reproduce a legacy file with no posting-type metadata.
+    std::memset(binary->data.get() + knowhere::sparse::inverted::kInvertedIndexQuantTypeOffset, 0,
+                sizeof(knowhere::sparse::inverted::InvertedIndexQuantType));
+    REQUIRE(knowhere::sparse::inverted::peek_quant_type_from_index_data(binary->data.get(), binary->size) ==
+            knowhere::sparse::inverted::InvertedIndexQuantType::UNSPECIFIED);
 
     auto load_config = u16_config;
     load_config.erase("quant_type");
