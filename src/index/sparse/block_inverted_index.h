@@ -1101,7 +1101,7 @@ BlockInvertedIndex<DType, QType, MetricType>::serialize(MemoryIOWriter& writer) 
     writer.write(&this->nr_rows_, sizeof(uint32_t));
     writer.write(&this->max_dim_, sizeof(uint32_t));
     writer.write(&this->nr_inner_dims_, sizeof(uint32_t));
-    auto reserved = std::array<uint8_t, kInvertedIndexHeaderReservedBytes>();
+    const auto reserved = make_inverted_index_reserved_header<QType>();
     writer.write(reserved.data(), reserved.size());
 
     uint32_t nr_sections = 2;  // base sections: posting lists and dim map reverse
@@ -1208,8 +1208,11 @@ BlockInvertedIndex<DType, QType, MetricType>::deserialize(MemoryIOReader& reader
         reader.read(&this->nr_rows_, sizeof(uint32_t));
         reader.read(&this->max_dim_, sizeof(uint32_t));
         reader.read(&this->nr_inner_dims_, sizeof(uint32_t));
-        // skip reserved bytes
-        reader.advance(kInvertedIndexHeaderReservedBytes);
+        std::array<uint8_t, kInvertedIndexHeaderReservedBytes> reserved{};
+        reader.read(reserved.data(), reserved.size());
+        if (!validate_inverted_index_reserved_header<QType>(reserved)) {
+            return Status::invalid_serialized_index_type;
+        }
 
         return Status::success;
     };

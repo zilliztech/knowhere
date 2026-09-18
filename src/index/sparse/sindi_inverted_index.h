@@ -864,11 +864,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             writer.write(&this->nr_rows_, sizeof(uint32_t));
             writer.write(&this->max_dim_, sizeof(uint32_t));
             writer.write(&this->nr_inner_dims_, sizeof(uint32_t));
-            auto reserved = std::array<uint8_t, kInvertedIndexHeaderReservedBytes>();
-            if constexpr (is_bm25) {
-                const auto quant_type = serialized_quant_type();
-                std::memcpy(reserved.data(), &quant_type, sizeof(quant_type));
-            }
+            const auto reserved = make_inverted_index_reserved_header<QuantType>();
             writer.write(reserved.data(), reserved.size());
 
             const bool has_row_sums = !row_sums_span_.empty();
@@ -1039,18 +1035,9 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 reader.read(&this->nr_inner_dims_, sizeof(uint32_t));
                 std::array<uint8_t, kInvertedIndexHeaderReservedBytes> reserved{};
                 reader.read(reserved.data(), reserved.size());
-                uint32_t serialized_quant_type_raw = 0;
-                std::memcpy(&serialized_quant_type_raw, reserved.data(), sizeof(serialized_quant_type_raw));
-                if constexpr (is_bm25) {
-                    if (serialized_quant_type_raw != static_cast<uint32_t>(serialized_quant_type())) {
-                        return Status::invalid_serialized_index_type;
-                    }
-                } else {
-                    if (serialized_quant_type_raw != 0) {
-                        return Status::invalid_serialized_index_type;
-                    }
+                if (!validate_inverted_index_reserved_header<QuantType>(reserved)) {
+                    return Status::invalid_serialized_index_type;
                 }
-
                 // if there are zero rows, there should be no inner dims, something is wrong
                 if (this->nr_rows_ == 0 && this->nr_inner_dims_ != 0) {
                     return Status::invalid_serialized_index_type;
@@ -1756,16 +1743,6 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     }
 
  private:
-    [[nodiscard]] static constexpr SindiQuantType
-    serialized_quant_type() noexcept {
-        static_assert(is_bm25);
-        if constexpr (is_bm25_u8) {
-            return SindiQuantType::BM25_U8;
-        } else {
-            return SindiQuantType::BM25_U16;
-        }
-    }
-
     void
     store_sealed_value(size_t offset, DataType value) noexcept {
         total_plists_vals_flat_[offset] = quantize_value(value);

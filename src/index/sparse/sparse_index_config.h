@@ -160,9 +160,13 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .description(
                 "quantization type for posting list values: fp16/fp32 for IP, u8/u16/u32/auto for BM25; u8 is "
                 "supported only by sealed SINDI with index version >= 11; BM25 auto requires index version >= 11 "
-                "and resolves to u8/u16 for sealed SINDI or u16 for other indexes")
+                "and resolves to u8/u16 for sealed SINDI or u16 for other indexes; the concrete type is persisted "
+                "in the index and restored automatically on load; the load parameter is used only for legacy "
+                "files without posting-type metadata")
             .allow_empty_without_default()
-            .for_train();
+            .for_train()
+            .for_deserialize()
+            .for_deserialize_from_file();
         KNOWHERE_CONFIG_DECLARE_FIELD(bm25_u8_max_overflow_ratio)
             .description(
                 "maximum overflow-posting ratio at which SINDI BM25 quant_type=auto selects restore-u8; 0.0001 "
@@ -178,7 +182,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
     }
 
     Status
-    CheckAndAdjust(PARAM_TYPE /*param_type*/, std::string* err_msg) override {
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
         if (inverted_index_algo.has_value() && !IsSupportedSparseInvertedIndexAlgo(inverted_index_algo.value())) {
             return HandleError(
                 err_msg,
@@ -194,6 +198,16 @@ class SparseInvertedIndexConfig : public BaseConfig {
                                    "block_adaptive]",
                                Status::invalid_args);
         }
+        // On load, the serialized type takes precedence. Validate the caller's
+        // quant_type later, only if a legacy file actually needs that parameter.
+        if (param_type & (DESERIALIZE | DESERIALIZE_FROM_FILE)) {
+            return Status::success;
+        }
+        return ValidateQuantType(err_msg);
+    }
+
+    Status
+    ValidateQuantType(std::string* err_msg) const {
         if (quant_type.has_value() && !quant_type.value().empty()) {
             auto qt = quant_type.value();
             auto mt = metric_type.value();

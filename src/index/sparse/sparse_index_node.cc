@@ -204,45 +204,50 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     Status
-    ResolveQuantTypeForDeserialize(const uint8_t* data, size_t size,
-                                   std::optional<sparse::inverted::InvertedIndexEncoding> encoding,
-                                   SparseInvertedIndexConfig& cfg) const {
-        if (!IsMetricType(cfg.metric_type.value(), metric::BM25)) {
-            return Status::success;
+    ResolveQuantTypeForDeserialize(const uint8_t* data, size_t size, SparseInvertedIndexConfig& cfg) const {
+        if (version_use_raw_data()) {
+            // The raw-data format has no posting-type header.
+            return cfg.ValidateQuantType(nullptr);
         }
 
-        if (!encoding.has_value() || encoding.value() != sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS) {
-            cfg.quant_type = "u16";
-            return Status::success;
-        }
-
-        const auto serialized_quant_type = sparse::inverted::peek_sindi_quant_type_from_index_data(data, size);
-        if (!serialized_quant_type.has_value()) {
+        using sparse::inverted::InvertedIndexQuantType;
+        const auto posting_type = sparse::inverted::peek_quant_type_from_index_data(data, size);
+        if (!posting_type.has_value()) {
             return Status::invalid_serialized_index_type;
         }
-
+        if (posting_type.value() == InvertedIndexQuantType::UNSPECIFIED) {
+            // Legacy indexes require the original build parameters or version defaults.
+            return cfg.ValidateQuantType(nullptr);
+        }
         std::string resolved_quant_type;
-        switch (serialized_quant_type.value()) {
-            case sparse::inverted::SindiQuantType::BM25_U8:
-                if (!IsMetricType(cfg.metric_type.value(), metric::BM25)) {
-                    return Status::invalid_serialized_index_type;
-                }
+        bool is_ip = false;
+        switch (posting_type.value()) {
+            case InvertedIndexQuantType::IP_FP16:
+                resolved_quant_type = "fp16";
+                is_ip = true;
+                break;
+            case InvertedIndexQuantType::IP_FP32:
+                resolved_quant_type = "fp32";
+                is_ip = true;
+                break;
+            case InvertedIndexQuantType::BM25_U8:
                 resolved_quant_type = "u8";
                 break;
-            case sparse::inverted::SindiQuantType::BM25_U16:
-                if (!IsMetricType(cfg.metric_type.value(), metric::BM25)) {
-                    return Status::invalid_serialized_index_type;
-                }
+            case InvertedIndexQuantType::BM25_U16:
                 resolved_quant_type = "u16";
                 break;
+            case InvertedIndexQuantType::BM25_U32:
+                resolved_quant_type = "u32";
+                break;
             default:
-                LOG_KNOWHERE_ERROR_ << "Unknown SINDI quantization type in serialized index: "
-                                    << static_cast<uint32_t>(serialized_quant_type.value());
+                LOG_KNOWHERE_ERROR_ << "Unknown posting quantization type in serialized index: "
+                                    << static_cast<uint32_t>(posting_type.value());
                 return Status::invalid_serialized_index_type;
         }
-
+        if (!IsMetricType(cfg.metric_type.value(), is_ip ? metric::IP : metric::BM25)) {
+            return Status::invalid_serialized_index_type;
+        }
         cfg.quant_type = resolved_quant_type;
-        LOG_KNOWHERE_INFO_ << "Using serialized SINDI quantization type " << resolved_quant_type;
         return Status::success;
     }
 
@@ -432,7 +437,7 @@ class SparseInvertedIndexNode : public IndexNode {
                                    << " from serialized index data";
             }
         }
-        RETURN_IF_ERROR(ResolveQuantTypeForDeserialize(binary->data.get(), binary->size, encoding, cfg));
+        RETURN_IF_ERROR(ResolveQuantTypeForDeserialize(binary->data.get(), binary->size, cfg));
 
         // create or recreate index
         if (index_ != nullptr) {
@@ -488,8 +493,7 @@ class SparseInvertedIndexNode : public IndexNode {
                                    << " from index file " << filename;
             }
         }
-        RETURN_IF_ERROR(
-            ResolveQuantTypeForDeserialize(reinterpret_cast<const uint8_t*>(mapped_memory), map_size, encoding, cfg));
+        RETURN_IF_ERROR(ResolveQuantTypeForDeserialize(reinterpret_cast<const uint8_t*>(mapped_memory), map_size, cfg));
 
         // create or recreate index
         if (index_ != nullptr) {
