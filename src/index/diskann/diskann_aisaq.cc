@@ -198,6 +198,9 @@ TryDiskANNCall(std::function<void()>&& diskann_call) {
     try {
         diskann_call();
         return Status::success;
+    } catch (const folly::FutureCancellation& e) {
+        LOG_KNOWHERE_INFO_ << "DiskANN call cancelled by the caller: " << e.what();
+        return Status::cancelled;
     } catch (const diskann::FileException& e) {
         LOG_KNOWHERE_ERROR_ << "AiSAQ File Exception: " << e.what();
         return Status::disk_file_error;
@@ -716,7 +719,10 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
         }));
     }
 
-    if (TryDiskANNCall([&]() { WaitAllSuccess(futures); }) != Status::success) {
+    if (auto stat = TryDiskANNCall([&]() { WaitAllSuccess(futures); }); stat != Status::success) {
+        if (stat == Status::cancelled) {
+            return expected<DataSetPtr>::Err(stat, "search cancelled by the caller");
+        }
         return expected<DataSetPtr>::Err(Status::aisaq_error, "some search failed");
     }
 
