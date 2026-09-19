@@ -66,6 +66,11 @@ RerankByCalcDistByStorageIds(const std::vector<int64_t>& candidate_docs, const D
         auto bf_search_res =
             index->CalcDistByStorageIds(query_dataset, bitset, vids.data(), vids.size(), is_cosine, op_context);
         if (!bf_search_res.has_value()) {
+            // A cancellation is the caller's request, not a failure of this
+            // index: pass it through unchanged and do not report it as an error.
+            if (bf_search_res.error() == Status::cancelled) {
+                return Status::cancelled;
+            }
             LOG_KNOWHERE_ERROR_ << "CalcDistByStorageIds failed for doc " << doc_id << ": " << bf_search_res.what();
             return Status::emb_list_inner_error;
         }

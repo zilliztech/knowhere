@@ -9,6 +9,8 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <folly/CancellationToken.h>
+
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
@@ -33,6 +35,7 @@
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
+#include "knowhere/context.h"
 #include "knowhere/dataset.h"
 #include "knowhere/index/emb_list_strategy.h"
 #include "knowhere/index/index_factory.h"
@@ -3777,3 +3780,224 @@ TEST_CASE("EmbList Serialization", "Strategy and IndexNode serialization/deseria
 }
 
 #endif  // !KNOWHERE_WITH_CARDINAL
+
+namespace {
+
+// Answers the approximate search from a real index but reports every exact
+// distance computation as cancelled. That is what a request cancelled between
+// the two stages of a multi-vector search looks like to the rerank: the first
+// stage has already succeeded, and the cancellation is first observed by the
+// distance computation that reranks its candidates.
+class CancelAtRerankIndexNode : public knowhere::IndexNode {
+ public:
+    explicit CancelAtRerankIndexNode(const knowhere::IndexNode* inner) : inner_(inner) {
+    }
+
+    mutable int ann_calls = 0;
+    mutable int rerank_calls = 0;
+
+    knowhere::expected<knowhere::DataSetPtr>
+    Search(const knowhere::DataSetPtr dataset, std::unique_ptr<knowhere::Config> cfg,
+           const knowhere::BitsetView& bitset, milvus::OpContext* op_context) const override {
+        ++ann_calls;
+        return inner_->Search(dataset, std::move(cfg), bitset, op_context);
+    }
+
+    std::optional<size_t>
+    GetQueryCodeSize(const knowhere::DataSetPtr dataset) const override {
+        return inner_->GetQueryCodeSize(dataset);
+    }
+
+    knowhere::expected<knowhere::DataSetPtr>
+    CalcDistByStorageIds(const knowhere::DataSetPtr dataset, const knowhere::BitsetView& bitset, const int64_t* labels,
+                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const override {
+        ++rerank_calls;
+        return knowhere::expected<knowhere::DataSetPtr>::Err(knowhere::Status::cancelled,
+                                                             "cancelled at the rerank checkpoint");
+    }
+
+    // A TokenANN search reaches none of what follows.
+    knowhere::Status
+    Train(const knowhere::DataSetPtr, std::shared_ptr<knowhere::Config>, bool) override {
+        return knowhere::Status::not_implemented;
+    }
+    knowhere::Status
+    Add(const knowhere::DataSetPtr, std::shared_ptr<knowhere::Config>, bool) override {
+        return knowhere::Status::not_implemented;
+    }
+    knowhere::expected<knowhere::DataSetPtr>
+    RangeSearch(const knowhere::DataSetPtr, std::unique_ptr<knowhere::Config>, const knowhere::BitsetView&,
+                milvus::OpContext*) const override {
+        return knowhere::expected<knowhere::DataSetPtr>::Err(knowhere::Status::not_implemented, "");
+    }
+    knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
+    AnnIterator(const knowhere::DataSetPtr, std::unique_ptr<knowhere::Config>, const knowhere::BitsetView&, bool,
+                milvus::OpContext*) const override {
+        return knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>::Err(knowhere::Status::not_implemented,
+                                                                                      "");
+    }
+    knowhere::expected<knowhere::DataSetPtr>
+    GetVectorByIds(const knowhere::DataSetPtr, milvus::OpContext*) const override {
+        return knowhere::expected<knowhere::DataSetPtr>::Err(knowhere::Status::not_implemented, "");
+    }
+    bool
+    HasRawData(const std::string& metric_type) const override {
+        return inner_->HasRawData(metric_type);
+    }
+    knowhere::expected<knowhere::DataSetPtr>
+    GetIndexMeta(std::unique_ptr<knowhere::Config>) const override {
+        return knowhere::expected<knowhere::DataSetPtr>::Err(knowhere::Status::not_implemented, "");
+    }
+    knowhere::Status
+    Serialize(knowhere::BinarySet&) const override {
+        return knowhere::Status::not_implemented;
+    }
+    knowhere::Status
+    Deserialize(const knowhere::BinarySet&, std::shared_ptr<knowhere::Config>) override {
+        return knowhere::Status::not_implemented;
+    }
+    knowhere::Status
+    DeserializeFromFile(const std::string&, std::shared_ptr<knowhere::Config>) override {
+        return knowhere::Status::not_implemented;
+    }
+    std::unique_ptr<knowhere::BaseConfig>
+    CreateConfig() const override {
+        return inner_->CreateConfig();
+    }
+    int64_t
+    Dim() const override {
+        return inner_->Dim();
+    }
+    int64_t
+    Size() const override {
+        return inner_->Size();
+    }
+    int64_t
+    Count() const override {
+        return inner_->Count();
+    }
+    std::string
+    Type() const override {
+        return "CANCEL_AT_RERANK";
+    }
+
+ private:
+    const knowhere::IndexNode* inner_;
+};
+
+}  // namespace
+
+TEST_CASE("Cancellation passes through the multi-vector strategies", "[emb_list][cancel]") {
+    const int32_t DIM = 16;
+    const int32_t NB = 1000;
+    const int32_t NQ = 10;
+    const int32_t TOPK = 8;
+    const int EACH_EL_LEN = 10;
+    const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+
+    auto base_ds = GenEmbListDataSet(NB, DIM, 42, EACH_EL_LEN);
+    auto query_ds = GenQueryEmbListDataSet(NQ, DIM, 7);
+
+    knowhere::Json conf;
+    conf[knowhere::indexparam::HNSW_M] = 16;
+    conf[knowhere::indexparam::EFCONSTRUCTION] = 96;
+    conf[knowhere::indexparam::EF] = 64;
+    conf[knowhere::meta::TOPK] = TOPK;
+    conf[knowhere::indexparam::RETRIEVAL_ANN_RATIO] = 3.0f;
+    conf[knowhere::meta::DIM] = DIM;
+    conf[knowhere::meta::ROWS] = NB;
+    conf[knowhere::meta::INDEX_TYPE] = knowhere::IndexEnum::INDEX_HNSW;
+    conf[knowhere::meta::METRIC_TYPE] = "MAX_SIM_IP";
+
+    // Every strategy's first stage is an ordinary index search, which reports a
+    // cancellation it observes as Status::cancelled. The strategy must hand
+    // that on rather than turn it into its own inner error.
+    SECTION("a search cancelled before it starts reports cancelled through the public API") {
+        const std::vector<std::string> strategies = {
+            knowhere::meta::EMB_LIST_STRATEGY_TOKENANN,
+            knowhere::meta::EMB_LIST_STRATEGY_MUVERA,
+            knowhere::meta::EMB_LIST_STRATEGY_LEMUR,
+        };
+        for (const auto& strategy : strategies) {
+            CAPTURE(strategy);
+            knowhere::Json strategy_conf = conf;
+            strategy_conf["emb_list_strategy"] = strategy;
+            if (strategy == knowhere::meta::EMB_LIST_STRATEGY_MUVERA) {
+                strategy_conf["muvera_num_projections"] = 3;
+                strategy_conf["muvera_num_repeats"] = 5;
+                strategy_conf["muvera_seed"] = 42;
+            } else if (strategy == knowhere::meta::EMB_LIST_STRATEGY_LEMUR) {
+                strategy_conf["lemur_hidden_dim"] = 16;
+                strategy_conf["lemur_num_train_samples"] = 1000;
+                strategy_conf["lemur_num_epochs"] = 2;
+                strategy_conf["lemur_batch_size"] = 16;
+                strategy_conf["lemur_learning_rate"] = 0.001f;
+                strategy_conf["lemur_seed"] = 42;
+                strategy_conf["lemur_num_layers"] = 1;
+            }
+
+            auto index = knowhere::IndexFactory::Instance()
+                             .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version)
+                             .value();
+            REQUIRE(index.Build(base_ds, strategy_conf) == knowhere::Status::success);
+
+            // The same search, uncancelled, succeeds, so a failure below is the
+            // cancellation and nothing else.
+            REQUIRE(index.Search(query_ds, strategy_conf, nullptr).has_value());
+
+            folly::CancellationSource cs;
+            milvus::OpContext op_context(cs.getToken());
+            cs.requestCancellation();
+
+            auto res = index.Search(query_ds, strategy_conf, nullptr, &op_context);
+            REQUIRE_FALSE(res.has_value());
+            REQUIRE(res.error() == knowhere::Status::cancelled);
+        }
+    }
+
+    // The first stage succeeds and the cancellation is first seen by the
+    // distance computation that reranks its candidates. The rerank helper and
+    // the strategy both have to hand the cancellation on unchanged.
+    SECTION("a cancellation first seen at the rerank checkpoint stays cancelled") {
+        // TokenANN's first stage is a plain index over every vector, so a plain
+        // HNSW over the same vectors, with the per-vector metric, stands in for
+        // the base index the multi-vector index would build.
+        knowhere::Json base_conf = conf;
+        base_conf[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+        auto plain_ds = knowhere::GenDataSet(NB, DIM, base_ds->GetTensor());
+        auto base =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, version).value();
+        REQUIRE(base.Build(plain_ds, base_conf) == knowhere::Status::success);
+
+        knowhere::BaseConfig strategy_cfg;
+        strategy_cfg.metric_type = "MAX_SIM_IP";
+        strategy_cfg.dim = DIM;
+        auto strategy_or = knowhere::CreateEmbListStrategy(knowhere::meta::EMB_LIST_STRATEGY_TOKENANN, strategy_cfg);
+        REQUIRE(strategy_or.has_value());
+        auto& strategy = strategy_or.value();
+
+        const size_t* doc_lims = base_ds->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+        knowhere::EmbListOffset doc_offset(std::vector<size_t>(doc_lims, doc_lims + NB / EACH_EL_LEN + 1));
+        REQUIRE(strategy->PrepareDataForBuild(base_ds, doc_offset, strategy_cfg).has_value());
+
+        const size_t* query_lims = query_ds->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+        const auto num_query_docs = query_ds->Get<int64_t>(knowhere::meta::EMB_LIST_COUNT);
+        knowhere::EmbListOffset query_offset(std::vector<size_t>(query_lims, query_lims + num_query_docs + 1));
+
+        CancelAtRerankIndexNode wrapped(base.Node());
+
+        // The search config has to be the base index's own type: the strategy
+        // hands it straight to that index's search.
+        auto search_cfg = wrapped.CreateConfig();
+        knowhere::Json search_json = conf;
+        REQUIRE(knowhere::Config::FormatAndCheck(*search_cfg, search_json) == knowhere::Status::success);
+        REQUIRE(knowhere::Config::Load(*search_cfg, search_json, knowhere::SEARCH) == knowhere::Status::success);
+
+        auto res = strategy->Search(query_ds, query_offset, &wrapped, std::move(search_cfg), nullptr, nullptr);
+
+        REQUIRE(wrapped.ann_calls == 1);    // the first stage ran, and succeeded
+        REQUIRE(wrapped.rerank_calls > 0);  // the rerank was reached
+        REQUIRE_FALSE(res.has_value());
+        REQUIRE(res.error() == knowhere::Status::cancelled);
+    }
+}
