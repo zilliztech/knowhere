@@ -573,7 +573,9 @@ FlattenInvertedIndex<DType, QType>::serialize(MemoryIOWriter& writer) const {
     writer.write(&this->nr_rows_, sizeof(uint32_t));
     writer.write(&this->max_dim_, sizeof(uint32_t));
     writer.write(&this->nr_inner_dims_, sizeof(uint32_t));
-    auto reserved = std::array<uint8_t, kInvertedIndexHeaderReservedBytes>();
+    const auto quant_type = posting_quant_type<QType>();
+    writer.write(&quant_type, sizeof(quant_type));
+    const std::array<uint8_t, kInvertedIndexHeaderReservedBytes> reserved{};
     writer.write(reserved.data(), reserved.size());
 
     uint32_t nr_sections = 2;  // base sections: posting lists and dim map reverse
@@ -701,7 +703,11 @@ FlattenInvertedIndex<DType, QType>::deserialize(MemoryIOReader& reader) {
         reader.read(&this->nr_rows_, sizeof(uint32_t));
         reader.read(&this->max_dim_, sizeof(uint32_t));
         reader.read(&this->nr_inner_dims_, sizeof(uint32_t));
-        // skip reserved bytes
+        InvertedIndexQuantType quant_type{};
+        reader.read(&quant_type, sizeof(quant_type));
+        if (!validate_posting_quant_type<QType>(quant_type)) {
+            return Status::invalid_serialized_index_type;
+        }
         reader.advance(kInvertedIndexHeaderReservedBytes);
 
         return Status::success;
