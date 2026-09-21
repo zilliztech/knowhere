@@ -168,17 +168,21 @@ namespace diskann {
   }
 
   template<typename T>
+  float IteratorWorkspace<T>::output_distance(float distance) const {
+    if (metric == diskann::Metric::INNER_PRODUCT) {
+      distance = distance / 2.0f - 1.0f;
+      if (max_base_norm != 0) {
+        distance *= (max_base_norm * query_norm);
+      }
+    }
+    return distance;
+  }
+
+  template<typename T>
   void IteratorWorkspace<T>::move_full_retset_to_backup() {
     if (is_good_pq_enough() && !full_retset.empty()) {
       auto &nbr = full_retset.top();
-      auto  dist = nbr.distance;
-      if (metric == diskann::Metric::INNER_PRODUCT) {
-        dist = dist / 2.0f - 1.0f;
-        if (max_base_norm != 0) {
-          dist *= (max_base_norm * query_norm);
-        }
-      }
-      backup_res.emplace_back(nbr.id, dist);
+      backup_res.emplace_back(nbr.id, output_distance(nbr.distance));
       full_retset.pop();
       next_count++;
     }
@@ -188,7 +192,7 @@ namespace diskann {
   void IteratorWorkspace<T>::move_last_full_retset_to_backup() {
     while (!full_retset.empty()) {
       auto &nbr = full_retset.top();
-      backup_res.emplace_back(nbr.id, nbr.distance);
+      backup_res.emplace_back(nbr.id, output_distance(nbr.distance));
       full_retset.pop();
     }
   }

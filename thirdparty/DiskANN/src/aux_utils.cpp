@@ -1688,11 +1688,14 @@ template<typename T>
     unsigned R = config.max_degree;
     unsigned L = config.search_list_size;
 
-    double pq_code_size_limit = get_memory_budget(config.pq_code_size_gb);
-    if (pq_code_size_limit <= 0) {
-      LOG(ERROR) << "Insufficient memory budget (or string was not in right "
-                    "format). Should be > 0.";
-      return -1;
+    double pq_code_size_limit = 0;
+    if (config.use_pq_navigation) {
+      pq_code_size_limit = get_memory_budget(config.pq_code_size_gb);
+      if (pq_code_size_limit <= 0) {
+        LOG(ERROR) << "Insufficient memory budget (or string was not in right "
+                      "format). Should be > 0.";
+        return -1;
+      }
     }
     double indexing_ram_budget = config.index_mem_gb;
     if (indexing_ram_budget <= 0) {
@@ -1736,16 +1739,6 @@ template<typename T>
                         << " Indexing ram budget: " << indexing_ram_budget
                         << "(GiB)";
 
-    size_t num_pq_chunks =
-        (size_t) (std::floor)(_u64(pq_code_size_limit / points_num));
-
-    num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
-    num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
-    num_pq_chunks = num_pq_chunks > diskann::defaults::MAX_PQ_CHUNKS ? diskann::defaults::MAX_PQ_CHUNKS : num_pq_chunks;
-
-    LOG_KNOWHERE_INFO_ << "Compressing " << dim << "-dimensional data into "
-                       << num_pq_chunks << " bytes per vector.";
-
     size_t train_size = 0, train_dim = 0;
     std::unique_ptr<float[]> train_data = nullptr;
 
@@ -1777,6 +1770,13 @@ template<typename T>
             disk_pq_pivots_path, disk_pq_compressed_vectors_path);
     }
     if (config.use_pq_navigation) {
+    size_t num_pq_chunks =
+        (size_t) (std::floor)(_u64(pq_code_size_limit / points_num));
+    num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
+    num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
+    num_pq_chunks = num_pq_chunks > diskann::defaults::MAX_PQ_CHUNKS ? diskann::defaults::MAX_PQ_CHUNKS : num_pq_chunks;
+    LOG_KNOWHERE_INFO_ << "Compressing " << dim << "-dimensional data into "
+                       << num_pq_chunks << " bytes per vector.";
     LOG_KNOWHERE_DEBUG_ << "Training data loaded of size " << train_size;
 
     // don't translate data to make zero mean for PQ compression. We must not

@@ -27,6 +27,8 @@ def test_navigation_roundtrip(tmp_path, metric, kind, codec):
                   disk_pq_dims=0, search_cache_budget_gb=0, search_cache_budget_gb_ratio=0, rbq_bits=4)
     if codec is not None:
         config["navigation_codec"] = codec
+    if kind == "DISKANN_RABITQ" or codec == "RABITQ":
+        config.pop("pq_code_budget_gb")
     version = knowhere.GetCurrentVersion()
     index = knowhere.CreateIndex(kind, version)
     assert knowhere.Status(index.Build(knowhere.GetNullDataSet(), json.dumps(config))) == knowhere.Status.success

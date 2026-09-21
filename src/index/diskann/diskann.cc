@@ -125,7 +125,10 @@ class DiskANNIndexNode : public IndexNode {
                 msg = "external DiskANN navigation currently requires FP32 data";
                 return Status::invalid_args;
             }
-            if (base_cfg.emb_list_strategy.has_value() || base_cfg.emb_list_offset_file_path.has_value()) {
+            // The strategy has a default even for ordinary vectors. Only
+            // actual embedding-list inputs select embedding-list mode.
+            if (get_el_metric_type(base_cfg.metric_type.value_or(metric::L2)).has_value() ||
+                base_cfg.emb_list_offset_file_path.has_value()) {
                 msg = "external DiskANN navigation does not support embedding-list mode";
                 return Status::not_implemented;
             }
@@ -1272,20 +1275,6 @@ class DiskANNRaBitQIndexNode : public DiskANNIndexNode<DataType> {
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
         return StaticCreateConfig();
-    }
-
-    static Status
-    StaticConfigCheck(const Config& cfg, PARAM_TYPE param_type, std::string& msg) {
-        const auto status = DiskANNIndexNode<DataType>::StaticConfigCheck(cfg, param_type, msg);
-        if (status != Status::success) {
-            return status;
-        }
-        const auto& base_cfg = static_cast<const BaseConfig&>(cfg);
-        if (base_cfg.emb_list_strategy.has_value() || base_cfg.emb_list_offset_file_path.has_value()) {
-            msg = "DISKANN_RABITQ does not support embedding-list mode";
-            return Status::not_implemented;
-        }
-        return Status::success;
     }
 
     std::string

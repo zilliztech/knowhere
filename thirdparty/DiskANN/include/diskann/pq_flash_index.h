@@ -126,6 +126,10 @@ namespace diskann {
 
     void pop_pq_retset();
 
+    // Convert the internal SSD score to the smaller-is-better iterator
+    // output. The Knowhere iterator wrapper applies the final IP sign flip.
+    float output_distance(float distance) const;
+
     void move_full_retset_to_backup();
 
     void move_last_full_retset_to_backup();

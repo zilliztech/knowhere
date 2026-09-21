@@ -119,7 +119,8 @@ class DiskANNConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(disk_pq_dims)
             .description("the dimension of compressed vectors stored on the ssd, use 0 to store uncompressed data.")
             .set_default(0)
-            .for_train();
+            .for_train()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(accelerate_build)
             .description("a flag to enbale fast build.")
             .set_default(false)
