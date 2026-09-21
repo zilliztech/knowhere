@@ -108,6 +108,10 @@ class DiskANNIndexNode : public IndexNode {
 
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
+        const auto* disk_config = dynamic_cast<const DiskANNConfig*>(&config);
+        if (disk_config && disk_config->disk_pq_dims.value_or(0) > 0) {
+            return false;
+        }
         knowhere::MetricType metric_type = config.metric_type.has_value() ? config.metric_type.value() : "";
         const auto& base_metric = get_sub_metric_type(metric_type).value_or(metric_type);
         return IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::COSINE);
@@ -136,6 +140,9 @@ class DiskANNIndexNode : public IndexNode {
 
     bool
     HasRawData(const std::string& metric_type) const override {
+        if (pq_flash_index_ && pq_flash_index_->uses_disk_pq()) {
+            return false;
+        }
         const auto& base_metric = get_sub_metric_type(metric_type).value_or(metric_type);
         return IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::COSINE);
     }
@@ -515,18 +522,10 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
             return diskann::Metric::INNER_PRODUCT;
         }
     }();
-    uint64_t num_nodes_to_cache;
-    if (build_conf.disk_pq_dims.value() > 0) {
-        uint64_t disk_pq_nchunks = dim;
-        if (std::cmp_less(build_conf.disk_pq_dims.value(), dim)) {
-            disk_pq_nchunks = build_conf.disk_pq_dims.value();
-        }
-        num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), disk_pq_nchunks, sizeof(_u8),
-                                              build_conf.max_degree.value());
-    } else {
-        num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), dim, sizeof(DataType),
-                                              build_conf.max_degree.value());
-    }
+    // The coordinate cache uses aligned T slots even when the SSD payload is PQ.
+    const auto cache_dim = ROUND_UP(dim + (diskann_metric == diskann::Metric::INNER_PRODUCT ? 1 : 0), 8);
+    const auto num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), cache_dim,
+                                                    sizeof(DataType), build_conf.max_degree.value());
     diskann::BuildConfig diskann_internal_build_config{data_path,
                                                        index_prefix_,
                                                        diskann_metric,
@@ -782,19 +781,9 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         diskann::load_bin<uint32_t>(cached_nodes_file, cached_nodes_ids, num_nodes, nodes_id_dim);
         node_list.assign(cached_nodes_ids.get(), cached_nodes_ids.get() + num_nodes);
     } else {
-        uint64_t num_nodes_to_cache = 0;
-        if (prep_conf.disk_pq_dims.value() > 0) {
-            uint64_t disk_pq_nchunks = pq_flash_index_->get_data_dim();
-            if (prep_conf.disk_pq_dims.value() < static_cast<int>(pq_flash_index_->get_data_dim())) {
-                disk_pq_nchunks = prep_conf.disk_pq_dims.value();
-            }
-            num_nodes_to_cache = GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), disk_pq_nchunks,
-                                                  sizeof(_u8), pq_flash_index_->get_max_degree());
-        } else {
-            num_nodes_to_cache =
-                GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), pq_flash_index_->get_data_dim(),
-                                 sizeof(DataType), pq_flash_index_->get_max_degree());
-        }
+        const auto num_nodes_to_cache =
+            GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), ROUND_UP(pq_flash_index_->get_data_dim(), 8),
+                             sizeof(DataType), pq_flash_index_->get_max_degree());
         if (num_nodes_to_cache > pq_flash_index_->get_num_points() / 3) {
             LOG_KNOWHERE_ERROR_ << "Failed to generate cache, num_nodes_to_cache(" << num_nodes_to_cache
                                 << ") is larger than 1/3 of the total data number.";
@@ -1201,6 +1190,9 @@ DiskANNIndexNode<DataType>::GetVectorByStorageIds(const DataSetPtr dataset, milv
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+    }
+    if (pq_flash_index_->uses_disk_pq()) {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "SSD PQ does not retain original vectors");
     }
     auto dim = Dim();
     auto rows = dataset->GetRows();

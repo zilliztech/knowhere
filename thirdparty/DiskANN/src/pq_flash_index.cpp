@@ -1040,8 +1040,7 @@ namespace diskann {
       {
         std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
         if (coord_cache.find(id) != coord_cache.end()) {
-          float dist = dist_cmp_wrap(query, coord_cache.at(id),
-                                     (size_t) aligned_dim, id);
+          float dist = disk_distance(query, query_float, coord_cache.at(id), id);
           max_heap.Push(dist, id);
           continue;
         }
@@ -1081,8 +1080,7 @@ namespace diskann {
             char *node_buf = get_offset_to_node(sector_buf, cur_id);
             memcpy(node_fp_coords_copy, node_buf,
                    disk_bytes_per_point);  // Do we really need memcpy here?
-            float dist = dist_cmp_wrap(query, node_fp_coords_copy,
-                                       (size_t) aligned_dim, cur_id);
+            float dist = disk_distance(query, query_float, node_fp_coords_copy, cur_id);
             max_heap.Push(dist, cur_id);
             if (feder != nullptr) {
               feder->visit_info_.AddTopCandidateInfo(cur_id, dist);
@@ -1158,7 +1156,12 @@ namespace diskann {
     std::unique_ptr<ThreadData<T>, decltype(return_scratch)> scratch_guard(&data, return_scratch);
     auto query_norm_opt = init_thread_data(data, query1);
     if (!query_norm_opt.has_value()) {
-      // return an empty answer when calcu a zero point
+      // A zero IP/cosine query has no searchable direction. Explicitly mark
+      // every result missing rather than returning untouched output buffers.
+      std::fill_n(indices, k_search, -1);
+      if (distances != nullptr) {
+        std::fill_n(distances, k_search, -1.0f);
+      }
       return;
     }
     float query_norm = query_norm_opt.value();
@@ -1412,19 +1415,8 @@ namespace diskann {
       auto process_node = [&](T *node_fp_coords_copy, auto node_id, auto n_nbr,
                               auto *nbrs) {
         if (bitset_view.empty() || !bitset_view.test(node_id)) {
-          float cur_expanded_dist;
-          if (!use_disk_index_pq) {
-            cur_expanded_dist = dist_cmp_wrap(query, node_fp_coords_copy,
-                                              (size_t) aligned_dim, node_id);
-          } else {
-            if (metric == diskann::Metric::INNER_PRODUCT ||
-                metric == diskann::Metric::COSINE)
-              cur_expanded_dist = disk_pq_table.inner_product(
-                  query_float, (_u8 *) node_fp_coords_copy);
-            else
-              cur_expanded_dist = disk_pq_table.l2_distance(
-                  query_float, (_u8 *) node_fp_coords_copy);
-          }
+          const float cur_expanded_dist =
+              disk_distance(query, query_float, node_fp_coords_copy, node_id);
           full_retset.push_back(
               Neighbor((unsigned) node_id, cur_expanded_dist, true));
 
@@ -1611,6 +1603,11 @@ namespace diskann {
   void PQFlashIndex<T>::calc_dist_by_ids(const T *query_, const int64_t *ids,
                                          const int64_t n,
                                          float *const  output_dists) {
+    for (int64_t i = 0; i < n; ++i) {
+      if (ids[i] < 0 || static_cast<_u64>(ids[i]) >= num_points) {
+        throw ANNException("Invalid storage id", -1);
+      }
+    }
     ThreadData<T> data = this->thread_data.pop();
     while (data.scratch.sector_scratch == nullptr) {
       this->thread_data.wait_for_push_notify();
@@ -1618,6 +1615,7 @@ namespace diskann {
     }
     auto query_norm_opt = init_thread_data(data, query_);
     if (!query_norm_opt.has_value()) {
+      std::fill_n(output_dists, n, -1.0f);
       this->thread_data.push(data);
       this->thread_data.push_notify_all();
       return;
@@ -1664,7 +1662,7 @@ namespace diskann {
         if (it != coord_cache.end()) {
           // Vector is in cache, calculate distance directly
           output_dists[i] =
-              dist_cmp_wrap(query, it->second, (size_t) aligned_dim, id);
+              disk_distance(query, data.scratch.aligned_query_float, it->second, id);
 
         } else {
           // Need to read from disk
@@ -1734,9 +1732,9 @@ namespace diskann {
           char   *node_buf = get_offset_to_node(sector_buf, id);
           T      *node_coords = OFFSET_TO_NODE_COORDS(node_buf);
 
-          // Calculate raw distance (not PQ distance)
+          // Score the actual SSD representation; PQ bytes are not float vectors.
           output_dists[output_idx] =
-              dist_cmp_wrap(query, node_coords, (size_t) aligned_dim, id);
+              disk_distance(query, data.scratch.aligned_query_float, node_coords, id);
         }
       }
     }
@@ -1783,6 +1781,9 @@ namespace diskann {
   template<typename T>
   void PQFlashIndex<T>::get_vector_by_ids(const int64_t *ids, const int64_t n,
                                           T *output_data) {
+    if (use_disk_index_pq) {
+      throw ANNException("SSD PQ does not retain original vectors", -1);
+    }
     auto sectors_to_visit =
         get_sectors_layout_and_write_data_from_cache(ids, n, output_data);
     if (0 == sectors_to_visit.size()) {
@@ -1984,20 +1985,9 @@ namespace diskann {
     auto process_node = [&](T *node_fp_coords_copy, auto node_id, auto n_nbr,
                             auto *nbrs) {
       if (workspace->bitset.empty() || !workspace->bitset.test(node_id)) {
-        float cur_expanded_dist;
-        if (!use_disk_index_pq) {
-          cur_expanded_dist =
-              dist_cmp_wrap(workspace->aligned_query_T, node_fp_coords_copy,
-                            (size_t) aligned_dim, node_id);
-        } else {
-          if (metric == diskann::Metric::INNER_PRODUCT ||
-              metric == diskann::Metric::COSINE)
-            cur_expanded_dist = disk_pq_table.inner_product(
-                workspace->aligned_query_float, (_u8 *) node_fp_coords_copy);
-          else
-            cur_expanded_dist = disk_pq_table.l2_distance(
-                workspace->aligned_query_float, (_u8 *) node_fp_coords_copy);
-        }
+        const float cur_expanded_dist = disk_distance(
+            workspace->aligned_query_T, workspace->aligned_query_float,
+            node_fp_coords_copy, node_id);
         workspace->insert_to_full((unsigned) node_id, cur_expanded_dist);
       }
 

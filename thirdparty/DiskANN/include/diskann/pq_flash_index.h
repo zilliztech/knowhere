@@ -213,6 +213,8 @@ namespace diskann {
 
     virtual void load_cache_list(std::vector<uint32_t> &node_list);
 
+    bool uses_disk_pq() const noexcept { return use_disk_index_pq; }
+
     // asynchronously collect the access frequency of each node in the graph
     void async_generate_cache_list_from_sample_queries(std::string sample_bin,
                                                        _u64        l_search,
@@ -383,6 +385,24 @@ namespace diskann {
       } else {
         return dist_cmp(x, y, d);
       }
+    }
+
+    // SSD payload scoring, independent of the resident navigation codec.
+    // Keep the same internal score convention as the uncompressed path.
+    float disk_distance(const T *query, const float *query_float,
+                        const T *payload, int32_t id) {
+      if (!use_disk_index_pq) {
+        return dist_cmp_wrap(query, payload, aligned_dim, id);
+      }
+      auto *code = reinterpret_cast<_u8 *>(const_cast<T *>(payload));
+      if (metric == Metric::INNER_PRODUCT) {
+        return 2.0f + 2.0f * disk_pq_table.inner_product(query_float, code);
+      }
+      if (metric == Metric::COSINE) {
+        // Disk PQ encodes the normalized base, not the original vectors.
+        return disk_pq_table.inner_product(query_float, code);
+      }
+      return disk_pq_table.l2_distance(query_float, code);
     }
 
     float dist_cmp_float_wrap(const float *x, const float *y, size_t d,
