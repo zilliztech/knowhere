@@ -333,8 +333,8 @@ RaBitQStore::CreateDistanceComputer(const DiskANNConfig& config) const {
         throw std::invalid_argument("RaBitQ navigation requires query configuration");
     }
     const auto query_metric = config.metric_type.value_or(metric::L2);
-    if (query_metric != metric::L2 && query_metric != metric::IP) {
-        throw std::invalid_argument("RaBitQ navigation currently supports L2 and IP");
+    if (query_metric != metric::L2 && query_metric != metric::IP && query_metric != metric::COSINE) {
+        throw std::invalid_argument("RaBitQ navigation supports L2, IP and COSINE");
     }
     const auto mode = navigation->rbq_refine_mode.value_or("probabilistic");
     if (mode != "probabilistic" && mode != "full") {

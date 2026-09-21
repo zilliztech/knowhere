@@ -131,9 +131,11 @@ namespace diskann {
     uint32_t inline_pq = 0;
     bool rearrange = false;
     int num_entry_points = 0;
-    // Keep the temporary MIPS-to-L2 base until the caller builds auxiliary
-    // indexes that must use the exact same internal d+1 representation.
+    // Keep the temporary MIPS-to-L2 or normalized cosine base until the caller
+    // builds auxiliary indexes in the same internal representation.
     bool keep_preprocessed_base = false;
+    // External navigation owns its codes; SSD PQ remains independently optional.
+    bool use_pq_navigation = true;
   };
 
   template<typename T>

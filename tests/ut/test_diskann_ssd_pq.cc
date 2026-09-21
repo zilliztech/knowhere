@@ -24,7 +24,19 @@ class DiskPQReference : public diskann::PQFlashIndex<float> {
         : PQFlashIndex(std::make_shared<LinuxAlignedFileReader>(), metric) {
     }
 
-    float Score(const std::string& prefix, unsigned id, const float* query, size_t dim) {
+    void
+    CheckExternalResources() {
+        REQUIRE(data == nullptr);
+        REQUIRE(pq_table.get_total_dims() == 0);
+        auto slot = thread_data.pop();
+        REQUIRE(slot.scratch.aligned_pq_coord_scratch == nullptr);
+        REQUIRE(slot.scratch.aligned_pqtable_dist_scratch == nullptr);
+        REQUIRE(slot.scratch.coord_scratch != nullptr);
+        thread_data.push(slot);
+    }
+
+    float
+    Score(const std::string& prefix, unsigned id, const float* query, size_t dim) {
         std::ifstream file(prefix + "_disk.index", std::ios::binary);
         file.seekg(get_node_sector_offset(id) + (long_node ? 0 : (id % nnodes_per_sector) * max_node_len));
         std::vector<uint8_t> code(disk_pq_n_chunks);
@@ -38,8 +50,10 @@ class DiskPQReference : public diskann::PQFlashIndex<float> {
             norm += double(query[j]) * query[j];
             l2 += (double(query[j]) - decoded[j]) * (double(query[j]) - decoded[j]);
         }
-        if (metric == diskann::Metric::INNER_PRODUCT) return dot * max_base_norm;
-        if (metric == diskann::Metric::COSINE) return dot / std::sqrt(norm);
+        if (metric == diskann::Metric::INNER_PRODUCT)
+            return dot * max_base_norm;
+        if (metric == diskann::Metric::COSINE)
+            return dot / std::sqrt(norm);
         return l2;
     }
 };
@@ -47,9 +61,10 @@ class DiskPQReference : public diskann::PQFlashIndex<float> {
 
 TEST_CASE("DiskANN SSD PQ scores are independent of navigation and cache", "[diskann][ssd_pq]") {
     const auto metric = GENERATE(std::string("L2"), std::string("IP"), std::string("COSINE"));
+    const bool external = GENERATE(false, true);
     const auto version = GenTestVersionList();
     constexpr size_t rows = 300, dim = 16, nq = 3, k = 10;
-    const auto dir = std::filesystem::current_path() / ("ssd_pq_regression_" + metric);
+    const auto dir = std::filesystem::current_path() / ("ssd_pq_regression_" + metric + (external ? "_rbq" : "_pq"));
     std::filesystem::create_directories(dir);
     const auto prefix = (dir / "index").string();
     const auto raw = (dir / "base.bin").string();
@@ -70,16 +85,31 @@ TEST_CASE("DiskANN SSD PQ scores are independent of navigation and cache", "[dis
 #else
     const char* index_type = "DISKANN";
 #endif
-    knowhere::Json config = {{"dim", dim}, {"metric_type", metric}, {"index_prefix", prefix}, {"data_path", raw},
-                             {"max_degree", 24}, {"search_list_size", 100}, {"pq_code_budget_gb", 0.001},
-                             {"build_dram_budget_gb", 1.0}, {"disk_pq_dims", 4},
-                             {"search_cache_budget_gb", 0}, {"search_cache_budget_gb_ratio", 0}};
+    knowhere::Json config = {{"dim", dim},
+                             {"metric_type", metric},
+                             {"index_prefix", prefix},
+                             {"data_path", raw},
+                             {"max_degree", 24},
+                             {"search_list_size", 100},
+                             {"pq_code_budget_gb", 0.001},
+                             {"build_dram_budget_gb", 1.0},
+                             {"disk_pq_dims", 4},
+                             {"search_cache_budget_gb", 0},
+                             {"search_cache_budget_gb_ratio", 0}};
+    if (external) {
+        config["navigation_codec"] = "RABITQ";
+        config["rbq_bits"] = 4;
+    }
     auto built = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type, version, pack).value();
     REQUIRE(built.Build(nullptr, config) == knowhere::Status::success);
     knowhere::BinarySet binary;
     REQUIRE(built.Serialize(binary) == knowhere::Status::success);
-    const auto dm = metric == "L2" ? diskann::Metric::L2
-                                   : metric == "IP" ? diskann::Metric::INNER_PRODUCT : diskann::Metric::COSINE;
+    REQUIRE(std::filesystem::exists(prefix + "_pq_compressed.bin") == !external);
+    REQUIRE(std::filesystem::exists(prefix + "_pq_pivots.bin") == !external);
+    REQUIRE(std::filesystem::exists(prefix + "_disk.index_pq_pivots.bin"));
+    const auto dm = metric == "L2"   ? diskann::Metric::L2
+                    : metric == "IP" ? diskann::Metric::INNER_PRODUCT
+                                     : diskann::Metric::COSINE;
     const auto* xq = static_cast<const float*>(queries->GetTensor());
     for (bool cached : {false, true}) {
         auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type, version, pack).value();
@@ -91,7 +121,10 @@ TEST_CASE("DiskANN SSD PQ scores are independent of navigation and cache", "[dis
         int64_t id = 0;
         REQUIRE_FALSE(index.GetVectorByIds(knowhere::GenIdsDataSet(1, &id)).has_value());
         DiskPQReference reference(dm);
-        REQUIRE(reference.load(1, prefix.c_str()) == 0);
+        const DiskPQReference::NavigationMetadata metadata{rows, dim + (metric == "IP" ? 1 : 0)};
+        REQUIRE(reference.load(1, prefix.c_str(), !external, external ? &metadata : nullptr) == 0);
+        if (external)
+            reference.CheckExternalResources();
         if (cached) {
             std::vector<uint32_t> ids(60);
             std::iota(ids.begin(), ids.end(), 0);
@@ -110,7 +143,8 @@ TEST_CASE("DiskANN SSD PQ scores are independent of navigation and cache", "[dis
                     REQUIRE(label >= static_cast<int64_t>(filtered));
                     REQUIRE(label < rows);
                     const auto expected = reference.Score(prefix, label, xq + q * dim, dim);
-                    REQUIRE(result.value()->GetDistance()[offset] == Catch::Approx(expected).epsilon(0.0002).margin(0.0002));
+                    REQUIRE(result.value()->GetDistance()[offset] ==
+                            Catch::Approx(expected).epsilon(0.0002).margin(0.0002));
                 }
             }
         }
@@ -119,7 +153,8 @@ TEST_CASE("DiskANN SSD PQ scores are independent of navigation and cache", "[dis
         float distances[4];
         reference.calc_dist_by_ids(xq, ids, 4, distances);
         for (size_t j = 0; j < 4; ++j)
-            REQUIRE(distances[j] == Catch::Approx(reference.Score(prefix, ids[j], xq, dim)).epsilon(0.0002).margin(0.0002));
+            REQUIRE(distances[j] ==
+                    Catch::Approx(reference.Score(prefix, ids[j], xq, dim)).epsilon(0.0002).margin(0.0002));
     }
     std::filesystem::remove_all(dir);
 }

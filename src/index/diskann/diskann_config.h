@@ -255,8 +255,8 @@ class DiskANNNavigationConfig : public DiskANNConfig {
             return HandleError(err_msg, "unsupported DiskANN navigation codec", Status::invalid_args);
         }
         const auto metric = metric_type.value_or(knowhere::metric::L2);
-        if (metric != knowhere::metric::L2 && metric != knowhere::metric::IP) {
-            return HandleError(err_msg, "DISKANN_RABITQ supports L2 and IP", Status::invalid_metric_type);
+        if (metric != knowhere::metric::L2 && metric != knowhere::metric::IP && metric != knowhere::metric::COSINE) {
+            return HandleError(err_msg, "DISKANN_RABITQ supports L2, IP and COSINE", Status::invalid_metric_type);
         }
         const auto database_bits = rbq_bits.value_or(1);
         if (database_bits < 1 || database_bits > 9) {
@@ -265,9 +265,6 @@ class DiskANNNavigationConfig : public DiskANNConfig {
         const auto refine_mode = rbq_refine_mode.value_or("probabilistic");
         if (refine_mode != "probabilistic" && refine_mode != "full") {
             return HandleError(err_msg, "rbq_refine_mode must be probabilistic or full", Status::invalid_args);
-        }
-        if (disk_pq_dims.value_or(0) != 0) {
-            return HandleError(err_msg, "DISKANN_RABITQ requires disk_pq_dims=0", Status::invalid_args);
         }
         return Status::success;
     }

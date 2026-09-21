@@ -1609,6 +1609,9 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
 
 template<typename T>
   int build_disk_index(BuildConfig &config) {
+    if (config.aisaq_mode && !config.use_pq_navigation) {
+      throw diskann::ANNException("AiSAQ requires PQ navigation", -1);
+    }
     if (!knowhere::KnowhereFloatTypeCheck<T>::value &&
         (config.compare_metric == diskann::Metric::INNER_PRODUCT ||
          config.compare_metric == diskann::Metric::COSINE)) {
@@ -1743,14 +1746,16 @@ template<typename T>
     LOG_KNOWHERE_INFO_ << "Compressing " << dim << "-dimensional data into "
                        << num_pq_chunks << " bytes per vector.";
 
-    size_t train_size, train_dim;
+    size_t train_size = 0, train_dim = 0;
     std::unique_ptr<float[]> train_data = nullptr;
 
     double p_val = ((double) MAX_PQ_TRAINING_SET_SIZE / (double) points_num);
     // generates random sample and sets it to train_data and updates
     // train_size
-    gen_random_slice<T>(data_file_to_use.c_str(), p_val, train_data, train_size,
-                        train_dim);
+    if (config.use_pq_navigation || use_disk_pq) {
+      gen_random_slice<T>(data_file_to_use.c_str(), p_val, train_data, train_size,
+                          train_dim);
+    }
 
     if (use_disk_pq) {
       if (disk_pq_dims > dim)
@@ -1771,6 +1776,7 @@ template<typename T>
             data_file_to_use.c_str(), 256, (uint32_t) disk_pq_dims,
             disk_pq_pivots_path, disk_pq_compressed_vectors_path);
     }
+    if (config.use_pq_navigation) {
     LOG_KNOWHERE_DEBUG_ << "Training data loaded of size " << train_size;
 
     // don't translate data to make zero mean for PQ compression. We must not
@@ -1793,6 +1799,7 @@ template<typename T>
     auto pq_e = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> pq_diff = pq_e - pq_s;
     LOG_KNOWHERE_INFO_ << "Training PQ codes cost: " << pq_diff.count() << "s";
+    }
 // Gopal. Splitting diskann_dll into separate DLLs for search and build.
 // This code should only be available in the "build" DLL.
 #if defined(RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && \
@@ -1866,7 +1873,7 @@ template<typename T>
     gen_random_slice<T>(base_file.c_str(), sample_data_file,
                         sample_sampling_rate);
 
-    if (vamana_index != nullptr) {
+    if (vamana_index != nullptr && config.use_pq_navigation) {
       auto final_graph = vamana_index->get_graph();
       auto entry_point = vamana_index->get_entry_point();
 
@@ -1889,7 +1896,8 @@ template<typename T>
     std::chrono::duration<double> diff = e - s;
     LOG_KNOWHERE_INFO_ << "Indexing time: " << diff.count();
 
-    if (config.compare_metric == diskann::Metric::INNER_PRODUCT &&
+    if ((config.compare_metric == diskann::Metric::INNER_PRODUCT ||
+         config.compare_metric == diskann::Metric::COSINE) &&
         !config.keep_preprocessed_base) {
       std::remove(data_file_to_use.c_str());
     }

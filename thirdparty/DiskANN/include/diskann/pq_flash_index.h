@@ -203,13 +203,18 @@ namespace diskann {
   template<typename T>
   class PQFlashIndex: public PQDataGetter {
    public:
+    struct NavigationMetadata {
+      uint64_t count;
+      uint64_t dimension;
+    };
     PQFlashIndex(std::shared_ptr<AlignedFileReader> fileReader,
                  diskann::Metric metric = diskann::Metric::L2);
     ~PQFlashIndex();
 
     // load compressed data, and obtains the handle to the disk-resident index
     int load(uint32_t num_threads, const char *index_prefix,
-             bool load_pq_data = true);
+             bool load_pq_data = true,
+             const NavigationMetadata* navigation_metadata = nullptr);
 
     virtual void load_cache_list(std::vector<uint32_t> &node_list);
 
@@ -374,6 +379,8 @@ namespace diskann {
     std::unique_ptr<_u8[]> data = nullptr;
     _u64                   n_chunks;
     FixedChunkPQTable      pq_table;
+    // AiSAQ also needs PQ scratch although its codes are disk resident.
+    bool use_pq_navigation = true;
 
     // distance comparator
     DISTFUN<T>     dist_cmp;

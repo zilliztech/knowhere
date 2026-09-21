@@ -409,16 +409,18 @@ TryDiskANNCall(std::function<void()>&& diskann_call) {
 
 std::vector<std::string>
 GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const bool use_sample_cache,
-                      const bool use_sample_warmup) {
+                      const bool use_sample_warmup, const bool use_pq_navigation = true) {
     std::vector<std::string> filenames;
     auto pq_pivots_filename = diskann::get_pq_pivots_filename(prefix);
     auto disk_index_filename = diskann::get_disk_index_filename(prefix);
 
-    filenames.push_back(pq_pivots_filename);
-    filenames.push_back(diskann::get_pq_rearrangement_perm_filename(pq_pivots_filename));
-    filenames.push_back(diskann::get_pq_chunk_offsets_filename(pq_pivots_filename));
-    filenames.push_back(diskann::get_pq_centroid_filename(pq_pivots_filename));
-    filenames.push_back(diskann::get_pq_compressed_filename(prefix));
+    if (use_pq_navigation) {
+        filenames.push_back(pq_pivots_filename);
+        filenames.push_back(diskann::get_pq_rearrangement_perm_filename(pq_pivots_filename));
+        filenames.push_back(diskann::get_pq_chunk_offsets_filename(pq_pivots_filename));
+        filenames.push_back(diskann::get_pq_centroid_filename(pq_pivots_filename));
+        filenames.push_back(diskann::get_pq_compressed_filename(prefix));
+    }
     filenames.push_back(disk_index_filename);
     if (need_norm) {
         filenames.push_back(diskann::get_disk_index_max_base_norm_file(disk_index_filename));
@@ -525,7 +527,7 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
     // The coordinate cache uses aligned T slots even when the SSD payload is PQ.
     const auto cache_dim = ROUND_UP(dim + (diskann_metric == diskann::Metric::INNER_PRODUCT ? 1 : 0), 8);
     const auto num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), cache_dim,
-                                                    sizeof(DataType), build_conf.max_degree.value());
+                                                     sizeof(DataType), build_conf.max_degree.value());
     diskann::BuildConfig diskann_internal_build_config{data_path,
                                                        index_prefix_,
                                                        diskann_metric,
@@ -538,8 +540,9 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
                                                        build_conf.accelerate_build.value(),
                                                        static_cast<uint32_t>(num_nodes_to_cache),
                                                        build_conf.shuffle_build.value()};
-    diskann_internal_build_config.keep_preprocessed_base =
-        external_navigation && diskann_metric == diskann::Metric::INNER_PRODUCT;
+    const bool navigation_uses_preprocessed_base = external_navigation && need_norm;
+    diskann_internal_build_config.keep_preprocessed_base = navigation_uses_preprocessed_base;
+    diskann_internal_build_config.use_pq_navigation = !external_navigation;
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
         int res = diskann::build_disk_index<DataType>(diskann_internal_build_config);
         if (res != 0)
@@ -550,14 +553,14 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
     if (external_navigation) {
         try {
             const auto sidecar_source =
-                diskann_metric == diskann::Metric::INNER_PRODUCT ? index_prefix_ + "_prepped_base.bin" : data_path;
+                navigation_uses_preprocessed_base ? index_prefix_ + "_prepped_base.bin" : data_path;
             BuildNavigationStore(build_conf, sidecar_source, index_prefix_);
-            if (diskann_metric == diskann::Metric::INNER_PRODUCT) {
+            if (navigation_uses_preprocessed_base) {
                 std::error_code error;
                 std::filesystem::remove(sidecar_source, error);
             }
         } catch (const std::exception& e) {
-            if (diskann_metric == diskann::Metric::INNER_PRODUCT) {
+            if (navigation_uses_preprocessed_base) {
                 std::error_code error;
                 std::filesystem::remove(index_prefix_ + "_prepped_base.bin", error);
             }
@@ -567,7 +570,7 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
     }
 
     // Add file to the file manager
-    for (auto& filename : GetNecessaryFilenames(index_prefix_, need_norm, true, true)) {
+    for (auto& filename : GetNecessaryFilenames(index_prefix_, need_norm, true, true, !external_navigation)) {
         if (!AddFile(filename)) {
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << filename << ".";
             return Status::disk_file_error;
@@ -703,7 +706,7 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
     for (auto& filename : GetNecessaryFilenames(
              index_prefix_, need_norm,
              prep_conf.search_cache_budget_gb.value() > 0 && !prep_conf.use_bfs_cache.value() && !external_navigation,
-             prep_conf.warm_up.value())) {
+             prep_conf.warm_up.value(), !external_navigation)) {
         if (!LoadFile(filename)) {
             return Status::disk_file_error;
         }
@@ -725,6 +728,16 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         }
     }
 
+    navigation_store_.reset();
+    if (external_navigation) {
+        try {
+            navigation_store_ = LoadNavigationStore(prep_conf, index_prefix_);
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_ERROR_ << "Failed to initialize DiskANN navigation sidecar: " << e.what();
+            return Status::invalid_index_error;
+        }
+    }
+
     // set thread pool
     search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
 
@@ -735,7 +748,13 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
 
     pq_flash_index_ = std::make_unique<diskann::PQFlashIndex<DataType>>(reader, diskann_metric);
     auto disk_ann_call = [&]() {
-        int res = pq_flash_index_->load(search_pool_->size(), index_prefix_.c_str(), !external_navigation);
+        typename diskann::PQFlashIndex<DataType>::NavigationMetadata metadata{};
+        if (navigation_store_) {
+            metadata.count = navigation_store_->Count();
+            metadata.dimension = navigation_store_->Dimension();
+        }
+        int res = pq_flash_index_->load(search_pool_->size(), index_prefix_.c_str(), !external_navigation,
+                                        navigation_store_ ? &metadata : nullptr);
         if (res != 0) {
             throw diskann::ANNException("pq_flash_index_->load returned non-zero value: " + std::to_string(res), -1);
         }
@@ -753,10 +772,8 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         dim_.store(pq_flash_index_->get_data_dim());
     }
 
-    navigation_store_.reset();
     if (external_navigation) {
         try {
-            navigation_store_ = LoadNavigationStore(prep_conf, index_prefix_);
             if (navigation_store_->Count() != static_cast<int64_t>(pq_flash_index_->get_num_points()) ||
                 navigation_store_->Dimension() != static_cast<int64_t>(pq_flash_index_->get_data_dim())) {
                 LOG_KNOWHERE_ERROR_ << "DiskANN graph and navigation sidecar metadata do not match";

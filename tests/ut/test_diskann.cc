@@ -526,7 +526,7 @@ TEST_CASE("DiskANN navigation load resource estimate", "[diskann][rabitq][resour
     constexpr uint64_t file_bytes = 1ULL << 30;
     constexpr int64_t rows = 1000000;
     constexpr int64_t dim = 769;
-    for (const auto* metric : {"L2", "IP"}) {
+    for (const auto* metric : {"L2", "IP", "COSINE"}) {
         const int64_t prepared_dim = dim + (std::string(metric) == "IP" ? 1 : 0);
         uint64_t previous = 0;
         for (int bits = 1; bits <= 9; ++bits) {
@@ -633,13 +633,15 @@ TEST_CASE("Test DISKANN_RABITQ constraints", "[diskann][rabitq]") {
     invalid["metric_type"] = knowhere::metric::IP;
     check_train_config(invalid, knowhere::Status::success);
     invalid["metric_type"] = knowhere::metric::COSINE;
+    check_train_config(invalid, knowhere::Status::success);
+    invalid["metric_type"] = "HAMMING";
     check_train_config(invalid, knowhere::Status::invalid_metric_type);
     invalid = valid;
     invalid["rbq_bits"] = 10;
     check_train_config(invalid, knowhere::Status::out_of_range_in_json);
     invalid = valid;
     invalid["disk_pq_dims"] = 16;
-    check_train_config(invalid, knowhere::Status::invalid_args);
+    check_train_config(invalid, knowhere::Status::success);
     invalid = valid;
     invalid["search_cache_budget_gb"] = 0.01;
     check_train_config(invalid, knowhere::Status::success);
@@ -964,19 +966,14 @@ TEST_CASE("Test DISKANN_RABITQ build and search", "[diskann][rabitq]") {
         }
 
         if (rbq_bits == 1) {
-            auto full_reader = std::make_shared<LinuxAlignedFileReader>();
-            diskann::PQFlashIndex<float> full_pq_index(full_reader, diskann::Metric::L2);
-            REQUIRE(full_pq_index.load(1, rabitq_prefix.c_str(), true) == 0);
-
             auto metadata_reader = std::make_shared<LinuxAlignedFileReader>();
             diskann::PQFlashIndex<float> metadata_only_index(metadata_reader, diskann::Metric::L2);
-            REQUIRE(metadata_only_index.load(1, rabitq_prefix.c_str(), false) == 0);
-            REQUIRE(metadata_only_index.get_num_points() == full_pq_index.get_num_points());
-            REQUIRE(metadata_only_index.get_data_dim() == full_pq_index.get_data_dim());
-
-            const auto pq_file_size = fs::file_size(rabitq_prefix + "_pq_compressed.bin");
-            const auto pq_code_bytes = pq_file_size - 2 * sizeof(uint32_t);
-            REQUIRE(full_pq_index.cal_size() - metadata_only_index.cal_size() == pq_code_bytes);
+            const diskann::PQFlashIndex<float>::NavigationMetadata metadata{kNumRows, kDim};
+            REQUIRE(metadata_only_index.load(1, rabitq_prefix.c_str(), false, &metadata) == 0);
+            REQUIRE(metadata_only_index.get_num_points() == kNumRows);
+            REQUIRE(metadata_only_index.get_data_dim() == kDim);
+            REQUIRE_FALSE(fs::exists(rabitq_prefix + "_pq_compressed.bin"));
+            REQUIRE_FALSE(fs::exists(rabitq_prefix + "_pq_pivots.bin"));
 
             std::array<float, kDim> query{};
             std::array<int64_t, 1> ids{};
@@ -1150,6 +1147,104 @@ TEST_CASE("Test DISKANN_RABITQ inner product d+1 sidecar", "[diskann][rabitq][ip
     fs::remove_all(kDir);
 }
 
+TEST_CASE("DiskANN RaBitQ cosine uses normalized navigation and original SSD vectors", "[diskann][rabitq][cosine]") {
+    const auto dir = kDir + "/rabitq_cosine";
+    REQUIRE_NOTHROW(fs::create_directories(dir));
+    const auto prefix = dir + "/index";
+    const auto raw = dir + "/base.fbin";
+    auto base = GenDataSet(kNumRows, kDim, 30);
+    auto query = GenDataSet(kNumQueries, kDim, 42);
+    auto* xb = const_cast<float*>(static_cast<const float*>(base->GetTensor()));
+    auto* xq = const_cast<float*>(static_cast<const float*>(query->GetTensor()));
+    for (uint32_t i = 0; i < kNumRows; ++i) {
+        const float scale = (i == 0) ? 0.0f : (0.1f + float(i % 100));
+        for (uint32_t j = 0; j < kDim; ++j) xb[i * kDim + j] *= scale;
+    }
+    for (uint32_t i = 0; i < kNumQueries; ++i)
+        for (uint32_t j = 0; j < kDim; ++j) xq[i * kDim + j] *= 0.2f + float(i);
+    WriteRawDataToDisk<float>(raw, xb, kNumRows, kDim);
+    auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(std::make_shared<milvus::LocalFileManager>()));
+    const auto version = GenTestVersionList();
+    knowhere::Json config = {{"dim", kDim},
+                             {"metric_type", "COSINE"},
+                             {"index_prefix", prefix},
+                             {"data_path", raw},
+                             {"max_degree", defaultMaxDegree},
+                             {"search_list_size", 128},
+                             {"pq_code_budget_gb", 0.001},
+                             {"build_dram_budget_gb", 1.0},
+                             {"disk_pq_dims", 0},
+                             {"search_cache_budget_gb", 0},
+                             {"search_cache_budget_gb_ratio", 0},
+                             {"rbq_bits", 4}};
+    knowhere::BinarySet binary;
+    {
+        auto built = knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN_RABITQ", version, pack).value();
+        REQUIRE(built.Build(nullptr, config) == knowhere::Status::success);
+        REQUIRE(built.Serialize(binary) == knowhere::Status::success);
+        REQUIRE_FALSE(fs::exists(prefix + "_prepped_base.bin"));
+        knowhere::RaBitQStore store(prefix + "_rabitq.index");
+        REQUIRE(store.Dimension() == kDim);
+    }
+    auto restored = knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN_RABITQ", version, pack).value();
+    config["warm_up"] = true;
+    config["search_cache_budget_gb"] = 0.00005;
+    config["use_bfs_cache"] = false;
+    REQUIRE(restored.Deserialize(binary, config) == knowhere::Status::success);
+    // SSD must still contain original vectors, not the normalized navigation copy.
+    int64_t raw_id = 1;
+    auto id_dataset = knowhere::GenIdsDataSet(1, &raw_id);
+    auto retrieved = restored.GetVectorByIds(id_dataset);
+    REQUIRE(retrieved.has_value());
+    const auto* original = static_cast<const float*>(retrieved.value()->GetTensor());
+    for (uint32_t j = 0; j < kDim; ++j) REQUIRE(original[j] == xb[kDim + j]);
+    knowhere::Json search = {
+        {"dim", kDim}, {"metric_type", "COSINE"}, {"k", kK}, {"search_list_size", 128}, {"beamwidth", 8}};
+    auto exact = knowhere::BruteForce::Search<knowhere::fp32>(base, query, search, nullptr);
+    REQUIRE(exact.has_value());
+    for (const int qb : {0, 4, 8}) {
+        for (const auto* mode : {"full", "probabilistic"}) {
+            search["rbq_bits_query"] = qb;
+            search["rbq_refine_mode"] = mode;
+            auto result = restored.Search(query, search, nullptr);
+            REQUIRE(result.has_value());
+            REQUIRE(GetKNNRecall(*exact.value(), *result.value()) > 0.8f);
+            for (uint32_t i = 0; i < kNumQueries; ++i) {
+                for (uint32_t j = 0; j < kK; ++j) {
+                    const auto offset = i * kK + j;
+                    const auto id = result.value()->GetIds()[offset];
+                    REQUIRE(id >= 0);
+                    REQUIRE(id < kNumRows);
+                    double dot = 0, norm_x = 0, norm_q = 0;
+                    for (uint32_t k = 0; k < kDim; ++k) {
+                        dot += double(xb[id * kDim + k]) * xq[i * kDim + k];
+                        norm_x += double(xb[id * kDim + k]) * xb[id * kDim + k];
+                        norm_q += double(xq[i * kDim + k]) * xq[i * kDim + k];
+                    }
+                    const double score = norm_x > 0 && norm_q > 0 ? dot / std::sqrt(norm_x * norm_q) : 0;
+                    REQUIRE(std::abs(result.value()->GetDistance()[offset] - score) < 1e-5);
+                }
+            }
+        }
+    }
+    for (const int excluded : {1, 950, 1000}) {
+        auto mask = GenerateBitsetWithFirstTbitsSet(kNumRows, excluded);
+        auto filtered = restored.Search(query, search, knowhere::BitsetView(mask.data(), kNumRows));
+        REQUIRE(filtered.has_value());
+        for (uint32_t i = 0; i < kNumQueries * kK; ++i) {
+            const auto id = filtered.value()->GetIds()[i];
+            REQUIRE((id == -1 || (id >= excluded && id < kNumRows)));
+            if (excluded == 1000)
+                REQUIRE(id == -1);
+        }
+    }
+    std::vector<float> zero(kDim, 0);
+    auto zero_result = restored.Search(knowhere::GenDataSet(1, kDim, zero.data()), search, nullptr);
+    REQUIRE(zero_result.has_value());
+    for (uint32_t j = 0; j < kK; ++j) REQUIRE(zero_result.value()->GetIds()[j] == -1);
+    fs::remove_all(dir);
+}
+
 TEST_CASE("DiskANN and AiSAQ preserve the navigation PQ limit", "[diskann][aisaq][large_pq]") {
     const auto* index_type = GENERATE(kNativeDiskANN, "AISAQ");
     constexpr uint32_t rows = 300;
@@ -1203,6 +1298,15 @@ TEST_CASE("DiskANN and AiSAQ preserve the navigation PQ limit", "[diskann][aisaq
 
     auto loaded = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(index_type, version, pack).value();
     REQUIRE(loaded.Deserialize(binset, deserialize_json) == knowhere::Status::success);
+
+    auto query = GenDataSet(3, dim, 42);
+    const knowhere::Json search = {
+        {"dim", dim}, {"metric_type", "L2"}, {"k", 5}, {"search_list_size", 50}, {"beamwidth", 4}};
+    auto result = loaded.Search(query, search, nullptr);
+    REQUIRE(result.has_value());
+    auto exact = knowhere::BruteForce::Search<knowhere::fp32>(base_ds, query, search, nullptr);
+    REQUIRE(exact.has_value());
+    REQUIRE(GetKNNRecall(*exact.value(), *result.value()) > 0.8f);
 
     fs::remove_all(test_dir);
 }

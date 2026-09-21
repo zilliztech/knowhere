@@ -9,12 +9,15 @@ import numpy as np
 import pytest
 
 
-@pytest.mark.parametrize("metric", ["L2", "IP"])
+@pytest.mark.parametrize("metric", ["L2", "IP", "COSINE"])
 @pytest.mark.parametrize("kind,codec", [("DISKANN_RABITQ", None), ("DISKANN", "RABITQ"), ("DISKANN", None)])
 def test_navigation_roundtrip(tmp_path, metric, kind, codec):
     rng = np.random.default_rng(42)
     base = rng.normal(size=(1000, 64)).astype("float32")
     query = rng.normal(size=(10, 64)).astype("float32")
+    if metric == "COSINE":
+        base *= rng.uniform(0.1, 10, size=(1000, 1)).astype("float32")
+        query *= rng.uniform(0.1, 10, size=(10, 1)).astype("float32")
     source = tmp_path / "base.fbin"
     with source.open("wb") as output:
         output.write(struct.pack("<II", *base.shape))
@@ -39,6 +42,17 @@ def test_navigation_roundtrip(tmp_path, metric, kind, codec):
     assert ids.shape == (10, 10)
     assert np.all(ids >= 0) and np.all(np.isfinite(distances))
     exact = ((query[:, None, :] - base[None, :, :]) ** 2).sum(2) if metric == "L2" else -(query @ base.T)
+    if metric == "COSINE":
+        exact /= np.linalg.norm(query, axis=1)[:, None] * np.linalg.norm(base, axis=1)[None, :]
     truth = np.argsort(exact, axis=1)[:, :10]
     recall = sum(len(set(actual) & set(expected)) for actual, expected in zip(ids, truth)) / 100
     assert recall > 0.8
+    if metric == "COSINE":
+        expected_scores = -np.take_along_axis(exact, ids, axis=1)
+        np.testing.assert_allclose(distances, expected_scores, rtol=1e-4, atol=1e-5)
+    if metric in ("IP", "COSINE"):
+        zeros = np.zeros((1, 64), dtype="float32")
+        empty, status = restored.Search(knowhere.ArrayToDataSet(zeros), json.dumps(search), knowhere.GetNullBitSetView())
+        assert knowhere.Status(status) == knowhere.Status.success
+        empty_distances, empty_ids = knowhere.DataSetToArray(empty)
+        assert np.all(empty_ids == -1) and np.all(empty_distances == -1)

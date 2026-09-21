@@ -244,13 +244,15 @@ namespace diskann {
       diskann::alloc_aligned((void **) &scratch.sector_scratch,
                              (_u64) diskann::defaults::MAX_N_SECTOR_READS * read_len_for_node,
                              diskann::defaults::SECTOR_LEN);
-      diskann::alloc_aligned(
+      if (use_pq_navigation) {
+        diskann::alloc_aligned(
           (void **) &scratch.aligned_pq_coord_scratch,
           (_u64) diskann::defaults::MAX_GRAPH_DEGREE * (_u64) this->aligned_dim * sizeof(_u8),
           256);
       diskann::alloc_aligned((void **) &scratch.aligned_pqtable_dist_scratch,
                              256 * (_u64) this->aligned_dim * sizeof(float),
                              256);
+      }
       diskann::alloc_aligned((void **) &scratch.aligned_dist_scratch,
                              (_u64) diskann::defaults::MAX_GRAPH_DEGREE * sizeof(float), 256);
       diskann::alloc_aligned((void **) &scratch.aligned_query_T,
@@ -278,10 +280,12 @@ namespace diskann {
     thread_data_size += ROUND_UP(sizeof(T) * this->aligned_dim, 256);
     thread_data_size +=
         ROUND_UP((_u64) diskann::defaults::MAX_N_SECTOR_READS * read_len_for_node, diskann::defaults::SECTOR_LEN);
-    thread_data_size += ROUND_UP(
+    if (use_pq_navigation) {
+      thread_data_size += ROUND_UP(
         (_u64) diskann::defaults::MAX_GRAPH_DEGREE * (_u64) this->aligned_dim * sizeof(_u8), 256);
     thread_data_size +=
         ROUND_UP(256 * (_u64) this->aligned_dim * sizeof(float), 256);
+    }
     thread_data_size += ROUND_UP((_u64) diskann::defaults::MAX_GRAPH_DEGREE * sizeof(float), 256);
     thread_data_size += ROUND_UP(this->aligned_dim * sizeof(T), 8 * sizeof(T));
     thread_data_size +=
@@ -705,7 +709,9 @@ namespace diskann {
 
   template<typename T>
   int PQFlashIndex<T>::load(uint32_t num_threads, const char *index_prefix,
-                            bool load_pq_data) {
+                            bool load_pq_data,
+                            const NavigationMetadata* navigation_metadata) {
+    use_pq_navigation = load_pq_data;
     std::string pq_table_bin =
         get_pq_pivots_filename(std::string(index_prefix));
     std::string pq_compressed_vectors =
@@ -717,14 +723,21 @@ namespace diskann {
     std::string centroids_file =
         get_disk_index_centroids_filename(std::string(disk_index_file));
 
-    size_t pq_file_dim, pq_file_num_centroids;
-    get_bin_metadata(pq_table_bin, pq_file_num_centroids, pq_file_dim);
+    size_t pq_file_dim = 0, pq_file_num_centroids = 0;
+    if (!load_pq_data && navigation_metadata != nullptr) {
+      if (navigation_metadata->count == 0 || navigation_metadata->dimension == 0 ||
+          navigation_metadata->dimension > std::numeric_limits<int32_t>::max()) {
+        throw ANNException("Invalid external navigation metadata", -1);
+      }
+      pq_file_dim = navigation_metadata->dimension;
+    } else {
+      get_bin_metadata(pq_table_bin, pq_file_num_centroids, pq_file_dim);
+      if (pq_file_num_centroids != 256) {
+        throw ANNException("Number of PQ centroids is not 256", -1);
+      }
+    }
 
     this->disk_index_file = disk_index_file;
-    if (pq_file_num_centroids != 256) {
-      LOG(ERROR) << "Error. Number of PQ centroids is not 256. Exitting.";
-      return -1;
-    }
 
     this->data_dim = pq_file_dim;
     // will reset later if we use PQ on disk
@@ -734,10 +747,12 @@ namespace diskann {
     this->disk_bytes_per_point = this->data_dim * sizeof(T);
     this->aligned_dim = ROUND_UP(pq_file_dim, 8);
 
-    size_t npts_u64, nchunks_u64;
+    size_t npts_u64 = 0, nchunks_u64 = 0;
     if (load_pq_data) {
       diskann::load_bin<_u8>(pq_compressed_vectors, this->data, npts_u64,
                              nchunks_u64);
+    } else if (navigation_metadata != nullptr) {
+      npts_u64 = navigation_metadata->count;
     } else {
       get_bin_metadata(pq_compressed_vectors, npts_u64, nchunks_u64);
       const size_t header_size = 2 * sizeof(uint32_t);
@@ -758,11 +773,12 @@ namespace diskann {
     this->num_points = npts_u64;
     this->n_chunks = nchunks_u64;
 
-    pq_table.load_pq_centroid_bin(pq_table_bin.c_str(), nchunks_u64);
+    if (load_pq_data) {
+      pq_table.load_pq_centroid_bin(pq_table_bin.c_str(), nchunks_u64);
+    }
 
-    LOG(INFO) << "Loaded PQ centroids and "
-              << (load_pq_data ? "in-memory compressed vectors"
-                               : "compressed-vector metadata only")
+    LOG(INFO) << (load_pq_data ? "Loaded resident PQ navigation"
+                               : "Using external navigation metadata")
               << ". #points: " << num_points << " #dim: " << data_dim
               << " #aligned_dim: " << aligned_dim
               << " #chunks: " << n_chunks;
@@ -773,6 +789,9 @@ namespace diskann {
       // giving 0 chunks to make the pq_table infer from the
       // chunk_offsets file the correct value
       disk_pq_table.load_pq_centroid_bin(disk_pq_pivots_path.c_str(), 0);
+      if (disk_pq_table.get_total_dims() != data_dim) {
+        throw ANNException("SSD PQ and navigation dimensions do not match", -1);
+      }
       disk_pq_n_chunks = disk_pq_table.get_num_chunks();
       disk_bytes_per_point =
           disk_pq_n_chunks *
@@ -883,7 +902,7 @@ namespace diskann {
         diskann::load_aligned_bin<float>(centroids_file, centroid_data,
                                          num_centroids, tmp_dim,
                                          aligned_tmp_dim);
-        if (aligned_tmp_dim != aligned_dim || num_centroids != num_medoids) {
+        if (tmp_dim != data_dim || aligned_tmp_dim != aligned_dim || num_centroids != num_medoids) {
           std::stringstream stream;
           stream << "Error loading centroids data file. Expected bin format of "
                     "m times data_dim vector of float, where m is number of "
@@ -2132,6 +2151,11 @@ namespace diskann {
     index_mem_size +=
         this->pq_table.get_total_dims() * (sizeof(uint32_t) + sizeof(float));
     index_mem_size += (this->pq_table.get_num_chunks() + 1) * sizeof(uint32_t);
+    if (use_disk_index_pq) {
+      index_mem_size += disk_pq_table.get_total_dims() *
+          (256 * sizeof(float) * 2 + sizeof(uint32_t) + sizeof(float));
+      index_mem_size += (disk_pq_table.get_num_chunks() + 1) * sizeof(uint32_t);
+    }
     // base norms:
     if (this->metric == diskann::Metric::COSINE) {
       index_mem_size += sizeof(float) * this->num_points;
