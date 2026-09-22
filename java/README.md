@@ -1,7 +1,9 @@
 # Knowhere C and Java bindings
 
-The optional bindings expose index creation, build, search, serialization,
-deserialization, brute-force search and thread pool sizing. `libknowhere_jni` calls the standalone
+The optional bindings expose index creation, build (from a direct buffer or from
+a native address), search, serialization, deserialization, brute-force search
+(per query with an exclusion bitmap, or one FP32 batch through faiss's BLAS
+path) and thread pool sizing. `libknowhere_jni` calls the standalone
 `libknowhere_c` ABI, which calls Knowhere. The Java API targets Java 11 and has no
 Spark, Scala, Arrow or Hadoop dependency. Both build options default to off.
 
@@ -172,6 +174,26 @@ optional bitmap excludes that public row ID; bit zero is the least significant
 bit of byte zero. The bitmap must cover all base rows. Brute-force IDs start at
 zero for the supplied base batch.
 
+Two entries take what a `ByteBuffer` call cannot express:
+
+```java
+// Vectors larger than one ByteBuffer (more than Integer.MAX_VALUE bytes): the
+// native address and the 64-bit length of the same row-major, native-order data.
+index.build(address, bytes, rows, dimension, parameters);
+// Many FP32 queries against one base block in a single call, on faiss's SGEMM
+// path; the caller leaves excluded rows out of the base instead of passing a bitmap.
+Knowhere.bruteForceBatched(DType.FLOAT32, base, baseRows, queries, queryRows,
+        dimension, topK, ids, distances, parameters);
+```
+
+`bruteForceBatched` accepts FP32 base and queries with `metric_type` L2, IP or
+COSINE; other dtypes and metrics stay with `bruteForce`. Its IDs, distances and
+`-1` tail follow `bruteForce`. The results agree with `bruteForce` up to float
+rounding: for L2 the BLAS path computes ‖x‖² + ‖y‖² − 2x·y, so distances may
+differ in the last bits and exact ties may change order. The C entry is
+`knowhere_bruteforce_batched`; the address build reaches the existing
+`knowhere_index_build`, whose `knowhere_vectors` already carries a 64-bit length.
+
 ## Memory, lifecycle and errors
 
 - Numeric buffers must be direct, naturally aligned and in native byte order.
@@ -182,6 +204,14 @@ zero for the supplied base batch.
   buffer modification until return. Build retains an owned copy of its input;
   deserialization retains an independent copy of the BinarySet. The caller may
   reuse those inputs after return. Query buffers are borrowed, not retained.
+- The address form of `build` trusts its caller for what a `ByteBuffer` would
+  have guaranteed: the address designates an allocated, readable region of
+  `bytes` bytes holding row-major vectors in native byte order, left intact
+  until the call returns. Java rejects a zero address and a negative length; the
+  C layer still checks that the address is aligned for the element type and
+  that `rows` times the row size fits in `bytes`, but neither can verify that
+  the region exists. Build retains a copy as with the buffer form, so the region
+  may be released after return.
 - Indexes and BinarySets implement `AutoCloseable`; use try-with-resources.
   `close()` is idempotent and later calls fail. Native handles are typed registry
   identifiers, not exposed pointers, and are never reused. Calls on one resource
@@ -198,8 +228,11 @@ zero for the supplied base batch.
   translates these to `KnowhereException` with `code()` and a message; Java
   argument/state errors use the standard exceptions. C++ exceptions cannot
   cross either native boundary. An error does not produce an empty success.
-- ABI version 1 describes the C interface. Maven/API version and Knowhere index
-  format version are independent. Supply the original compatible index format
+- ABI version 1 describes the C interface. The thread pool functions, the
+  batched brute-force entry and the address build were added to it without
+  changing any existing function, so a library built from an earlier revision
+  lacks their symbols while still reporting ABI 1. Maven/API version and
+  Knowhere index format version are independent. Supply the original compatible index format
   version when restoring saved index blobs; the current version is not evidence
   that every historical Milvus index format is readable.
 
@@ -224,14 +257,34 @@ Knowhere.resizeBuildThreadPool(executorCores);
 return 0 until the pool exists. The C entry points are
 `knowhere_search_thread_pool_resize`, `knowhere_search_thread_pool_size`,
 `knowhere_build_thread_pool_resize` and `knowhere_build_thread_pool_size`. SIMD
-selection, BLAS thresholds and logging stay at Knowhere's defaults.
+selection, BLAS thresholds and logging stay at Knowhere's defaults outside the
+batched entry described next.
+
+`bruteForceBatched` does not use the pools. It runs on the calling thread with
+OpenMP at one thread, so a host that already runs one search per task gets one
+core per call and supplies the parallelism itself. While any batched call is in
+flight, two process-wide settings are changed and the last call out restores
+them: faiss's `distance_compute_blas_threshold` becomes 20, because the bundled
+fork's value of 16384 would never take the BLAS path, and OpenBLAS's thread
+count becomes 1, because the bundled OpenBLAS is a pthreads build in which even
+`openblas_set_num_threads_local` writes the process value. Per-query
+`bruteForce` and index searches call faiss with one query at a time, so the
+threshold does not affect them; a BLAS-heavy build running at the same time,
+such as IVF training, uses single-threaded BLAS for that duration. On macOS the
+OpenBLAS thread control compiles out.
 
 ## Verification coverage
 
 The tests exercise five dtypes with FLAT/BIN_FLAT and brute force, HNSW and
 IVF_FLAT round trips, filtering, exact fixed examples, invalid inputs, Unicode
 blob names, input retention, chunk bounds, double close, concurrent close and
-thread pool sizing before and after searches.
+thread pool sizing before and after searches. The batched brute force is
+compared with the per-query entry for L2 above and below the BLAS threshold, IP
+and COSINE, with six concurrent callers against one serial answer, and checked
+for the `-1` tail, zero queries and rejected metric, dtype and conflicting `k`;
+the address build's argument checks are covered, while a region larger than one
+`ByteBuffer` is exercised by the consumers' integration runs, since a Java test
+has no portable way to obtain a direct buffer's address.
 DiskANN has a separate local-file test when enabled. It checks recall against
 brute force on uniformly distributed samples, plus IDs, distances and exclusions;
 its approximate graph does not guarantee exact neighbors for isolated points.
