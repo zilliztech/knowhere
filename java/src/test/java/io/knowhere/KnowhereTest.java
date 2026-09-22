@@ -170,6 +170,21 @@ public class KnowhereTest {
     }
 
     @Test
+    public void addressBuildRequiresAnAddressAndANonNegativeLength() {
+        try (final KnowhereIndex index = Knowhere.createIndex("FLAT", DType.FLOAT32, Knowhere.currentIndexVersion())) {
+            assertThrows(IllegalArgumentException.class, new ThrowingRunnable() {
+                public void run() { index.build(0L, 24L, 3, 2, L2); }
+            });
+            assertThrows(IllegalArgumentException.class, new ThrowingRunnable() {
+                public void run() { index.build(8L, -1L, 3, 2, L2); }
+            });
+            assertThrows(NullPointerException.class, new ThrowingRunnable() {
+                public void run() { index.build(8L, 24L, 3, 2, null); }
+            });
+        }
+    }
+
+    @Test
     public void heapAndReadOnlyOutputsAreRejectedBeforeNativeWrites() {
         assertThrows(IllegalArgumentException.class, new ThrowingRunnable() {
             public void run() {

@@ -33,6 +33,8 @@ final class NativeBindings {
     static native long indexCreate(String type, int dtype, int version);
     static native void indexDestroy(long handle);
     static native void indexBuild(long handle, ByteBuffer data, long rows, int dimension, int dtype, String parameters);
+    static native void indexBuildAddress(long handle, long address, long bytes, long rows, int dimension, int dtype,
+            String parameters);
     static native void indexBuildFromFile(long handle, String parameters);
     static native void indexSearch(long handle, ByteBuffer queries, long rows, int dimension, int dtype, int topK,
             ByteBuffer excluded, long bits, ByteBuffer ids, ByteBuffer distances, String parameters);

@@ -36,6 +36,23 @@ public final class KnowhereIndex implements AutoCloseable {
     }
 
     /**
+     * Builds once from vectors at a native address in native byte order; {@code bytes} is the
+     * length of that memory. It takes what a ByteBuffer cannot address: more than
+     * Integer.MAX_VALUE bytes. Native storage retains a copy, so the memory may be reused after
+     * return.
+     */
+    public synchronized void build(long address, long bytes, long rows, int dimension, String parameters) {
+        if (address == 0L) {
+            throw new IllegalArgumentException("A native address is required");
+        }
+        if (bytes < 0L) {
+            throw new IllegalArgumentException("The byte length is negative");
+        }
+        NativeBindings.indexBuildAddress(requireHandle(), address, bytes, rows, dimension, dtype.code,
+                Objects.requireNonNull(parameters, "parameters"));
+    }
+
+    /**
      * Builds a file-backed index such as DiskANN using Knowhere's data_path/index_prefix parameters.
      * Keep generated index files available until every loaded index using them is closed.
      */

@@ -291,6 +291,20 @@ Java_io_knowhere_NativeBindings_indexBuild(JNIEnv* env, jclass, jlong handle, jo
     });
 }
 JNIEXPORT void JNICALL
+Java_io_knowhere_NativeBindings_indexBuildAddress(JNIEnv* env, jclass, jlong handle, jlong address, jlong bytes,
+                                                  jlong rows, jint dimension, jint dtype, jstring parameters) {
+    Call(env, 0, [&] {
+        if (address == 0 || bytes < 0) {
+            throw std::invalid_argument("A native address and a non-negative byte length are required");
+        }
+        knowhere_vectors vectors{reinterpret_cast<const void*>(static_cast<uintptr_t>(address)),
+                                 static_cast<uint64_t>(bytes), rows, dimension, dtype};
+        Utf8 config(env, parameters);
+        CheckStatus(env, knowhere_index_build(handle, &vectors, config.get()));
+        return 0;
+    });
+}
+JNIEXPORT void JNICALL
 Java_io_knowhere_NativeBindings_indexBuildFromFile(JNIEnv* env, jclass, jlong handle, jstring parameters) {
     Call(env, 0, [&] {
         Utf8 config(env, parameters);
