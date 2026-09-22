@@ -115,7 +115,7 @@ TEST_CASE("DiskANN prepared build files have scoped ownership", "[diskann][build
         config.data_file_path = kRawDataPath;
         config.index_file_path = kDir + "/prepared";
         config.compare_metric = metric;
-        config.use_pq_navigation = false;
+        config.pq_code_size_gb = 0.001;
         const auto temporary = config.index_file_path + "_prepped_base.bin";
         const auto norm =
             diskann::get_disk_index_max_base_norm_file(diskann::get_disk_index_filename(config.index_file_path));
@@ -128,7 +128,8 @@ TEST_CASE("DiskANN prepared build files have scoped ownership", "[diskann][build
             REQUIRE(context->prepared_source == (metric == diskann::Metric::L2 ? kRawDataPath : temporary));
             REQUIRE_THROWS(context->own_temporary(kRawDataPath));
             // Failure after successful preprocessing must release the prepared input.
-            REQUIRE(diskann::build_disk_index<float>(config, *context) != 0);
+            const auto navigation = diskann::make_pq_navigation_builder<float>();
+            REQUIRE(diskann::build_disk_index<float>(config, *context, *navigation) != 0);
         }
         REQUIRE(fs::exists(kRawDataPath));
         REQUIRE_FALSE(fs::exists(temporary));
@@ -173,6 +174,111 @@ TEST_CASE("DiskANN registration rolls back a partial failure", "[diskann][build_
     }
     REQUIRE(manager.IsExisted("first").value());
     REQUIRE(manager.IsExisted("second").value());
+}
+
+TEST_CASE("DiskANN discovers persisted navigation without build parameters", "[diskann][navigation_load]") {
+    fs::remove_all(kDir);
+    fs::create_directories(kDir);
+    constexpr int rows = 512, dim = 16;
+    auto base = GenDataSet(rows, dim, 19);
+    auto query = GenDataSet(10, dim, 20);
+    WriteRawDataToDisk<float>(kRawDataPath, static_cast<const float*>(base->GetTensor()), rows, dim);
+    const auto version = GenTestVersionList();
+    const auto pq_prefix = kDir + "/pq";
+    const auto rbq_prefix = kDir + "/rbq";
+    knowhere::BinarySet empty;
+    auto create = [&](bool rbq = false) {
+        auto manager = std::make_shared<milvus::LocalFileManager>();
+        return knowhere::IndexFactory::Instance()
+            .Create<knowhere::fp32>(rbq ? knowhere::IndexEnum::INDEX_DISKANN_RABITQ : kNativeDiskANN, version,
+                                    knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager)))
+            .value();
+    };
+    for (bool rbq : {false, true}) {
+        auto index = create();
+        knowhere::Json build = {{"dim", dim},
+                                {"metric_type", "L2"},
+                                {"index_prefix", rbq ? rbq_prefix : pq_prefix},
+                                {"data_path", kRawDataPath},
+                                {"max_degree", 16},
+                                {"search_list_size", 32},
+                                {"build_dram_budget_gb", 1.0},
+                                {"pq_code_budget_gb", 0.000004},
+                                {"search_cache_budget_gb", 0},
+                                {"search_cache_budget_gb_ratio", 0},
+                                {"rbq_bits", 4}};
+        if (rbq)
+            build["navigation_codec"] = "RABITQ";
+        REQUIRE(index.Build(nullptr, build) == knowhere::Status::success);
+    }
+    knowhere::Json load = {{"metric_type", "L2"},
+                           {"index_prefix", rbq_prefix},
+                           {"search_cache_budget_gb", 0},
+                           {"search_cache_budget_gb_ratio", 0},
+                           {"warm_up", false}};
+    knowhere::Json search = {{"metric_type", "L2"}, {"k", 10}, {"search_list_size", 100}, {"beamwidth", 8}};
+    auto rbq = create();
+    REQUIRE(rbq.Deserialize(empty, load) == knowhere::Status::success);
+    auto reference = rbq.Search(query, search, nullptr);
+    REQUIRE(reference.has_value());
+    auto alias = create(true);
+    REQUIRE(alias.Deserialize(empty, load) == knowhere::Status::success);
+    auto alias_result = alias.Search(query, search, nullptr);
+    REQUIRE(alias_result.has_value());
+    for (int i = 0; i < 100; ++i) {
+        REQUIRE(reference.value()->GetIds()[i] == alias_result.value()->GetIds()[i]);
+        REQUIRE(reference.value()->GetDistance()[i] == alias_result.value()->GetDistance()[i]);
+    }
+    auto wrong = load;
+    wrong["navigation_codec"] = "PQ";
+    REQUIRE(create().Deserialize(empty, wrong) == knowhere::Status::invalid_serialized_index_type);
+    REQUIRE(rbq.Deserialize(empty, wrong) == knowhere::Status::invalid_serialized_index_type);
+    load["index_prefix"] = pq_prefix;
+    REQUIRE(create().Deserialize(empty, load) == knowhere::Status::success);
+    REQUIRE(create(true).Deserialize(empty, load) == knowhere::Status::invalid_serialized_index_type);
+    const auto sidecar = knowhere::RaBitQStore::SidecarFilename(pq_prefix);
+    fs::copy_file(knowhere::RaBitQStore::SidecarFilename(rbq_prefix), sidecar);
+    REQUIRE(create().Deserialize(empty, load) == knowhere::Status::invalid_serialized_index_type);
+    load["navigation_codec"] = "RABITQ";
+    auto retry = create();
+    REQUIRE(retry.Deserialize(empty, load) == knowhere::Status::success);
+    fs::resize_file(sidecar, 4);
+    auto corrupt = create();
+    REQUIRE(corrupt.Deserialize(empty, load) != knowhere::Status::success);
+    REQUIRE_FALSE(corrupt.Search(query, search, nullptr).has_value());
+    fs::copy_file(knowhere::RaBitQStore::SidecarFilename(rbq_prefix), sidecar, fs::copy_options::overwrite_existing);
+    REQUIRE(corrupt.Deserialize(empty, load) == knowhere::Status::success);
+    load["navigation_codec"] = "PQ";
+    REQUIRE(create().Deserialize(empty, load) == knowhere::Status::success);
+    fs::remove(pq_prefix + "_pq_compressed.bin");
+    REQUIRE(create().Deserialize(empty, load) != knowhere::Status::success);
+}
+
+TEST_CASE("DiskANN navigation discovery preserves FileManager errors", "[diskann][navigation_load]") {
+    class QueryFailureManager : public milvus::LocalFileManager {
+     public:
+        bool fail = true;
+        std::optional<bool>
+        IsExisted(const std::string& path) override {
+            if (fail)
+                return std::nullopt;
+            return milvus::LocalFileManager::IsExisted(path);
+        }
+    } manager;
+    knowhere::DiskANNNavigationConfig config;
+    const auto prefix = kDir + "/remote_only";
+    REQUIRE(manager.AddFile(diskann::get_pq_pivots_filename(prefix)));
+    auto result = knowhere::DetectNavigationCodec(config, prefix, manager);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error() == knowhere::Status::disk_file_error);
+    manager.fail = false;
+    result = knowhere::DetectNavigationCodec(config, prefix, manager);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value() == "PQ");
+    REQUIRE(manager.AddFile(knowhere::RaBitQStore::SidecarFilename(prefix)));
+    REQUIRE_FALSE(knowhere::DetectNavigationCodec(config, prefix, manager).has_value());
+    config.navigation_codec = "RABITQ";
+    REQUIRE(knowhere::DetectNavigationCodec(config, prefix, manager).value() == "RABITQ");
 }
 
 TEST_CASE("Valid diskann build params test", "[diskann]") {
@@ -1098,7 +1204,7 @@ TEST_CASE("Test DISKANN_RABITQ build and search", "[diskann][rabitq]") {
             auto generic =
                 knowhere::IndexFactory::Instance().Create<knowhere::fp32>(kNativeDiskANN, version, pack).value();
             auto generic_load = deserialize_json;
-            generic_load["navigation_codec"] = "RABITQ";
+            // Loading the generic node recovers the codec from persisted files.
             REQUIRE(generic.Deserialize(binset, generic_load) == knowhere::Status::success);
             for (const int qb : {0, 4, 8}) {
                 auto request = search_json;

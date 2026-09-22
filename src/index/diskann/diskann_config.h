@@ -17,6 +17,10 @@
 
 namespace knowhere {
 
+class DiskANNNavigationConfig;
+Status
+ValidateNavigationConfig(const DiskANNNavigationConfig& config, std::string* error);
+
 namespace {
 
 constexpr const CFG_INT::value_type kSearchListSizeMinValue = 16;
@@ -209,8 +213,8 @@ class DiskANNNavigationConfig : public DiskANNConfig {
 
     KNOWHERE_DECLARE_CONFIG(DiskANNNavigationConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(navigation_codec)
-            .description("resident navigation codec: PQ or RABITQ")
-            .set_default("PQ")
+            .description("navigation codec: build defaults to PQ; load detects stored codec unless constrained")
+            .allow_empty_without_default()
             .for_train()
             .for_deserialize()
             .for_static();
@@ -233,22 +237,7 @@ class DiskANNNavigationConfig : public DiskANNConfig {
         if (base_status != Status::success) {
             return base_status;
         }
-        const auto codec = navigation_codec.value_or("PQ");
-        if (codec == "PQ") {
-            return Status::success;
-        }
-        if (codec != "RABITQ") {
-            return HandleError(err_msg, "unsupported DiskANN navigation codec", Status::invalid_args);
-        }
-        const auto metric = metric_type.value_or(knowhere::metric::L2);
-        if (metric != knowhere::metric::L2 && metric != knowhere::metric::IP && metric != knowhere::metric::COSINE) {
-            return HandleError(err_msg, "DISKANN_RABITQ supports L2, IP and COSINE", Status::invalid_metric_type);
-        }
-        const auto database_bits = rbq_bits.value_or(1);
-        if (database_bits < 1 || database_bits > 9) {
-            return HandleError(err_msg, "DISKANN_RABITQ supports rbq_bits in [1, 9]", Status::invalid_args);
-        }
-        return Status::success;
+        return ValidateNavigationConfig(*this, err_msg);
     }
 };
 

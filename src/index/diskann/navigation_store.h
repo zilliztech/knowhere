@@ -6,10 +6,17 @@
 #include <string>
 #include <vector>
 
+#include "diskann/navigation_build.h"
 #include "diskann/pq_flash_index.h"
+#include "filemanager/FileManager.h"
+#include "knowhere/expected.h"
 
 namespace knowhere {
 class DiskANNConfig;
+class DiskANNNavigationConfig;
+
+expected<std::string>
+DetectNavigationCodec(const DiskANNNavigationConfig& config, const std::string& prefix, milvus::FileManager& manager);
 
 // Immutable after load. Each request owns its scorer and transformed-query
 // scratch; this store must outlive those scorers. PQ remains the native engine
@@ -33,10 +40,16 @@ bool
 UsesExternalNavigation(const DiskANNConfig& config);
 uint64_t
 EstimateNavigationMemory(const DiskANNConfig& config, int64_t rows, int64_t dim);
-std::vector<std::string>
+struct NavigationFileSet {
+    std::vector<std::string> required;
+    std::vector<std::string> optional;
+};
+NavigationFileSet
 NavigationFiles(const DiskANNConfig& config, const std::string& prefix);
-void
-BuildNavigationStore(const DiskANNConfig& config, const std::string& prepared_source, const std::string& prefix);
+std::vector<std::string>
+AllNavigationFiles(const std::string& prefix);
+std::unique_ptr<diskann::NavigationBuilder>
+CreateNavigationBuilder(const DiskANNConfig& config, std::unique_ptr<diskann::NavigationBuilder> native_pq);
 std::unique_ptr<NavigationStore>
 LoadNavigationStore(const DiskANNConfig& config, const std::string& prefix);
 }  // namespace knowhere

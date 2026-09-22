@@ -336,6 +336,7 @@ class DiskANNIndexNode : public IndexNode {
     std::shared_ptr<milvus::FileManager> file_manager_;
     std::unique_ptr<diskann::PQFlashIndex<DataType>> pq_flash_index_;
     std::unique_ptr<NavigationStore> navigation_store_;
+    std::string loaded_navigation_codec_;
     std::atomic_int64_t dim_;
     std::atomic_int64_t count_;
     std::shared_ptr<ThreadPool> search_pool_;
@@ -412,19 +413,11 @@ TryDiskANNCall(std::function<void()>&& diskann_call) {
 }
 
 std::vector<std::string>
-GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const bool use_sample_cache,
-                      const bool use_sample_warmup, const bool use_pq_navigation = true) {
-    std::vector<std::string> filenames;
-    auto pq_pivots_filename = diskann::get_pq_pivots_filename(prefix);
+GetNecessaryFilenames(const DiskANNConfig& config, const std::string& prefix, const bool need_norm,
+                      const bool use_sample_cache, const bool use_sample_warmup) {
+    auto filenames = NavigationFiles(config, prefix).required;
     auto disk_index_filename = diskann::get_disk_index_filename(prefix);
 
-    if (use_pq_navigation) {
-        filenames.push_back(pq_pivots_filename);
-        filenames.push_back(diskann::get_pq_rearrangement_perm_filename(pq_pivots_filename));
-        filenames.push_back(diskann::get_pq_chunk_offsets_filename(pq_pivots_filename));
-        filenames.push_back(diskann::get_pq_centroid_filename(pq_pivots_filename));
-        filenames.push_back(diskann::get_pq_compressed_filename(prefix));
-    }
     filenames.push_back(disk_index_filename);
     if (need_norm) {
         filenames.push_back(diskann::get_disk_index_max_base_norm_file(disk_index_filename));
@@ -436,8 +429,8 @@ GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const boo
 }
 
 std::vector<std::string>
-GetOptionalFilenames(const std::string& prefix) {
-    std::vector<std::string> filenames;
+GetOptionalFilenames(const DiskANNConfig& config, const std::string& prefix) {
+    auto filenames = NavigationFiles(config, prefix).optional;
     auto disk_index_filename = diskann::get_disk_index_filename(prefix);
     auto disk_pq_pivots_file_name = diskann::get_disk_index_pq_pivots_filename(disk_index_filename);
     filenames.push_back(diskann::get_disk_index_centroids_filename(disk_index_filename));
@@ -462,8 +455,8 @@ AnyIndexFileExist(const std::string& index_prefix, const DiskANNConfig& config) 
         }
         return false;
     };
-    return file_exist(GetNecessaryFilenames(index_prefix, diskann::INNER_PRODUCT, true, true)) ||
-           file_exist(GetOptionalFilenames(index_prefix)) || file_exist(NavigationFiles(config, index_prefix));
+    return file_exist(GetNecessaryFilenames(config, index_prefix, true, true, true)) ||
+           file_exist(GetOptionalFilenames(config, index_prefix)) || file_exist(AllNavigationFiles(index_prefix));
 }
 
 inline bool
@@ -542,44 +535,34 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
                                                        build_conf.accelerate_build.value(),
                                                        static_cast<uint32_t>(num_nodes_to_cache),
                                                        build_conf.shuffle_build.value()};
-    diskann_internal_build_config.use_pq_navigation = !external_navigation;
     std::unique_ptr<diskann::PreparedBuildContext> context;
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
         context = diskann::prepare_build_context<DataType>(diskann_internal_build_config);
-        for (const auto& path : GetNecessaryFilenames(index_prefix_, need_norm, true, true, !external_navigation)) {
+        for (const auto& path : GetNecessaryFilenames(build_conf, index_prefix_, need_norm, true, true)) {
             context->own_output(path);
         }
-        for (const auto& path : GetOptionalFilenames(index_prefix_)) {
+        for (const auto& path : GetOptionalFilenames(build_conf, index_prefix_)) {
             context->own_output(path);
         }
-        for (const auto& path : NavigationFiles(build_conf, index_prefix_)) {
-            context->own_output(path);
-        }
-        const int res = diskann::build_disk_index<DataType>(diskann_internal_build_config, *context);
+        auto navigation = CreateNavigationBuilder(build_conf, diskann::make_pq_navigation_builder<DataType>());
+        const int res = diskann::build_disk_index<DataType>(diskann_internal_build_config, *context, *navigation);
         if (res != 0) {
             throw diskann::ANNException("diskann::build_disk_index returned non-zero value: " + std::to_string(res),
                                         -1);
         }
-        BuildNavigationStore(build_conf, context->prepared_source, index_prefix_);
     }));
 
     // Add file to the file manager
     DiskANNBuildRegistration registration(*file_manager_);
-    for (auto& filename : GetNecessaryFilenames(index_prefix_, need_norm, true, true, !external_navigation)) {
+    for (auto& filename : GetNecessaryFilenames(build_conf, index_prefix_, need_norm, true, true)) {
         if (!registration.Add(filename)) {
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << filename << ".";
             return Status::disk_file_error;
         }
     }
-    for (auto& filename : GetOptionalFilenames(index_prefix_)) {
+    for (auto& filename : GetOptionalFilenames(build_conf, index_prefix_)) {
         if (file_exists(filename) && !registration.Add(filename)) {
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << filename << ".";
-            return Status::disk_file_error;
-        }
-    }
-    for (const auto& sidecar_path : NavigationFiles(build_conf, index_prefix_)) {
-        if (!registration.Add(sidecar_path)) {
-            LOG_KNOWHERE_ERROR_ << "Failed to add file " << sidecar_path << ".";
             return Status::disk_file_error;
         }
     }
@@ -664,20 +647,22 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
 template <typename DataType>
 Status
 DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) {
-    const auto& prep_conf = static_cast<const DiskANNConfig&>(*cfg);
-    const bool external_navigation = UsesExternalNavigation(prep_conf);
-    if (external_navigation && !std::is_same_v<DataType, float>) {
-        return Status::invalid_args;
-    }
+    auto prep_conf = static_cast<const DiskANNNavigationConfig&>(*cfg);
     if (!CheckMetric(prep_conf.metric_type.value())) {
         return Status::invalid_metric_type;
     }
     if (is_prepared_.load()) {
+        if (prep_conf.index_prefix.value_or("") != index_prefix_ ||
+            (prep_conf.navigation_codec.has_value() &&
+             prep_conf.navigation_codec.value() != loaded_navigation_codec_)) {
+            return Status::invalid_serialized_index_type;
+        }
         return Status::success;
     }
     const auto rollback = folly::makeGuard([this]() {
         if (!is_prepared_.load()) {
             navigation_store_.reset();
+            loaded_navigation_codec_.clear();
             pq_flash_index_.reset();
             count_.store(-1);
             dim_.store(-1);
@@ -688,6 +673,18 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         return Status::invalid_param_in_json;
     }
     index_prefix_ = prep_conf.index_prefix.value();
+    const auto detected = DetectNavigationCodec(prep_conf, index_prefix_, *file_manager_);
+    if (!detected.has_value()) {
+        LOG_KNOWHERE_ERROR_ << detected.what();
+        return detected.error();
+    }
+    prep_conf.navigation_codec = detected.value();
+    const bool external_navigation = UsesExternalNavigation(prep_conf);
+    if (external_navigation && !std::is_same_v<DataType, float>)
+        return Status::invalid_args;
+    if (external_navigation && (!el_metric_type_.empty() || prep_conf.emb_list_offset_file_path.has_value())) {
+        return Status::not_implemented;
+    }
     bool is_ip = IsMetricType(prep_conf.metric_type.value(), knowhere::metric::IP);
     bool need_norm = IsMetricType(prep_conf.metric_type.value(), knowhere::metric::IP) ||
                      IsMetricType(prep_conf.metric_type.value(), knowhere::metric::COSINE);
@@ -703,26 +700,20 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
 
     // Load file from file manager.
     for (auto& filename : GetNecessaryFilenames(
-             index_prefix_, need_norm,
+             prep_conf, index_prefix_, need_norm,
              prep_conf.search_cache_budget_gb.value() > 0 && !prep_conf.use_bfs_cache.value() && !external_navigation,
-             prep_conf.warm_up.value(), !external_navigation)) {
+             prep_conf.warm_up.value())) {
         if (!LoadFile(filename)) {
             return Status::disk_file_error;
         }
     }
-    for (auto& filename : GetOptionalFilenames(index_prefix_)) {
+    for (auto& filename : GetOptionalFilenames(prep_conf, index_prefix_)) {
         auto is_exist_op = file_manager_->IsExisted(filename);
         if (!is_exist_op.has_value()) {
             LOG_KNOWHERE_ERROR_ << "Failed to check existence of file " << filename << ".";
             return Status::disk_file_error;
         }
         if (is_exist_op.value() && !LoadFile(filename)) {
-            return Status::disk_file_error;
-        }
-    }
-    for (const auto& sidecar_path : NavigationFiles(prep_conf, index_prefix_)) {
-        if (!LoadFile(sidecar_path)) {
-            LOG_KNOWHERE_ERROR_ << "Failed to load DiskANN navigation sidecar " << sidecar_path;
             return Status::disk_file_error;
         }
     }
@@ -890,6 +881,7 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         }
     }
 
+    loaded_navigation_codec_ = detected.value();
     is_prepared_.store(true);
     LOG_KNOWHERE_INFO_ << "End of diskann loading.";
     return Status::success;
@@ -970,7 +962,7 @@ template <typename DataType>
 expected<std::vector<IndexNode::IteratorPtr>>
 DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                                         bool use_knowhere_search_pool, milvus::OpContext* op_context) const {
-    if (navigation_store_ || UsesExternalNavigation(static_cast<const DiskANNConfig&>(*cfg))) {
+    if (navigation_store_) {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::not_implemented,
                                                                   "DISKANN_RABITQ does not support iterator search");
     }

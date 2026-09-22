@@ -7,6 +7,7 @@
 #include "diskann/aisaq.h"
 #include "diskann/aux_utils.h"
 #include "diskann/linux_aligned_file_reader.h"
+#include "diskann/navigation_build.h"
 #include "diskann/pq_flash_aisaq_index.h"
 #include "diskann/pq_flash_index.h"
 #include "filemanager/FileManager.h"
@@ -213,14 +214,9 @@ TryDiskANNCall(std::function<void()>&& diskann_call) {
 std::vector<std::string>
 GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const bool use_sample_cache,
                       const bool use_sample_warmup, const bool rearrange, const bool entry_points) {
-    std::vector<std::string> filenames;
-    auto pq_pivots_filename = diskann::get_pq_pivots_filename(prefix);
+    auto filenames = diskann::pq_navigation_files(prefix, rearrange);
     auto disk_index_filename = diskann::get_disk_index_filename(prefix);
 
-    filenames.push_back(pq_pivots_filename);
-    filenames.push_back(diskann::get_pq_rearrangement_perm_filename(pq_pivots_filename));
-    filenames.push_back(diskann::get_pq_chunk_offsets_filename(pq_pivots_filename));
-    filenames.push_back(diskann::get_pq_centroid_filename(pq_pivots_filename));
     filenames.push_back(disk_index_filename);
     if (need_norm) {
         filenames.push_back(diskann::get_disk_index_max_base_norm_file(disk_index_filename));
@@ -230,9 +226,6 @@ GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const boo
     }
     if (rearrange) {
         filenames.push_back(diskann::get_index_rearranged_filename(prefix));
-        filenames.push_back(diskann::get_pq_compressed_rearranged_filename(prefix));
-    } else {
-        filenames.push_back(diskann::get_pq_compressed_filename(prefix));
     }
     if (entry_points) {
         filenames.push_back(diskann::get_index_entry_points_filename(prefix));

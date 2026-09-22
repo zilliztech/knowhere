@@ -35,8 +35,12 @@ def test_navigation_roundtrip(tmp_path, metric, kind, codec):
     binary = knowhere.GetBinarySet()
     assert knowhere.Status(index.Serialize(binary)) == knowhere.Status.success
     del index
-    restored = knowhere.CreateIndex(kind, version)
-    assert knowhere.Status(restored.Deserialize(binary, json.dumps(dict(config, warm_up=True)))) == knowhere.Status.success
+    # A fresh generic DiskANN node recovers its navigation from stored files,
+    # without the original codec, bits, PQ budget or other build parameters.
+    restored = knowhere.CreateIndex("DISKANN", version)
+    load = dict(metric_type=metric, index_prefix=config["index_prefix"],
+                search_cache_budget_gb=0, search_cache_budget_gb_ratio=0, warm_up=True)
+    assert knowhere.Status(restored.Deserialize(binary, json.dumps(load))) == knowhere.Status.success
     search = dict(dim=64, metric_type=metric, k=10, search_list_size=100, beamwidth=4, rbq_bits_query=4)
     result, status = restored.Search(knowhere.ArrayToDataSet(query), json.dumps(search), knowhere.GetNullBitSetView())
     assert knowhere.Status(status) == knowhere.Status.success

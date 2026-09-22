@@ -131,8 +131,6 @@ namespace diskann {
     uint32_t inline_pq = 0;
     bool rearrange = false;
     int      num_entry_points = 0;
-    // External navigation owns its codes; SSD PQ remains independently optional.
-    bool use_pq_navigation = true;
   };
 
   // One build owns its prepared input and intermediate files. The original
@@ -170,8 +168,10 @@ namespace diskann {
   std::unique_ptr<PreparedBuildContext> prepare_build_context(
       const BuildConfig &config);
 
+  class NavigationBuilder;
   template<typename T>
-  int build_disk_index(BuildConfig &config, PreparedBuildContext &context);
+  int build_disk_index(BuildConfig &config, PreparedBuildContext &context,
+                       const NavigationBuilder &navigation);
 
   template<typename T>
   int build_disk_index(BuildConfig &config);

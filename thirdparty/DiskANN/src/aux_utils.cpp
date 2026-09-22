@@ -19,6 +19,7 @@
 #include "boost/dynamic_bitset.hpp"
 #include "diskann/aisaq_utils.h"
 #include "diskann/aux_utils.h"
+#include "diskann/navigation_build.h"
 #include "diskann/cached_io.h"
 #include "diskann/index.h"
 #include "diskann/partition_and_pq.h"
@@ -34,7 +35,6 @@
 namespace diskann {
   namespace {
     static constexpr uint32_t kSearchLForCache = 15;
-    static constexpr float    kCacheMemFactor = 1.1;
     // Currently supported values for graph_degree in cuvs.
     static const int DEGREE_SIZES[4] = {32, 64, 128, 256};
     static bool valid_gpu_params = false;
@@ -1714,15 +1714,19 @@ std::unique_ptr<PreparedBuildContext> prepare_build_context(
 template<typename T>
 int build_disk_index(BuildConfig &config) {
     auto       context = prepare_build_context<T>(config);
-    const auto result = build_disk_index<T>(config, *context);
+    auto       navigation = make_pq_navigation_builder<T>();
+    for (const auto &path : pq_navigation_files(context->prefix))
+      context->own_output(path);
+    const auto result = build_disk_index<T>(config, *context, *navigation);
     if (result == 0)
       context->commit_outputs();
     return result;
 }
 
 template<typename T>
-int build_disk_index(BuildConfig &config, PreparedBuildContext &context) {
-    if (config.aisaq_mode && !config.use_pq_navigation) {
+int build_disk_index(BuildConfig &config, PreparedBuildContext &context,
+                     const NavigationBuilder &navigation) {
+    if (config.aisaq_mode && !navigation.supports_aisaq()) {
       throw diskann::ANNException("AiSAQ requires PQ navigation", -1);
     }
     _u32        disk_pq_dims = config.disk_pq_dims;
@@ -1733,9 +1737,6 @@ int build_disk_index(BuildConfig &config, PreparedBuildContext &context) {
     const auto &data_file_to_use = context.prepared_source;
     const auto &data_file_to_save = context.ssd_source;
     const auto &index_prefix_path = context.prefix;
-    const auto  pq_pivots_path = get_pq_pivots_filename(index_prefix_path);
-    const auto  pq_compressed_vectors_path =
-        get_pq_compressed_filename(index_prefix_path);
     const auto mem_index_path = index_prefix_path + "_mem.index";
     const auto disk_index_path = get_disk_index_filename(index_prefix_path);
     const auto medoids_path = get_disk_index_medoids_filename(disk_index_path);
@@ -1747,6 +1748,26 @@ int build_disk_index(BuildConfig &config, PreparedBuildContext &context) {
     const auto disk_pq_compressed_vectors_path =
         index_prefix_path + "_disk.index_pq_compressed.bin";
     const auto cached_nodes_file = get_cached_nodes_file(index_prefix_path);
+    for (const auto &path : {disk_index_path, medoids_path, centroids_path,
+                             sample_data_file, cached_nodes_file}) {
+      context.own_output(path);
+    }
+    if (use_disk_pq) {
+      for (const auto &path :
+           {disk_pq_pivots_path,
+            get_pq_rearrangement_perm_filename(disk_pq_pivots_path),
+            get_pq_chunk_offsets_filename(disk_pq_pivots_path),
+            get_pq_centroid_filename(disk_pq_pivots_path)}) {
+          context.own_output(path);
+      }
+    }
+    if (config.aisaq_mode) {
+      for (const auto &path :
+           {get_index_rearranged_filename(index_prefix_path),
+            get_pq_compressed_rearranged_filename(index_prefix_path),
+            get_index_entry_points_filename(index_prefix_path)})
+          context.own_output(path);
+    }
     context.own_temporary(mem_index_path);
     if (use_disk_pq)
       context.own_temporary(disk_pq_compressed_vectors_path);
@@ -1754,15 +1775,8 @@ int build_disk_index(BuildConfig &config, PreparedBuildContext &context) {
     unsigned R = config.max_degree;
     unsigned L = config.search_list_size;
 
-    double pq_code_size_limit = 0;
-    if (config.use_pq_navigation) {
-      pq_code_size_limit = get_memory_budget(config.pq_code_size_gb);
-      if (pq_code_size_limit <= 0) {
-        LOG(ERROR) << "Insufficient memory budget (or string was not in right "
-                      "format). Should be > 0.";
-        return -1;
-      }
-    }
+    if (!navigation.validate(config))
+      return -1;
     double indexing_ram_budget = config.index_mem_gb;
     if (indexing_ram_budget <= 0) {
       LOG(ERROR) << "Not building index. Please provide more RAM budget";
@@ -1799,11 +1813,13 @@ int build_disk_index(BuildConfig &config, PreparedBuildContext &context) {
 
     diskann::get_bin_metadata(data_file_to_use.c_str(), points_num, dim);
 
-    LOG_KNOWHERE_INFO_ << "Starting index build for : " << points_num << " vectors with dim: " << dim << " R=" << R << " L=" << L
-                        << " Query RAM budget: "
-                        << pq_code_size_limit / (1024 * 1024 * 1024) << "(GiB)"
-                        << " Indexing ram budget: " << indexing_ram_budget
-                        << "(GiB)";
+    LOG_KNOWHERE_INFO_ << "Starting index build for : " << points_num
+                       << " vectors with dim: " << dim << " R=" << R
+                       << " L=" << L
+                       << " Query RAM budget: " << config.pq_code_size_gb
+                       << "(GiB)"
+                       << " Indexing ram budget: " << indexing_ram_budget
+                       << "(GiB)";
 
     size_t train_size = 0, train_dim = 0;
     std::unique_ptr<float[]> train_data = nullptr;
@@ -1811,7 +1827,7 @@ int build_disk_index(BuildConfig &config, PreparedBuildContext &context) {
     double p_val = ((double) MAX_PQ_TRAINING_SET_SIZE / (double) points_num);
     // generates random sample and sets it to train_data and updates
     // train_size
-    if (config.use_pq_navigation || use_disk_pq) {
+    if (navigation.needs_training_sample() || use_disk_pq) {
       gen_random_slice<T>(data_file_to_use.c_str(), p_val, train_data, train_size,
                           train_dim);
     }
@@ -1835,37 +1851,8 @@ int build_disk_index(BuildConfig &config, PreparedBuildContext &context) {
             data_file_to_use.c_str(), 256, (uint32_t) disk_pq_dims,
             disk_pq_pivots_path, disk_pq_compressed_vectors_path);
     }
-    if (config.use_pq_navigation) {
-    size_t num_pq_chunks =
-        (size_t) (std::floor)(_u64(pq_code_size_limit / points_num));
-    num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
-    num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
-    num_pq_chunks = num_pq_chunks > diskann::defaults::MAX_PQ_CHUNKS ? diskann::defaults::MAX_PQ_CHUNKS : num_pq_chunks;
-    LOG_KNOWHERE_INFO_ << "Compressing " << dim << "-dimensional data into "
-                       << num_pq_chunks << " bytes per vector.";
-    LOG_KNOWHERE_DEBUG_ << "Training data loaded of size " << train_size;
-
-    // don't translate data to make zero mean for PQ compression. We must not
-    // translate for inner product search.
-    bool make_zero_mean = true;
-    if (config.compare_metric != diskann::Metric::L2)
-      make_zero_mean = false;
-
-    auto pq_s = std::chrono::high_resolution_clock::now();
-
-    LOG_KNOWHERE_INFO_ << "Generating PQ pivots";
-    generate_pq_pivots(train_data.get(), train_size, (uint32_t) dim, 256,
-                       (uint32_t) num_pq_chunks, NUM_KMEANS_REPS,
-                       pq_pivots_path, make_zero_mean);
-
-    LOG_KNOWHERE_INFO_ << "Encoding PQ data";
-    generate_pq_data_from_pivots<T>(data_file_to_use.c_str(), 256,
-                                    (uint32_t) num_pq_chunks, pq_pivots_path,
-                                    pq_compressed_vectors_path);
-    auto pq_e = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> pq_diff = pq_e - pq_s;
-    LOG_KNOWHERE_INFO_ << "Training PQ codes cost: " << pq_diff.count() << "s";
-    }
+    navigation.build(config, context,
+                     {train_data.get(), train_size, train_dim});
 // Gopal. Splitting diskann_dll into separate DLLs for search and build.
 // This code should only be available in the "build" DLL.
 #if defined(RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && \
@@ -1939,24 +1926,9 @@ int build_disk_index(BuildConfig &config, PreparedBuildContext &context) {
     gen_random_slice<T>(base_file.c_str(), sample_data_file,
                         sample_sampling_rate);
 
-    if (vamana_index != nullptr && config.use_pq_navigation) {
-      auto final_graph = vamana_index->get_graph();
-      auto entry_point = vamana_index->get_entry_point();
-
-      auto generate_cache_mem_usage =
-          kCacheMemFactor *
-          (get_file_size(mem_index_path) + get_file_size(sample_data_file) +
-           get_file_size(pq_compressed_vectors_path) +
-           get_file_size(pq_pivots_path)) /
-          (1024 * 1024 * 1024);
-
-      if (config.num_nodes_to_cache > 0 && final_graph->size() != 0 &&
-          generate_cache_mem_usage < config.index_mem_gb) {
-        generate_cache_list_from_graph_with_pq<T>(
-            config.num_nodes_to_cache, config.max_degree, config.compare_metric,
-            sample_data_file, pq_pivots_path, pq_compressed_vectors_path,
-            entry_point, *final_graph, cached_nodes_file);
-      }
+    if (vamana_index != nullptr) {
+        navigation.build_cache(config, context, *vamana_index->get_graph(),
+                               vamana_index->get_entry_point());
     }
     auto                          e = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> diff = e - s;
@@ -2034,11 +2006,14 @@ int build_disk_index(BuildConfig &config, PreparedBuildContext &context) {
   template int build_disk_index<float>(BuildConfig &config);
   template int build_disk_index<knowhere::fp16>(BuildConfig &config);
   template int build_disk_index<knowhere::bf16>(BuildConfig &config);
-  template int build_disk_index<float>(BuildConfig &, PreparedBuildContext &);
+  template int build_disk_index<float>(BuildConfig &, PreparedBuildContext &,
+                                       const NavigationBuilder &);
   template int build_disk_index<knowhere::fp16>(BuildConfig &,
-                                                PreparedBuildContext &);
+                                                PreparedBuildContext &,
+                                                const NavigationBuilder &);
   template int build_disk_index<knowhere::bf16>(BuildConfig &,
-                                                PreparedBuildContext &);
+                                                PreparedBuildContext &,
+                                                const NavigationBuilder &);
   template std::unique_ptr<PreparedBuildContext> prepare_build_context<float>(
       const BuildConfig &);
   template std::unique_ptr<PreparedBuildContext>
