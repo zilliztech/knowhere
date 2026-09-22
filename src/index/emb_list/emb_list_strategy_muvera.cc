@@ -205,6 +205,11 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         config.metric_type = mi.sub_metric_type;
         auto ann_result = index->Search(encoded_query_dataset, std::move(cfg), bitset, op_context);
         if (!ann_result.has_value()) {
+            // A cancellation is the caller's request, not a failure of this
+            // index: pass it through unchanged and do not report it as an error.
+            if (ann_result.error() == Status::cancelled) {
+                return expected<DataSetPtr>::Err(Status::cancelled, ann_result.what());
+            }
             LOG_KNOWHERE_ERROR_ << "MUVERA ANN search failed: " << ann_result.what();
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "ANN search failed");
         }
@@ -301,6 +306,9 @@ class MuveraEmbListStrategy : public EmbListStrategy {
                                                        mi.agg_func, ids.get() + q * k, dists.get() + q * k,
                                                        total_doc_vecs, total_distance_computations);
 
+            if (status == Status::cancelled) {
+                return expected<DataSetPtr>::Err(Status::cancelled, "rerank cancelled by the caller");
+            }
             if (status != Status::success) {
                 return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "rerank distance computation error");
             }

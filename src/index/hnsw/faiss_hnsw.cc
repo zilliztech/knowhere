@@ -1526,6 +1526,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
             // wait for the completion
             WaitAllSuccess(futs);
+        } catch (const folly::FutureCancellation& e) {
+            LOG_KNOWHERE_INFO_ << "cancelled by the caller: " << e.what();
+            return expected<DataSetPtr>::Err(Status::cancelled, e.what());
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
@@ -1649,6 +1652,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
             }
             // wait for the completion
             WaitAllSuccess(futs);
+        } catch (const folly::FutureCancellation& e) {
+            LOG_KNOWHERE_INFO_ << "cancelled by the caller: " << e.what();
+            return expected<DataSetPtr>::Err(Status::cancelled, e.what());
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
@@ -1823,6 +1829,9 @@ class BaseFaissRegularIndexHNSWNode : public BaseFaissRegularIndexNode {
 
             // wait for the completion
             WaitAllSuccess(futs);
+        } catch (const folly::FutureCancellation& e) {
+            LOG_KNOWHERE_INFO_ << "cancelled by the caller: " << e.what();
+            return expected<DataSetPtr>::Err(Status::cancelled, e.what());
         } catch (const std::exception& e) {
             LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
             return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());

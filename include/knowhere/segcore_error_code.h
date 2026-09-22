@@ -89,6 +89,10 @@ ToSegcoreErrorCode(knowhere::Status status) {
         case knowhere::Status::aisaq_error:
         case knowhere::Status::knowhere_inner_error:
             return milvus::ErrorCode::KnowhereError;
+        // the caller cancelled: the shared registry has a code for exactly
+        // this, which segcore and the Go retry policy already understand
+        case knowhere::Status::cancelled:
+            return milvus::ErrorCode::FollyCancel;
     }
     // out-of-range value: safe non-retriable fallback (does not suppress
     // -Wswitch above)
