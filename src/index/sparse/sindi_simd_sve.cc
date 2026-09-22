@@ -17,11 +17,97 @@ ip_accumulate_sve_fp16(float qval, const knowhere::fp16* __restrict vals, const 
 
     int32_t i = 0;
     const int32_t step = static_cast<int32_t>(vl32 * 2);
+
+    for (; i + 4 * step <= num; i += 4 * step) {
+        const __fp16* hptr_0 = reinterpret_cast<const __fp16*>(vals + i + 0 * step);
+        const __fp16* hptr_1 = reinterpret_cast<const __fp16*>(vals + i + 1 * step);
+        const __fp16* hptr_2 = reinterpret_cast<const __fp16*>(vals + i + 2 * step);
+        const __fp16* hptr_3 = reinterpret_cast<const __fp16*>(vals + i + 3 * step);
+
+        svfloat16_t vh_0 = svld1_f16(pg16, hptr_0);
+        svfloat16_t vh_1 = svld1_f16(pg16, hptr_1);
+        svfloat16_t vh_2 = svld1_f16(pg16, hptr_2);
+        svfloat16_t vh_3 = svld1_f16(pg16, hptr_3);
+        svfloat32_t vf_even_0 = svcvt_f32_f16_x(pg32, vh_0);
+        svfloat32_t vf_even_1 = svcvt_f32_f16_x(pg32, vh_1);
+        svfloat32_t vf_even_2 = svcvt_f32_f16_x(pg32, vh_2);
+        svfloat32_t vf_even_3 = svcvt_f32_f16_x(pg32, vh_3);
+        // // SVE2 replacement
+        // svfloat32_t vf_odd_0 = svcvtlt_f32_f16_x(pg32, vh_0);
+        // svfloat32_t vf_odd_1 = svcvtlt_f32_f16_x(pg32, vh_1);
+        // svfloat32_t vf_odd_2 = svcvtlt_f32_f16_x(pg32, vh_2);
+        // svfloat32_t vf_odd_3 = svcvtlt_f32_f16_x(pg32, vh_3);
+        svfloat16_t vh_shift_0 = svext_f16(vh_0, vh_0, 1);
+        svfloat16_t vh_shift_1 = svext_f16(vh_1, vh_1, 1);
+        svfloat16_t vh_shift_2 = svext_f16(vh_2, vh_2, 1);
+        svfloat16_t vh_shift_3 = svext_f16(vh_3, vh_3, 1);
+        svfloat32_t vf_odd_0 = svcvt_f32_f16_x(pg32, vh_shift_0);
+        svfloat32_t vf_odd_1 = svcvt_f32_f16_x(pg32, vh_shift_1);
+        svfloat32_t vf_odd_2 = svcvt_f32_f16_x(pg32, vh_shift_2);
+        svfloat32_t vf_odd_3 = svcvt_f32_f16_x(pg32, vh_shift_3);
+
+        svuint16_t id16_0 = svld1_u16(pg16, ids + i + 0 * step);
+        svuint16_t id16_1 = svld1_u16(pg16, ids + i + 1 * step);
+        svuint16_t id16_2 = svld1_u16(pg16, ids + i + 2 * step);
+        svuint16_t id16_3 = svld1_u16(pg16, ids + i + 3 * step);
+        // Each 32-bit lane contains two adjacent uint16 ids. Splitting the
+        // low/high halves avoids the unzip + unpack sequence for both lanes.
+        svuint32_t id_pairs_0 = svreinterpret_u32_u16(id16_0);
+        svuint32_t id_pairs_1 = svreinterpret_u32_u16(id16_1);
+        svuint32_t id_pairs_2 = svreinterpret_u32_u16(id16_2);
+        svuint32_t id_pairs_3 = svreinterpret_u32_u16(id16_3);
+        svuint32_t vidx_even_0 = svand_n_u32_x(pg32, id_pairs_0, 0xffffu);
+        svuint32_t vidx_even_1 = svand_n_u32_x(pg32, id_pairs_1, 0xffffu);
+        svuint32_t vidx_even_2 = svand_n_u32_x(pg32, id_pairs_2, 0xffffu);
+        svuint32_t vidx_even_3 = svand_n_u32_x(pg32, id_pairs_3, 0xffffu);
+        svuint32_t vidx_odd_0 = svlsr_n_u32_x(pg32, id_pairs_0, 16);
+        svuint32_t vidx_odd_1 = svlsr_n_u32_x(pg32, id_pairs_1, 16);
+        svuint32_t vidx_odd_2 = svlsr_n_u32_x(pg32, id_pairs_2, 16);
+        svuint32_t vidx_odd_3 = svlsr_n_u32_x(pg32, id_pairs_3, 16);
+
+        // Issue both independent gathers before their arithmetic to expose
+        // enough memory-level parallelism for the scatter-heavy loop.
+        svfloat32_t vold_even_0 = svld1_gather_u32index_f32(pg32, out, vidx_even_0);
+        svfloat32_t vold_even_1 = svld1_gather_u32index_f32(pg32, out, vidx_even_1);
+        svfloat32_t vold_even_2 = svld1_gather_u32index_f32(pg32, out, vidx_even_2);
+        svfloat32_t vold_even_3 = svld1_gather_u32index_f32(pg32, out, vidx_even_3);
+        svfloat32_t vold_odd_0 = svld1_gather_u32index_f32(pg32, out, vidx_odd_0);
+        svfloat32_t vold_odd_1 = svld1_gather_u32index_f32(pg32, out, vidx_odd_1);
+        svfloat32_t vold_odd_2 = svld1_gather_u32index_f32(pg32, out, vidx_odd_2);
+        svfloat32_t vold_odd_3 = svld1_gather_u32index_f32(pg32, out, vidx_odd_3);
+        svfloat32_t vsum_even_0 = svmad_f32_x(pg32, vf_even_0, vq32, vold_even_0);
+        svfloat32_t vsum_even_1 = svmad_f32_x(pg32, vf_even_1, vq32, vold_even_1);
+        svfloat32_t vsum_even_2 = svmad_f32_x(pg32, vf_even_2, vq32, vold_even_2);
+        svfloat32_t vsum_even_3 = svmad_f32_x(pg32, vf_even_3, vq32, vold_even_3);
+        svfloat32_t vsum_odd_0 = svmad_f32_x(pg32, vf_odd_0, vq32, vold_odd_0);
+        svfloat32_t vsum_odd_1 = svmad_f32_x(pg32, vf_odd_1, vq32, vold_odd_1);
+        svfloat32_t vsum_odd_2 = svmad_f32_x(pg32, vf_odd_2, vq32, vold_odd_2);
+        svfloat32_t vsum_odd_3 = svmad_f32_x(pg32, vf_odd_3, vq32, vold_odd_3);
+        svst1_scatter_u32index_f32(pg32, out, vidx_even_0, vsum_even_0);
+        svst1_scatter_u32index_f32(pg32, out, vidx_even_1, vsum_even_1);
+        svst1_scatter_u32index_f32(pg32, out, vidx_even_2, vsum_even_2);
+        svst1_scatter_u32index_f32(pg32, out, vidx_even_3, vsum_even_3);
+        svst1_scatter_u32index_f32(pg32, out, vidx_odd_0, vsum_odd_0);
+        svst1_scatter_u32index_f32(pg32, out, vidx_odd_1, vsum_odd_1);
+        svst1_scatter_u32index_f32(pg32, out, vidx_odd_2, vsum_odd_2);
+        svst1_scatter_u32index_f32(pg32, out, vidx_odd_3, vsum_odd_3);
+        v_max = svmax_f32_x(pg32, v_max, vsum_even_0);
+        v_max = svmax_f32_x(pg32, v_max, vsum_even_1);
+        v_max = svmax_f32_x(pg32, v_max, vsum_even_2);
+        v_max = svmax_f32_x(pg32, v_max, vsum_even_3);
+        v_max = svmax_f32_x(pg32, v_max, vsum_odd_0);
+        v_max = svmax_f32_x(pg32, v_max, vsum_odd_1);
+        v_max = svmax_f32_x(pg32, v_max, vsum_odd_2);
+        v_max = svmax_f32_x(pg32, v_max, vsum_odd_3);
+    }
+
     for (; i + step <= num; i += step) {
         const __fp16* hptr = reinterpret_cast<const __fp16*>(vals + i);
 
         svfloat16_t vh = svld1_f16(pg16, hptr);
         svfloat32_t vf_even = svcvt_f32_f16_x(pg32, vh);
+        // // SVE2 replacement
+        // svfloat32_t vf_odd = svcvtlt_f32_f16_x(pg32, vh);
         svfloat16_t vh_shift = svext_f16(vh, vh, 1);
         svfloat32_t vf_odd = svcvt_f32_f16_x(pg32, vh_shift);
 
