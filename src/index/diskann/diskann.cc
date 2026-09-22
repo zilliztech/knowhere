@@ -25,6 +25,7 @@
 #include "diskann/pq_flash_index.h"
 #include "filemanager/FileManager.h"
 #include "fmt/core.h"
+#include "index/diskann/build_files.h"
 #include "index/diskann/diskann_config.h"
 #include "index/diskann/navigation_store.h"
 #include "knowhere/comp/index_param.h"
@@ -513,8 +514,6 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
     size_t count;
     size_t dim;
     diskann::get_bin_metadata(build_conf.data_path.value(), count, dim);
-    count_.store(count);
-    dim_.store(dim);
 
     bool need_norm = IsMetricType(build_conf.metric_type.value(), knowhere::metric::IP) ||
                      IsMetricType(build_conf.metric_type.value(), knowhere::metric::COSINE);
@@ -543,55 +542,52 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
                                                        build_conf.accelerate_build.value(),
                                                        static_cast<uint32_t>(num_nodes_to_cache),
                                                        build_conf.shuffle_build.value()};
-    const bool navigation_uses_preprocessed_base = external_navigation && need_norm;
-    diskann_internal_build_config.keep_preprocessed_base = navigation_uses_preprocessed_base;
     diskann_internal_build_config.use_pq_navigation = !external_navigation;
+    std::unique_ptr<diskann::PreparedBuildContext> context;
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
-        int res = diskann::build_disk_index<DataType>(diskann_internal_build_config);
-        if (res != 0)
+        context = diskann::prepare_build_context<DataType>(diskann_internal_build_config);
+        for (const auto& path : GetNecessaryFilenames(index_prefix_, need_norm, true, true, !external_navigation)) {
+            context->own_output(path);
+        }
+        for (const auto& path : GetOptionalFilenames(index_prefix_)) {
+            context->own_output(path);
+        }
+        for (const auto& path : NavigationFiles(build_conf, index_prefix_)) {
+            context->own_output(path);
+        }
+        const int res = diskann::build_disk_index<DataType>(diskann_internal_build_config, *context);
+        if (res != 0) {
             throw diskann::ANNException("diskann::build_disk_index returned non-zero value: " + std::to_string(res),
                                         -1);
+        }
+        BuildNavigationStore(build_conf, context->prepared_source, index_prefix_);
     }));
 
-    if (external_navigation) {
-        try {
-            const auto sidecar_source =
-                navigation_uses_preprocessed_base ? index_prefix_ + "_prepped_base.bin" : data_path;
-            BuildNavigationStore(build_conf, sidecar_source, index_prefix_);
-            if (navigation_uses_preprocessed_base) {
-                std::error_code error;
-                std::filesystem::remove(sidecar_source, error);
-            }
-        } catch (const std::exception& e) {
-            if (navigation_uses_preprocessed_base) {
-                std::error_code error;
-                std::filesystem::remove(index_prefix_ + "_prepped_base.bin", error);
-            }
-            LOG_KNOWHERE_ERROR_ << "Failed to build DiskANN navigation sidecar: " << e.what();
-            return Status::diskann_inner_error;
-        }
-    }
-
     // Add file to the file manager
+    DiskANNBuildRegistration registration(*file_manager_);
     for (auto& filename : GetNecessaryFilenames(index_prefix_, need_norm, true, true, !external_navigation)) {
-        if (!AddFile(filename)) {
+        if (!registration.Add(filename)) {
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << filename << ".";
             return Status::disk_file_error;
         }
     }
     for (auto& filename : GetOptionalFilenames(index_prefix_)) {
-        if (file_exists(filename) && !AddFile(filename)) {
+        if (file_exists(filename) && !registration.Add(filename)) {
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << filename << ".";
             return Status::disk_file_error;
         }
     }
     for (const auto& sidecar_path : NavigationFiles(build_conf, index_prefix_)) {
-        if (!AddFile(sidecar_path)) {
+        if (!registration.Add(sidecar_path)) {
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << sidecar_path << ".";
             return Status::disk_file_error;
         }
     }
 
+    registration.Commit();
+    context->commit_outputs();
+    count_.store(count);
+    dim_.store(dim);
     is_prepared_.store(false);
     return Status::success;
 }

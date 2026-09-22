@@ -130,13 +130,48 @@ namespace diskann {
     bool aisaq_mode = false;
     uint32_t inline_pq = 0;
     bool rearrange = false;
-    int num_entry_points = 0;
-    // Keep the temporary MIPS-to-L2 or normalized cosine base until the caller
-    // builds auxiliary indexes in the same internal representation.
-    bool keep_preprocessed_base = false;
+    int      num_entry_points = 0;
     // External navigation owns its codes; SSD PQ remains independently optional.
     bool use_pq_navigation = true;
   };
+
+  // One build owns its prepared input and intermediate files. The original
+  // input is never owned. Outputs are retained only after successful
+  // publication.
+  class PreparedBuildContext {
+   public:
+    explicit PreparedBuildContext(const BuildConfig &config);
+    ~PreparedBuildContext();
+    PreparedBuildContext(const PreparedBuildContext &) = delete;
+    PreparedBuildContext &operator=(const PreparedBuildContext &) = delete;
+    void                  own_temporary(const std::string &path);
+    void                  own_output(const std::string &path);
+    void                  commit_outputs() noexcept {
+      committed_ = true;
+    }
+
+    const std::string     raw_source;
+    const std::string     prefix;
+    const diskann::Metric metric;
+    std::string           prepared_source;
+    std::string           ssd_source;
+    size_t                rows = 0;
+    size_t                raw_dim = 0;
+    size_t                prepared_dim = 0;
+
+   private:
+    void own(const std::string &path, std::vector<std::string> &paths);
+    std::vector<std::string> temporaries_;
+    std::vector<std::string> outputs_;
+    bool                     committed_ = false;
+  };
+
+  template<typename T>
+  std::unique_ptr<PreparedBuildContext> prepare_build_context(
+      const BuildConfig &config);
+
+  template<typename T>
+  int build_disk_index(BuildConfig &config, PreparedBuildContext &context);
 
   template<typename T>
   int build_disk_index(BuildConfig &config);

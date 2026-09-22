@@ -39,6 +39,7 @@
 #include "faiss/utils/rabitq_simd.h"
 #include "filemanager/FileManager.h"
 #include "filemanager/impl/LocalFileManager.h"
+#include "index/diskann/build_files.h"
 #include "index/diskann/diskann_config.h"
 #include "index/diskann/rabitq_store.h"
 #include "knowhere/comp/brute_force.h"
@@ -102,6 +103,77 @@ constexpr float kL2RangeAp = 0.9;
 constexpr float kIpRangeAp = 0.9;
 constexpr float kCosineRangeAp = 0.9;
 }  // namespace
+
+TEST_CASE("DiskANN prepared build files have scoped ownership", "[diskann][build_context]") {
+    fs::remove_all(kDir);
+    fs::create_directories(kDir);
+    constexpr size_t rows = 32, dim = 16;
+    auto data = GenDataSet(rows, dim, 17);
+    WriteRawDataToDisk<float>(kRawDataPath, static_cast<const float*>(data->GetTensor()), rows, dim);
+    for (const auto metric : {diskann::Metric::L2, diskann::Metric::INNER_PRODUCT, diskann::Metric::COSINE}) {
+        diskann::BuildConfig config;
+        config.data_file_path = kRawDataPath;
+        config.index_file_path = kDir + "/prepared";
+        config.compare_metric = metric;
+        config.use_pq_navigation = false;
+        const auto temporary = config.index_file_path + "_prepped_base.bin";
+        const auto norm =
+            diskann::get_disk_index_max_base_norm_file(diskann::get_disk_index_filename(config.index_file_path));
+        {
+            auto context = diskann::prepare_build_context<float>(config);
+            REQUIRE(context->rows == rows);
+            REQUIRE(context->raw_dim == dim);
+            REQUIRE(context->prepared_dim == dim + (metric == diskann::Metric::INNER_PRODUCT));
+            REQUIRE(context->ssd_source == (metric == diskann::Metric::INNER_PRODUCT ? temporary : kRawDataPath));
+            REQUIRE(context->prepared_source == (metric == diskann::Metric::L2 ? kRawDataPath : temporary));
+            REQUIRE_THROWS(context->own_temporary(kRawDataPath));
+            // Failure after successful preprocessing must release the prepared input.
+            REQUIRE(diskann::build_disk_index<float>(config, *context) != 0);
+        }
+        REQUIRE(fs::exists(kRawDataPath));
+        REQUIRE_FALSE(fs::exists(temporary));
+        REQUIRE_FALSE(fs::exists(norm));
+        REQUIRE_FALSE(fs::exists(config.index_file_path + "_mem.index"));
+        // A preexisting file is not ours to overwrite or clean up.
+        if (metric != diskann::Metric::L2) {
+            fs::copy_file(kRawDataPath, temporary);
+            REQUIRE_THROWS(diskann::prepare_build_context<float>(config));
+            REQUIRE(fs::file_size(temporary) == fs::file_size(kRawDataPath));
+            fs::remove(temporary);
+        }
+    }
+}
+
+TEST_CASE("DiskANN registration rolls back a partial failure", "[diskann][build_context]") {
+    class FailingManager : public milvus::LocalFileManager {
+     public:
+        bool fail = true;
+        bool
+        AddFile(const std::string& path) override {
+            const auto result = milvus::LocalFileManager::AddFile(path);
+            return fail && path == "second" ? false : result;
+        }
+    } manager;
+    REQUIRE(manager.AddFile("existing"));
+    {
+        knowhere::DiskANNBuildRegistration files(manager);
+        REQUIRE_FALSE(files.Add("existing"));
+        REQUIRE(files.Add("first"));
+        REQUIRE_FALSE(files.Add("second"));
+    }
+    REQUIRE(manager.IsExisted("existing").value());
+    REQUIRE_FALSE(manager.IsExisted("first").value());
+    REQUIRE_FALSE(manager.IsExisted("second").value());
+    manager.fail = false;
+    {
+        knowhere::DiskANNBuildRegistration files(manager);
+        REQUIRE(files.Add("first"));
+        REQUIRE(files.Add("second"));
+        files.Commit();
+    }
+    REQUIRE(manager.IsExisted("first").value());
+    REQUIRE(manager.IsExisted("second").value());
+}
 
 TEST_CASE("Valid diskann build params test", "[diskann]") {
     int rows_num = 1000000;

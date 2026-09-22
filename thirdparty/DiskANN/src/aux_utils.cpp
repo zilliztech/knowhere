@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cassert>
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <set>
 #include <string>
@@ -1607,11 +1608,50 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
     }
 }
 
-template<typename T>
-  int build_disk_index(BuildConfig &config) {
-    if (config.aisaq_mode && !config.use_pq_navigation) {
-      throw diskann::ANNException("AiSAQ requires PQ navigation", -1);
+PreparedBuildContext::PreparedBuildContext(const BuildConfig &config)
+    : raw_source(config.data_file_path), prefix(config.index_file_path),
+      metric(config.compare_metric), prepared_source(raw_source),
+      ssd_source(raw_source) {
+    get_bin_metadata(raw_source, rows, raw_dim);
+    prepared_dim = raw_dim;
+}
+
+void PreparedBuildContext::own(const std::string        &path,
+                               std::vector<std::string> &paths) {
+    if (std::find(paths.begin(), paths.end(), path) != paths.end())
+        return;
+    if (path == raw_source || std::filesystem::exists(path)) {
+        throw diskann::ANNException(
+            "Refusing to overwrite existing build file: " + path, -1);
     }
+    paths.push_back(path);
+}
+
+void PreparedBuildContext::own_temporary(const std::string &path) {
+    own(path, temporaries_);
+}
+void PreparedBuildContext::own_output(const std::string &path) {
+    own(path, outputs_);
+}
+
+PreparedBuildContext::~PreparedBuildContext() {
+    auto remove_owned = [](const std::vector<std::string> &paths) {
+      for (auto it = paths.rbegin(); it != paths.rend(); ++it) {
+        std::error_code error;
+        std::filesystem::remove(*it, error);
+        if (error)
+          LOG_KNOWHERE_WARNING_ << "Could not clean build file " << *it << ": "
+                                << error.message();
+      }
+    };
+    remove_owned(temporaries_);
+    if (!committed_)
+        remove_owned(outputs_);
+}
+
+template<typename T>
+std::unique_ptr<PreparedBuildContext> prepare_build_context(
+    const BuildConfig &config) {
     if (!knowhere::KnowhereFloatTypeCheck<T>::value &&
         (config.compare_metric == diskann::Metric::INNER_PRODUCT ||
          config.compare_metric == diskann::Metric::COSINE)) {
@@ -1622,33 +1662,17 @@ template<typename T>
       throw diskann::ANNException(stream.str(), -1);
     }
 
-    _u32 disk_pq_dims = config.disk_pq_dims;
-    bool use_disk_pq = disk_pq_dims != 0;
-
-    bool reorder_data = config.reorder;
-    bool ip_prepared = false;
-
-    std::string base_file = config.data_file_path;
-    std::string data_file_to_use = base_file;
-    std::string data_file_to_save = base_file;
-    std::string index_prefix_path = config.index_file_path;
-    std::string pq_pivots_path = get_pq_pivots_filename(index_prefix_path);
-    std::string pq_compressed_vectors_path =
-        get_pq_compressed_filename(index_prefix_path);
-    std::string mem_index_path = index_prefix_path + "_mem.index";
-    std::string disk_index_path = get_disk_index_filename(index_prefix_path);
-    std::string medoids_path = get_disk_index_medoids_filename(disk_index_path);
-    std::string centroids_path =
-        get_disk_index_centroids_filename(disk_index_path);
-    std::string sample_data_file = get_sample_data_filename(index_prefix_path);
-    // optional, used if disk index file must store pq data
-    std::string disk_pq_pivots_path =
-        index_prefix_path + "_disk.index_pq_pivots.bin";
-    // optional, used if disk index must store pq data
-    std::string disk_pq_compressed_vectors_path =
-        index_prefix_path + "_disk.index_pq_compressed.bin";
-    // optional, used if build mem usage is enough to generate cached nodes
-    std::string cached_nodes_file = get_cached_nodes_file(index_prefix_path);
+    auto        context = std::make_unique<PreparedBuildContext>(config);
+    const auto &base_file = context->raw_source;
+    const auto &index_prefix_path = context->prefix;
+    const auto  disk_index_path = get_disk_index_filename(index_prefix_path);
+    auto       &data_file_to_use = context->prepared_source;
+    auto       &data_file_to_save = context->ssd_source;
+    if (config.compare_metric == diskann::Metric::INNER_PRODUCT ||
+        config.compare_metric == diskann::Metric::COSINE) {
+      context->own_temporary(index_prefix_path + "_prepped_base.bin");
+      context->own_output(get_disk_index_max_base_norm_file(disk_index_path));
+    }
 
     // output a new base file which contains extra dimension with sqrt(1 -
     // ||x||^2/M^2) for every x, M is max norm of all points. Extra space on
@@ -1667,7 +1691,6 @@ template<typename T>
       std::string norm_file =
           get_disk_index_max_base_norm_file(disk_index_path);
       diskann::save_bin<float>(norm_file, &max_norm_of_base, 1, 1);
-      ip_prepared = true;
     }
     if (config.compare_metric == diskann::Metric::COSINE) {
       LOG_KNOWHERE_INFO_
@@ -1684,6 +1707,49 @@ template<typename T>
       diskann::save_bin<float>(norm_file, norms_of_base.data(),
                                norms_of_base.size(), 1);
     }
+    get_bin_metadata(data_file_to_use, context->rows, context->prepared_dim);
+    return context;
+}
+
+template<typename T>
+int build_disk_index(BuildConfig &config) {
+    auto       context = prepare_build_context<T>(config);
+    const auto result = build_disk_index<T>(config, *context);
+    if (result == 0)
+      context->commit_outputs();
+    return result;
+}
+
+template<typename T>
+int build_disk_index(BuildConfig &config, PreparedBuildContext &context) {
+    if (config.aisaq_mode && !config.use_pq_navigation) {
+      throw diskann::ANNException("AiSAQ requires PQ navigation", -1);
+    }
+    _u32        disk_pq_dims = config.disk_pq_dims;
+    const bool  use_disk_pq = disk_pq_dims != 0;
+    const bool  reorder_data = config.reorder;
+    const bool  ip_prepared = context.metric == diskann::Metric::INNER_PRODUCT;
+    const auto &base_file = context.raw_source;
+    const auto &data_file_to_use = context.prepared_source;
+    const auto &data_file_to_save = context.ssd_source;
+    const auto &index_prefix_path = context.prefix;
+    const auto  pq_pivots_path = get_pq_pivots_filename(index_prefix_path);
+    const auto  pq_compressed_vectors_path =
+        get_pq_compressed_filename(index_prefix_path);
+    const auto mem_index_path = index_prefix_path + "_mem.index";
+    const auto disk_index_path = get_disk_index_filename(index_prefix_path);
+    const auto medoids_path = get_disk_index_medoids_filename(disk_index_path);
+    const auto centroids_path =
+        get_disk_index_centroids_filename(disk_index_path);
+    const auto sample_data_file = get_sample_data_filename(index_prefix_path);
+    const auto disk_pq_pivots_path =
+        index_prefix_path + "_disk.index_pq_pivots.bin";
+    const auto disk_pq_compressed_vectors_path =
+        index_prefix_path + "_disk.index_pq_compressed.bin";
+    const auto cached_nodes_file = get_cached_nodes_file(index_prefix_path);
+    context.own_temporary(mem_index_path);
+    if (use_disk_pq)
+      context.own_temporary(disk_pq_compressed_vectors_path);
 
     unsigned R = config.max_degree;
     unsigned L = config.search_list_size;
@@ -1896,16 +1962,8 @@ template<typename T>
     std::chrono::duration<double> diff = e - s;
     LOG_KNOWHERE_INFO_ << "Indexing time: " << diff.count();
 
-    if ((config.compare_metric == diskann::Metric::INNER_PRODUCT ||
-         config.compare_metric == diskann::Metric::COSINE) &&
-        !config.keep_preprocessed_base) {
-      std::remove(data_file_to_use.c_str());
-    }
-    std::remove(mem_index_path.c_str());
-    if (use_disk_pq)
-      std::remove(disk_pq_compressed_vectors_path.c_str());
     return 0;
-  }
+}
 
   template void create_disk_layout<int8_t>(const std::string base_file,
                                            const std::string mem_index_file,
@@ -1976,6 +2034,17 @@ template<typename T>
   template int build_disk_index<float>(BuildConfig &config);
   template int build_disk_index<knowhere::fp16>(BuildConfig &config);
   template int build_disk_index<knowhere::bf16>(BuildConfig &config);
+  template int build_disk_index<float>(BuildConfig &, PreparedBuildContext &);
+  template int build_disk_index<knowhere::fp16>(BuildConfig &,
+                                                PreparedBuildContext &);
+  template int build_disk_index<knowhere::bf16>(BuildConfig &,
+                                                PreparedBuildContext &);
+  template std::unique_ptr<PreparedBuildContext> prepare_build_context<float>(
+      const BuildConfig &);
+  template std::unique_ptr<PreparedBuildContext>
+  prepare_build_context<knowhere::fp16>(const BuildConfig &);
+  template std::unique_ptr<PreparedBuildContext>
+  prepare_build_context<knowhere::bf16>(const BuildConfig &);
 
   template std::unique_ptr<diskann::Index<int8_t>>
   build_merged_vamana_index<int8_t>(
