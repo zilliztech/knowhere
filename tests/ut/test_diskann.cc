@@ -646,18 +646,12 @@ TEST_CASE("Test DISKANN_RABITQ constraints", "[diskann][rabitq]") {
     invalid["search_cache_budget_gb"] = 0.01;
     check_train_config(invalid, knowhere::Status::success);
 
-    auto check_search_mode = [&](const std::string& mode, knowhere::Status expected) {
-        auto cfg = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig(knowhere::IndexEnum::INDEX_DISKANN_RABITQ,
-                                                                            version);
-        knowhere::Json json = {{"dim", kDim},    {"metric_type", knowhere::metric::L2},
-                               {"k", kK},        {"search_list_size", 128},
-                               {"beamwidth", 8}, {"rbq_refine_mode", mode}};
-        std::string msg;
-        REQUIRE(knowhere::Config::Load(*cfg, json, knowhere::PARAM_TYPE::SEARCH, &msg) == expected);
-    };
-    check_search_mode("probabilistic", knowhere::Status::success);
-    check_search_mode("full", knowhere::Status::success);
-    check_search_mode("invalid", knowhere::Status::invalid_args);
+    // Experimental controls are not part of either public configuration.
+    for (const auto* type : {kNativeDiskANN, knowhere::IndexEnum::INDEX_DISKANN_RABITQ}) {
+        auto cfg = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig(type, version);
+        REQUIRE(cfg->__DICT__.count("rbq_refine_mode") == 0);
+        REQUIRE(cfg->__DICT__.count("bfs_cache_seed") == 0);
+    }
     for (const int qb : {-1, 0, 4, 8, 9}) {
         auto cfg = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig(knowhere::IndexEnum::INDEX_DISKANN_RABITQ,
                                                                             version);
@@ -696,7 +690,7 @@ TEST_CASE("Test DISKANN_RABITQ probabilistic refinement", "[diskann][rabitq]") {
     }
 
     knowhere::RaBitQStore store(sidecar_path);
-    auto distance_computer = store.CreateDistanceComputer(true, 0);
+    auto distance_computer = store.CreateDistanceComputer(0);
     distance_computer->set_query(base);
     std::vector<unsigned> ids(rows);
     std::iota(ids.begin(), ids.end(), 0);
@@ -718,14 +712,15 @@ TEST_CASE("Test DISKANN_RABITQ probabilistic refinement", "[diskann][rabitq]") {
     REQUIRE(pruned_stats.n_cmps_saved == rows);
     REQUIRE(std::all_of(distances.begin(), distances.end(), [](float distance) { return std::isinf(distance); }));
 
-    auto full_distance_computer = store.CreateDistanceComputer(false, 0);
-    full_distance_computer->set_query(base);
-    diskann::QueryStats explicit_full_stats;
-    full_distance_computer->compute_distances(ids.data(), rows, distances.data(), 0.0f, true, &explicit_full_stats);
-    REQUIRE(explicit_full_stats.n_approx_estimates == 0);
-    REQUIRE(explicit_full_stats.n_approx_refinements == rows);
-    REQUIRE(explicit_full_stats.n_approx_pruned == 0);
-    REQUIRE(std::all_of(distances.begin(), distances.end(), [](float distance) { return std::isfinite(distance); }));
+    // A valid, unbounded threshold refines every candidate; there is no
+    // separate full-distance search mode.
+    diskann::QueryStats unbounded_stats;
+    distance_computer->compute_distances(ids.data(), rows, distances.data(), std::numeric_limits<float>::infinity(),
+                                         true, &unbounded_stats);
+    REQUIRE(unbounded_stats.n_approx_estimates == rows);
+    REQUIRE(unbounded_stats.n_approx_refinements == rows);
+    REQUIRE(unbounded_stats.n_approx_pruned == 0);
+    REQUIRE(std::all_of(distances.begin(), distances.end(), [](float d) { return std::isfinite(d); }));
 
     fs::remove_all(refinement_dir);
 }
@@ -769,12 +764,12 @@ TEST_CASE("DiskANN RaBitQ shares Faiss codes and request-local query bits", "[di
             }
             const unsigned ids[] = {0, 1, 3, 5, 7, 9, 12};
             std::vector<float> initial(7), after(7);
-            auto stable = store.CreateDistanceComputer(false, 0);
+            auto stable = store.CreateDistanceComputer(0);
             stable->set_query(x);
             stable->compute_distances(ids, 7, initial.data(), 0, false, nullptr);
             for (const uint8_t qb : {0, 4, 8}) {
                 CAPTURE(qb);
-                auto adapter = store.CreateDistanceComputer(false, qb);
+                auto adapter = store.CreateDistanceComputer(qb);
                 std::unique_ptr<faiss::FlatCodesDistanceComputer> native(
                     rbq->get_quantized_distance_computer(qb, false));
                 adapter->set_query(x);
@@ -800,7 +795,7 @@ TEST_CASE("DiskANN RaBitQ shares Faiss codes and request-local query bits", "[di
             stable->compute_distances(ids, 7, after.data(), 0, false, nullptr);
             REQUIRE(initial == after);
             REQUIRE(rbq->qb == 4);
-            REQUIRE_THROWS(store.CreateDistanceComputer(false, 9));
+            REQUIRE_THROWS(store.CreateDistanceComputer(9));
         }
     }
     fs::remove_all(dir);
@@ -822,8 +817,8 @@ TEST_CASE("DiskANN RaBitQ batches preserve scalar decisions", "[diskann][rabitq]
             std::iota(ids.begin(), ids.end(), 0);
             for (uint8_t qb = 0; qb <= 8; ++qb) {
                 CAPTURE(dim, bits, qb);
-                auto scalar = store.CreateDistanceComputer(true, qb);
-                auto batch = store.CreateDistanceComputer(true, qb);
+                auto scalar = store.CreateDistanceComputer(qb);
+                auto batch = store.CreateDistanceComputer(qb);
                 scalar->set_query(x + 18 * dim);
                 batch->set_query(x + 18 * dim);
                 std::array<float, 17> full{};
@@ -856,7 +851,7 @@ TEST_CASE("DiskANN RaBitQ batches preserve scalar decisions", "[diskann][rabitq]
             // Concurrent callers have independent query transforms and query bits.
             std::array<std::vector<float>, 2> sequential, concurrent;
             const auto run_query = [&](size_t q, std::vector<float>& result) {
-                auto dc = store.CreateDistanceComputer(false, q ? 8 : 0);
+                auto dc = store.CreateDistanceComputer(q ? 8 : 0);
                 dc->set_query(x + (17 + q) * dim);
                 result.resize(ids.size());
                 dc->compute_distances(ids.data(), ids.size(), result.data(), 0, false, nullptr);
@@ -945,7 +940,6 @@ TEST_CASE("Test DISKANN_RABITQ build and search", "[diskann][rabitq]") {
             // RaBitQ must safely force BFS even when the default sample-query
             // cache mode is requested, because its navigation PQ is not resident.
             deserialize_json["use_bfs_cache"] = false;
-            deserialize_json["bfs_cache_seed"] = 42;
         }
         knowhere::Json search_json = {{"dim", kDim},
                                       {"metric_type", knowhere::metric::L2},
@@ -993,7 +987,7 @@ TEST_CASE("Test DISKANN_RABITQ build and search", "[diskann][rabitq]") {
                 }
             } failing;
             knowhere::RaBitQStore store(rabitq_prefix + "_rabitq.index");
-            auto scorer = store.CreateDistanceComputer(false, 0);
+            auto scorer = store.CreateDistanceComputer(0);
             std::copy_n(static_cast<const float*>(query_ds->GetTensor()), kDim, query.data());
             for (bool fail_set : {true, false}) {
                 failing.fail_set = fail_set;
@@ -1047,14 +1041,9 @@ TEST_CASE("Test DISKANN_RABITQ build and search", "[diskann][rabitq]") {
                 }
             }
         }
-        search_json["rbq_refine_mode"] = "full";
-        auto full_result = index.Search(query_ds, search_json, nullptr);
-        REQUIRE(full_result.has_value());
         auto ground_truth = knowhere::BruteForce::Search<knowhere::fp32>(base_ds, query_ds, search_json, nullptr);
         REQUIRE(ground_truth.has_value());
         REQUIRE(GetKNNRecall(*ground_truth.value(), *result.value()) > 0.5f);
-        REQUIRE(GetKNNRecall(*ground_truth.value(), *full_result.value()) > 0.5f);
-        search_json["rbq_refine_mode"] = "probabilistic";
 
         std::vector<uint8_t> empty_bitset_data((kNumRows + 7) / 8, 0);
         auto empty_bitset_result =
@@ -1203,27 +1192,24 @@ TEST_CASE("DiskANN RaBitQ cosine uses normalized navigation and original SSD vec
     auto exact = knowhere::BruteForce::Search<knowhere::fp32>(base, query, search, nullptr);
     REQUIRE(exact.has_value());
     for (const int qb : {0, 4, 8}) {
-        for (const auto* mode : {"full", "probabilistic"}) {
-            search["rbq_bits_query"] = qb;
-            search["rbq_refine_mode"] = mode;
-            auto result = restored.Search(query, search, nullptr);
-            REQUIRE(result.has_value());
-            REQUIRE(GetKNNRecall(*exact.value(), *result.value()) > 0.8f);
-            for (uint32_t i = 0; i < kNumQueries; ++i) {
-                for (uint32_t j = 0; j < kK; ++j) {
-                    const auto offset = i * kK + j;
-                    const auto id = result.value()->GetIds()[offset];
-                    REQUIRE(id >= 0);
-                    REQUIRE(id < kNumRows);
-                    double dot = 0, norm_x = 0, norm_q = 0;
-                    for (uint32_t k = 0; k < kDim; ++k) {
-                        dot += double(xb[id * kDim + k]) * xq[i * kDim + k];
-                        norm_x += double(xb[id * kDim + k]) * xb[id * kDim + k];
-                        norm_q += double(xq[i * kDim + k]) * xq[i * kDim + k];
-                    }
-                    const double score = norm_x > 0 && norm_q > 0 ? dot / std::sqrt(norm_x * norm_q) : 0;
-                    REQUIRE(std::abs(result.value()->GetDistance()[offset] - score) < 1e-5);
+        search["rbq_bits_query"] = qb;
+        auto result = restored.Search(query, search, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(GetKNNRecall(*exact.value(), *result.value()) > 0.8f);
+        for (uint32_t i = 0; i < kNumQueries; ++i) {
+            for (uint32_t j = 0; j < kK; ++j) {
+                const auto offset = i * kK + j;
+                const auto id = result.value()->GetIds()[offset];
+                REQUIRE(id >= 0);
+                REQUIRE(id < kNumRows);
+                double dot = 0, norm_x = 0, norm_q = 0;
+                for (uint32_t k = 0; k < kDim; ++k) {
+                    dot += double(xb[id * kDim + k]) * xq[i * kDim + k];
+                    norm_x += double(xb[id * kDim + k]) * xb[id * kDim + k];
+                    norm_q += double(xq[i * kDim + k]) * xq[i * kDim + k];
                 }
+                const double score = norm_x > 0 && norm_q > 0 ? dot / std::sqrt(norm_x * norm_q) : 0;
+                REQUIRE(std::abs(result.value()->GetDistance()[offset] - score) < 1e-5);
             }
         }
     }

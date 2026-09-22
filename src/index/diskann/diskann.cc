@@ -817,10 +817,8 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
                                           "resident";
                 }
                 LOG_KNOWHERE_INFO_ << "Use bfs to generate cache list";
-                if (TryDiskANNCall([&]() {
-                        pq_flash_index_->cache_bfs_levels(num_nodes_to_cache, node_list,
-                                                          prep_conf.bfs_cache_seed.value());
-                    }) != Status::success) {
+                if (TryDiskANNCall([&]() { pq_flash_index_->cache_bfs_levels(num_nodes_to_cache, node_list); }) !=
+                    Status::success) {
                     LOG_KNOWHERE_ERROR_ << "Failed to generate bfs cache for DiskANN.";
                     return Status::diskann_inner_error;
                 }

@@ -94,10 +94,9 @@ apply_rotation_single_query(const faiss::RandomRotationMatrix* rotation, const f
 class RaBitQNavigationDistanceComputer final : public diskann::NavigationDistanceComputer {
  public:
     RaBitQNavigationDistanceComputer(const faiss::RandomRotationMatrix* rotation, const faiss::IndexRaBitQ* rabitq,
-                                     bool probabilistic_refinement, uint8_t query_bits)
+                                     uint8_t query_bits)
         : rotation_(rotation),
           rabitq_(rabitq),
-          probabilistic_refinement_(probabilistic_refinement),
           distance_computer_(rabitq->get_quantized_distance_computer(query_bits, false)),
           rabitq_distance_computer_(dynamic_cast<faiss::RaBitQDistanceComputer*>(distance_computer_.get())) {
         if (rabitq_distance_computer_ == nullptr) {
@@ -116,7 +115,7 @@ class RaBitQNavigationDistanceComputer final : public diskann::NavigationDistanc
     void
     compute_distances(const unsigned* ids, _u64 n_ids, float* distances, float threshold, bool threshold_valid,
                       diskann::QueryStats* stats) override {
-        const bool can_prune = probabilistic_refinement_ && threshold_valid && rabitq_->rabitq.nb_bits > 1;
+        const bool can_prune = threshold_valid && rabitq_->rabitq.nb_bits > 1;
         if (!can_prune) {
             _u64 i = 0;
             for (; i + 4 <= n_ids; i += 4) {
@@ -193,7 +192,6 @@ class RaBitQNavigationDistanceComputer final : public diskann::NavigationDistanc
  private:
     const faiss::RandomRotationMatrix* rotation_;
     const faiss::IndexRaBitQ* rabitq_;
-    const bool probabilistic_refinement_;
     std::unique_ptr<faiss::FlatCodesDistanceComputer> distance_computer_;
     faiss::RaBitQDistanceComputer* rabitq_distance_computer_;
     std::unique_ptr<float[]> transformed_query_;
@@ -336,23 +334,19 @@ RaBitQStore::CreateDistanceComputer(const DiskANNConfig& config) const {
     if (query_metric != metric::L2 && query_metric != metric::IP && query_metric != metric::COSINE) {
         throw std::invalid_argument("RaBitQ navigation supports L2, IP and COSINE");
     }
-    const auto mode = navigation->rbq_refine_mode.value_or("probabilistic");
-    if (mode != "probabilistic" && mode != "full") {
-        throw std::invalid_argument("invalid RaBitQ refinement mode");
-    }
     const auto qb = navigation->rbq_bits_query.value_or(4);
     if (qb < 0 || qb > 8) {
         throw std::invalid_argument("RaBitQ query bits must be in [0, 8]");
     }
-    return CreateDistanceComputer(mode == "probabilistic", static_cast<uint8_t>(qb));
+    return CreateDistanceComputer(static_cast<uint8_t>(qb));
 }
 
 std::unique_ptr<diskann::NavigationDistanceComputer>
-RaBitQStore::CreateDistanceComputer(bool probabilistic_refinement, uint8_t query_bits) const {
+RaBitQStore::CreateDistanceComputer(uint8_t query_bits) const {
     if (query_bits > 8) {
         throw std::invalid_argument("RaBitQ query bits must be in [0, 8]");
     }
-    return std::make_unique<RaBitQNavigationDistanceComputer>(rotation_, rabitq_, probabilistic_refinement, query_bits);
+    return std::make_unique<RaBitQNavigationDistanceComputer>(rotation_, rabitq_, query_bits);
 }
 
 int64_t
