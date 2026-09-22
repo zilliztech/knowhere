@@ -82,6 +82,30 @@ bool is_supported_build_param(const std::string& name);
 // ParameterSpace::set_index_parameter. Note: "quantizer_<name>" where <name> is
 // one of these is also supported via ParameterSpace's recursion — use
 // is_supported_build_param for that case.
+//
+// The set is index-family agnostic, exactly like the if-chain it mirrors: a
+// name that belongs to another family (nprobe on an HNSW, alpha on an IVF)
+// passes this check and is then rejected by set_index_parameter itself.
 std::set<std::string> supported_build_param_names();
+
+// ---------- Per-index capability queries ----------
+//
+// Unlike the name list above, these answer for a concrete index, so a caller
+// can apply a knob only where it exists instead of catching a rejection. All of
+// them look through the wrappers ParameterSpace looks through.
+
+// Whether `index` honors "is_static", i.e. has an immutable backend that
+// consumes all of its data in the first add().
+bool supports_static_index(const ::faiss::Index* index);
+
+// Whether `index` honors "store_vectors", i.e. keeps a copy of the raw vectors
+// that only backs reconstruct() and can be skipped.
+bool supports_dropping_stored_vectors(const ::faiss::Index* index);
+
+// Whether `index` implements train_with_queries(), i.e. can learn from a
+// representative query sample alongside the database vectors (out-of-
+// distribution training). The base method is a silent no-op, so callers need
+// this to tell "supported" from "ignored".
+bool supports_train_with_queries(const ::faiss::Index* index);
 
 } // namespace faiss::cppcontrib::knowhere
