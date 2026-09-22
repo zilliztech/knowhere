@@ -1610,6 +1610,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
 
 PreparedBuildContext::PreparedBuildContext(const BuildConfig &config)
     : raw_source(config.data_file_path), prefix(config.index_file_path),
+      graph_index_path(prefix + "_build_tmp/graph"),
       metric(config.compare_metric), prepared_source(raw_source),
       ssd_source(raw_source) {
     get_bin_metadata(raw_source, rows, raw_dim);
@@ -1634,6 +1635,18 @@ void PreparedBuildContext::own_output(const std::string &path) {
     own(path, outputs_);
 }
 
+void PreparedBuildContext::create_graph_workspace() {
+    if (owns_graph_workspace_)
+        return;
+    const auto directory =
+        std::filesystem::path(graph_index_path).parent_path();
+    if (!std::filesystem::create_directory(directory)) {
+        throw diskann::ANNException(
+            "Build workspace already exists: " + directory.string(), -1);
+    }
+    owns_graph_workspace_ = true;
+}
+
 PreparedBuildContext::~PreparedBuildContext() {
     auto remove_owned = [](const std::vector<std::string> &paths) {
       for (auto it = paths.rbegin(); it != paths.rend(); ++it) {
@@ -1645,6 +1658,16 @@ PreparedBuildContext::~PreparedBuildContext() {
       }
     };
     remove_owned(temporaries_);
+    if (owns_graph_workspace_) {
+        // Only this newly created directory is owned, including any partial
+        // partition/shard files produced by low-memory graph construction.
+        std::error_code error;
+        std::filesystem::remove_all(
+            std::filesystem::path(graph_index_path).parent_path(), error);
+        if (error)
+          LOG_KNOWHERE_WARNING_ << "Could not clean graph workspace: "
+                                << error.message();
+    }
     if (!committed_)
         remove_owned(outputs_);
 }
@@ -1737,7 +1760,8 @@ int build_disk_index(BuildConfig &config, PreparedBuildContext &context,
     const auto &data_file_to_use = context.prepared_source;
     const auto &data_file_to_save = context.ssd_source;
     const auto &index_prefix_path = context.prefix;
-    const auto mem_index_path = index_prefix_path + "_mem.index";
+    context.create_graph_workspace();
+    const auto &mem_index_path = context.graph_index_path;
     const auto disk_index_path = get_disk_index_filename(index_prefix_path);
     const auto medoids_path = get_disk_index_medoids_filename(disk_index_path);
     const auto centroids_path =

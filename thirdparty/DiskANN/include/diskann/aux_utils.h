@@ -144,12 +144,14 @@ namespace diskann {
     PreparedBuildContext &operator=(const PreparedBuildContext &) = delete;
     void                  own_temporary(const std::string &path);
     void                  own_output(const std::string &path);
+    void                  create_graph_workspace();
     void                  commit_outputs() noexcept {
       committed_ = true;
     }
 
     const std::string     raw_source;
     const std::string     prefix;
+    const std::string     graph_index_path;
     const diskann::Metric metric;
     std::string           prepared_source;
     std::string           ssd_source;
@@ -162,6 +164,7 @@ namespace diskann {
     std::vector<std::string> temporaries_;
     std::vector<std::string> outputs_;
     bool                     committed_ = false;
+    bool                     owns_graph_workspace_ = false;
   };
 
   template<typename T>

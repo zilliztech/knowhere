@@ -3,6 +3,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "filemanager/FileManager.h"
@@ -32,11 +33,20 @@ class DiskANNBuildRegistration {
         }
     }
     bool
-    Add(const std::string& path) {
+    Reserve(const std::string& path) {
+        // Check before creating local outputs: FileManager implementations may
+        // consult the local filesystem as well as their registered objects.
         const auto exists = manager_.IsExisted(path);
         if (!exists.has_value() || exists.value()) {
             return false;
         }
+        reserved_.insert(path);
+        return true;
+    }
+    bool
+    Add(const std::string& path) {
+        if (!reserved_.count(path))
+            return false;
         attempted_.push_back(path);
         return manager_.AddFile(path);
     }
@@ -47,6 +57,7 @@ class DiskANNBuildRegistration {
 
  private:
     milvus::FileManager& manager_;
+    std::unordered_set<std::string> reserved_;
     std::vector<std::string> attempted_;
     bool committed_ = false;
 };

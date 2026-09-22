@@ -135,6 +135,13 @@ TEST_CASE("DiskANN prepared build files have scoped ownership", "[diskann][build
         REQUIRE_FALSE(fs::exists(temporary));
         REQUIRE_FALSE(fs::exists(norm));
         REQUIRE_FALSE(fs::exists(config.index_file_path + "_mem.index"));
+        REQUIRE_FALSE(fs::exists(config.index_file_path + "_build_tmp"));
+        {
+            diskann::PreparedBuildContext context(config);
+            context.create_graph_workspace();
+            fs::copy_file(kRawDataPath, context.graph_index_path + "_tempFiles_subshard-0.bin");
+        }
+        REQUIRE_FALSE(fs::exists(config.index_file_path + "_build_tmp"));
         // A preexisting file is not ours to overwrite or clean up.
         if (metric != diskann::Metric::L2) {
             fs::copy_file(kRawDataPath, temporary);
@@ -158,7 +165,9 @@ TEST_CASE("DiskANN registration rolls back a partial failure", "[diskann][build_
     REQUIRE(manager.AddFile("existing"));
     {
         knowhere::DiskANNBuildRegistration files(manager);
-        REQUIRE_FALSE(files.Add("existing"));
+        REQUIRE_FALSE(files.Reserve("existing"));
+        REQUIRE(files.Reserve("first"));
+        REQUIRE(files.Reserve("second"));
         REQUIRE(files.Add("first"));
         REQUIRE_FALSE(files.Add("second"));
     }
@@ -168,6 +177,8 @@ TEST_CASE("DiskANN registration rolls back a partial failure", "[diskann][build_
     manager.fail = false;
     {
         knowhere::DiskANNBuildRegistration files(manager);
+        REQUIRE(files.Reserve("first"));
+        REQUIRE(files.Reserve("second"));
         REQUIRE(files.Add("first"));
         REQUIRE(files.Add("second"));
         files.Commit();
@@ -279,6 +290,66 @@ TEST_CASE("DiskANN navigation discovery preserves FileManager errors", "[diskann
     REQUIRE_FALSE(knowhere::DetectNavigationCodec(config, prefix, manager).has_value());
     config.navigation_codec = "RABITQ";
     REQUIRE(knowhere::DetectNavigationCodec(config, prefix, manager).value() == "RABITQ");
+}
+
+TEST_CASE("DiskANN failed publication cleans outputs and permits retry", "[diskann][build_context]") {
+    fs::remove_all(kDir);
+    fs::create_directories(kDir);
+    auto base = GenDataSet(512, 16, 21);
+    WriteRawDataToDisk<float>(kRawDataPath, static_cast<const float*>(base->GetTensor()), 512, 16);
+    class FailingManager : public milvus::LocalFileManager {
+     public:
+        bool fail = true;
+        bool
+        AddFile(const std::string& path) override {
+            const bool result = milvus::LocalFileManager::AddFile(path);
+            return fail && path.find("_disk.index") != std::string::npos ? false : result;
+        }
+        std::optional<bool>
+        IsExisted(const std::string& path) override {
+            return milvus::LocalFileManager::IsExisted(path).value() || fs::exists(path);
+        }
+    };
+    const auto version = GenTestVersionList();
+    for (const auto* codec : {"PQ", "RABITQ"}) {
+        const auto prefix = kDir + "/retry_" + codec;
+        auto manager = std::make_shared<FailingManager>();
+        auto index = knowhere::IndexFactory::Instance()
+                         .Create<knowhere::fp32>(kNativeDiskANN, version,
+                                                 knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager)))
+                         .value();
+        knowhere::Json build = {{"dim", 16},
+                                {"metric_type", "IP"},
+                                {"index_prefix", prefix},
+                                {"data_path", kRawDataPath},
+                                {"max_degree", 16},
+                                {"search_list_size", 32},
+                                {"build_dram_budget_gb", 1.0},
+                                {"pq_code_budget_gb", 0.000004},
+                                {"disk_pq_dims", 4},
+                                {"search_cache_budget_gb", 0},
+                                {"search_cache_budget_gb_ratio", 0},
+                                {"rbq_bits", 4},
+                                {"navigation_codec", codec}};
+        REQUIRE(index.Build(nullptr, build) == knowhere::Status::disk_file_error);
+        for (const auto& entry : fs::directory_iterator(kDir)) {
+            REQUIRE(entry.path().string().find(prefix) != 0);
+        }
+        REQUIRE(fs::exists(kRawDataPath));
+        REQUIRE_FALSE(manager->IsExisted(diskann::get_disk_index_filename(prefix)).value());
+        manager->fail = false;
+        REQUIRE(index.Build(nullptr, build) == knowhere::Status::success);
+        REQUIRE_FALSE(fs::exists(prefix + "_build_tmp"));
+        REQUIRE_FALSE(fs::exists(prefix + "_prepped_base.bin"));
+        REQUIRE_FALSE(fs::exists(prefix + "_disk.index_pq_compressed.bin"));
+        knowhere::BinarySet empty;
+        knowhere::Json load = {{"metric_type", "IP"},
+                               {"index_prefix", prefix},
+                               {"search_cache_budget_gb", 0},
+                               {"search_cache_budget_gb_ratio", 0},
+                               {"warm_up", false}};
+        REQUIRE(index.Deserialize(empty, load) == knowhere::Status::success);
+    }
 }
 
 TEST_CASE("Valid diskann build params test", "[diskann]") {

@@ -73,7 +73,7 @@ namespace diskann {
       // Keep the native cache-generation policy and its memory allowance.
       constexpr float cache_mem_factor = 1.1;
       const auto      usage = cache_mem_factor *
-                         (get_file_size(context.prefix + "_mem.index") +
+                         (get_file_size(context.graph_index_path) +
                           get_file_size(sample_file) + get_file_size(codes) +
                           get_file_size(pivots)) /
                          (1024 * 1024 * 1024);

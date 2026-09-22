@@ -268,7 +268,9 @@ RaBitQStore::BuildFromFloatBin(const std::string& data_path, const std::string& 
 
     const std::string temporary_path = sidecar_path + ".tmp";
     std::error_code error;
-    std::filesystem::remove(temporary_path, error);
+    if (std::filesystem::exists(temporary_path)) {
+        throw std::runtime_error("Refusing to overwrite RaBitQ temporary file: " + temporary_path);
+    }
     try {
         faiss::cppcontrib::knowhere::write_index(pretransform.get(), temporary_path.c_str());
         std::filesystem::rename(temporary_path, sidecar_path);

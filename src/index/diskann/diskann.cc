@@ -536,6 +536,15 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
                                                        static_cast<uint32_t>(num_nodes_to_cache),
                                                        build_conf.shuffle_build.value()};
     std::unique_ptr<diskann::PreparedBuildContext> context;
+    DiskANNBuildRegistration registration(*file_manager_);
+    for (const auto& path : GetNecessaryFilenames(build_conf, index_prefix_, need_norm, true, true)) {
+        if (!registration.Reserve(path))
+            return Status::disk_file_error;
+    }
+    for (const auto& path : GetOptionalFilenames(build_conf, index_prefix_)) {
+        if (!registration.Reserve(path))
+            return Status::disk_file_error;
+    }
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
         context = diskann::prepare_build_context<DataType>(diskann_internal_build_config);
         for (const auto& path : GetNecessaryFilenames(build_conf, index_prefix_, need_norm, true, true)) {
@@ -553,7 +562,6 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
     }));
 
     // Add file to the file manager
-    DiskANNBuildRegistration registration(*file_manager_);
     for (auto& filename : GetNecessaryFilenames(build_conf, index_prefix_, need_norm, true, true)) {
         if (!registration.Add(filename)) {
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << filename << ".";
