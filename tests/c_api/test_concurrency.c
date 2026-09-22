@@ -52,6 +52,58 @@ independent_errors(void* unused) {
     return NULL;
 }
 
+/* Batched brute force saves and restores process-wide BLAS settings around
+ * the calls in flight; callers on several threads must each get the answer a
+ * single caller gets.
+ */
+enum { BATCHED_ROWS = 2000, BATCHED_QUERIES = 48, BATCHED_DIM = 32, BATCHED_K = 8, BATCHED_THREADS = 6 };
+static float batched_base[BATCHED_ROWS * BATCHED_DIM];
+static float batched_queries[BATCHED_QUERIES * BATCHED_DIM];
+static int64_t batched_expected[BATCHED_QUERIES * BATCHED_K];
+
+static void
+batched_search(int64_t* ids, float* distances) {
+    knowhere_vectors base = {batched_base, sizeof(batched_base), BATCHED_ROWS, BATCHED_DIM, KNOWHERE_FP32};
+    knowhere_vectors query = {batched_queries, sizeof(batched_queries), BATCHED_QUERIES, BATCHED_DIM, KNOWHERE_FP32};
+    knowhere_search_result result = {ids, sizeof(int64_t) * BATCHED_QUERIES * BATCHED_K, distances,
+                                     sizeof(float) * BATCHED_QUERIES * BATCHED_K, BATCHED_K};
+    CHECK(knowhere_bruteforce_batched(&base, &query, &result, "{\"metric_type\":\"L2\"}") == KNOWHERE_SUCCESS);
+}
+
+static void*
+batched_caller(void* unused) {
+    (void)unused;
+    int64_t ids[BATCHED_QUERIES * BATCHED_K];
+    float distances[BATCHED_QUERIES * BATCHED_K];
+    for (int i = 0; i < 20; i++) {
+        batched_search(ids, distances);
+        CHECK(memcmp(ids, batched_expected, sizeof(ids)) == 0);
+    }
+    return NULL;
+}
+
+static void
+test_batched_callers(void) {
+    uint32_t state = 11u;
+    for (int i = 0; i < BATCHED_ROWS * BATCHED_DIM; i++) {
+        state = state * 1664525u + 1013904223u;
+        batched_base[i] = (float)(state >> 8) / (float)(1u << 23) - 1.0f;
+    }
+    for (int i = 0; i < BATCHED_QUERIES * BATCHED_DIM; i++) {
+        state = state * 1664525u + 1013904223u;
+        batched_queries[i] = (float)(state >> 8) / (float)(1u << 23) - 1.0f;
+    }
+    float distances[BATCHED_QUERIES * BATCHED_K];
+    batched_search(batched_expected, distances);
+    pthread_t callers[BATCHED_THREADS];
+    for (int i = 0; i < BATCHED_THREADS; i++) {
+        CHECK(pthread_create(&callers[i], NULL, batched_caller, NULL) == 0);
+    }
+    for (int i = 0; i < BATCHED_THREADS; i++) {
+        CHECK(pthread_join(callers[i], NULL) == 0);
+    }
+}
+
 int
 main(void) {
     pthread_t errors;
@@ -77,6 +129,7 @@ main(void) {
         previous = handle;
     }
     CHECK(pthread_join(errors, NULL) == 0);
+    test_batched_callers();
     puts("Knowhere concurrent C API tests passed");
     return 0;
 }

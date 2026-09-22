@@ -180,6 +180,20 @@ knowhere_index_deserialize(knowhere_index_handle handle, knowhere_binary_set_han
 KNOWHERE_C_API int32_t
 knowhere_bruteforce(const knowhere_vectors* base, const knowhere_vectors* queries, const knowhere_bitset* excluded,
                     knowhere_search_result* result, const char* parameters);
+/* Exact search over FP32 vectors without a filter, every query handed to the
+ * bundled faiss in one call so that it takes its BLAS (SGEMM) path: knn_L2sqr,
+ * knn_inner_product or knn_cosine by the JSON metric_type L2, IP or COSINE.
+ * The call runs on the calling thread with OpenMP and OpenBLAS at one thread;
+ * the caller provides the parallelism. While any batched call is in flight the
+ * process-wide faiss BLAS threshold is 20 queries and OpenBLAS's process-wide
+ * thread count is 1; the last call out restores both. Base and queries must both be FP32 with
+ * the same dimensions; both buffers are borrowed. Output follows
+ * knowhere_search_result with ids of -1 where fewer than top_k rows exist and
+ * distances in the metric's own semantics (squared L2, inner product, cosine).
+ */
+KNOWHERE_C_API int32_t
+knowhere_bruteforce_batched(const knowhere_vectors* base, const knowhere_vectors* queries,
+                            knowhere_search_result* result, const char* parameters);
 
 KNOWHERE_C_API int32_t
 knowhere_binary_set_create(knowhere_binary_set_handle* output);

@@ -82,4 +82,24 @@ public final class Knowhere {
                 NativeBuffers.region(outputDistances, true, true),
                 Objects.requireNonNull(parameters, "parameters"));
     }
+
+    /**
+     * Searches FLOAT32 base vectors without an index or a filter, handing every query to the
+     * bundled faiss in one call so that it takes its BLAS (SGEMM) path. The call runs on the
+     * calling thread with OpenMP and OpenBLAS at one thread; callers provide the parallelism
+     * by calling from several threads or processes. Buffers are borrowed until return;
+     * positions and limits remain unchanged. IDs are int64 (-1 where fewer than topK rows
+     * exist) and distances float32 in the metric's own semantics. Parameters are a Knowhere
+     * JSON object whose metric_type is L2, IP or COSINE.
+     */
+    public static void bruteForceBatched(DType dtype, ByteBuffer base, long baseRows,
+            ByteBuffer queries, long queryRows, int dimension, int topK,
+            ByteBuffer outputIds, ByteBuffer outputDistances, String parameters) {
+        NativeBindings.bruteForceBatched(Objects.requireNonNull(dtype, "dtype").code,
+                NativeBuffers.region(base, false, true), baseRows,
+                NativeBuffers.region(queries, false, true), queryRows, dimension, topK,
+                NativeBuffers.region(outputIds, true, true),
+                NativeBuffers.region(outputDistances, true, true),
+                Objects.requireNonNull(parameters, "parameters"));
+    }
 }

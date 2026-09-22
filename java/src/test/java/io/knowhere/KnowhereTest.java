@@ -123,6 +123,76 @@ public class KnowhereTest {
                 null, 0, bytes(0), bytes(0), L2);
     }
 
+    static ByteBuffer randomFloats(Random random, int count) {
+        ByteBuffer data = bytes(count * Float.BYTES);
+        for (int i = 0; i < count; i++) {
+            data.putFloat(i * Float.BYTES, (float) random.nextGaussian());
+        }
+        return data;
+    }
+
+    @Test
+    public void batchedBruteForceAnswersAsThePerQueryEntryDoes() {
+        Random random = new Random(7);
+        int rows = 200;
+        int queries = 40;
+        int dimension = 16;
+        int topK = 4;
+        ByteBuffer base = randomFloats(random, rows * dimension);
+        ByteBuffer query = randomFloats(random, queries * dimension);
+        for (String metric : new String[] {"L2", "IP", "COSINE"}) {
+            String parameters = "{\"metric_type\":\"" + metric + "\"}";
+            ByteBuffer ids = bytes(queries * topK * Long.BYTES);
+            ByteBuffer distances = bytes(queries * topK * Float.BYTES);
+            ByteBuffer batchedIds = bytes(queries * topK * Long.BYTES);
+            ByteBuffer batchedDistances = bytes(queries * topK * Float.BYTES);
+            Knowhere.bruteForce(DType.FLOAT32, base, rows, query, queries, dimension, topK,
+                    null, 0, ids, distances, parameters);
+            Knowhere.bruteForceBatched(DType.FLOAT32, base, rows, query, queries, dimension, topK,
+                    batchedIds, batchedDistances, parameters);
+            for (int q = 0; q < queries; q++) {
+                for (int i = 0; i < topK; i++) {
+                    long id = ids.getLong((q * topK + i) * Long.BYTES);
+                    float expected = distances.getFloat((q * topK + i) * Float.BYTES);
+                    boolean found = false;
+                    for (int j = 0; j < topK; j++) {
+                        if (batchedIds.getLong((q * topK + j) * Long.BYTES) == id) {
+                            assertEquals(metric + " query " + q, expected,
+                                    batchedDistances.getFloat((q * topK + j) * Float.BYTES),
+                                    1e-3f * Math.max(1f, Math.abs(expected)));
+                            found = true;
+                        }
+                    }
+                    assertTrue(metric + " query " + q + " misses id " + id, found);
+                }
+            }
+        }
+        Knowhere.bruteForceBatched(DType.FLOAT32, floats(0, 0), 1, bytes(0), 0, 2, 2,
+                bytes(0), bytes(0), L2);
+    }
+
+    @Test
+    public void batchedBruteForceTakesFloat32AndTheFloatMetricsOnly() {
+        assertThrows(KnowhereException.class, new ThrowingRunnable() {
+            public void run() {
+                Knowhere.bruteForceBatched(DType.FLOAT32, floats(0, 0), 1, floats(0, 0), 1, 2, 1,
+                        bytes(8), bytes(4), "{\"metric_type\":\"HAMMING\"}");
+            }
+        });
+        assertThrows(KnowhereException.class, new ThrowingRunnable() {
+            public void run() {
+                Knowhere.bruteForceBatched(DType.FLOAT16, bytes(4), 1, bytes(4), 1, 2, 1,
+                        bytes(8), bytes(4), L2);
+            }
+        });
+        assertThrows(IllegalArgumentException.class, new ThrowingRunnable() {
+            public void run() {
+                Knowhere.bruteForceBatched(DType.FLOAT32, ByteBuffer.allocate(8), 1,
+                        floats(0, 0), 1, 2, 1, bytes(8), bytes(4), L2);
+            }
+        });
+    }
+
     @Test
     public void threadPoolsResizeBeforeAndAfterSearches() {
         assertThrows(KnowhereException.class, new ThrowingRunnable() {

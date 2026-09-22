@@ -11,6 +11,9 @@
 
 #include "knowhere/c_api.h"
 
+#include <omp.h>
+
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -18,12 +21,17 @@
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
+#include <vector>
 
+#include "faiss/cppcontrib/knowhere/utils/distances.h"
 #include "filemanager/impl/LocalFileManager.h"
 #include "knowhere/comp/brute_force.h"
+#include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/index/index_factory.h"
+#include "knowhere/utils.h"
 #include "knowhere/version.h"
+#include "simd/hook.h"
 
 namespace {
 thread_local char last_error[4096] = {};
@@ -526,6 +534,132 @@ knowhere_bruteforce(const knowhere_vectors* base, const knowhere_vectors* querie
             KNOWHERE_BF_CASE(KNOWHERE_INT8, knowhere::int8);
         }
 #undef KNOWHERE_BF_CASE
+    });
+}
+
+// OpenBLAS thread control, declared as src/index/emb_list/simple_mlp.h does so
+// that the C ABI needs no cblas header. Apple Accelerate has none.
+#ifndef __APPLE__
+extern "C" {
+void
+openblas_set_num_threads(int num_threads);
+int
+openblas_get_num_threads(void);
+}
+#endif
+
+namespace {
+
+// faiss dispatches a batch to its BLAS path only from this many queries up
+// (cppcontrib/knowhere/utils/distances.cpp, knn_*_select). The bundled fork
+// sets 16384; the upstream default is 20. A caller that passes one query at a
+// time, Knowhere's BruteForce::Search among them, stays on the sequential path
+// under either value.
+constexpr int kBlasThreshold = 20;
+
+// Two settings of the process that a batched call needs and that are one value
+// for the whole process: the BLAS threshold above, and OpenBLAS's thread count
+// (the bundled OpenBLAS is a pthreads build, where even
+// openblas_set_num_threads_local writes the global count). The first call in
+// flight saves both and sets its own; the last one out puts back what it
+// found. While any batched call runs, every caller's sgemm_ is single-threaded
+// and every batch of at least 20 queries takes the BLAS path; outside those
+// calls the process is as it was.
+std::mutex batched_settings_mutex;
+int batched_in_flight = 0;
+int saved_blas_threshold = 0;
+int saved_blas_threads = 0;
+
+// Runs the enclosed call with OpenMP at one thread on this thread (an OpenMP
+// ICV set outside a parallel region belongs to the calling thread) and with
+// the process settings above. faiss's BLAS path alternates sgemm_ (OpenBLAS
+// workers) with an omp parallel post-pass (libgomp team); sized to the CPU
+// count together they starve each other, and the caller's tasks provide the
+// parallelism instead.
+class SingleThreaded {
+ public:
+    SingleThreaded() : omp_(omp_get_max_threads()) {
+        omp_set_num_threads(1);
+        std::lock_guard<std::mutex> lock(batched_settings_mutex);
+        if (batched_in_flight++ == 0) {
+            saved_blas_threshold = faiss::cppcontrib::knowhere::distance_compute_blas_threshold;
+            faiss::cppcontrib::knowhere::distance_compute_blas_threshold = kBlasThreshold;
+#ifndef __APPLE__
+            saved_blas_threads = openblas_get_num_threads();
+            openblas_set_num_threads(1);
+#endif
+        }
+    }
+    ~SingleThreaded() {
+        {
+            std::lock_guard<std::mutex> lock(batched_settings_mutex);
+            if (--batched_in_flight == 0) {
+#ifndef __APPLE__
+                openblas_set_num_threads(saved_blas_threads);
+#endif
+                faiss::cppcontrib::knowhere::distance_compute_blas_threshold = saved_blas_threshold;
+            }
+        }
+        omp_set_num_threads(omp_);
+    }
+    SingleThreaded(const SingleThreaded&) = delete;
+    SingleThreaded&
+    operator=(const SingleThreaded&) = delete;
+
+ private:
+    int omp_;
+};
+
+}  // namespace
+
+int32_t
+knowhere_bruteforce_batched(const knowhere_vectors* base, const knowhere_vectors* queries,
+                            knowhere_search_result* result, const char* parameters) {
+    return Boundary([&] {
+        CheckVectors(base);
+        CheckVectors(queries);
+        Require(base->dtype == KNOWHERE_FP32 && queries->dtype == KNOWHERE_FP32,
+                "batched brute force takes FP32 base and queries");
+        Require(base->dimensions == queries->dimensions, "query dimensions differ from base dimensions");
+        auto json = Parameters(parameters);
+        SearchParameters(json, queries->rows, result);
+        Require(json.contains(knowhere::meta::METRIC_TYPE) && json.at(knowhere::meta::METRIC_TYPE).is_string(),
+                "parameters must name metric_type");
+        const std::string metric = json.at(knowhere::meta::METRIC_TYPE).get<std::string>();
+        const bool l2 = knowhere::IsMetricType(metric, knowhere::metric::L2);
+        const bool ip = knowhere::IsMetricType(metric, knowhere::metric::IP);
+        const bool cosine = knowhere::IsMetricType(metric, knowhere::metric::COSINE);
+        Require(l2 || ip || cosine, "batched brute force takes metric_type L2, IP or COSINE");
+        if (queries->rows == 0) {
+            return;
+        }
+        const auto d = static_cast<size_t>(base->dimensions);
+        const auto nb = static_cast<size_t>(base->rows);
+        const auto nq = static_cast<size_t>(queries->rows);
+        const auto k = static_cast<size_t>(result->top_k);
+        const auto* xb = static_cast<const float*>(base->data);
+        const auto* xq = static_cast<const float*>(queries->data);
+        SingleThreaded single;
+        if (l2) {
+            faiss::cppcontrib::knowhere::knn_L2sqr(xq, xb, d, nq, nb, k, result->distances, result->ids, nullptr,
+                                                   nullptr);
+        } else if (ip) {
+            faiss::cppcontrib::knowhere::knn_inner_product(xq, xb, d, nq, nb, k, result->distances, result->ids,
+                                                           nullptr);
+        } else {
+            // As BruteForce::Search computes cosine (brute_force.cc): knn_cosine
+            // divides by the base norms only, so the queries are normalized
+            // first, and a zero base vector is taken at norm 1, which is what
+            // GetInverseVecNorms does.
+            auto normalized = knowhere::CopyAndNormalizeVecs(xq, nq, static_cast<int32_t>(d));
+            std::vector<float> inverse_norms(nb);
+            for (size_t row = 0; row < nb; ++row) {
+                const float l2sqr = faiss::cppcontrib::knowhere::fvec_norm_L2sqr(xb + row * d, d);
+                inverse_norms[row] = l2sqr == 0.0f ? 1.0f : 1.0f / std::sqrt(l2sqr);
+            }
+            faiss::cppcontrib::knowhere::knn_cosine(normalized.get(), xb, inverse_norms.data(), d, nq, nb, k,
+                                                    result->distances, result->ids, nullptr);
+        }
     });
 }
 

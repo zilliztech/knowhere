@@ -369,6 +369,19 @@ Java_io_knowhere_NativeBindings_bruteForce(JNIEnv* env, jclass, jint dtype, jobj
         return 0;
     });
 }
+JNIEXPORT void JNICALL
+Java_io_knowhere_NativeBindings_bruteForceBatched(JNIEnv* env, jclass, jint dtype, jobject base_data, jlong base_rows,
+                                                  jobject query_data, jlong query_rows, jint dimension, jint top_k,
+                                                  jobject ids, jobject distances, jstring parameters) {
+    Call(env, 0, [&] {
+        auto base = Vectors(env, base_data, base_rows, dimension, dtype);
+        auto queries = Vectors(env, query_data, query_rows, dimension, dtype);
+        auto result = Result(env, ids, distances, top_k);
+        Utf8 config(env, parameters);
+        CheckStatus(env, knowhere_bruteforce_batched(&base, &queries, &result, config.get()));
+        return 0;
+    });
+}
 JNIEXPORT jlong JNICALL
 Java_io_knowhere_NativeBindings_binarySetCreate(JNIEnv* env, jclass) {
     return Call(env, jlong{0}, [&]() -> jlong {

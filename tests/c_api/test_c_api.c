@@ -277,6 +277,105 @@ test_thread_pools(void) {
     CHECK(size == 2);
 }
 
+/* Deterministic values in [-1, 1): a linear congruential sequence keeps the
+ * test free of rand() state while making ties improbable.
+ */
+static void
+fill(float* values, int64_t count, uint32_t seed) {
+    uint32_t state = seed;
+    for (int64_t i = 0; i < count; i++) {
+        state = state * 1664525u + 1013904223u;
+        values[i] = (float)(state >> 8) / (float)(1u << 23) - 1.0f;
+    }
+}
+
+/* knowhere_bruteforce_batched returns, for every query, the same ids as
+ * knowhere_bruteforce with the same distances; the order of equal distances
+ * may differ, so ids are compared as sets.
+ */
+static void
+check_batched(const char* metric, int64_t nq, int64_t nb, int64_t dim, int64_t k) {
+    float* base_data = malloc((size_t)(nb * dim) * sizeof(float));
+    float* query_data = malloc((size_t)(nq * dim) * sizeof(float));
+    int64_t* ids = malloc((size_t)(nq * k) * sizeof(int64_t));
+    int64_t* batched_ids = malloc((size_t)(nq * k) * sizeof(int64_t));
+    float* distances = malloc((size_t)(nq * k) * sizeof(float));
+    float* batched_distances = malloc((size_t)(nq * k) * sizeof(float));
+    CHECK(base_data && query_data && ids && batched_ids && distances && batched_distances);
+    fill(base_data, nb * dim, 7u);
+    fill(query_data, nq * dim, 11u);
+    knowhere_vectors base = {base_data, (uint64_t)(nb * dim) * sizeof(float), nb, dim, KNOWHERE_FP32};
+    knowhere_vectors query = {query_data, (uint64_t)(nq * dim) * sizeof(float), nq, dim, KNOWHERE_FP32};
+    knowhere_search_result result = {ids, (uint64_t)(nq * k) * sizeof(int64_t), distances,
+                                     (uint64_t)(nq * k) * sizeof(float), k};
+    knowhere_search_result batched = {batched_ids, (uint64_t)(nq * k) * sizeof(int64_t), batched_distances,
+                                      (uint64_t)(nq * k) * sizeof(float), k};
+    char parameters[64];
+    snprintf(parameters, sizeof(parameters), "{\"metric_type\":\"%s\"}", metric);
+    OK(knowhere_bruteforce(&base, &query, NULL, &result, parameters));
+    OK(knowhere_bruteforce_batched(&base, &query, &batched, parameters));
+    for (int64_t q = 0; q < nq; q++) {
+        for (int64_t i = 0; i < k; i++) {
+            int found = 0;
+            for (int64_t j = 0; j < k; j++) {
+                if (batched_ids[q * k + j] == ids[q * k + i]) {
+                    float expected = distances[q * k + i];
+                    float actual = batched_distances[q * k + j];
+                    float tolerance = 1e-3f * (expected < 0 ? -expected : expected) + 1e-3f;
+                    CHECK(actual - expected <= tolerance && expected - actual <= tolerance);
+                    found = 1;
+                }
+            }
+            CHECK(found);
+        }
+    }
+    free(batched_distances);
+    free(distances);
+    free(batched_ids);
+    free(ids);
+    free(query_data);
+    free(base_data);
+}
+
+static void
+test_bruteforce_batched(void) {
+    /* Above and below faiss's BLAS threshold, and the other two metrics; the
+     * queries are not normalized, which COSINE must do itself.
+     */
+    check_batched("L2", 64, 300, 24, 5);
+    check_batched("L2", 3, 300, 24, 5);
+    check_batched("IP", 40, 200, 24, 4);
+    check_batched("COSINE", 40, 200, 24, 4);
+
+    float data[4] = {0, 0, 3, 4};
+    float origin[2] = {0, 0};
+    knowhere_vectors base = {data, sizeof(data), 2, 2, KNOWHERE_FP32};
+    knowhere_vectors query = {origin, sizeof(origin), 1, 2, KNOWHERE_FP32};
+    int64_t ids[4] = {-9, -9, -9, -9};
+    float distances[4] = {-9, -9, -9, -9};
+    knowhere_search_result result = {ids, sizeof(ids), distances, sizeof(distances), 4};
+    /* Fewer base rows than top_k leave the tail at -1. */
+    OK(knowhere_bruteforce_batched(&base, &query, &result, "{\"metric_type\":\"L2\"}"));
+    CHECK(ids[0] == 0 && ids[1] == 1 && ids[2] == -1 && ids[3] == -1);
+    CHECK(distances[0] == 0.0f && distances[1] == 25.0f);
+    /* Zero queries validate and leave the output as it was. */
+    query.rows = 0;
+    ids[0] = -9;
+    OK(knowhere_bruteforce_batched(&base, &query, &result, "{\"metric_type\":\"L2\"}"));
+    CHECK(ids[0] == -9);
+    query.rows = 1;
+    CHECK(knowhere_bruteforce_batched(&base, &query, &result, "{\"metric_type\":\"HAMMING\"}") ==
+          KNOWHERE_INVALID_ARGUMENT);
+    CHECK(knowhere_bruteforce_batched(&base, &query, &result, "{}") == KNOWHERE_INVALID_ARGUMENT);
+    CHECK(knowhere_bruteforce_batched(&base, &query, &result, "{\"metric_type\":\"L2\",\"k\":1}") ==
+          KNOWHERE_INVALID_ARGUMENT);
+    uint16_t half[4] = {0, 0, 0x4200, 0x4400};
+    knowhere_vectors half_base = {half, sizeof(half), 2, 2, KNOWHERE_FP16};
+    knowhere_vectors half_query = {half, 4, 1, 2, KNOWHERE_FP16};
+    CHECK(knowhere_bruteforce_batched(&half_base, &half_query, &result, "{\"metric_type\":\"L2\"}") ==
+          KNOWHERE_INVALID_ARGUMENT);
+}
+
 int
 main(void) {
     float fp32[] = {0, 0, 1, 0, 0, 2};
@@ -291,6 +390,7 @@ main(void) {
     test_binary_set();
     test_invalid();
     test_failed_initialization();
+    test_bruteforce_batched();
     test_typed(KNOWHERE_FP32, fp32, sizeof(fp32), fp32, 8, 2, "FLAT", "L2", 0);
     test_typed(KNOWHERE_FP16, fp16, sizeof(fp16), fp16, 4, 2, "FLAT", "L2", 0);
     test_typed(KNOWHERE_BF16, bf16, sizeof(bf16), bf16, 4, 2, "FLAT", "L2", 0);
