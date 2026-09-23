@@ -82,8 +82,10 @@ struct AdapterOwnedBuildParam {
     bool (*supported)(const ::faiss::Index*);
 };
 constexpr AdapterOwnedBuildParam kAdapterOwnedBuildParams[] = {
-    {"is_static", 1.0, &::faiss::cppcontrib::knowhere::supports_static_index},
-    {"store_vectors", 0.0, &::faiss::cppcontrib::knowhere::supports_dropping_stored_vectors},
+    {.name = "is_static", .value = 1.0, .supported = &::faiss::cppcontrib::knowhere::supports_static_index},
+    {.name = "store_vectors",
+     .value = 0.0,
+     .supported = &::faiss::cppcontrib::knowhere::supports_dropping_stored_vectors},
 };
 
 bool

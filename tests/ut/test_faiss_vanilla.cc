@@ -649,9 +649,8 @@ TEST_CASE("FAISS SVS Vamana LeanVec: build params accepted", "[faiss_vanilla]") 
         SUCCEED("LVQ/LeanVec unavailable in this SVS runtime build");
         return;
     }
-    const size_t nb = 4096, dim = 32, nq = 4, n_train_q = 256;
+    const size_t nb = 4096, dim = 32, nq = 4;
     auto version = knowhere::Version::GetCurrentVersion();
-    const char* name = "SVSVamana64,LeanVec4x8_16";
 
     auto make = [&]() {
         return knowhere::IndexFactory::Instance()
