@@ -574,29 +574,37 @@ struct RaBitQDistanceComputerQ final : RaBitQDistanceComputer {
     }
 
     void distance_to_code_1bit_batch_4(
-            const uint8_t* const* codes_in, float* distances) final {
+            const uint8_t* const* codes_in,
+            float* distances) final {
         if (qb != 4 || centered) {
-            RaBitQDistanceComputer::distance_to_code_1bit_batch_4(codes_in, distances);
+            RaBitQDistanceComputer::distance_to_code_1bit_batch_4(
+                    codes_in, distances);
             return;
         }
         const size_t size = (d + 7) / 8;
-        const size_t prefix = size + (nb_bits == 1 ? sizeof(SignBitFactors) : sizeof(SignBitFactorsWithError));
+        const size_t prefix = size +
+                (nb_bits == 1 ? sizeof(SignBitFactors)
+                              : sizeof(SignBitFactorsWithError));
         for (int i = 0; i < 4; ++i) {
             for (size_t offset = 0; offset < prefix; offset += 64) {
                 prefetch_L1(codes_in[i] + offset);
             }
         }
         rabitq::BitwiseAndDotProductResult results[4];
-        rabitq::bitwise_q4_batch_4<SL>(rearranged_rotated_qq.data(), codes_in, size, results);
+        rabitq::bitwise_q4_batch_4<SL>(
+                rearranged_rotated_qq.data(), codes_in, size, results);
         for (int i = 0; i < 4; ++i) {
-            const auto* factors = reinterpret_cast<const SignBitFactors*>(codes_in[i] + size);
+            const auto* factors =
+                    reinterpret_cast<const SignBitFactors*>(codes_in[i] + size);
             float final_dot = 0;
             final_dot += query_fac.c1 * results[i].dot_product;
             final_dot += query_fac.c2 * results[i].popcount;
             final_dot -= query_fac.c34;
-            const float pre_dist = factors->or_minus_c_l2sqr + query_fac.qr_to_c_L2sqr -
+            const float pre_dist = factors->or_minus_c_l2sqr +
+                    query_fac.qr_to_c_L2sqr -
                     2 * factors->dp_multiplier * final_dot;
-            distances[i] = metric_type == METRIC_L2 ? std::max(0.0f, pre_dist)
+            distances[i] = metric_type == METRIC_L2
+                    ? std::max(0.0f, pre_dist)
                     : -0.5f * (pre_dist - query_fac.qr_norm_L2sqr);
         }
     }
@@ -750,12 +758,10 @@ FlatCodesDistanceComputer* RaBitQuantizer::get_distance_computer(
     // call the SIMD-specialized rabitq functions directly (no per-call
     // with_simd_level overhead).
     //
-    // Use A0_SPR (which includes AVX512_SPR) so that on Sapphire Rapids
-    // and later x86 microarchitectures the VPOPCNTDQ-based RaBitQ
-    // specialization in rabitq_avx512_spr.cpp is selected. On AVX-512
-    // CPUs without VPOPCNTDQ, dispatch falls through to the AVX512
-    // specialization in rabitq_avx512.cpp.
-    return with_selected_simd_levels<AVAILABLE_SIMD_LEVELS_A0_SPR>(
+    // VPOPCNT rather than SPR: Ice Lake and Zen 4 have VPOPCNTDQ without the
+    // rest of the SPR feature set. Below it, dispatch falls through to
+    // rabitq_avx512.cpp.
+    return with_selected_simd_levels<AVAILABLE_SIMD_LEVELS_BASE_WITH_VPOPCNT>(
             [&]<SIMDLevel SL>() -> FlatCodesDistanceComputer* {
                 if (qb == 0) {
                     auto dc =

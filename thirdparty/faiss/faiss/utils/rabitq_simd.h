@@ -53,18 +53,26 @@ BitwiseAndDotProductResult bitwise_and_dot_product_with_popcount(
         size_t size,
         size_t qb);
 
+/// Four independent AND-dot-product/popcount pairs for a four-plane query.
+/// Query contains 4 * size bytes; each data pointer contains size bytes.
+/// Byte-aligned buffers and arbitrary byte counts are supported.
 template <SIMDLevel SL = SINGLE_SIMD_LEVEL>
 inline void bitwise_q4_batch_4(
-        const uint8_t* query, const uint8_t* const* data, size_t size,
+        const uint8_t* query,
+        const uint8_t* const* data,
+        size_t size,
         BitwiseAndDotProductResult* results) {
     for (size_t i = 0; i < 4; ++i) {
-        results[i] = bitwise_and_dot_product_with_popcount<SL>(query, data[i], size, 4);
+        results[i] = bitwise_and_dot_product_with_popcount<SL>(
+                query, data[i], size, 4);
     }
 }
 
 template <>
-void bitwise_q4_batch_4<SIMDLevel::AVX512>(
-        const uint8_t* query, const uint8_t* const* data, size_t size,
+void bitwise_q4_batch_4<SIMDLevel::AVX512_VPOPCNT>(
+        const uint8_t* query,
+        const uint8_t* const* data,
+        size_t size,
         BitwiseAndDotProductResult* results);
 
 /**
@@ -383,7 +391,8 @@ inline float ip_scalar(
         // trailing factor bytes for the scalar reference or SIMD tail.
         for (size_t i = start; i < d; ++i) {
             const int sb = (sign_bits[i / 8] >> (i % 8)) & 1;
-            result += rotated_q[i] * (static_cast<float>((sb << 8) + ex_code[i]) + cb);
+            result += rotated_q[i] *
+                    (static_cast<float>((sb << 8) + ex_code[i]) + cb);
         }
         return result;
     }

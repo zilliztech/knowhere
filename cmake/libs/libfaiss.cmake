@@ -74,13 +74,20 @@ list(APPEND FAISS_AVX512_SRCS ${FAISS_DD_AVX512_SRCS})
 # remove platform files from general files
 list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_SRCS})
 
+# AVX512 VPOPCNT is available independently of the full Sapphire Rapids ISA.
+knowhere_file_glob(
+  GLOB
+  FAISS_AVX512_VPOPCNT_SRCS
+  thirdparty/faiss/faiss/utils/hamming_distance/hamming_avx512_vpopcnt.cpp
+  thirdparty/faiss/faiss/utils/simd_impl/rabitq_avx512_vpopcnt.cpp
+)
+list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_VPOPCNT_SRCS})
+
 # AVX512 Sapphire Rapids files
 knowhere_file_glob(
   GLOB
   FAISS_AVX512_SPR_SRCS
   thirdparty/faiss/faiss/impl/scalar_quantizer/sq-avx512-spr.cpp
-  thirdparty/faiss/faiss/utils/hamming_distance/hamming_avx512_spr.cpp
-  thirdparty/faiss/faiss/utils/simd_impl/rabitq_avx512_spr.cpp
 )
 # remove platform files from general files
 list(REMOVE_ITEM FAISS_SRCS ${FAISS_AVX512_SPR_SRCS})
@@ -134,6 +141,8 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/IndexPQFastScan.cpp
   thirdparty/faiss/faiss/IndexIVFFastScan.cpp
   thirdparty/faiss/faiss/IndexIVFPQFastScan.cpp
+  thirdparty/faiss/faiss/IndexSQFastScan.cpp
+  thirdparty/faiss/faiss/IndexIVFSQFastScan.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/IndexIVFPQFastScan.cpp
   thirdparty/faiss/faiss/cppcontrib/knowhere/IVFFastScanIteratorWorkspace.cpp
 )
@@ -152,6 +161,7 @@ knowhere_file_glob(
 knowhere_file_glob(
   GLOB
   FAISS_DD_NEON_SRCS
+  thirdparty/faiss/faiss/impl/fast_scan/impl-neon.cpp
   thirdparty/faiss/faiss/impl/approx_topk/neon.cpp
   thirdparty/faiss/faiss/impl/fast_scan/impl-neon.cpp
   thirdparty/faiss/faiss/impl/binary_hamming/neon.cpp
@@ -373,11 +383,19 @@ include_directories(${xxHash_INCLUDE_DIRS})
 # generate `faiss` library for x86
 if(__X86_64)
   check_cxx_compiler_flag("-mavx512vpopcntdq" FAISS_COMPILER_SUPPORTS_AVX512VPOPCNTDQ)
+  check_cxx_compiler_flag("-mavx512bitalg" FAISS_COMPILER_SUPPORTS_AVX512BITALG)
   check_cxx_compiler_flag("-mavx512vnni" FAISS_COMPILER_SUPPORTS_AVX512VNNI)
   check_cxx_compiler_flag("-mavx512fp16" FAISS_COMPILER_SUPPORTS_AVX512FP16)
   check_cxx_compiler_flag("-mavx512bf16" FAISS_COMPILER_SUPPORTS_AVX512BF16)
-  set(FAISS_ENABLE_AVX512_SPR FALSE)
+  set(FAISS_ENABLE_AVX512_VPOPCNT FALSE)
   if(FAISS_COMPILER_SUPPORTS_AVX512VPOPCNTDQ
+     AND FAISS_COMPILER_SUPPORTS_AVX512BITALG)
+    set(FAISS_ENABLE_AVX512_VPOPCNT TRUE)
+  else()
+    message(STATUS "Skip Faiss AVX512_VPOPCNT: compiler does not support VPOPCNTDQ and BITALG")
+  endif()
+  set(FAISS_ENABLE_AVX512_SPR FALSE)
+  if(FAISS_ENABLE_AVX512_VPOPCNT
      AND FAISS_COMPILER_SUPPORTS_AVX512VNNI
      AND FAISS_COMPILER_SUPPORTS_AVX512FP16
      AND FAISS_COMPILER_SUPPORTS_AVX512BF16)
@@ -401,6 +419,7 @@ if(__X86_64)
             -mfma
             -mf16c
             -mavx512f
+            -mavx512cd
             -mavx512dq
             -mavx512bw
             -mavx512vl
@@ -408,6 +427,29 @@ if(__X86_64)
   target_compile_definitions(faiss_avx512 PRIVATE COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512)
   target_include_directories(faiss_avx512 PRIVATE ${Boost_INCLUDE_DIRS})
   target_link_libraries(faiss_avx512 PRIVATE milvus-common::milvus-common)
+
+  if(FAISS_ENABLE_AVX512_VPOPCNT)
+    add_library(faiss_avx512_vpopcnt OBJECT ${FAISS_AVX512_VPOPCNT_SRCS})
+    target_compile_options(
+      faiss_avx512_vpopcnt
+      PRIVATE $<$<COMPILE_LANGUAGE:CXX>:
+              -msse4.2
+              -mavx2
+              -mfma
+              -mf16c
+              -mavx512f
+              -mavx512cd
+              -mavx512vl
+              -mavx512dq
+              -mavx512bw
+              -mavx512vpopcntdq
+              -mavx512bitalg
+              -mpopcnt>)
+    target_compile_definitions(faiss_avx512_vpopcnt PRIVATE
+                               COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512 COMPILE_SIMD_AVX512_VPOPCNT)
+    target_include_directories(faiss_avx512_vpopcnt PRIVATE ${Boost_INCLUDE_DIRS})
+    target_link_libraries(faiss_avx512_vpopcnt PRIVATE milvus-common::milvus-common)
+  endif()
 
   if(FAISS_ENABLE_AVX512_SPR)
     add_library(faiss_avx512_spr OBJECT ${FAISS_AVX512_SPR_SRCS})
@@ -424,12 +466,14 @@ if(__X86_64)
               -mavx512dq
               -mavx512bw
               -mavx512vpopcntdq
+              -mavx512bitalg
               -mavx512vnni
               -mavx512fp16
               -mavx512bf16
               -mpopcnt>)
     target_compile_definitions(faiss_avx512_spr PRIVATE
-                               COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512 COMPILE_SIMD_AVX512_SPR)
+                               COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512
+                               COMPILE_SIMD_AVX512_VPOPCNT COMPILE_SIMD_AVX512_SPR)
     target_include_directories(faiss_avx512_spr PRIVATE ${Boost_INCLUDE_DIRS})
     target_link_libraries(faiss_avx512_spr PRIVATE milvus-common::milvus-common)
   endif()
@@ -438,6 +482,9 @@ if(__X86_64)
   target_include_directories(faiss PRIVATE ${Boost_INCLUDE_DIRS})
 
   add_dependencies(faiss faiss_avx2 faiss_avx512 knowhere_utils)
+  if(FAISS_ENABLE_AVX512_VPOPCNT)
+    add_dependencies(faiss faiss_avx512_vpopcnt)
+  endif()
   if(FAISS_ENABLE_AVX512_SPR)
     add_dependencies(faiss faiss_avx512_spr)
   endif()
@@ -457,11 +504,17 @@ if(__X86_64)
   target_link_libraries(
     faiss PUBLIC OpenMP::OpenMP_CXX ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
                  faiss_avx2 faiss_avx512 knowhere_utils)
+  if(FAISS_ENABLE_AVX512_VPOPCNT)
+    target_link_libraries(faiss PUBLIC faiss_avx512_vpopcnt)
+  endif()
   if(FAISS_ENABLE_AVX512_SPR)
     target_link_libraries(faiss PUBLIC faiss_avx512_spr)
   endif()
   target_compile_definitions(faiss PRIVATE
                              FINTEGER=int FAISS_ENABLE_DD COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512)
+  if(FAISS_ENABLE_AVX512_VPOPCNT)
+    target_compile_definitions(faiss PRIVATE COMPILE_SIMD_AVX512_VPOPCNT)
+  endif()
   if(FAISS_ENABLE_AVX512_SPR)
     target_compile_definitions(faiss PRIVATE COMPILE_SIMD_AVX512_SPR)
   endif()
@@ -489,6 +542,10 @@ if(__X86_64)
     target_compile_definitions(faiss PUBLIC FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=v0)
     target_compile_definitions(faiss_avx2 PUBLIC FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=v0)
     target_compile_definitions(faiss_avx512 PUBLIC FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=v0)
+    if(FAISS_ENABLE_AVX512_VPOPCNT)
+      target_link_libraries(faiss_avx512_vpopcnt PUBLIC svs::svs_runtime)
+      target_compile_definitions(faiss_avx512_vpopcnt PUBLIC FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=v0)
+    endif()
     if(FAISS_ENABLE_AVX512_SPR)
       target_link_libraries(faiss_avx512_spr PUBLIC svs::svs_runtime)
       target_compile_definitions(faiss_avx512_spr PUBLIC FAISS_ENABLE_SVS FAISS_SVS_RUNTIME_VERSION=v0)
@@ -549,6 +606,7 @@ if(__AARCH64)
                                      knowhere_utils)
   if(SVE_AVAILABLE)
     target_link_libraries(faiss PUBLIC faiss_sve)
+    target_compile_definitions(faiss PRIVATE COMPILE_SIMD_ARM_SVE)
   endif()
   target_compile_definitions(faiss PRIVATE FINTEGER=int FAISS_ENABLE_DD COMPILE_SIMD_ARM_NEON)
 endif()

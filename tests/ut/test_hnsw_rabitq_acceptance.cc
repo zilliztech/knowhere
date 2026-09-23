@@ -376,7 +376,8 @@ TEST_CASE("RaBitQ brute-force full distances agree across available SIMD levels"
                 std::vector<float> distances(128);
                 for (int i = 0; i < 128; ++i)
                     distances[reference.value()->GetIds()[i]] = reference.value()->GetDistance()[i];
-                for (auto level : {faiss::SIMDLevel::NONE, faiss::SIMDLevel::AVX2, faiss::SIMDLevel::AVX512}) {
+                for (int value = 0; value < static_cast<int>(faiss::SIMDLevel::COUNT); ++value) {
+                    const auto level = static_cast<faiss::SIMDLevel>(value);
                     if (!faiss::SIMDConfig::is_simd_level_available(level))
                         continue;
                     CAPTURE(metric, bits, qb, static_cast<int>(level));
@@ -432,7 +433,8 @@ TEST_CASE("RaBitQ graph recall and range search across available SIMD levels", "
         }
     } restore;
     std::vector<faiss::SIMDLevel> levels{restore.level};
-    for (auto level : {faiss::SIMDLevel::NONE, faiss::SIMDLevel::AVX2, faiss::SIMDLevel::AVX512}) {
+    for (int value = 0; value < static_cast<int>(faiss::SIMDLevel::COUNT); ++value) {
+        const auto level = static_cast<faiss::SIMDLevel>(value);
         if (faiss::SIMDConfig::is_simd_level_available(level) &&
             std::find(levels.begin(), levels.end(), level) == levels.end())
             levels.push_back(level);

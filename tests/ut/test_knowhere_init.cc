@@ -18,6 +18,7 @@
 
 #include "catch2/catch_test_macros.hpp"
 #include "knowhere/comp/knowhere_config.h"
+#include "simd/hook.h"
 
 TEST_CASE("Knowhere global config", "[init]") {
     knowhere::KnowhereConfig::ShowVersion();
@@ -80,7 +81,8 @@ TEST_CASE("Knowhere SIMD config", "[simd]") {
 
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AUTO);
         auto auto_level = faiss::SIMDConfig::get_level();
-        REQUIRE(auto_level != faiss::SIMDLevel::COUNT);
+        REQUIRE(auto_level == faiss::SIMDConfig::auto_detect_simd_level());
+        REQUIRE(faiss::SIMDConfig::get_dispatched_level() == auto_level);
 
 #ifdef __x86_64__
         // On x86_64, GENERIC disables SIMD and reports NONE. On ARM the DD level
@@ -99,15 +101,22 @@ TEST_CASE("Knowhere SIMD config", "[simd]") {
         if (faiss::SIMDConfig::is_simd_level_available(faiss::SIMDLevel::AVX512)) {
             knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX512);
             REQUIRE(faiss::SIMDConfig::get_level() == faiss::SIMDLevel::AVX512);
+            // Standalone hooks must preserve explicit caps as well.
+            faiss::cppcontrib::knowhere::fvec_hook(res);
+            REQUIRE(faiss::SIMDConfig::get_level() == faiss::SIMDLevel::AVX512);
         }
 #endif
 
 #ifdef __aarch64__
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AUTO);
-        REQUIRE(faiss::SIMDConfig::get_level() >= faiss::SIMDLevel::ARM_NEON);
+        REQUIRE((faiss::SIMDConfig::get_level() == faiss::SIMDLevel::ARM_NEON ||
+                 faiss::SIMDConfig::get_level() == faiss::SIMDLevel::ARM_SVE));
 #endif
 
-        // Restore AUTO
+        // Restoring AUTO must also restore the best available FAISS tier.
         knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AUTO);
+        faiss::cppcontrib::knowhere::fvec_hook(res);
+        REQUIRE(faiss::SIMDConfig::get_level() == auto_level);
+        REQUIRE(faiss::SIMDConfig::get_dispatched_level() == auto_level);
     }
 }

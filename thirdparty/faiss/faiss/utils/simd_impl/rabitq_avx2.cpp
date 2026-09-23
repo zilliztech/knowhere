@@ -525,7 +525,12 @@ inline float ip_1exbit_avx2(
 }
 
 #if defined(__GNUC__) && defined(__x86_64__)
-__attribute__((target("bmi2"), noinline)) float ip_bitplane_avx2(
+#define FAISS_RABITQ_BMI2_TARGET __attribute__((target("bmi2"), noinline))
+#elif defined(__BMI2__)
+#define FAISS_RABITQ_BMI2_TARGET
+#endif
+#ifdef FAISS_RABITQ_BMI2_TARGET
+FAISS_RABITQ_BMI2_TARGET float ip_bitplane_avx2(
         const uint8_t* __restrict sign_bits,
         const uint8_t* __restrict ex_code,
         const float* __restrict rotated_q,
@@ -595,19 +600,24 @@ float compute_inner_product<SIMDLevel::AVX2>(
         __m256 acc = _mm256_setzero_ps();
         const __m256 weight = _mm256_set1_ps(256.f);
         const __m256 offset = _mm256_set1_ps(cb);
-        const __m256i positions = _mm256_setr_epi32(1, 2, 4, 8, 16, 32, 64, 128);
+        const __m256i positions =
+                _mm256_setr_epi32(1, 2, 4, 8, 16, 32, 64, 128);
         size_t i = 0;
         for (; i + 8 <= d; i += 8) {
             const __m128i bytes = _mm_loadl_epi64(
                     reinterpret_cast<const __m128i*>(ex_code + i));
-            const __m256 extra = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(bytes));
+            const __m256 extra =
+                    _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(bytes));
             const __m256i mask = _mm256_cmpgt_epi32(
-                    _mm256_and_si256(_mm256_set1_epi32(sign_bits[i / 8]), positions),
+                    _mm256_and_si256(
+                            _mm256_set1_epi32(sign_bits[i / 8]), positions),
                     _mm256_setzero_si256());
             const __m256 recon = _mm256_add_ps(
                     extra, _mm256_and_ps(_mm256_castsi256_ps(mask), weight));
-            acc = _mm256_fmadd_ps(_mm256_loadu_ps(rotated_q + i),
-                                 _mm256_add_ps(recon, offset), acc);
+            acc = _mm256_fmadd_ps(
+                    _mm256_loadu_ps(rotated_q + i),
+                    _mm256_add_ps(recon, offset),
+                    acc);
         }
         return hsum_avx2(acc) +
                 ip_scalar(sign_bits, ex_code, rotated_q, i, d, ex_bits, cb);
@@ -616,8 +626,12 @@ float compute_inner_product<SIMDLevel::AVX2>(
         return ip_1exbit_avx2(sign_bits, ex_code, rotated_q, d, cb);
     }
 
+#ifdef FAISS_RABITQ_BMI2_TARGET
+    bool has_bmi2 = true;
 #if defined(__GNUC__) && defined(__x86_64__)
-    if (ex_bits <= 7 && __builtin_cpu_supports("bmi2")) {
+    has_bmi2 = __builtin_cpu_supports("bmi2");
+#endif
+    if (ex_bits <= 7 && has_bmi2) {
         return ip_bitplane_avx2(sign_bits, ex_code, rotated_q, d, ex_bits, cb);
     }
 #endif
@@ -627,3 +641,7 @@ float compute_inner_product<SIMDLevel::AVX2>(
 } // namespace faiss::rabitq::multibit
 
 #endif // COMPILE_SIMD_AVX2
+
+#ifdef FAISS_RABITQ_BMI2_TARGET
+#undef FAISS_RABITQ_BMI2_TARGET
+#endif

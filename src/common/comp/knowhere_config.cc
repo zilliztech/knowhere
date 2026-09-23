@@ -63,6 +63,7 @@ KnowhereConfig::ShowVersion() {
 std::string
 KnowhereConfig::SetSimdType(const SimdType simd_type) {
 #ifdef __x86_64__
+    faiss::cppcontrib::knowhere::use_simd_auto = (simd_type == SimdType::AUTO);
     if (simd_type == SimdType::AUTO) {
         faiss::cppcontrib::knowhere::use_avx512 = true;
         faiss::cppcontrib::knowhere::use_avx2 = true;
