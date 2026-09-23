@@ -23,6 +23,8 @@ namespace cppcontrib {
 namespace knowhere {
 
 #if defined(__x86_64__)
+// Allow FAISS to select its finer SIMD tiers only in AUTO mode.
+extern bool use_simd_auto;
 extern bool use_avx512;
 extern bool use_avx2;
 extern bool use_sse4_2;

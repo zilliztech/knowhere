@@ -119,6 +119,19 @@ TEST_CASE("RaBitQ batch4 integer kernel matches independent scalar candidates", 
             REQUIRE(actual[lane].dot_product == expected.dot_product);
             REQUIRE(actual[lane].popcount == expected.popcount);
         }
+#ifdef COMPILE_SIMD_AVX512_VPOPCNT
+        if (faiss::SIMDConfig::is_simd_level_available(faiss::SIMDLevel::AVX512_VPOPCNT)) {
+            // The upgraded batch-four specialization is in the VPOPCNT tier;
+            // the AVX512 call above now checks the four-single-call fallback.
+            faiss::rabitq::bitwise_q4_batch_4<faiss::SIMDLevel::AVX512_VPOPCNT>(query.data() + 1, codes, bytes, actual);
+            for (int lane = 0; lane < 4; ++lane) {
+                const auto expected = faiss::rabitq::bitwise_and_dot_product_with_popcount<faiss::SIMDLevel::NONE>(
+                    query.data() + 1, codes[lane], bytes, 4);
+                REQUIRE(actual[lane].dot_product == expected.dot_product);
+                REQUIRE(actual[lane].popcount == expected.popcount);
+            }
+        }
+#endif
     }
 #endif
 }

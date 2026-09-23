@@ -157,9 +157,14 @@ struct RaBitQDistanceComputer : FlatCodesDistanceComputer {
     // Compute 1-bit distance estimate (fast)
     virtual float distance_to_code_1bit(const uint8_t* code) = 0;
 
-    // Independent estimates only; callers retain sequential refinement decisions.
+    /// Compute four independent one-bit estimates, in input order, after
+    /// set_query(). Each pointer addresses one complete encoded row; rows need
+    /// not be contiguous or distinct. Output has room for four floats.
+    /// Does not refine candidates, update thresholds, or increment stats.
+    /// The default implementation delegates to four single-code evaluations.
     virtual void distance_to_code_1bit_batch_4(
-            const uint8_t* const* codes_in, float* distances) {
+            const uint8_t* const* codes_in,
+            float* distances) {
         for (size_t i = 0; i < 4; ++i) {
             distances[i] = distance_to_code_1bit(codes_in[i]);
         }

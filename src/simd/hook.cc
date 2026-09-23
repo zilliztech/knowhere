@@ -49,6 +49,7 @@
 namespace faiss::cppcontrib::knowhere {
 
 #if defined(__x86_64__)
+bool use_simd_auto = true;
 bool use_avx512 = true;
 bool use_avx2 = true;
 bool use_sse4_2 = true;
@@ -554,7 +555,10 @@ fvec_hook(std::string& simd_type) {
 #if defined(__x86_64__)
     if (faiss::SIMDConfig::is_simd_level_available(faiss::SIMDLevel::NONE)) {
         faiss::SIMDLevel target_level = faiss::SIMDLevel::NONE;
-        if (simd_type == "AVX512") {
+        if (simd_type == "AVX512" && use_simd_auto) {
+            // AUTO may use VPOPCNT or SPR; explicit AVX512 remains capped.
+            target_level = faiss::SIMDConfig::auto_detect_simd_level();
+        } else if (simd_type == "AVX512") {
             target_level = faiss::SIMDConfig::is_simd_level_available(faiss::SIMDLevel::AVX512)
                                ? faiss::SIMDLevel::AVX512
                                : faiss::SIMDConfig::auto_detect_simd_level();
