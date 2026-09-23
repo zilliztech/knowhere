@@ -64,6 +64,10 @@ public final class BinarySet implements AutoCloseable {
         NativeBindings.binarySetAllocate(requireHandle(), Objects.requireNonNull(name, "name"), length);
     }
 
+    /**
+     * Copies a chunk into an entry. Refused with {@link KnowhereException} once the set has been
+     * passed to {@link KnowhereIndex#deserialize}: an index loaded from it may still read the bytes.
+     */
     public synchronized void write(String name, long offset, ByteBuffer source) {
         NativeBindings.binarySetWrite(requireHandle(), Objects.requireNonNull(name, "name"), offset,
                 NativeBuffers.region(source, false, false));

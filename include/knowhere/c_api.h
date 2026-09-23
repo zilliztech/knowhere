@@ -39,9 +39,11 @@ extern "C" {
  * a destroyed handle return KNOWHERE_CLOSED. Mixing resource types is invalid.
  *
  * Every pointer must designate an accessible region of the stated capacity.
- * Buffers are borrowed only for the duration of a synchronous call, except
- * Build/Deserialize, which make retained native copies. The caller must prevent
- * concurrent modification of borrowed input and output buffers.
+ * Buffers are borrowed only for the duration of a synchronous call. Build makes
+ * a retained native copy of its vectors; Deserialize shares the BinarySet's
+ * entries with the index instead of copying them (see
+ * knowhere_index_deserialize). The caller must prevent concurrent modification
+ * of borrowed input and output buffers.
  */
 typedef uint64_t knowhere_index_handle;
 typedef uint64_t knowhere_binary_set_handle;
@@ -168,8 +170,13 @@ knowhere_index_info(knowhere_index_handle handle, int64_t* rows, int64_t* dimens
  */
 KNOWHERE_C_API int32_t
 knowhere_index_serialize(knowhere_index_handle handle, knowhere_binary_set_handle* output);
-/* Takes an independent snapshot of the BinarySet. It may be changed or closed
- * after this call without invalidating the index. The caller must select the
+/* Loads from the BinarySet's entries without copying them. An engine that
+ * keeps bytes past loading holds its own reference to the entries, so the
+ * BinarySet may be closed, and entries replaced with
+ * knowhere_binary_set_allocate, after this call. The bytes it held at this call
+ * must not change while an index loaded from them is open:
+ * knowhere_binary_set_write on this BinarySet returns KNOWHERE_INVALID_ARGUMENT
+ * from now on, whether or not the load succeeded. The caller must select the
  * same index type, dtype and compatible version as the original index.
  */
 KNOWHERE_C_API int32_t
@@ -218,6 +225,8 @@ KNOWHERE_C_API int32_t
 knowhere_binary_set_allocate(knowhere_binary_set_handle handle, const char* name, uint64_t length);
 /* Chunk ranges must be completely within the entry: no partial read/write.
  * A zero-length chunk at the end is valid and its data pointer may be null.
+ * Writing is refused with KNOWHERE_INVALID_ARGUMENT once the BinarySet has been
+ * passed to knowhere_index_deserialize; allocating a new entry stays allowed.
  */
 KNOWHERE_C_API int32_t
 knowhere_binary_set_write(knowhere_binary_set_handle handle, const char* name, uint64_t offset, const void* data,

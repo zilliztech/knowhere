@@ -116,10 +116,14 @@ test_typed(int dtype, const void* base_data, uint64_t bytes, const void* query_d
     OK(knowhere_index_create(type, dtype, knowhere_index_version_current(), &loaded));
     OK(knowhere_index_deserialize(loaded, set, parameters));
     CHECK(knowhere_index_deserialize(loaded, set, parameters) != KNOWHERE_SUCCESS);
-    /* Mutating the source BinarySet after Deserialize must not change the index. */
+    /* The BinarySet is frozen once an index loaded from it: the index may still
+     * read those bytes, so writing in place is refused, while replacing an entry
+     * with a fresh buffer and closing the set leave the index intact. */
     {
         uint64_t count, i, required, length;
+        uint8_t zero = 0;
         OK(knowhere_binary_set_count(set, &count));
+        CHECK(count > 0);
         for (i = 0; i < count; ++i) {
             char* name;
             OK(knowhere_binary_set_name(set, i, NULL, 0, &required));
@@ -127,6 +131,9 @@ test_typed(int dtype, const void* base_data, uint64_t bytes, const void* query_d
             CHECK(name != NULL);
             OK(knowhere_binary_set_name(set, i, name, required, &required));
             OK(knowhere_binary_set_length(set, name, &length));
+            if (length > 0) {
+                CHECK(knowhere_binary_set_write(set, name, 0, &zero, 1) == KNOWHERE_INVALID_ARGUMENT);
+            }
             OK(knowhere_binary_set_allocate(set, name, length));
             free(name);
         }

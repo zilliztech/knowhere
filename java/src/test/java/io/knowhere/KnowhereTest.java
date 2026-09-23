@@ -61,6 +61,33 @@ public class KnowhereTest {
     }
 
     @Test
+    public void binarySetIsFrozenOnceAnIndexLoadedFromIt() {
+        KnowhereIndex first = Knowhere.createIndex("FLAT", DType.FLOAT32, Knowhere.currentIndexVersion());
+        first.build(floats(0, 0, 1, 0, 0, 2), 3, 2, L2);
+        final BinarySet serialized = first.serialize();
+        first.close();
+        try (KnowhereIndex loaded = Knowhere.createIndex("FLAT", DType.FLOAT32, Knowhere.currentIndexVersion())) {
+            loaded.deserialize(serialized, L2);
+            final String name = serialized.name(0);
+            final long length = serialized.length(name);
+            // The index may still read these bytes, so writing in place is refused.
+            assertThrows(KnowhereException.class, new ThrowingRunnable() {
+                public void run() { serialized.write(name, 0, bytes(1)); }
+            });
+            // Replacing the entry with a fresh buffer and closing the set leave the index intact.
+            serialized.allocate(name, length);
+            serialized.close();
+            ByteBuffer ids = bytes(16);
+            ByteBuffer distances = bytes(8);
+            loaded.search(floats(0, 0), 1, 2, 2, null, 0, ids, distances, L2);
+            assertEquals(0, ids.getLong(0));
+            assertEquals(1, ids.getLong(8));
+            assertEquals(0f, distances.getFloat(0), 0f);
+            assertEquals(1f, distances.getFloat(4), 0f);
+        }
+    }
+
+    @Test
     public void serializationSurvivesSourceAndBinarySetClose() {
         KnowhereIndex first = Knowhere.createIndex("FLAT", DType.FLOAT32, Knowhere.currentIndexVersion());
         first.build(floats(0, 0, 1, 0, 0, 2), 3, 2, L2);

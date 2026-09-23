@@ -201,9 +201,13 @@ differ in the last bits and exact ties may change order. The C entry is
   buffers must be writable. A zero-query search writes nothing. Shape, capacity,
   alignment and integer multiplication are validated before accessing data.
 - Calls are synchronous. Keep borrowed memory alive and prevent concurrent
-  buffer modification until return. Build retains an owned copy of its input;
-  deserialization retains an independent copy of the BinarySet. The caller may
-  reuse those inputs after return. Query buffers are borrowed, not retained.
+  buffer modification until return. Build retains an owned copy of its input,
+  so that buffer may be reused after return. Deserialization does not copy: the
+  index shares the BinarySet's entries, an engine that keeps bytes past loading
+  (Cardinal does) holds its own reference to them, and the caller may close the
+  BinarySet or allocate new entries afterwards but can no longer write into it;
+  `write` on such a set throws. Loading an index therefore costs one copy of it
+  in memory, not two. Query buffers are borrowed, not retained.
 - The address form of `build` trusts its caller for what a `ByteBuffer` would
   have guaranteed: the address designates an allocated, readable region of
   `bytes` bytes holding row-major vectors in native byte order, left intact
@@ -277,7 +281,8 @@ OpenBLAS thread control compiles out.
 
 The tests exercise five dtypes with FLAT/BIN_FLAT and brute force, HNSW and
 IVF_FLAT round trips, filtering, exact fixed examples, invalid inputs, Unicode
-blob names, input retention, chunk bounds, double close, concurrent close and
+blob names, input retention for builds, the BinarySet frozen against writes
+once an index loaded from it, chunk bounds, double close, concurrent close and
 thread pool sizing before and after searches. The batched brute force is
 compared with the per-query entry for L2 above and below the BLAS threshold, IP
 and COSINE, with six concurrent callers against one serial answer, and checked

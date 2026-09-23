@@ -109,9 +109,10 @@ struct IndexResource {
     int32_t dtype = 0;
     bool file_build = false;
     State state = State::Empty;
-    // Keep retained storage alive until after the index destructor runs.
+    // Keep the build input alive until after the index destructor runs. A
+    // deserialized index shares the BinarySet's entries instead (see
+    // knowhere_index_deserialize), so nothing is kept for it here.
     std::shared_ptr<uint8_t[]> build_data;
-    knowhere::BinarySet deserialized_data;
     knowhere::Index<knowhere::IndexNode> index;
 
     IndexResource(int32_t dtype, bool file_build, knowhere::Index<knowhere::IndexNode>&& index)
@@ -122,6 +123,10 @@ struct IndexResource {
 struct BinaryResource {
     std::mutex mutex;
     knowhere::BinarySet data;
+    // Set once the entries have been handed to knowhere_index_deserialize: an
+    // index loaded from them may still read those bytes, so they can no longer
+    // be written in place. Allocating replaces an entry and stays allowed.
+    bool frozen = false;
 };
 
 std::mutex registry_mutex;
@@ -482,7 +487,13 @@ knowhere_index_deserialize(knowhere_index_handle handle, knowhere_binary_set_han
         std::lock_guard<std::mutex> index_lock(resource->mutex);
         Require(resource->state == IndexResource::State::Empty, "index initialization was already attempted");
         auto json = Parameters(parameters);
-        knowhere::BinarySet copy;
+        // The entries are shared, not copied: Knowhere's Binary holds its bytes
+        // through a shared_ptr, so an engine that keeps them past Deserialize
+        // (Cardinal keeps the BinaryPtr) holds its own reference, and the ones
+        // that read into their own structures (Faiss) let them go with the
+        // caller's BinarySet. Copying here would keep a second copy of every
+        // loaded index alive for its whole lifetime.
+        knowhere::BinarySet shared;
         {
             std::lock_guard<std::mutex> binary_lock(binary->mutex);
             for (const auto& entry : binary->data.binary_map_) {
@@ -490,16 +501,12 @@ knowhere_index_deserialize(knowhere_index_handle handle, knowhere_binary_set_han
                 Require(blob != nullptr && blob->size >= 0, "invalid serialized binary entry");
                 const uint64_t size = CheckSize(blob->size);
                 Require(size == 0 || blob->data != nullptr, "serialized binary entry has no data");
-                std::shared_ptr<uint8_t[]> bytes(new uint8_t[size]);
-                if (size != 0) {
-                    std::memcpy(bytes.get(), blob->data.get(), size);
-                }
-                copy.Append(entry.first, bytes, size);
+                shared.Append(entry.first, blob);
             }
+            binary->frozen = true;
         }
-        resource->deserialized_data = std::move(copy);
         resource->state = IndexResource::State::Failed;
-        CheckStatus(resource->index.Deserialize(resource->deserialized_data, json));
+        CheckStatus(resource->index.Deserialize(shared, json));
         Require(resource->index.Dim() > 0 && resource->index.Count() >= 0, "deserialized index has invalid shape");
         resource->state = IndexResource::State::Ready;
     });
@@ -736,6 +743,9 @@ knowhere_binary_set_write(knowhere_binary_set_handle handle, const char* name, u
     return Boundary([&] {
         auto resource = Get(binary_sets, handle, 0);
         std::lock_guard<std::mutex> lock(resource->mutex);
+        Require(!resource->frozen,
+                "binary set entries were handed to an index by deserialize and can no longer be written; allocate a "
+                "new entry instead");
         auto blob = Blob(*resource, name);
         Require(offset <= static_cast<uint64_t>(blob->size) && length <= static_cast<uint64_t>(blob->size) - offset,
                 "binary write range exceeds entry length");

@@ -87,7 +87,11 @@ public final class KnowhereIndex implements AutoCloseable {
         return BinarySet.fromIndex(requireHandle());
     }
 
-    /** Loads once. The source BinarySet may be modified or closed after this call returns. */
+    /**
+     * Loads once, sharing the BinarySet's bytes with the index instead of copying them. The
+     * BinarySet may be closed, and its entries re-allocated, after this call; writing into it is
+     * refused from then on, because an index loaded from those bytes may still read them.
+     */
     public synchronized void deserialize(BinarySet data, String parameters) {
         NativeBindings.indexDeserialize(requireHandle(), Objects.requireNonNull(data, "data").requireHandle(),
                 Objects.requireNonNull(parameters, "parameters"));
