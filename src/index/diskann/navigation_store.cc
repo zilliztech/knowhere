@@ -36,7 +36,7 @@ class RaBitQNavigationBuilder final : public diskann::NavigationBuilder {
 struct NavigationCodec {
     bool external;
     Status (*validate)(const DiskANNNavigationConfig&, std::string*);
-    uint64_t (*estimate)(const DiskANNConfig&, int64_t, int64_t);
+    std::optional<uint64_t> (*estimate)(const DiskANNConfig&, int64_t, int64_t);
     NavigationFileSet (*files)(const std::string&);
     std::unique_ptr<diskann::NavigationBuilder> (*builder)(const DiskANNConfig&);
     std::unique_ptr<NavigationStore> (*load)(const std::string&);
@@ -47,7 +47,7 @@ Codecs() {
     static const std::unordered_map<std::string, NavigationCodec> codecs = {
         {"PQ",
          {false, [](const DiskANNNavigationConfig&, std::string*) { return Status::success; },
-          [](const DiskANNConfig&, int64_t, int64_t) -> uint64_t { return 0; },
+          [](const DiskANNConfig&, int64_t, int64_t) -> std::optional<uint64_t> { return 0; },
           [](const std::string& prefix) {
               return NavigationFileSet{diskann::pq_navigation_files(prefix), {}};
           },
@@ -69,13 +69,15 @@ Codecs() {
               }
               return Status::success;
           },
-          [](const DiskANNConfig& config, int64_t rows, int64_t dim) {
+          [](const DiskANNConfig& config, int64_t rows, int64_t dim) -> std::optional<uint64_t> {
+              const auto bits = NavigationConfig(config).rbq_bits;
+              if (!bits.has_value())
+                  return std::nullopt;
               if (dim <= 0 || dim >= std::numeric_limits<int>::max()) {
                   throw std::invalid_argument("invalid DiskANN navigation dimension");
               }
               const auto prepared_dim = dim + (config.metric_type.value_or(metric::L2) == metric::IP ? 1 : 0);
-              return RaBitQStore::EstimateMemorySize(
-                  rows, prepared_dim, static_cast<uint8_t>(NavigationConfig(config).rbq_bits.value_or(1)));
+              return RaBitQStore::EstimateMemorySize(rows, prepared_dim, static_cast<uint8_t>(bits.value()));
           },
           [](const std::string& prefix) {
               return NavigationFileSet{{RaBitQStore::SidecarFilename(prefix)}, {}};
@@ -160,8 +162,11 @@ UsesExternalNavigation(const DiskANNConfig& config) {
     return Codec(config).external;
 }
 
-uint64_t
+std::optional<uint64_t>
 EstimateNavigationMemory(const DiskANNConfig& config, int64_t rows, int64_t dim) {
+    const auto* navigation = dynamic_cast<const DiskANNNavigationConfig*>(&config);
+    if (navigation && !navigation->navigation_codec.has_value())
+        return std::nullopt;
     return Codec(config).estimate(config, rows, dim);
 }
 

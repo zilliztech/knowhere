@@ -170,29 +170,31 @@ class DiskANNIndexNode : public IndexNode {
     StaticEstimateLoadResource(const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
                                const knowhere::BaseConfig& config, const IndexVersion& version) {
         const auto& disk_config = static_cast<const DiskANNConfig&>(config);
-        if (UsesExternalNavigation(disk_config)) {
-            try {
-                const auto navigation_bytes = EstimateNavigationMemory(disk_config, num_rows, dim);
-                const long double raw_bytes = static_cast<long double>(num_rows) * dim * sizeof(float);
-                const long double cache_bytes = std::max(
-                    static_cast<long double>(disk_config.search_cache_budget_gb.value_or(0)) * (1ULL << 30),
-                    static_cast<long double>(disk_config.search_cache_budget_gb_ratio.value_or(0)) * raw_bytes);
-                // Keep the legacy engine allowance for scratch, PQ tables and
-                // other loading overhead. Add the codec's persistent storage
-                // and cache budget explicitly. This is a conservative estimate,
-                // not an exact RSS prediction or a replacement for Size().
-                const long double memory_bytes =
-                    file_size_in_bytes / 4 + static_cast<long double>(navigation_bytes) + std::ceil(cache_bytes);
-                if (!std::isfinite(memory_bytes) || memory_bytes < 0 ||
-                    memory_bytes >= static_cast<long double>(std::numeric_limits<uint64_t>::max())) {
-                    return expected<Resource>::Err(Status::invalid_args, "DiskANN resource estimate overflows");
-                }
-                return Resource{.memoryCost = static_cast<uint64_t>(memory_bytes), .diskCost = file_size_in_bytes};
-            } catch (const std::exception& e) {
-                return expected<Resource>::Err(Status::invalid_args, e.what());
-            }
+        if (num_rows < 0 || dim <= 0) {
+            return expected<Resource>::Err(Status::invalid_args, "Invalid DiskANN resource estimate dimensions");
         }
-        return Resource{.memoryCost = file_size_in_bytes / 4, .diskCost = file_size_in_bytes};
+        try {
+            const auto navigation_bytes = EstimateNavigationMemory(disk_config, num_rows, dim);
+            const long double raw_bytes = static_cast<long double>(num_rows) * dim * sizeof(float);
+            const long double cache_bytes =
+                std::max(static_cast<long double>(disk_config.search_cache_budget_gb.value_or(0)) * (1ULL << 30),
+                         static_cast<long double>(disk_config.search_cache_budget_gb_ratio.value_or(0)) * raw_bytes);
+            // Preserve the legacy engine allowance. Without complete model
+            // parameters, budget the entire serialized payload as resident
+            // rather than guessing PQ or applying the RBQ build defaults.
+            // Cache is additional in every branch, including explicit PQ.
+            // This estimates admission costs, not exact or peak RSS.
+            const long double memory_bytes = file_size_in_bytes / 4 +
+                                             static_cast<long double>(navigation_bytes.value_or(file_size_in_bytes)) +
+                                             std::ceil(cache_bytes);
+            if (!std::isfinite(memory_bytes) || memory_bytes < 0 ||
+                memory_bytes >= static_cast<long double>(std::numeric_limits<uint64_t>::max())) {
+                return expected<Resource>::Err(Status::invalid_args, "DiskANN resource estimate overflows");
+            }
+            return Resource{.memoryCost = static_cast<uint64_t>(memory_bytes), .diskCost = file_size_in_bytes};
+        } catch (const std::exception& e) {
+            return expected<Resource>::Err(Status::invalid_args, e.what());
+        }
     }
 
     Status

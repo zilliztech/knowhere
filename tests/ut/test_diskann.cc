@@ -806,7 +806,7 @@ TEST_CASE("DiskANN navigation load resource estimate", "[diskann][rabitq][resour
             config["navigation_codec"] = "PQ";
             auto pq = Static::EstimateLoadResource(kNativeDiskANN, version, file_bytes, rows, dim, config);
             REQUIRE(pq.has_value());
-            REQUIRE(pq.value().memoryCost == file_bytes / 4);
+            REQUIRE(pq.value().memoryCost == file_bytes / 4 + rows * dim * sizeof(float) / 2);
             REQUIRE(pq.value().diskCost == file_bytes);
         }
     }
@@ -817,6 +817,127 @@ TEST_CASE("DiskANN navigation load resource estimate", "[diskann][rabitq][resour
         auto invalid = Static::EstimateLoadResource("DISKANN_RABITQ", version, file_bytes, shape.first, shape.second,
                                                     {{"rbq_bits", 8}});
         REQUIRE_FALSE(invalid.has_value());
+    }
+}
+
+TEST_CASE("DiskANN static estimate does not infer persisted navigation from build defaults",
+          "[diskann][rabitq][resource]") {
+    using Static = knowhere::IndexStaticFaced<knowhere::fp32>;
+    const auto version = GenTestVersionList();
+    constexpr uint64_t file_bytes = 1ULL << 30;
+    constexpr int64_t rows = 1000000, dim = 1536;
+    constexpr uint64_t fallback = file_bytes + file_bytes / 4;
+    for (const auto* metric : {"L2", "IP", "COSINE"}) {
+        for (const auto* type : {kNativeDiskANN, "DISKANN_RABITQ"}) {
+            knowhere::Json config = {{"metric_type", metric}, {"disk_pq_dims", 16}};
+            auto estimate = [&](const knowhere::Json& params, uint64_t bytes = 1ULL << 30) {
+                return Static::EstimateLoadResource(type, version, bytes, rows, dim, params);
+            };
+            auto missing = estimate(config);
+            REQUIRE(missing.has_value());
+            REQUIRE(missing.value().memoryCost == fallback);
+            REQUIRE(missing.value().diskCost == file_bytes);
+            config["navigation_codec"] = "RABITQ";
+            auto missing_bits = estimate(config);
+            REQUIRE(missing_bits.has_value());
+            REQUIRE(missing_bits.value().memoryCost == fallback);
+            config["search_cache_budget_gb"] = 0.25;
+            auto cache = estimate(config);
+            REQUIRE(cache.has_value());
+            REQUIRE(cache.value().memoryCost == fallback + (1ULL << 28));
+            config["search_cache_budget_gb_ratio"] = 0.5;
+            auto ratio = estimate(config);
+            REQUIRE(ratio.has_value());
+            REQUIRE(ratio.value().memoryCost == fallback + rows * dim * sizeof(float) / 2);
+            config["rbq_bits"] = 1;
+            auto known = estimate(config);
+            REQUIRE(known.has_value());
+            REQUIRE(known.value().memoryCost < ratio.value().memoryCost);
+            config.erase("rbq_bits");
+            REQUIRE_FALSE(estimate(config, std::numeric_limits<uint64_t>::max()).has_value());
+        }
+        // A bit count without a codec cannot identify the persisted model.
+        auto only_bits = Static::EstimateLoadResource(kNativeDiskANN, version, file_bytes, rows, dim,
+                                                      {{"metric_type", metric}, {"rbq_bits", 9}});
+        REQUIRE(only_bits.has_value());
+        REQUIRE(only_bits.value().memoryCost == fallback);
+    }
+    for (const auto* codec : {"PQ", "RABITQ"}) {
+        knowhere::Json config = {{"navigation_codec", codec}, {"search_cache_budget_gb", 0.25}};
+        auto result = Static::EstimateLoadResource(kNativeDiskANN, version, file_bytes, rows, dim, config);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value().memoryCost == (std::string(codec) == "PQ" ? file_bytes / 4 : fallback) + (1ULL << 28));
+        config["search_cache_budget_gb"] = std::numeric_limits<float>::max();
+        REQUIRE_FALSE(Static::EstimateLoadResource(kNativeDiskANN, version, file_bytes, rows, dim, config).has_value());
+    }
+    for (const auto& shape : {std::pair<int64_t, int64_t>{-1, dim}, {rows, 0}, {rows, -1}}) {
+        REQUIRE_FALSE(Static::EstimateLoadResource(kNativeDiskANN, version, file_bytes, shape.first, shape.second, {})
+                          .has_value());
+    }
+}
+
+TEST_CASE("DiskANN automatic RBQ load and resource estimate with SSD PQ", "[diskann][rabitq][resource]") {
+    using Static = knowhere::IndexStaticFaced<knowhere::fp32>;
+    const auto* metric = GENERATE("L2", "IP", "COSINE");
+    const auto bits = GENERATE(1, 8, 9);
+    CAPTURE(metric, bits);
+    fs::remove_all(kDir);
+    fs::create_directories(kDir);
+    constexpr int rows = 512, dim = 256;
+    auto base = GenDataSet(rows, dim, 77);
+    auto query = GenDataSet(4, dim, 78);
+    WriteRawDataToDisk<float>(kRawDataPath, static_cast<const float*>(base->GetTensor()), rows, dim);
+    const auto version = GenTestVersionList();
+    const auto prefix = kDir + "/estimate";
+    auto create = [&]() {
+        std::shared_ptr<milvus::FileManager> manager = std::make_shared<milvus::LocalFileManager>();
+        return knowhere::IndexFactory::Instance()
+            .Create<knowhere::fp32>(kNativeDiskANN, version, knowhere::Pack(manager))
+            .value();
+    };
+    knowhere::Json build = {{"dim", dim},
+                            {"metric_type", metric},
+                            {"navigation_codec", "RABITQ"},
+                            {"index_prefix", prefix},
+                            {"data_path", kRawDataPath},
+                            {"max_degree", 16},
+                            {"search_list_size", 32},
+                            {"build_dram_budget_gb", 1.0},
+                            {"disk_pq_dims", 4}};
+    // Exercise the unchanged one-bit BUILD default, distinct from an unknown
+    // bit count when estimating a previously persisted model.
+    if (bits != 1)
+        build["rbq_bits"] = bits;
+    REQUIRE(create().Build(nullptr, build) == knowhere::Status::success);
+    uint64_t file_bytes = 0;
+    for (const auto& entry : fs::directory_iterator(kDir)) {
+        if (entry.is_regular_file() && entry.path().string().find(prefix + "_") == 0)
+            file_bytes += entry.file_size();
+    }
+    knowhere::RaBitQStore stored(knowhere::RaBitQStore::SidecarFilename(prefix));
+    const auto prepared_dim = dim + (std::string(metric) == "IP");
+    REQUIRE(stored.MemorySize() == knowhere::RaBitQStore::EstimateMemorySize(rows, prepared_dim, bits));
+    if (bits >= 8)
+        REQUIRE(file_bytes / 4 < stored.MemorySize());
+    knowhere::Json load = {{"metric_type", metric},
+                           {"index_prefix", prefix},
+                           {"search_cache_budget_gb", 0.00001},
+                           {"use_bfs_cache", true},
+                           {"warm_up", false}};
+    auto estimate = Static::EstimateLoadResource(kNativeDiskANN, version, file_bytes, rows, dim, load);
+    REQUIRE(estimate.has_value());
+    REQUIRE(estimate.value().memoryCost >= file_bytes + file_bytes / 4);
+    REQUIRE(estimate.value().memoryCost > stored.MemorySize());
+    auto loaded = create();
+    knowhere::BinarySet empty;
+    REQUIRE(loaded.Deserialize(empty, load) == knowhere::Status::success);
+    auto result = loaded.Search(
+        query, {{"metric_type", metric}, {"k", 10}, {"search_list_size", 128}, {"beamwidth", 4}}, nullptr);
+    REQUIRE(result.has_value());
+    for (int i = 0; i < 40; ++i) {
+        REQUIRE(result.value()->GetIds()[i] >= 0);
+        REQUIRE(result.value()->GetIds()[i] < rows);
+        REQUIRE(std::isfinite(result.value()->GetDistance()[i]));
     }
 }
 

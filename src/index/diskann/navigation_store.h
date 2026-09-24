@@ -3,6 +3,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,7 +39,9 @@ class NavigationStore {
 // search parameters. New codecs are added here, not to cached_beam_search.
 bool
 UsesExternalNavigation(const DiskANNConfig& config);
-uint64_t
+// Missing codec/model parameters require a file-size-based static estimate;
+// build defaults must not be mistaken for persisted model metadata.
+std::optional<uint64_t>
 EstimateNavigationMemory(const DiskANNConfig& config, int64_t rows, int64_t dim);
 struct NavigationFileSet {
     std::vector<std::string> required;

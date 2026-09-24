@@ -219,8 +219,8 @@ class DiskANNNavigationConfig : public DiskANNConfig {
             .for_deserialize()
             .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(rbq_bits)
-            .description("number of RaBitQ bits per database vector dimension")
-            .set_default(1)
+            .description("number of RaBitQ bits per database vector dimension; build defaults to 1")
+            .allow_empty_without_default()
             .set_range(1, 9)
             .for_train()
             .for_static();
