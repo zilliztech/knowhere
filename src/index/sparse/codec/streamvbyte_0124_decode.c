@@ -9,7 +9,11 @@
 #include <stdint.h>
 #include <string.h>  // for memcpy
 
-#if defined(__SSE4_1__) || defined(__ARM_NEON__) || defined(__ARM_NEON)
+#if defined(__SSE4_1__) || defined(__ARM_NEON__) || defined(__ARM_NEON) || defined(__loongarch_sx)
+#define KNOWHERE_STREAMVBYTE_SIMD
+#endif
+
+#ifdef KNOWHERE_STREAMVBYTE_SIMD
 // using 0,1,2,4 bytes per value
 static uint8_t lengthTable[256] = {
     0, 1, 2, 4,  1, 2, 3, 5,  2, 3, 4,  6,  4,  5,  6,  8,  1, 2, 3,  5,  2, 3,  4,  6,  3,  4,  5,  7,  5,  6,  7,  9,
@@ -285,11 +289,33 @@ static int8_t shuffleTable[256][16] = {
 
 #if defined(__SSE4_1__)
 #include <immintrin.h>
+#elif defined(__loongarch_sx)
+#include <lsxintrin.h>
 #elif defined(__ARM_NEON__) || defined(__ARM_NEON)
 #include <arm_neon.h>
 #endif
 
-#ifdef __SSE4_1__
+#if defined(__loongarch_sx)
+typedef __m128i decode_t;
+
+static inline decode_t
+svb_decode_uint32x4(const uint8_t key, const uint8_t* __restrict__* dataPtrPtr) {
+    uint8_t len = 0;
+    decode_t Data = __lsx_vld((void*)*dataPtrPtr, 0);
+    decode_t Shuf = __lsx_vld((void*)&shuffleTable[key], 0);
+    len = lengthTable[key];
+    // vshuf.b indexes its second input for indices 0..15 and its first
+    // input for 16..31. A table entry of -1 therefore selects a zero byte.
+    Data = __lsx_vshuf_b(__lsx_vldi(0), Data, Shuf);
+    *dataPtrPtr += len;
+    return Data;
+}
+
+static inline void
+svb_write_uint32x4(uint32_t* out, decode_t Vec) {
+    __lsx_vst(Vec, out, 0);
+}
+#elif defined(__SSE4_1__)
 typedef __m128i decode_t;
 
 static inline decode_t
@@ -308,7 +334,7 @@ static inline void
 svb_write_uint32x4(uint32_t* out, decode_t Vec) {
     _mm_storeu_si128((__m128i*)out, Vec);
 }
-#endif  // __SSE4_1__
+#endif  // __loongarch_sx || __SSE4_1__
 
 #if defined(__ARM_NEON__) || defined(__ARM_NEON)
 typedef uint8x16_t decode_t;
@@ -376,7 +402,7 @@ svb_decode_scalar(uint32_t* outPtr, const uint8_t* keyPtr, const uint8_t* dataPt
     return dataPtr;  // pointer to first unused byte after end
 }
 
-#if defined(__SSE4_1__) || defined(__ARM_NEON__) || defined(__ARM_NEON)
+#ifdef KNOWHERE_STREAMVBYTE_SIMD
 static const uint8_t*
 svb_decode_vec128_simple(uint32_t* out, const uint8_t* __restrict__ keyPtr, const uint8_t* __restrict__ dataPtr,
                          uint64_t count) {
@@ -449,7 +475,7 @@ svb_decode_vec128_simple(uint32_t* out, const uint8_t* __restrict__ keyPtr, cons
 
     return dataPtr;
 }
-#endif  // __SSE4_1__ || __ARM_NEON__ || __ARM_NEON
+#endif  // KNOWHERE_STREAMVBYTE_SIMD
 
 // Read count 32-bit integers in maskedvbyte format from in, storing the result
 // in out.  Returns the number of bytes read.
@@ -463,12 +489,12 @@ streamvbyte_decode_0124(const uint8_t* in, uint32_t* out, uint32_t count) {
     uint32_t keyLen = ((count + 3) / 4);       // 2-bits per key (rounded up)
     const uint8_t* dataPtr = keyPtr + keyLen;  // data starts at end of keys
 
-#if defined(__SSE4_1__) || defined(__ARM_NEON__) || defined(__ARM_NEON)
+#ifdef KNOWHERE_STREAMVBYTE_SIMD
     dataPtr = svb_decode_vec128_simple(out, keyPtr, dataPtr, count);
     out += count & ~31U;
     keyPtr += (count / 4) & ~7U;
     count &= 31;
-#endif  // __SSE4_1__ || __ARM_NEON__ || __ARM_NEON
+#endif  // KNOWHERE_STREAMVBYTE_SIMD
 
     return (size_t)(svb_decode_scalar(out, keyPtr, dataPtr, count) - in);
 }

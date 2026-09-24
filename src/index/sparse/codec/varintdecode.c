@@ -5,6 +5,8 @@
 //   Repository: https://github.com/lemire/MaskedVByte
 //   License: Apache License 2.0
 
+#include <stddef.h>
+
 #if defined(_MSC_VER)
 /* Microsoft C/C++-compatible compiler */
 #if (defined(_M_IX86) || defined(_M_AMD64))
@@ -19,8 +21,10 @@
 
 #elif defined(__aarch64__)
 #define SIMDE_ENABLE_NATIVE_ALIASES
-/* GCC-compatible compiler, targeting ARM with NEON */
+/* GCC-compatible compiler, targeting ARM with NEON through SIMDe */
 #include <simde/x86/sse4.1.h>
+#elif defined(__loongarch_sx)
+#include "lsx_sse_compat.h"
 #elif defined(__GNUC__) && defined(__IWMMXT__)
 /* GCC-compatible compiler, targeting ARM with WMMX */
 #include <mmintrin.h>
