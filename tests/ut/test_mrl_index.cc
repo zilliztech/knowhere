@@ -91,3 +91,27 @@ TEST_CASE("MRL cosine refinement preserves full-dimensional norms", "[mrl]") {
     REQUIRE(loaded_result.has_value());
     REQUIRE(loaded_result.value()->GetIds()[0] == 1);
 }
+
+TEST_CASE("MRL refinement preserves sentinel ids for fully filtered results", "[mrl]") {
+    float base_data[] = {0.0f, 0.0f, 100.0f, 100.0f, 1.0f, 1.0f, 0.0f, 0.0f};
+    float query_data[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    auto base = knowhere::GenDataSet(2, kSourceDim, base_data);
+    auto query = knowhere::GenDataSet(1, kSourceDim, query_data);
+    knowhere::Json config = {
+        {knowhere::meta::DIM, kMRLDim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
+        {knowhere::meta::TOPK, 2},
+    };
+
+    auto index = CreateMRLIndex(base_data, true);
+    REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
+    uint8_t bitset_data[]{0x03};
+    knowhere::BitsetView bitset(bitset_data, 2, 2);
+    auto result = index.Search(query, config, bitset);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == -1);
+    REQUIRE(result.value()->GetIds()[1] == -1);
+    auto node_config = index.Node()->CreateConfig();
+    static_cast<knowhere::BaseConfig&>(*node_config).k.reset();
+    REQUIRE_FALSE(index.Node()->Search(query, std::move(node_config), bitset, nullptr).has_value());
+}
