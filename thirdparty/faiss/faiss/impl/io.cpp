@@ -84,6 +84,10 @@ FileIOReader::~FileIOReader() {
 }
 
 size_t FileIOReader::operator()(void* ptr, size_t size, size_t nitems) {
+    // Empty serialized vectors may have a null data pointer.
+    if (size == 0 || nitems == 0) {
+        return 0;
+    }
     return fread(ptr, size, nitems, f);
 }
 
@@ -119,6 +123,10 @@ FileIOWriter::~FileIOWriter() {
 }
 
 size_t FileIOWriter::operator()(const void* ptr, size_t size, size_t nitems) {
+    // Avoid passing null to the C stdio API, even for a zero-byte write.
+    if (size == 0 || nitems == 0) {
+        return 0;
+    }
     return fwrite(ptr, size, nitems, f);
 }
 

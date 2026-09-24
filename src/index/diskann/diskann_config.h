@@ -17,6 +17,10 @@
 
 namespace knowhere {
 
+class DiskANNNavigationConfig;
+Status
+ValidateNavigationConfig(const DiskANNNavigationConfig& config, std::string* error);
+
 namespace {
 
 constexpr const CFG_INT::value_type kSearchListSizeMinValue = 16;
@@ -116,7 +120,8 @@ class DiskANNConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(disk_pq_dims)
             .description("the dimension of compressed vectors stored on the ssd, use 0 to store uncompressed data.")
             .set_default(0)
-            .for_train();
+            .for_train()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(accelerate_build)
             .description("a flag to enbale fast build.")
             .set_default(false)
@@ -126,13 +131,15 @@ class DiskANNConfig : public BaseConfig {
             .set_default(0)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .for_train()
-            .for_deserialize();
+            .for_deserialize()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_cache_budget_gb)
             .description("the size of cached nodes in GB.")
             .set_default(0)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .for_train()
-            .for_deserialize();
+            .for_deserialize()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(warm_up)
             .description("should do warm up before search.")
             .set_default(false)
@@ -193,6 +200,63 @@ class DiskANNConfig : public BaseConfig {
                 break;
         }
         return Status::success;
+    }
+};
+
+// Codec selection and codec-specific knobs are validated at this boundary;
+// the disk graph searcher receives only a query-local distance computer.
+class DiskANNNavigationConfig : public DiskANNConfig {
+ public:
+    CFG_STRING navigation_codec;
+    CFG_INT rbq_bits;
+    CFG_INT rbq_bits_query;
+
+    KNOWHERE_DECLARE_CONFIG(DiskANNNavigationConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(navigation_codec)
+            .description("navigation codec: build defaults to PQ; load detects stored codec unless constrained")
+            .allow_empty_without_default()
+            .for_train()
+            .for_deserialize()
+            .for_static();
+        KNOWHERE_CONFIG_DECLARE_FIELD(rbq_bits)
+            .description("number of RaBitQ bits per database vector dimension; build defaults to 1")
+            .allow_empty_without_default()
+            .set_range(1, 9)
+            .for_train()
+            .for_static();
+        KNOWHERE_CONFIG_DECLARE_FIELD(rbq_bits_query)
+            .description("query bits for the RaBitQ coarse estimator; 0 uses FP32")
+            .set_default(4)
+            .set_range(0, 8)
+            .for_search();
+    }
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        const auto base_status = DiskANNConfig::CheckAndAdjust(param_type, err_msg);
+        if (base_status != Status::success) {
+            return base_status;
+        }
+        return ValidateNavigationConfig(*this, err_msg);
+    }
+};
+
+class DiskANNRaBitQConfig : public DiskANNNavigationConfig {
+ public:
+    KNOWHERE_DECLARE_CONFIG(DiskANNRaBitQConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(navigation_codec)
+            .description("DISKANN_RABITQ fixes the navigation codec to RABITQ")
+            .set_default("RABITQ")
+            .for_train()
+            .for_deserialize()
+            .for_static();
+    }
+    Status
+    CheckAndAdjust(PARAM_TYPE type, std::string* error) override {
+        if (navigation_codec.value_or("RABITQ") != "RABITQ") {
+            return HandleError(error, "DISKANN_RABITQ requires navigation_codec=RABITQ", Status::invalid_args);
+        }
+        return DiskANNNavigationConfig::CheckAndAdjust(type, error);
     }
 };
 }  // namespace knowhere

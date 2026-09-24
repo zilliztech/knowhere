@@ -28,6 +28,12 @@ namespace diskann {
     unsigned n_cache_hits = 0;  // # cache_hits
     unsigned n_hops = 0;        // # search hops
     unsigned n_iters = 0;       // # range search iterations
+
+    // Optional approximate-distance refinement statistics. These remain zero
+    // for ordinary DiskANN PQ navigation.
+    unsigned n_approx_estimates = 0;
+    unsigned n_approx_refinements = 0;
+    unsigned n_approx_pruned = 0;
   };
 
   template<typename T>
