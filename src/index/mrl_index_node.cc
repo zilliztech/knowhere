@@ -290,8 +290,12 @@ MRLIndexNode::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, cons
         return expected<DataSetPtr>::Err(Status::invalid_args, "invalid MRL search config");
     }
 
+    const auto& base_cfg = static_cast<const BaseConfig&>(*cfg);
+    if (!base_cfg.k.has_value()) {
+        return expected<DataSetPtr>::Err(Status::invalid_args, "MRL search requires topk");
+    }
     const auto nq = dataset->GetRows();
-    const auto topk = static_cast<const BaseConfig&>(*cfg).k.value();
+    const auto topk = base_cfg.k.value();
     auto result = base_index_.Node()->Search(PreparePrefixDataSet(dataset), std::move(cfg), bitset, op_context);
     if (!result.has_value() || !with_mrl_refine_) {
         return result;
