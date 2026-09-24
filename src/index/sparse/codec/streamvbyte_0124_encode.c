@@ -343,9 +343,9 @@ svb_encode_scalar(const uint32_t* in, uint8_t* __restrict__ keyPtr, uint8_t* __r
 #ifdef KNOWHERE_STREAMVBYTE_SIMD
 typedef __m128i encode_t;
 
+#if defined(__loongarch_sx)
 static size_t
 streamvbyte_encode4(__m128i in, uint8_t* outData, uint8_t* outCode) {
-#if defined(__loongarch_sx)
     const __m128i ones = __lsx_vrepli_w(1);
     const __m128i zero_mask = __lsx_vseqi_w(in, 0);
     const __m128i byte_mask = __lsx_vseqi_w(__lsx_vsrli_w(in, 8), 0);
@@ -363,7 +363,16 @@ streamvbyte_encode4(__m128i in, uint8_t* outData, uint8_t* outCode) {
     __lsx_vst(out, outData, 0);
     *outCode = code;
     return length;
-#else
+}
+
+static size_t
+streamvbyte_encode_quad(const uint32_t* in, uint8_t* outData, uint8_t* outKey) {
+    __m128i vin = __lsx_vld((void*)in, 0);
+    return streamvbyte_encode4(vin, outData, outKey);
+}
+#else  // __SSE4_1__
+static size_t
+streamvbyte_encode4(__m128i in, uint8_t* outData, uint8_t* outCode) {
     const __m128i Ones = _mm_set1_epi32(0x01010101);
     const __m128i GatherBits = _mm_set1_epi32(0x08040102);
     const __m128i CodeTable = _mm_set_epi32(0x03030303, 0x03030303, 0x03030303, 0x02020100);
@@ -386,18 +395,14 @@ streamvbyte_encode4(__m128i in, uint8_t* outData, uint8_t* outCode) {
     _mm_storeu_si128((__m128i*)outData, out);
     *outCode = (uint8_t)code;
     return length;
-#endif
 }
 
 static size_t
 streamvbyte_encode_quad(const uint32_t* in, uint8_t* outData, uint8_t* outKey) {
-#if defined(__loongarch_sx)
-    __m128i vin = __lsx_vld((void*)in, 0);
-#else
     __m128i vin = _mm_loadu_si128((const __m128i*)in);
-#endif
     return streamvbyte_encode4(vin, outData, outKey);
 }
+#endif  // __loongarch_sx
 #endif  // KNOWHERE_STREAMVBYTE_SIMD
 
 size_t
