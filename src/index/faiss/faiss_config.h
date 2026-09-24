@@ -66,6 +66,16 @@ class FaissConfig : public BaseConfig {
     // "HNSW32,Flat", "BIVF256,Hamming".
     CFG_STRING faiss_index_name;
 
+    // Train for out-of-distribution queries (arXiv:2312.16335) instead of assuming
+    // queries follow the database distribution. A query sample can be attached to
+    // the train dataset under meta::TRAIN_QUERY_TENSOR / meta::TRAIN_QUERY_ROWS.
+    //
+    // Effectively defaults to true, but only where the family implements
+    // faiss::Index::train_with_queries (the SVS LeanVec families today). Left
+    // without a config default on purpose: Train distinguishes "unset" from an
+    // explicit true, which it rejects on a family that cannot honor it.
+    CFG_BOOL ood_training;
+
     // Captured subset of the incoming JSON: only keys that this config's __DICT__
     // does NOT declare (i.e. not owned by Knowhere's native config layer). Those are
     // the keys the vanilla faiss adapter forwards to faiss::ParameterSpace
@@ -81,6 +91,10 @@ class FaissConfig : public BaseConfig {
             .for_train()
             .for_deserialize()
             .for_deserialize_from_file();
+        KNOWHERE_CONFIG_DECLARE_FIELD(ood_training)
+            .description("train for out-of-distribution queries. default: true")
+            .allow_empty_without_default()
+            .for_train();
     }
 
     void

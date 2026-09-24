@@ -9,13 +9,16 @@
 #include <faiss/IndexBinary.h>
 #include <faiss/IndexBinaryIVF.h>
 #include <faiss/IndexHNSW.h>
+#include <faiss/IndexIDMap.h>
 #include <faiss/IndexIVF.h>
 #include <faiss/IndexPQ.h>
 #include <faiss/IndexPreTransform.h>
 #include <faiss/IndexRefine.h>
 
 #ifdef FAISS_ENABLE_SVS
+#include <faiss/svs/IndexSVSIVFLeanVec.h>
 #include <faiss/svs/IndexSVSVamana.h>
+#include <faiss/svs/IndexSVSVamanaLeanVec.h>
 #endif
 
 namespace faiss::cppcontrib::knowhere {
@@ -237,6 +240,21 @@ std::set<std::string> supported_build_param_names() {
             "prune_headroom",
             "efConstruction",
             "efSearch",
+#ifdef FAISS_ENABLE_SVS
+            // SVS Vamana family, including its LVQ / LeanVec subclasses.
+            "search_window_size",
+            "search_buffer_capacity",
+            "graph_max_degree",
+            "prune_to",
+            "alpha",
+            "construction_window_size",
+            "max_candidate_pool_size",
+            "use_full_search_history",
+            "storage_kind",
+            "is_static",
+            "store_vectors",
+            "leanvec_d",
+#endif
     };
     return kNames;
 }
@@ -254,6 +272,57 @@ bool is_supported_build_param(const std::string& name) {
         return is_supported_build_param(name.substr(kPrefixLen));
     }
     return false;
+}
+
+bool supports_train_with_queries(const ::faiss::Index* index) {
+#ifdef FAISS_ENABLE_SVS
+    // The only families that override the base no-op.
+    if (dynamic_cast<const ::faiss::IndexSVSVamanaLeanVec*>(index) ||
+        dynamic_cast<const ::faiss::IndexSVSIVFLeanVec*>(index)) {
+        return true;
+    }
+#else
+    (void)index;
+#endif
+    return false;
+}
+
+namespace {
+
+#ifdef FAISS_ENABLE_SVS
+// The wrappers ParameterSpace forwards build params into verbatim.
+const ::faiss::Index* build_param_target(const ::faiss::Index* index) {
+    if (auto* idm = dynamic_cast<const ::faiss::IndexIDMap*>(index)) {
+        return build_param_target(idm->index);
+    }
+    if (auto* pt = dynamic_cast<const ::faiss::IndexPreTransform*>(index)) {
+        return build_param_target(pt->index);
+    }
+    if (auto* rfn = dynamic_cast<const ::faiss::IndexRefine*>(index)) {
+        return build_param_target(rfn->base_index);
+    }
+    return index;
+}
+#endif
+
+bool is_svs_vamana(const ::faiss::Index* index) {
+#ifdef FAISS_ENABLE_SVS
+    return dynamic_cast<const ::faiss::IndexSVSVamana*>(
+                   build_param_target(index)) != nullptr;
+#else
+    (void)index;
+    return false;
+#endif
+}
+
+} // namespace
+
+bool supports_static_index(const ::faiss::Index* index) {
+    return is_svs_vamana(index);
+}
+
+bool supports_dropping_stored_vectors(const ::faiss::Index* index) {
+    return is_svs_vamana(index);
 }
 
 // ---------- runtime setter (walks into wrappers) ----------
