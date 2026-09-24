@@ -356,7 +356,7 @@ namespace diskann {
     bool       _has_built = false;
     DISTFUN<T> _func = nullptr;
     DISTFUN<T> _distance;
-    unsigned                                       _width = 0;
+    std::atomic<unsigned>                          _width{0};
     unsigned                                       _ep = 0;
     size_t _max_range_of_loaded_graph = 0;
     bool   _saturate_graph = false;

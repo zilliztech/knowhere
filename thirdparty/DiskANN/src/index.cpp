@@ -395,7 +395,8 @@ namespace diskann {
     _u64 index_size = 24;
     _u32 max_degree = 0;
     out.write((char *) &index_size, sizeof(uint64_t));
-    out.write((char *) &_width, sizeof(unsigned));
+    unsigned width = _width.load(std::memory_order_relaxed);
+    out.write((char *) &width, sizeof(unsigned));
     unsigned ep_u32 = _ep;
     out.write((char *) &ep_u32, sizeof(unsigned));
     out.write((char *) &_num_frozen_pts, sizeof(_u64));
@@ -653,7 +654,9 @@ namespace diskann {
     std::ifstream in(filename, std::ios::binary);
     in.seekg(file_offset, in.beg);
     in.read((char *) &expected_file_size, sizeof(_u64));
-    in.read((char *) &_width, sizeof(unsigned));
+    unsigned width = 0;
+    in.read((char *) &width, sizeof(unsigned));
+    _width.store(width, std::memory_order_relaxed);
     in.read((char *) &_ep, sizeof(unsigned));
     in.read((char *) &file_frozen_pts, sizeof(_u64));
     _u64 vamana_metadata_size =
@@ -1141,7 +1144,13 @@ namespace diskann {
                                   -1);
     }
 
-    _width = (std::max)(_width, range);
+    // Pruning runs concurrently for different nodes. Only the maximum value
+    // is shared here; it does not publish any graph data.
+    auto width = _width.load(std::memory_order_relaxed);
+    while (width < range &&
+           !_width.compare_exchange_weak(width, range,
+                                          std::memory_order_relaxed)) {
+    }
 
     // sort the pool based on distance to query
     std::sort(pool.begin(), pool.end());
@@ -1409,7 +1418,7 @@ namespace diskann {
 
       double   sync_time = 0, total_sync_time = 0;
       double   inter_time = 0, total_inter_time = 0;
-      size_t   inter_count = 0, total_inter_count = 0;
+      size_t   total_inter_count = 0;
       unsigned progress_counter = 0;
 
       size_t round_size = DIV_ROUND_UP(_nd, num_syncs);  // size of each batch
@@ -1527,7 +1536,6 @@ namespace diskann {
           if (need_to_sync[cur_node] != 0) {
             futures.emplace_back(_build_thread_pool->push([&, node_id = cur_node]() {
               need_to_sync[node_id] = 0;
-              inter_count++;
               tsl::robin_set<unsigned> dummy_visited(0);
               std::vector<Neighbor>    dummy_pool(0);
               std::vector<unsigned>    new_out_neighbors;
@@ -1552,6 +1560,9 @@ namespace diskann {
           }
         }
         knowhere::WaitAllSuccess(futures);
+        // Each completed task prunes one node. Count on the calling thread
+        // and include every batch, even after the final progress log.
+        total_inter_count += futures.size();
         futures.clear();
 
         diff = std::chrono::high_resolution_clock::now() - s;
@@ -1567,10 +1578,8 @@ namespace diskann {
           LOG_KNOWHERE_INFO_ << stream.str();
           total_sync_time += sync_time;
           total_inter_time += inter_time;
-          total_inter_count += inter_count;
           sync_time = 0;
           inter_time = 0;
-          inter_count = 0;
           progress_counter += 20;
         }
       }
@@ -1781,7 +1790,7 @@ namespace diskann {
                          << (float) total / (float) (_nd + _num_frozen_pts)
                          << "  min:" << min << "  count(deg<2):" << cnt;
     }
-    _width = (std::max)((unsigned) max, _width);
+    _width = (std::max)((unsigned) max, _width.load(std::memory_order_relaxed));
     _has_built = true;
   }
 
@@ -1892,7 +1901,7 @@ namespace diskann {
                          << (float) total / (float) (_nd + _num_frozen_pts)
                          << "  min:" << min << "  count(deg<2):" << cnt;
     }
-    _width = (std::max)((unsigned) max, _width);
+    _width = (std::max)((unsigned) max, _width.load(std::memory_order_relaxed));
     _has_built = true;
   }
 
