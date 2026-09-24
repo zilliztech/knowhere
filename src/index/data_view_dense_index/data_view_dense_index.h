@@ -27,6 +27,7 @@
 #include "faiss/impl/AuxIndexStructures.h"
 #include "faiss/utils/Heap.h"
 #include "index/data_view_dense_index/refine_computer.h"
+#include "knowhere/binaryset.h"
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/task.h"
 #include "knowhere/config.h"
@@ -141,6 +142,12 @@ class DataViewIndexBase {
     virtual void
     ComputeDistanceSubset(const void* __restrict x, const idx_t sub_y_n, float* x_y_distances,
                           const idx_t* __restrict x_y_labels, const bool use_quant) const = 0;
+
+    virtual Status
+    SerializeState(BinarySet& binset) const = 0;
+
+    virtual Status
+    DeserializeState(const BinarySet& binset) = 0;
 
     auto
     Dim() const {
@@ -289,6 +296,12 @@ class DataViewIndexFlat : public DataViewIndexBase {
     ComputeDistanceSubset(const void* __restrict x, const idx_t sub_y_n, float* __restrict x_y_distances,
                           const idx_t* __restrict x_y_labels, const bool use_quant) const override;
 
+    Status
+    SerializeState(BinarySet& binset) const override;
+
+    Status
+    DeserializeState(const BinarySet& binset) override;
+
     float
     GetDataNorm(idx_t id) const {
         assert(id < ntotal_);
@@ -323,6 +336,80 @@ class DataViewIndexFlat : public DataViewIndexBase {
     mutable std::shared_mutex norms_mutex_;
 };
 
+namespace {
+constexpr const char* kDataViewState = "DATA_VIEW_STATE";
+constexpr uint32_t kDataViewStateMagic = 0x44565231;
+constexpr uint32_t kDataViewStateVersion = 1;
+
+struct DataViewStateHeader {
+    uint32_t magic;
+    uint32_t version;
+    int64_t dim;
+    int64_t count;
+    uint64_t norms_count;
+    int32_t data_type;
+    int32_t refine_type;
+    uint8_t metric_is_ip;
+    uint8_t is_cosine;
+};
+}  // namespace
+
+inline Status
+DataViewIndexFlat::SerializeState(BinarySet& binset) const {
+    if (refine_type_ != RefineType::DATA_VIEW) {
+        return Status::not_implemented;
+    }
+
+    std::shared_lock lock(norms_mutex_);
+    DataViewStateHeader header{};
+    header.magic = kDataViewStateMagic;
+    header.version = kDataViewStateVersion;
+    header.dim = d_;
+    header.count = ntotal_.load();
+    header.norms_count = norms_.size();
+    header.data_type = static_cast<int32_t>(data_type_);
+    header.refine_type = static_cast<int32_t>(refine_type_);
+    header.metric_is_ip = static_cast<uint8_t>(metric_type_ == metric::IP);
+    header.is_cosine = static_cast<uint8_t>(is_cosine_);
+    const auto size = sizeof(header) + norms_.size() * sizeof(float);
+    auto data = std::shared_ptr<uint8_t[]>(new uint8_t[size]);
+    std::memcpy(data.get(), &header, sizeof(header));
+    if (!norms_.empty()) {
+        std::memcpy(data.get() + sizeof(header), norms_.data(), norms_.size() * sizeof(float));
+    }
+    binset.Append(kDataViewState, std::move(data), size);
+    return Status::success;
+}
+
+inline Status
+DataViewIndexFlat::DeserializeState(const BinarySet& binset) {
+    auto binary = binset.GetByName(kDataViewState);
+    if (binary == nullptr || binary->size < static_cast<int64_t>(sizeof(DataViewStateHeader))) {
+        return Status::invalid_binary_set;
+    }
+
+    DataViewStateHeader header{};
+    std::memcpy(&header, binary->data.get(), sizeof(header));
+    const auto expected_size = sizeof(header) + header.norms_count * sizeof(float);
+    if (header.magic != kDataViewStateMagic || header.version != kDataViewStateVersion || header.dim != d_ ||
+        header.data_type != static_cast<int32_t>(data_type_) ||
+        header.refine_type != static_cast<int32_t>(refine_type_) ||
+        header.metric_is_ip != static_cast<uint8_t>(metric_type_ == metric::IP) ||
+        header.is_cosine != static_cast<uint8_t>(is_cosine_) || expected_size != static_cast<uint64_t>(binary->size) ||
+        (is_cosine_ && header.norms_count != static_cast<uint64_t>(header.count)) ||
+        (!is_cosine_ && header.norms_count != 0)) {
+        return Status::invalid_binary_set;
+    }
+
+    std::unique_lock lock(norms_mutex_);
+    norms_.resize(header.norms_count);
+    if (!norms_.empty()) {
+        std::memcpy(norms_.data(), binary->data.get() + sizeof(header), header.norms_count * sizeof(float));
+    }
+    ntotal_.store(header.count);
+    return Status::success;
+}
+
 template <class SingleResultHandler, class SelectorHelper>
 void
 DataViewIndexFlat::exhaustive_search_in_one_query_impl(const std::unique_ptr<faiss::DistanceComputer>& computer,
@@ -343,7 +430,7 @@ DataViewIndexFlat::exhaustive_search_in_one_query_impl(const std::unique_ptr<fai
     }
 }
 
-void
+inline void
 DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k, float* __restrict distances,
                           idx_t* __restrict labels, const BitsetView& bitset, milvus::OpContext* op_context,
                           const bool use_quant) const {
@@ -438,7 +525,7 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
     }
 }
 
-void
+inline void
 DataViewIndexFlat::SearchWithIds(const idx_t n, const void* __restrict x, const idx_t* __restrict ids_num_lims,
                                  const idx_t* __restrict ids, const idx_t k, float* __restrict out_dist,
                                  idx_t* __restrict out_ids, const bool use_quant) const {
@@ -481,7 +568,7 @@ DataViewIndexFlat::SearchWithIds(const idx_t n, const void* __restrict x, const 
     return;
 }
 
-void
+inline void
 DataViewIndexFlat::CalcDistByIDs(const idx_t num_queries, const void* __restrict queries, const idx_t num_ids,
                                  const idx_t* __restrict ids, float* __restrict out_dist, const bool use_quant) const {
     const auto& search_pool = ThreadPool::GetGlobalSearchThreadPool();
@@ -504,7 +591,7 @@ DataViewIndexFlat::CalcDistByIDs(const idx_t num_queries, const void* __restrict
     return;
 }
 
-RangeSearchResult
+inline RangeSearchResult
 DataViewIndexFlat::RangeSearch(const idx_t n, const void* __restrict x, const float radius, const float range_filter,
                                const BitsetView& bitset, milvus::OpContext* op_context, const bool use_quant) const {
     // todo: need more test to check
@@ -594,7 +681,7 @@ DataViewIndexFlat::RangeSearch(const idx_t n, const void* __restrict x, const fl
     return GetRangeSearchResult(result_dist_array, result_id_array, is_ip, n, radius, range_filter);
 }
 
-RangeSearchResult
+inline RangeSearchResult
 DataViewIndexFlat::RangeSearchWithIds(const idx_t n, const void* __restrict x, const idx_t* __restrict ids_num_lims,
                                       const idx_t* __restrict ids, const float radius, const float range_filter,
                                       const bool use_quant) const {
@@ -640,7 +727,7 @@ DataViewIndexFlat::RangeSearchWithIds(const idx_t n, const void* __restrict x, c
     return GetRangeSearchResult(result_dist_array, result_id_array, is_ip, n, radius, range_filter);
 }
 
-void
+inline void
 DataViewIndexFlat::ComputeDistanceSubset(const void* __restrict x, const idx_t sub_y_n, float* x_y_distances,
                                          const idx_t* __restrict x_y_labels, const bool use_quant) const {
     auto computer =
