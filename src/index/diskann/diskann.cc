@@ -563,7 +563,12 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
         }
     }));
 
-    // Add file to the file manager
+    // Local generation is complete. Retain formal outputs even if publication
+    // fails: FileManager may already have uploaded files or updated its state,
+    // and RemoveFile is not supported by every consumer. Existing local files
+    // block an automatic same-prefix retry with that partially used manager.
+    // The context still releases preprocessing and graph/SSD scratch files.
+    context->commit_outputs();
     for (auto& filename : GetNecessaryFilenames(build_conf, index_prefix_, need_norm, true, true)) {
         if (!registration.Add(filename)) {
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << filename << ".";
@@ -577,8 +582,6 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
         }
     }
 
-    registration.Commit();
-    context->commit_outputs();
     count_.store(count);
     dim_.store(dim);
     is_prepared_.store(false);

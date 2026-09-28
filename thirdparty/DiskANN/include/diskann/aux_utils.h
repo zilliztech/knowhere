@@ -134,8 +134,8 @@ namespace diskann {
   };
 
   // One build owns its prepared input and intermediate files. The original
-  // input is never owned. Outputs are retained only after successful
-  // publication.
+  // input is never owned. Commit completed local outputs before publication:
+  // failed uploads cannot be rolled back by every FileManager implementation.
   class PreparedBuildContext {
    public:
     explicit PreparedBuildContext(const BuildConfig &config);

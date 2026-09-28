@@ -152,7 +152,7 @@ TEST_CASE("DiskANN prepared build files have scoped ownership", "[diskann][build
     }
 }
 
-TEST_CASE("DiskANN registration rolls back a partial failure", "[diskann][build_context]") {
+TEST_CASE("DiskANN registration preserves partial publication state", "[diskann][build_context]") {
     class FailingManager : public milvus::LocalFileManager {
      public:
         bool fail = true;
@@ -172,16 +172,14 @@ TEST_CASE("DiskANN registration rolls back a partial failure", "[diskann][build_
         REQUIRE_FALSE(files.Add("second"));
     }
     REQUIRE(manager.IsExisted("existing").value());
-    REQUIRE_FALSE(manager.IsExisted("first").value());
-    REQUIRE_FALSE(manager.IsExisted("second").value());
+    REQUIRE(manager.IsExisted("first").value());
+    REQUIRE(manager.IsExisted("second").value());
     manager.fail = false;
     {
         knowhere::DiskANNBuildRegistration files(manager);
-        REQUIRE(files.Reserve("first"));
-        REQUIRE(files.Reserve("second"));
-        REQUIRE(files.Add("first"));
-        REQUIRE(files.Add("second"));
-        files.Commit();
+        REQUIRE_FALSE(files.Reserve("first"));
+        REQUIRE_FALSE(files.Reserve("second"));
+        REQUIRE_FALSE(files.Add("unreserved"));
     }
     REQUIRE(manager.IsExisted("first").value());
     REQUIRE(manager.IsExisted("second").value());
@@ -292,7 +290,7 @@ TEST_CASE("DiskANN navigation discovery preserves FileManager errors", "[diskann
     REQUIRE(knowhere::DetectNavigationCodec(config, prefix, manager).value() == "RABITQ");
 }
 
-TEST_CASE("DiskANN failed publication cleans outputs and permits retry", "[diskann][build_context]") {
+TEST_CASE("DiskANN failed publication retains outputs and blocks same-prefix retry", "[diskann][build_context]") {
     fs::remove_all(kDir);
     fs::create_directories(kDir);
     auto base = GenDataSet(512, 16, 21);
@@ -300,20 +298,48 @@ TEST_CASE("DiskANN failed publication cleans outputs and permits retry", "[diska
     class FailingManager : public milvus::LocalFileManager {
      public:
         bool fail = true;
+        bool throw_on_failure = false;
+        std::string fail_path;
+        size_t add_calls = 0;
+        size_t remove_calls = 0;
+        uintmax_t registered_bytes = 0;
         bool
         AddFile(const std::string& path) override {
+            ++add_calls;
+            registered_bytes += fs::file_size(path);
             const bool result = milvus::LocalFileManager::AddFile(path);
-            return fail && path.find("_disk.index") != std::string::npos ? false : result;
+            if (fail && path == fail_path) {
+                if (throw_on_failure)
+                    throw std::runtime_error("injected partial upload failure");
+                return false;
+            }
+            return result;
+        }
+        bool
+        RemoveFile(const std::string&) override {
+            ++remove_calls;
+            return false;
         }
         std::optional<bool>
         IsExisted(const std::string& path) override {
-            return milvus::LocalFileManager::IsExisted(path).value() || fs::exists(path);
+            // Match consumers whose existence check is local but whose upload
+            // bookkeeping cannot be rolled back by RemoveFile.
+            return fs::exists(path);
         }
     };
+    const bool fail_first = GENERATE(false, true);
+    const bool throw_on_failure = GENERATE(false, true);
     const auto version = GenTestVersionList();
     for (const auto* codec : {"PQ", "RABITQ"}) {
         const auto prefix = kDir + "/retry_" + codec;
+        const auto disk_path = diskann::get_disk_index_filename(prefix);
+        const auto disk_pivots = diskann::get_disk_index_pq_pivots_filename(disk_path);
+        auto navigation_files = std::string(codec) == "PQ"
+                                    ? diskann::pq_navigation_files(prefix)
+                                    : std::vector<std::string>{knowhere::RaBitQStore::SidecarFilename(prefix)};
         auto manager = std::make_shared<FailingManager>();
+        manager->fail_path = fail_first ? navigation_files.front() : disk_pivots;
+        manager->throw_on_failure = throw_on_failure;
         auto index = knowhere::IndexFactory::Instance()
                          .Create<knowhere::fp32>(kNativeDiskANN, version,
                                                  knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager)))
@@ -331,24 +357,48 @@ TEST_CASE("DiskANN failed publication cleans outputs and permits retry", "[diska
                                 {"search_cache_budget_gb_ratio", 0},
                                 {"rbq_bits", 4},
                                 {"navigation_codec", codec}};
-        REQUIRE(index.Build(nullptr, build) == knowhere::Status::disk_file_error);
-        for (const auto& entry : fs::directory_iterator(kDir)) {
-            REQUIRE(entry.path().string().find(prefix) != 0);
-        }
+        CAPTURE(codec, fail_first, throw_on_failure);
+        REQUIRE(index.Build(nullptr, build) != knowhere::Status::success);
         REQUIRE(fs::exists(kRawDataPath));
-        REQUIRE_FALSE(manager->IsExisted(diskann::get_disk_index_filename(prefix)).value());
-        manager->fail = false;
-        REQUIRE(index.Build(nullptr, build) == knowhere::Status::success);
+        REQUIRE(manager->add_calls >= (fail_first ? 1 : 2));
+        REQUIRE(manager->remove_calls == 0);
+        REQUIRE(manager->milvus::LocalFileManager::IsExisted(manager->fail_path).value());
+        navigation_files.insert(
+            navigation_files.end(),
+            {disk_path, diskann::get_disk_index_max_base_norm_file(disk_path),
+             diskann::get_sample_data_filename(prefix), disk_pivots,
+             diskann::get_pq_rearrangement_perm_filename(disk_pivots),
+             diskann::get_pq_chunk_offsets_filename(disk_pivots), diskann::get_pq_centroid_filename(disk_pivots)});
+        for (const auto& path : navigation_files) {
+            REQUIRE(fs::exists(path));
+            REQUIRE(fs::file_size(path) > 0);
+        }
         REQUIRE_FALSE(fs::exists(prefix + "_build_tmp"));
         REQUIRE_FALSE(fs::exists(prefix + "_prepped_base.bin"));
         REQUIRE_FALSE(fs::exists(prefix + "_disk.index_pq_compressed.bin"));
+        const auto calls_before_retry = manager->add_calls;
+        const auto bytes_before_retry = manager->registered_bytes;
+        manager->fail = false;
+        REQUIRE(index.Build(nullptr, build) == knowhere::Status::disk_file_error);
+        REQUIRE(manager->add_calls == calls_before_retry);
+        REQUIRE(manager->registered_bytes == bytes_before_retry);
+        // A fresh node and manager must also refuse to overwrite this prefix.
+        auto fresh_manager = std::make_shared<FailingManager>();
+        auto fresh = knowhere::IndexFactory::Instance()
+                         .Create<knowhere::fp32>(kNativeDiskANN, version,
+                                                 knowhere::Pack(std::shared_ptr<milvus::FileManager>(fresh_manager)))
+                         .value();
+        REQUIRE(fresh.Build(nullptr, build) == knowhere::Status::disk_file_error);
+        REQUIRE(fresh_manager->add_calls == 0);
         knowhere::BinarySet empty;
         knowhere::Json load = {{"metric_type", "IP"},
                                {"index_prefix", prefix},
                                {"search_cache_budget_gb", 0},
                                {"search_cache_budget_gb_ratio", 0},
                                {"warm_up", false}};
-        REQUIRE(index.Deserialize(empty, load) == knowhere::Status::success);
+        // Local generation completed before upload began; retained files are
+        // loadable even though publication failed and Build reported failure.
+        REQUIRE(fresh.Deserialize(empty, load) == knowhere::Status::success);
     }
 }
 
