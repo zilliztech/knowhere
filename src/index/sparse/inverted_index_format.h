@@ -81,6 +81,7 @@ enum class InvertedIndexSectionType : uint32_t {
     PROMETHEUS_BUILD_STATS = 6,
     DIM_MAP_MPHF = 7,
     BM25_U8_OVERFLOWS = 8,
+    SINDI_REFINEMENT = 9,
 };
 
 struct InvertedIndexSectionHeader {
