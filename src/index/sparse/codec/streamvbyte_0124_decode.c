@@ -295,41 +295,46 @@ static int8_t shuffleTable[256][16] = {
 #include <arm_neon.h>
 #endif
 
-#if defined(__SSE4_1__) || defined(__loongarch_sx)
+#if defined(__loongarch_sx)
 typedef __m128i decode_t;
 
 static inline decode_t
 svb_decode_uint32x4(const uint8_t key, const uint8_t* __restrict__* dataPtrPtr) {
     uint8_t len = 0;
-#if defined(__loongarch_sx)
     decode_t Data = __lsx_vld((void*)*dataPtrPtr, 0);
     decode_t Shuf = __lsx_vld((void*)&shuffleTable[key], 0);
-#else
-    decode_t Data = _mm_loadu_si128((const decode_t*)*dataPtrPtr);
-    uint8_t* pshuf = (uint8_t*)&shuffleTable[key];
-    decode_t Shuf = *(__m128i*)pshuf;
-#endif
     len = lengthTable[key];
-#if defined(__loongarch_sx)
     // vshuf.b indexes its second input for indices 0..15 and its first
     // input for 16..31. A table entry of -1 therefore selects a zero byte.
     Data = __lsx_vshuf_b(__lsx_vldi(0), Data, Shuf);
-#else
-    Data = _mm_shuffle_epi8(Data, Shuf);
-#endif
     *dataPtrPtr += len;
     return Data;
 }
 
 static inline void
 svb_write_uint32x4(uint32_t* out, decode_t Vec) {
-#if defined(__loongarch_sx)
     __lsx_vst(Vec, out, 0);
-#else
-    _mm_storeu_si128((__m128i*)out, Vec);
-#endif
 }
-#endif  // __SSE4_1__ || __loongarch_sx
+#elif defined(__SSE4_1__)
+typedef __m128i decode_t;
+
+static inline decode_t
+svb_decode_uint32x4(const uint8_t key, const uint8_t* __restrict__* dataPtrPtr) {
+    uint8_t len = 0;
+    decode_t Data = _mm_loadu_si128((const decode_t*)*dataPtrPtr);
+    uint8_t* pshuf = (uint8_t*)&shuffleTable[key];
+    decode_t Shuf = *(__m128i*)pshuf;
+    len = lengthTable[key];
+    Data = _mm_shuffle_epi8(Data, Shuf);
+    *dataPtrPtr += len;
+    return Data;
+}
+
+static inline void
+svb_write_uint32x4(uint32_t* out, decode_t Vec) {
+    _mm_storeu_si128((__m128i*)out, Vec);
+}
+#endif  // __loongarch_sx || __SSE4_1__
 
 #if defined(__ARM_NEON__) || defined(__ARM_NEON)
 typedef uint8x16_t decode_t;
