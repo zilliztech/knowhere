@@ -177,7 +177,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(sindi_window_size)
             .description("window size for sindi inverted index")
             .set_range(1024, 65535)
-            .set_default(65535)
+            .set_default(4096)
             .for_train();
     }
 
