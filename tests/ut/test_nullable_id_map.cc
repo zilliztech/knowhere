@@ -3299,6 +3299,143 @@ TEST_CASE("Nullable IdMap primitives", "[nullable][id_map]") {
         RequireIdArrayEquals(map.InToOutIds(), {0, 2, 3, 5, 6, 8});
     }
 
+    SECTION("IdMap applies sealed validity by range and offsets") {
+        auto bitmap = MakeValidBitmap(10, {1, 4, 9});
+        knowhere::IdMap map;
+        map.SetType(knowhere::IdMap::Type::SEALED);
+        map.AddFromData(knowhere::IdMapData::FromValidBitmap(bitmap.data(), 10));
+
+        std::vector<uint8_t> range_validity(10, 2);
+        map.ApplyValidityByRange(2, range_validity.size(), [&](size_t offset, bool valid) {
+            range_validity[offset] = static_cast<uint8_t>(valid);
+        });
+        REQUIRE(range_validity == std::vector<uint8_t>{0, 0, 1, 0, 0, 0, 0, 1, 0, 0});
+
+        const int64_t offsets[] = {9, -1, 4, 4, 10, 1, 0};
+        std::vector<uint8_t> offset_validity(std::size(offsets), 2);
+        map.ApplyValidityByOffsets(offsets, std::size(offsets), [&](size_t offset, bool valid) {
+            offset_validity[offset] = static_cast<uint8_t>(valid);
+        });
+        REQUIRE(offset_validity == std::vector<uint8_t>{1, 0, 1, 1, 0, 1, 0});
+        REQUIRE_THROWS(map.ApplyValidityByOffsets(nullptr, 1, [](size_t, bool) {}));
+    }
+
+    SECTION("IdMap ANDs sealed validity into non-aligned packed targets") {
+        auto bitmap = MakeValidBitmap(257, {0, 2, 3, 7, 8, 31, 32, 127, 128, 200, 255, 256});
+        knowhere::IdMap map;
+        map.SetType(knowhere::IdMap::Type::SEALED);
+        map.AddFromData(knowhere::IdMapData::FromValidBitmap(bitmap.data(), 257));
+
+        constexpr size_t target_begin = 3;
+        constexpr size_t count = 263;
+        std::vector<uint8_t> target((target_begin + count + 7) / 8, 0xFF);
+        map.AndValidityByRange(-2, count, target.data(), target_begin);
+
+        for (size_t bit = 0; bit < target_begin; ++bit) {
+            REQUIRE((target[bit >> 3] & (1U << (bit & 7))) != 0);
+        }
+        for (size_t i = 0; i < count; ++i) {
+            const auto out_id = static_cast<int64_t>(i) - 2;
+            const auto actual = (target[(target_begin + i) >> 3] & (1U << ((target_begin + i) & 7))) != 0;
+            REQUIRE(actual == map.IsValidOutId(out_id));
+        }
+        const auto trailing_bit = target_begin + count;
+        if ((trailing_bit & 7U) != 0) {
+            REQUIRE((target[trailing_bit >> 3] & (1U << (trailing_bit & 7))) != 0);
+        }
+        REQUIRE_THROWS(map.AndValidityByRange(0, 1, nullptr));
+    }
+
+    SECTION("Growing IdMap range validity crosses append records with one snapshot") {
+        knowhere::IdMap map;
+        map.SetType(knowhere::IdMap::Type::GROWING);
+        const bool first_batch[] = {true, false, true, true, false};
+        map.AddFromData(knowhere::IdMapData::FromValidData(first_batch, std::size(first_batch)));
+        auto second_batch = MakeValidBitmap(7, {0, 3, 6});
+        map.AddFromData(knowhere::IdMapData::FromValidBitmap(second_batch.data(), 7));
+
+        std::vector<uint8_t> validity(8, 2);
+        bool appended = false;
+        map.ApplyValidityByRange(8, validity.size(), [&](size_t offset, bool valid) {
+            validity[offset] = static_cast<uint8_t>(valid);
+            if (!appended) {
+                const bool concurrent_batch[] = {true, true, true, true};
+                map.AddFromData(knowhere::IdMapData::FromValidData(concurrent_batch, std::size(concurrent_batch)));
+                appended = true;
+            }
+        });
+
+        REQUIRE(validity == std::vector<uint8_t>{1, 0, 0, 1, 0, 0, 0, 0});
+        REQUIRE(map.OutCount() == 16);
+
+        std::vector<uint8_t> refreshed(8, 2);
+        map.ApplyValidityByRange(8, refreshed.size(),
+                                 [&](size_t offset, bool valid) { refreshed[offset] = static_cast<uint8_t>(valid); });
+        REQUIRE(refreshed == std::vector<uint8_t>{1, 0, 0, 1, 1, 1, 1, 1});
+
+        const int64_t offsets[] = {0, 16};
+        std::vector<uint8_t> offset_validity(std::size(offsets), 2);
+        appended = false;
+        map.ApplyValidityByOffsets(offsets, std::size(offsets), [&](size_t offset, bool valid) {
+            offset_validity[offset] = static_cast<uint8_t>(valid);
+            if (!appended) {
+                const bool concurrent_batch[] = {true};
+                map.AddFromData(knowhere::IdMapData::FromValidData(concurrent_batch, std::size(concurrent_batch)));
+                appended = true;
+            }
+        });
+        REQUIRE(offset_validity == std::vector<uint8_t>{1, 0});
+        REQUIRE(map.IsValidOutId(16));
+    }
+
+    SECTION("IdMap ANDs growing validity across non-byte-aligned append records") {
+        knowhere::IdMap map;
+        map.SetType(knowhere::IdMap::Type::GROWING);
+        std::vector<bool> expected;
+        for (size_t batch_id = 0; batch_id < 9; ++batch_id) {
+            const auto batch_size = 29 + batch_id;
+            std::unique_ptr<bool[]> batch(new bool[batch_size]);
+            for (size_t i = 0; i < batch_size; ++i) {
+                batch[i] = ((expected.size() + i) % 5) != 1;
+                expected.push_back(batch[i]);
+            }
+            map.AddFromData(knowhere::IdMapData::FromValidData(batch.get(), batch_size));
+        }
+
+        constexpr size_t target_begin = 5;
+        const auto count = expected.size() - 7;
+        std::vector<uint8_t> target((target_begin + count + 7) / 8, 0xFF);
+        map.AndValidityByRange(7, count, target.data(), target_begin);
+        for (size_t i = 0; i < count; ++i) {
+            const auto actual = (target[(target_begin + i) >> 3] & (1U << ((target_begin + i) & 7))) != 0;
+            REQUIRE(actual == expected[i + 7]);
+        }
+    }
+
+    SECTION("Disabled IdMap batch validity preserves identity semantics") {
+        knowhere::IdMap map;
+
+        std::vector<uint8_t> range_validity(5, 2);
+        map.ApplyValidityByRange(-2, range_validity.size(), [&](size_t offset, bool valid) {
+            range_validity[offset] = static_cast<uint8_t>(valid);
+        });
+        REQUIRE(range_validity == std::vector<uint8_t>{0, 0, 1, 1, 1});
+
+        const int64_t offsets[] = {-1, 0, 100};
+        std::vector<uint8_t> offset_validity(std::size(offsets), 2);
+        map.ApplyValidityByOffsets(offsets, std::size(offsets), [&](size_t offset, bool valid) {
+            offset_validity[offset] = static_cast<uint8_t>(valid);
+        });
+        REQUIRE(offset_validity == std::vector<uint8_t>{0, 1, 1});
+
+        std::vector<uint8_t> packed(2, 0xFF);
+        map.AndValidityByRange(-2, 10, packed.data(), 3);
+        for (size_t i = 0; i < 10; ++i) {
+            const auto actual = (packed[(i + 3) >> 3] & (1U << ((i + 3) & 7))) != 0;
+            REQUIRE(actual == (i >= 2));
+        }
+    }
+
     SECTION("Growing IdMap keeps search-side prefixes stable across appends") {
         knowhere::IdMap map;
         map.SetType(knowhere::IdMap::Type::GROWING);

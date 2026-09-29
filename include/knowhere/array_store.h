@@ -17,11 +17,19 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
+
+#if defined(__AVX2__) || defined(__SSE2__)
+#include <immintrin.h>
+#elif defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 #include "knowhere/mmap.h"
 
@@ -330,6 +338,152 @@ class ArrayStore {
 
 using IdArray = ArrayStore<int32_t>;
 
+namespace detail {
+
+inline bool
+PackedBit(const uint8_t* bitmap, size_t bit) {
+    return (bitmap[bit >> 3] & (1U << (bit & 7))) != 0;
+}
+
+inline void
+ClearPackedBits(uint8_t* bitmap, size_t bit_begin, size_t bit_count) {
+    while (bit_count != 0 && (bit_begin & 7U) != 0) {
+        bitmap[bit_begin >> 3] &= static_cast<uint8_t>(~(1U << (bit_begin & 7U)));
+        ++bit_begin;
+        --bit_count;
+    }
+
+    const auto byte_count = bit_count >> 3;
+    if (byte_count != 0) {
+        std::memset(bitmap + (bit_begin >> 3), 0, byte_count);
+        bit_begin += byte_count << 3;
+        bit_count -= byte_count << 3;
+    }
+
+    while (bit_count != 0) {
+        bitmap[bit_begin >> 3] &= static_cast<uint8_t>(~(1U << (bit_begin & 7U)));
+        ++bit_begin;
+        --bit_count;
+    }
+}
+
+inline uint8_t
+ReadShiftedByte(const uint8_t* source, unsigned shift) {
+    if (shift == 0) {
+        return source[0];
+    }
+    return static_cast<uint8_t>((source[0] >> shift) | (source[1] << (8U - shift)));
+}
+
+// ANDs whole target bytes with a possibly bit-shifted source stream.  The
+// caller guarantees that source contains the extra carry byte when shift is
+// non-zero.  x86 and AArch64 use their baseline vector ISA, with AVX2 selected
+// when the including translation unit is compiled for it.
+inline void
+AndPackedBytes(uint8_t* target, const uint8_t* source, size_t byte_count, unsigned shift) {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ && defined(__AVX2__)
+    {
+        const auto shift_right = _mm_cvtsi64_si128(static_cast<long long>(shift));
+        const auto shift_left = _mm_cvtsi64_si128(static_cast<long long>(64U - shift));
+        while (byte_count >= 32) {
+            const auto input = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(source));
+            __m256i validity = input;
+            if (shift != 0) {
+                auto next = _mm256_permute4x64_epi64(input, _MM_SHUFFLE(3, 3, 2, 1));
+                const auto carry = _mm256_set_epi64x(static_cast<long long>(source[32]), 0, 0, 0);
+                next = _mm256_blend_epi32(next, carry, 0xC0);
+                validity = _mm256_or_si256(_mm256_srl_epi64(input, shift_right), _mm256_sll_epi64(next, shift_left));
+            }
+            const auto current = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(target));
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(target), _mm256_and_si256(current, validity));
+            target += 32;
+            source += 32;
+            byte_count -= 32;
+        }
+    }
+#endif
+
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ && defined(__SSE2__)
+    {
+        const auto shift_right = _mm_cvtsi64_si128(static_cast<long long>(shift));
+        const auto shift_left = _mm_cvtsi64_si128(static_cast<long long>(64U - shift));
+        while (byte_count >= 16) {
+            const auto input = _mm_loadu_si128(reinterpret_cast<const __m128i*>(source));
+            __m128i validity = input;
+            if (shift != 0) {
+                const auto carry = _mm_slli_si128(_mm_cvtsi64_si128(source[16]), 8);
+                const auto next = _mm_unpackhi_epi64(input, carry);
+                validity = _mm_or_si128(_mm_srl_epi64(input, shift_right), _mm_sll_epi64(next, shift_left));
+            }
+            const auto current = _mm_loadu_si128(reinterpret_cast<const __m128i*>(target));
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(target), _mm_and_si128(current, validity));
+            target += 16;
+            source += 16;
+            byte_count -= 16;
+        }
+    }
+#elif defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ && defined(__ARM_NEON)
+    {
+        const auto shift_right = vdupq_n_s64(-static_cast<int64_t>(shift));
+        const auto shift_left = vdupq_n_s64(static_cast<int64_t>(64U - shift));
+        while (byte_count >= 16) {
+            const auto input_bytes = vld1q_u8(source);
+            auto validity = vreinterpretq_u64_u8(input_bytes);
+            if (shift != 0) {
+                const uint64x2_t carry = {static_cast<uint64_t>(source[16]), 0};
+                const auto next = vextq_u64(validity, carry, 1);
+                validity = vorrq_u64(vshlq_u64(validity, shift_right), vshlq_u64(next, shift_left));
+            }
+            const auto current = vld1q_u8(target);
+            vst1q_u8(target, vandq_u8(current, vreinterpretq_u8_u64(validity)));
+            target += 16;
+            source += 16;
+            byte_count -= 16;
+        }
+    }
+#endif
+
+    while (byte_count != 0) {
+        *target &= ReadShiftedByte(source, shift);
+        ++target;
+        ++source;
+        --byte_count;
+    }
+}
+
+inline void
+AndPackedBits(uint8_t* target, size_t target_bit_begin, const uint8_t* source, size_t source_bit_begin,
+              size_t bit_count) {
+    while (bit_count != 0 && (target_bit_begin & 7U) != 0) {
+        if (!PackedBit(source, source_bit_begin)) {
+            target[target_bit_begin >> 3] &= static_cast<uint8_t>(~(1U << (target_bit_begin & 7U)));
+        }
+        ++target_bit_begin;
+        ++source_bit_begin;
+        --bit_count;
+    }
+
+    const auto byte_count = bit_count >> 3;
+    if (byte_count != 0) {
+        AndPackedBytes(target + (target_bit_begin >> 3), source + (source_bit_begin >> 3), byte_count,
+                       static_cast<unsigned>(source_bit_begin & 7U));
+        target_bit_begin += byte_count << 3;
+        source_bit_begin += byte_count << 3;
+        bit_count -= byte_count << 3;
+    }
+
+    while (bit_count != 0) {
+        if (!PackedBit(source, source_bit_begin)) {
+            target[target_bit_begin >> 3] &= static_cast<uint8_t>(~(1U << (target_bit_begin & 7U)));
+        }
+        ++target_bit_begin;
+        ++source_bit_begin;
+        --bit_count;
+    }
+}
+
+}  // namespace detail
+
 struct BitmapRecord {
     size_t bit_begin = 0;
     size_t bit_count = 0;
@@ -384,30 +538,82 @@ class AppendBitmapData {
         return value;
     }
 
+    bool
+    Test(size_t bit) const {
+        if (bit >= size()) {
+            return false;
+        }
+        const auto records = records_.Prefix(records_.size());
+        const auto record_id = FindRecord(records, bit);
+        return record_id < records.size() && records[record_id].Contains(bit) && records[record_id].Test(bit);
+    }
+
+    template <typename Visitor>
+    void
+    Visit(size_t bit_begin, size_t bit_count, Visitor&& visitor) const {
+        const auto visible_count = size();
+        if (bit_count == 0 || bit_begin >= visible_count) {
+            return;
+        }
+        const auto bit_end = bit_begin + std::min(bit_count, visible_count - bit_begin);
+        const auto records = records_.Prefix(records_.size());
+        auto record_id = FindRecord(records, bit_begin);
+        while (record_id < records.size()) {
+            const auto record = records[record_id];
+            if (record.bit_begin >= bit_end) {
+                break;
+            }
+            const auto record_begin = std::max(bit_begin, record.bit_begin);
+            const auto record_end = std::min(bit_end, record.bit_begin + record.bit_count);
+            for (auto bit = record_begin; bit < record_end; ++bit) {
+                visitor(bit, record.Test(bit));
+            }
+            ++record_id;
+        }
+    }
+
+    void
+    AndRange(size_t bit_begin, size_t bit_count, uint8_t* target, size_t target_bit_begin) const {
+        const auto visible_count = size();
+        if (bit_count == 0 || bit_begin >= visible_count) {
+            return;
+        }
+        const auto bit_end = bit_begin + std::min(bit_count, visible_count - bit_begin);
+        const auto records = records_.Prefix(records_.size());
+        auto record_id = FindRecord(records, bit_begin);
+        while (record_id < records.size()) {
+            const auto record = records[record_id];
+            if (record.bit_begin >= bit_end) {
+                break;
+            }
+            const auto record_begin = std::max(bit_begin, record.bit_begin);
+            const auto record_end = std::min(bit_end, record.bit_begin + record.bit_count);
+            detail::AndPackedBits(target, target_bit_begin + record_begin - bit_begin, record.bytes->data(),
+                                  record_begin - record.bit_begin, record_end - record_begin);
+            ++record_id;
+        }
+    }
+
  private:
     static size_t
     ByteSize(size_t bit_count) {
         return (bit_count + 7) / 8;
     }
 
-    bool
-    Test(size_t bit) const {
+    static size_t
+    FindRecord(const ArrayStore<BitmapRecord>& records, size_t bit) {
         auto left = static_cast<size_t>(0);
-        auto right = records_.size();
+        auto right = records.size();
         while (left < right) {
             const auto middle = left + (right - left) / 2;
-            if (records_[middle].bit_begin <= bit) {
+            const auto& record = records[middle];
+            if (record.bit_begin + record.bit_count <= bit) {
                 left = middle + 1;
             } else {
                 right = middle;
             }
         }
-        if (left == 0) {
-            return false;
-        }
-
-        const auto record = records_[left - 1];
-        return record.Contains(bit) && record.Test(bit);
+        return left;
     }
 
     ArrayStore<BitmapRecord> records_;
@@ -478,6 +684,49 @@ class BitmapArray {
     uint8_t
     operator[](size_t offset) const {
         return type_ == Type::ARRAY ? bytes_[offset] : append_data_->GetByte(offset);
+    }
+
+    bool
+    Test(size_t bit) const {
+        if (bit >= size()) {
+            return false;
+        }
+        if (type_ == Type::ARRAY) {
+            return (bytes_[bit >> 3] & (1U << (bit & 7))) != 0;
+        }
+        return append_data_->Test(bit);
+    }
+
+    template <typename Visitor>
+    void
+    Visit(size_t bit_begin, size_t bit_count, Visitor&& visitor) const {
+        const auto visible_count = size();
+        if (bit_count == 0 || bit_begin >= visible_count) {
+            return;
+        }
+        const auto visit_count = std::min(bit_count, visible_count - bit_begin);
+        if (type_ == Type::APPEND_ARRAY) {
+            append_data_->Visit(bit_begin, visit_count, std::forward<Visitor>(visitor));
+            return;
+        }
+        const auto bit_end = bit_begin + visit_count;
+        for (auto bit = bit_begin; bit < bit_end; ++bit) {
+            visitor(bit, Test(bit));
+        }
+    }
+
+    void
+    AndRange(size_t bit_begin, size_t bit_count, uint8_t* target, size_t target_bit_begin = 0) const {
+        const auto visible_count = size();
+        if (bit_count == 0 || bit_begin >= visible_count) {
+            return;
+        }
+        const auto visit_count = std::min(bit_count, visible_count - bit_begin);
+        if (type_ == Type::APPEND_ARRAY) {
+            append_data_->AndRange(bit_begin, visit_count, target, target_bit_begin);
+            return;
+        }
+        detail::AndPackedBits(target, target_bit_begin, bytes_.data(), bit_begin, visit_count);
     }
 
     void
