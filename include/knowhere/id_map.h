@@ -395,6 +395,114 @@ class IdMap {
         return valid_bitmap_.empty() || PackedBit(valid_bitmap_, offset);
     }
 
+    // Applies one validity snapshot to a contiguous public-id range. The
+    // visitor receives (range_offset, is_valid) exactly once for each row.
+    // Growing storage locates its first append record once and then traverses
+    // subsequent records sequentially.
+    template <typename Visitor>
+    void
+    ApplyValidityByRange(int64_t out_id_begin, size_t count, Visitor&& visitor) const {
+        const auto out_count = OutCount();
+        const auto bitmap = valid_bitmap_.Prefix(out_count);
+        size_t position = 0;
+        while (position < count && out_id_begin < 0) {
+            visitor(position++, false);
+            ++out_id_begin;
+        }
+        if (position == count) {
+            return;
+        }
+
+        // An empty public domain means that nullable mapping is disabled, so
+        // non-negative public ids retain identity validity.
+        if (out_count == 0 && bitmap.empty()) {
+            while (position < count) {
+                visitor(position++, true);
+            }
+            return;
+        }
+
+        const auto range_begin = static_cast<size_t>(out_id_begin);
+        if (range_begin < out_count) {
+            const auto visit_count = std::min(count - position, out_count - range_begin);
+            if (bitmap.empty()) {
+                for (size_t i = 0; i < visit_count; ++i) {
+                    visitor(position + i, true);
+                }
+            } else {
+                bitmap.Visit(range_begin, visit_count,
+                             [&](size_t bit, bool valid) { visitor(position + bit - range_begin, valid); });
+            }
+            position += visit_count;
+        }
+        while (position < count) {
+            visitor(position++, false);
+        }
+    }
+
+    // ANDs a validity snapshot into a packed target bitmap. Bits outside the
+    // requested target range are preserved. Contiguous source bytes are
+    // processed by the x86 or ARM SIMD kernel in BitmapArray.
+    void
+    AndValidityByRange(int64_t out_id_begin, size_t count, uint8_t* target, size_t target_bit_begin = 0) const {
+        if (count != 0 && target == nullptr) {
+            throw std::runtime_error("id map validity target is null");
+        }
+        if (count == 0) {
+            return;
+        }
+
+        const auto out_count = OutCount();
+        const auto bitmap = valid_bitmap_.Prefix(out_count);
+        size_t position = 0;
+        if (out_id_begin < 0) {
+            const auto negative_count = static_cast<uint64_t>(-(out_id_begin + 1)) + 1;
+            const auto prefix_count = negative_count >= count ? count : static_cast<size_t>(negative_count);
+            detail::ClearPackedBits(target, target_bit_begin, prefix_count);
+            position = prefix_count;
+            if (position == count) {
+                return;
+            }
+            out_id_begin = 0;
+        }
+
+        // Disabled maps preserve identity validity for non-negative ids.
+        if (out_count == 0 && bitmap.empty()) {
+            return;
+        }
+
+        const auto range_begin = static_cast<size_t>(out_id_begin);
+        if (range_begin < out_count) {
+            const auto visit_count = std::min(count - position, out_count - range_begin);
+            if (!bitmap.empty()) {
+                bitmap.AndRange(range_begin, visit_count, target, target_bit_begin + position);
+            }
+            position += visit_count;
+        }
+        detail::ClearPackedBits(target, target_bit_begin + position, count - position);
+    }
+
+    // Applies one validity snapshot to arbitrary public ids. Negative and
+    // out-of-domain ids are invalid; duplicates preserve their input order.
+    template <typename Visitor>
+    void
+    ApplyValidityByOffsets(const int64_t* out_ids, size_t count, Visitor&& visitor) const {
+        if (count != 0 && out_ids == nullptr) {
+            throw std::runtime_error("id map validity offsets are null");
+        }
+        const auto out_count = OutCount();
+        const auto bitmap = valid_bitmap_.Prefix(out_count);
+        for (size_t i = 0; i < count; ++i) {
+            const auto out_id = out_ids[i];
+            bool valid = out_id >= 0;
+            if (valid && out_count != 0) {
+                const auto offset = static_cast<size_t>(out_id);
+                valid = offset < out_count && (bitmap.empty() || bitmap.Test(offset));
+            }
+            visitor(i, valid);
+        }
+    }
+
     BitmapArray
     ValidBitmap() const {
         return valid_bitmap_.Prefix(OutCount());
@@ -479,7 +587,7 @@ class IdMap {
 
     static bool
     PackedBit(const BitmapArray& bitmap, size_t bit) {
-        return bit < bitmap.size() && (bitmap[bit >> 3] & (1U << (bit & 7))) != 0;
+        return bitmap.Test(bit);
     }
 
     static void
