@@ -57,7 +57,10 @@ INCLUDE_DIRS = [
     get_thirdparty_prefix("boost-headers") + "/include",
     get_thirdparty_prefix("nlohmann_json") + "/include",
     get_thirdparty_prefix("libglog") + "/include",
-    get_thirdparty_prefix("gflags") + "/include"
+    get_thirdparty_prefix("gflags") + "/include",
+    get_thirdparty_prefix("libfolly") + "/include",
+    get_thirdparty_prefix("double-conversion") + "/include",
+    get_thirdparty_prefix("fmt") + "/include"
 ]
 
 BUILD_DIR = os.path.abspath(os.path.join("..", "build", "Release"))
@@ -67,7 +70,7 @@ LIBRARY_DIRS = [
     BUILD_DIR,
     MILVUS_COMMON_LIB_DIR
 ]
-EXTRA_COMPILE_ARGS = ["-fPIC", "-std=gnu++17"]
+EXTRA_COMPILE_ARGS = ["-fPIC", "-std=gnu++20"]
 EXTRA_LINK_ARGS = [
     "-lknowhere",
     "-lmilvus-common",
