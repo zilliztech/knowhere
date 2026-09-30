@@ -3,7 +3,54 @@
 #if defined(__x86_64__)
 #include <immintrin.h>
 
+#include "index/sparse/sindi_packed12_x86.h"
+
 namespace knowhere::sparse::inverted::sindi {
+
+float
+ip_accumulate_avx2_u12_e5m7(float q, const uint8_t* vals, const uint8_t* ids, size_t start, int32_t n, float* out) {
+    if (n <= 0) {
+        return 0;
+    }
+
+    float maximum = 0;
+    if (start & 1) {
+        maximum = ip_accumulate_scalar_u12_e5m7(q, vals, ids, start, 1, out);
+        ++start;
+        --n;
+    }
+
+    const auto vq = _mm256_set1_ps(q);
+    auto vmax = _mm256_setzero_ps();
+
+    int32_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        const auto* ip = ids + ((start + i) / 2) * 3;
+        const auto* vp = vals + ((start + i) / 2) * 3;
+        const auto id = _mm256_cvtepu16_epi32(unpack12_eight_x86(ip));
+        const auto value = _mm256_cvtph_ps(_mm_slli_epi16(unpack12_eight_x86(vp), 3));
+        const auto sum = _mm256_fmadd_ps(value, vq, _mm256_i32gather_ps(out, id, 4));
+
+        // AVX2 has gather but no scatter.
+        alignas(32) uint32_t indices[8];
+        alignas(32) float scores[8];
+        _mm256_store_si256(reinterpret_cast<__m256i*>(indices), id);
+        _mm256_store_ps(scores, sum);
+        for (int lane = 0; lane < 8; ++lane) {
+            out[indices[lane]] = scores[lane];
+        }
+
+        vmax = _mm256_max_ps(vmax, sum);
+    }
+
+    alignas(32) float maxima[8];
+    _mm256_store_ps(maxima, vmax);
+    for (float value : maxima) {
+        maximum = std::max(maximum, value);
+    }
+
+    return std::max(maximum, ip_accumulate_scalar_u12_e5m7(q, vals, ids, start + i, n - i, out));
+}
 
 float
 ip_accumulate_avx2_fp16(float qval, const knowhere::fp16* vals, const uint16_t* ids, int32_t num, float* out) {
