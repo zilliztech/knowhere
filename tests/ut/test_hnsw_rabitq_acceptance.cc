@@ -1147,9 +1147,16 @@ TEST_CASE("RaBitQ filtered results and exhausted iterators match full-code refer
                         REQUIRE(distance == Catch::Approx(reference[id]).margin(1e-4));
                         REQUIRE(iter_ids.size() <= size_t(n - excluded));
                     }
-                    auto expected_reachable = reachable;
-                    for (int i = 0; i < excluded; ++i) expected_reachable.erase(i);
-                    REQUIRE(iter_ids == expected_reachable);
+                    // Below the kNN brute-force threshold the iterator traverses the graph and returns the
+                    // reachable points; at or above it, it scans and returns every unfiltered point.
+                    std::set<int64_t> expected_iter_ids;
+                    if (excluded >= n * knowhere::HnswSearchThresholds::kHnswSearchKnnBFFilterThreshold) {
+                        for (int i = excluded; i < n; ++i) expected_iter_ids.insert(i);
+                    } else {
+                        expected_iter_ids = reachable;
+                        for (int i = 0; i < excluded; ++i) expected_iter_ids.erase(i);
+                    }
+                    REQUIRE(iter_ids == expected_iter_ids);
                     REQUIRE_FALSE(it->HasNext().value());
                 }
             }
