@@ -870,7 +870,7 @@ struct FaissHnswIteratorWorkspace {
     // whether to scan the unfiltered points instead of traversing the graph.
     //   At high filter ratios the graph traversal visits almost every node while
     //   looking for the few unfiltered ones, so a sequential scan over the
-    //   unfiltered points is much cheaper (same rule as the kNN Search path).
+    //   unfiltered points is much cheaper (kHnswSearchIteratorBFFilterThreshold).
     bool use_brute_force = false;
 
     // accumulated elements
@@ -897,7 +897,8 @@ class FaissHnswIterator : public IndexIterator {
         const bool high_filter_ratio =
             (bitset_in.count() >= (index->ntotal * HnswSearchThresholds::kHnswSearchKnnBFFilterThreshold));
         workspace.accumulated_alpha = high_filter_ratio ? std::numeric_limits<float>::max() : 1.0f;
-        workspace.use_brute_force = high_filter_ratio;
+        workspace.use_brute_force =
+            (bitset_in.count() >= (index->ntotal * HnswSearchThresholds::kHnswSearchIteratorBFFilterThreshold));
 
         // set up a visitor
         workspace.graph_visitor = DummyVisitor();

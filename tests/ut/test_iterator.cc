@@ -387,7 +387,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
         const bool is_exact = (name == knowhere::IndexEnum::INDEX_HNSW) || json.value("refine", false);
         std::vector<std::function<std::vector<uint8_t>(size_t, size_t)>> gen_bitset_funcs = {
             GenerateBitsetWithFirstTbitsSet, GenerateBitsetWithRandomTbitsSet};
-        const auto bitset_percentages = {0.95f, 0.99f};
+        const auto bitset_percentages = {0.98f, 0.99f};
         for (const float percentage : bitset_percentages) {
             for (const auto& gen_func : gen_bitset_funcs) {
                 const size_t n_filtered = percentage * nb;

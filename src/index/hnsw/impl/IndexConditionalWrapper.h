@@ -28,6 +28,10 @@ struct SearchParametersHNSWWrapper;
 struct HnswSearchThresholds {
     static constexpr float kHnswSearchKnnBFFilterThreshold = 0.93f;
     static constexpr float kHnswSearchRangeBFFilterThreshold = 0.97f;
+    // AnnIterator switches to a scan over the unfiltered points at this filter ratio. It is higher
+    //   than the kNN threshold because, at typical ef values, the graph traversal of an iterator
+    //   stays cheaper than the brute force up to ~97%.
+    static constexpr float kHnswSearchIteratorBFFilterThreshold = 0.97f;
     static constexpr float kHnswSearchBFTopkThreshold = 0.5f;
 };
 
