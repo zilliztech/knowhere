@@ -53,6 +53,109 @@ ip_accumulate_avx2_u12_e5m7(float q, const uint8_t* vals, const uint8_t* ids, si
 }
 
 float
+bm25_accumulate_avx2_u12_u4_lut(float q, const uint8_t* vals, const uint8_t* ids, size_t start, int32_t n, float* out,
+                                float k1, float b, float avgdl, const float* lengths, const uint8_t* table) {
+    if (n <= 0) {
+        return 0;
+    }
+
+    float maximum = 0;
+    if (start & 1) {
+        maximum = bm25_accumulate_scalar_u12_u4_lut(q, vals, ids, start, 1, out, k1, b, avgdl, lengths, table);
+        ++start;
+        --n;
+    }
+    const auto lut = _mm_loadu_si128(reinterpret_cast<const __m128i*>(table));
+    const auto nibble_mask = _mm_set1_epi8(15);
+    const auto vqp1 = _mm256_set1_ps(q * (k1 + 1.0f));
+    const auto vp2 = _mm256_set1_ps(k1 * (1.0f - b)), vp3 = _mm256_set1_ps(k1 * b / avgdl);
+    auto vmax = _mm256_setzero_ps();
+
+    int32_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        const auto id = _mm256_cvtepu16_epi32(unpack12_eight_x86(ids + ((start + i) / 2) * 3));
+        // Eight codes occupy exactly four bytes; the LUT load is exactly 16.
+        uint32_t packed;
+        std::memcpy(&packed, vals + (start + i) / 2, sizeof(packed));
+        const auto bytes = _mm_cvtsi32_si128(packed);
+        const auto codes = _mm_and_si128(_mm_unpacklo_epi8(bytes, _mm_srli_epi16(bytes, 4)), nibble_mask);
+        const auto tf = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_shuffle_epi8(lut, codes)));
+        const auto dl = _mm256_i32gather_ps(lengths, id, 4);
+        const auto denominator = _mm256_add_ps(tf, _mm256_fmadd_ps(dl, vp3, vp2));
+        const auto contribution = _mm256_div_ps(_mm256_mul_ps(tf, vqp1), denominator);
+        const auto sum = _mm256_add_ps(_mm256_i32gather_ps(out, id, 4), contribution);
+
+        // Match existing AVX2 BM25 writeback: gather is available, scatter is not.
+        alignas(32) uint32_t indices[8];
+        alignas(32) float scores[8];
+        _mm256_store_si256(reinterpret_cast<__m256i*>(indices), id);
+        _mm256_store_ps(scores, sum);
+        for (int lane = 0; lane < 8; ++lane) {
+            out[indices[lane]] = scores[lane];
+        }
+        vmax = _mm256_max_ps(vmax, sum);
+    }
+    auto tail_max = _mm_max_ps(_mm256_castps256_ps128(vmax), _mm256_extractf128_ps(vmax, 1));
+    tail_max = _mm_max_ps(tail_max, _mm_shuffle_ps(tail_max, tail_max, _MM_SHUFFLE(2, 3, 0, 1)));
+    tail_max = _mm_max_ps(tail_max, _mm_shuffle_ps(tail_max, tail_max, _MM_SHUFFLE(1, 0, 3, 2)));
+    maximum = std::max(maximum, _mm_cvtss_f32(tail_max));
+    return std::max(
+        maximum, bm25_accumulate_scalar_u12_u4_lut(q, vals, ids, start + i, n - i, out, k1, b, avgdl, lengths, table));
+}
+
+float
+bm25_accumulate_avx2_u16_u4_lut(float q, const uint8_t* vals, const uint8_t* ids, size_t start, int32_t n, float* out,
+                                float k1, float b, float avgdl, const float* lengths, const uint8_t* table) {
+    if (n <= 0) {
+        return 0;
+    }
+
+    float maximum = 0;
+    if (start & 1) {
+        maximum = bm25_accumulate_scalar_u16_u4_lut(q, vals, ids, start, 1, out, k1, b, avgdl, lengths, table);
+        ++start;
+        --n;
+    }
+    const auto lut = _mm_loadu_si128(reinterpret_cast<const __m128i*>(table));
+    const auto nibble_mask = _mm_set1_epi8(15);
+    const auto vqp1 = _mm256_set1_ps(q * (k1 + 1.0f));
+    const auto vp2 = _mm256_set1_ps(k1 * (1.0f - b)), vp3 = _mm256_set1_ps(k1 * b / avgdl);
+    auto vmax = _mm256_setzero_ps();
+
+    int32_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        const auto id = _mm256_cvtepu16_epi32(
+            _mm_loadu_si128(reinterpret_cast<const __m128i*>(ids + (start + i) * sizeof(uint16_t))));
+        // Eight codes occupy exactly four bytes; the LUT load is exactly 16.
+        uint32_t packed;
+        std::memcpy(&packed, vals + (start + i) / 2, sizeof(packed));
+        const auto bytes = _mm_cvtsi32_si128(packed);
+        const auto codes = _mm_and_si128(_mm_unpacklo_epi8(bytes, _mm_srli_epi16(bytes, 4)), nibble_mask);
+        const auto tf = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_shuffle_epi8(lut, codes)));
+        const auto dl = _mm256_i32gather_ps(lengths, id, 4);
+        const auto denominator = _mm256_add_ps(tf, _mm256_fmadd_ps(dl, vp3, vp2));
+        const auto contribution = _mm256_div_ps(_mm256_mul_ps(tf, vqp1), denominator);
+        const auto sum = _mm256_add_ps(_mm256_i32gather_ps(out, id, 4), contribution);
+
+        // Match existing AVX2 BM25 writeback: gather is available, scatter is not.
+        alignas(32) uint32_t indices[8];
+        alignas(32) float scores[8];
+        _mm256_store_si256(reinterpret_cast<__m256i*>(indices), id);
+        _mm256_store_ps(scores, sum);
+        for (int lane = 0; lane < 8; ++lane) {
+            out[indices[lane]] = scores[lane];
+        }
+        vmax = _mm256_max_ps(vmax, sum);
+    }
+    auto tail_max = _mm_max_ps(_mm256_castps256_ps128(vmax), _mm256_extractf128_ps(vmax, 1));
+    tail_max = _mm_max_ps(tail_max, _mm_shuffle_ps(tail_max, tail_max, _MM_SHUFFLE(2, 3, 0, 1)));
+    tail_max = _mm_max_ps(tail_max, _mm_shuffle_ps(tail_max, tail_max, _MM_SHUFFLE(1, 0, 3, 2)));
+    maximum = std::max(maximum, _mm_cvtss_f32(tail_max));
+    return std::max(
+        maximum, bm25_accumulate_scalar_u16_u4_lut(q, vals, ids, start + i, n - i, out, k1, b, avgdl, lengths, table));
+}
+
+float
 ip_accumulate_avx2_fp16(float qval, const knowhere::fp16* vals, const uint16_t* ids, int32_t num, float* out) {
     int32_t i = 0;
     const __m256 vq = _mm256_set1_ps(qval);

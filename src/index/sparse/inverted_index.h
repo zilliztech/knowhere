@@ -51,6 +51,8 @@ enum class InvertedIndexEncoding : uint32_t {
     FIXED_DOCID_WINDOWS = 3,
     BLOCK_ADAPTIVE = 4,
     FIXED_DOCID_WINDOWS_U12_E5M7 = 5,
+    FIXED_DOCID_WINDOWS_U12_U4_LUT = 6,
+    FIXED_DOCID_WINDOWS_U16_U4_LUT = 7,
 };
 
 enum class InvertedIndexPrometheusBuildStats : uint32_t { DATASET_NNZ_STATS = 0, POSTING_LIST_LENGTH_STATS = 1 };

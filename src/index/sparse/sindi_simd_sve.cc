@@ -498,6 +498,78 @@ batch_insert_sve(const float* scores, size_t docid_start, size_t count,
     }
 }
 
+// Both streams are decoded directly into matching U32 lanes. All byte loads
+// are predicated to their exact extent, including odd starts and partial tails.
+float
+bm25_accumulate_sve_u12_u4_lut(float q, const uint8_t* vals, const uint8_t* ids, size_t start, int32_t count,
+                               float* out, float k1, float b, float avgdl, const float* lengths, const uint8_t* lut) {
+    if (count <= 0)
+        return 0;
+    const uint32_t vl = svcntw(), phase = start & 1;
+    const auto full = svptrue_b32();
+    const auto lane = svindex_u32(0, 1);
+    const auto bit12 = svadd_n_u32_x(full, svmul_n_u32_x(full, lane, 12), phase * 4);
+    const auto byte12 = svlsr_n_u32_x(full, bit12, 3);
+    const auto table12 = svorr_u32_x(full, byte12, svlsl_n_u32_x(full, svadd_n_u32_x(full, byte12, 1), 8));
+    const auto shift12 = svand_n_u32_x(full, bit12, 7);
+    const auto byte4 = svlsr_n_u32_x(full, svadd_n_u32_x(full, lane, phase), 1);
+    const auto shift4 = svlsl_n_u32_x(full, svand_n_u32_x(full, svadd_n_u32_x(full, lane, phase), 1), 2);
+    const auto decode = svld1_u8(svwhilelt_b8(0u, 16u), lut);
+    const auto p1 = svdup_f32(q * (k1 + 1));
+    const float p2 = k1 * (1 - b), p3 = k1 * b / avgdl;
+    auto maximum = svdup_f32(0);
+    for (uint32_t i = 0; i < uint32_t(count); i += vl) {
+        const uint32_t n = std::min(vl, uint32_t(count) - i);
+        const auto pg = svwhilelt_b32(0u, n);
+        const auto id = load12(ids + 3 * ((start + i) / 2) + phase, n, phase * 4, table12, shift12);
+        const auto raw = svld1_u8(svwhilelt_b8(0u, (n + phase + 1) / 2), vals + (start + i) / 2);
+        const auto bytes = svreinterpret_u32_u8(svtbl_u8(raw, svreinterpret_u8_u32(byte4)));
+        const auto code = svand_n_u32_x(full, svlsr_u32_x(full, bytes, shift4), 15);
+        const auto tfword = svreinterpret_u32_u8(svtbl_u8(decode, svreinterpret_u8_u32(code)));
+        const auto tf = svcvt_f32_u32_x(pg, tfword);
+        const auto dl = svld1_gather_u32index_f32(pg, lengths, id);
+        const auto denominator = svadd_f32_x(pg, svadd_n_f32_x(pg, tf, p2), svmul_n_f32_x(pg, dl, p3));
+        const auto contribution = svdiv_f32_x(pg, svmul_f32_x(pg, p1, tf), denominator);
+        const auto sum = svadd_f32_x(pg, svld1_gather_u32index_f32(pg, out, id), contribution);
+        svst1_scatter_u32index_f32(pg, out, id, sum);
+        maximum = svmax_f32_m(pg, maximum, sum);
+    }
+    return svmaxv_f32(full, maximum);
+}
+
+float
+bm25_accumulate_sve_u16_u4_lut(float q, const uint8_t* vals, const uint8_t* ids, size_t start, int32_t count,
+                               float* out, float k1, float b, float avgdl, const float* lengths, const uint8_t* lut) {
+    if (count <= 0)
+        return 0;
+    const uint32_t vl = svcntw(), phase = start & 1;
+    const auto full = svptrue_b32();
+    const auto lane = svindex_u32(0, 1);
+    const auto byte4 = svlsr_n_u32_x(full, svadd_n_u32_x(full, lane, phase), 1);
+    const auto shift4 = svlsl_n_u32_x(full, svand_n_u32_x(full, svadd_n_u32_x(full, lane, phase), 1), 2);
+    const auto decode = svld1_u8(svwhilelt_b8(0u, 16u), lut);
+    const auto p1 = svdup_f32(q * (k1 + 1));
+    const float p2 = k1 * (1 - b), p3 = k1 * b / avgdl;
+    auto maximum = svdup_f32(0);
+    for (uint32_t i = 0; i < uint32_t(count); i += vl) {
+        const uint32_t n = std::min(vl, uint32_t(count) - i);
+        const auto pg = svwhilelt_b32(0u, n);
+        const auto id = svld1uh_u32(pg, reinterpret_cast<const uint16_t*>(ids + (start + i) * sizeof(uint16_t)));
+        const auto raw = svld1_u8(svwhilelt_b8(0u, (n + phase + 1) / 2), vals + (start + i) / 2);
+        const auto bytes = svreinterpret_u32_u8(svtbl_u8(raw, svreinterpret_u8_u32(byte4)));
+        const auto code = svand_n_u32_x(full, svlsr_u32_x(full, bytes, shift4), 15);
+        const auto tfword = svreinterpret_u32_u8(svtbl_u8(decode, svreinterpret_u8_u32(code)));
+        const auto tf = svcvt_f32_u32_x(pg, tfword);
+        const auto dl = svld1_gather_u32index_f32(pg, lengths, id);
+        const auto denominator = svadd_f32_x(pg, svadd_n_f32_x(pg, tf, p2), svmul_n_f32_x(pg, dl, p3));
+        const auto contribution = svdiv_f32_x(pg, svmul_f32_x(pg, p1, tf), denominator);
+        const auto sum = svadd_f32_x(pg, svld1_gather_u32index_f32(pg, out, id), contribution);
+        svst1_scatter_u32index_f32(pg, out, id, sum);
+        maximum = svmax_f32_m(pg, maximum, sum);
+    }
+    return svmaxv_f32(full, maximum);
+}
+
 }  // namespace knowhere::sparse::inverted::sindi
 
 #endif

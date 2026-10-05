@@ -38,6 +38,8 @@
 #include "knowhere/index/index_factory.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/version.h"
+#include "src/index/sparse/inverted_index_format.h"
+#include "src/index/sparse/sindi_packed12.h"
 #include "src/index/sparse/sindi_refinement.h"
 #include "src/index/sparse/sindi_simd.h"
 
@@ -184,9 +186,13 @@ LoadTruth(const std::string& path, const std::vector<uint64_t>& selection, uint6
 struct Options {
     std::string data, output = "sparse_results.csv", method = "all";
     uint64_t queries = 100, offset = 0, base_limit = 0;
-    bool refine = false;
+    bool refine = false, size_only = false;
+    std::string quant_type = "fp16";
     float mass = 1, factor = 1, drop = 0;
-    std::string sweep, split = "dev";
+    std::string sweep, split = "dev", scheme = "mass";
+    int samples = 100;
+    uint32_t pareto_seed = 42;
+    float factor_min = 1, factor_max = 20, mass_min = .4f, mass_max = 1;
     int threads = std::max(2u, std::thread::hardware_concurrency()), repeats = 3, k = 10;
     std::optional<uint32_t> seed;
 };
@@ -194,14 +200,19 @@ struct Options {
 Options
 Parse(int argc, char** argv) {
     Options o;
+    std::set<std::string> supplied;
     for (int i = 1; i < argc; ++i) {
         const std::string key = argv[i];
         if (key == "--help") {
             std::cout
                 << "benchmark_sparse --data-dir DIR [--queries 100] [--query-offset 0] [--seed N]\n"
                    "  [--threads N] [--repeats 3] [--k 10] [--output sparse_results.csv]\n"
+                   "  [--quant-type fp16|e5m7] [--size-only 0|1] (SINDI only)\n"
                    "  [--refine 0|1] [--mass 1] [--factor 1] [--drop 0]\n"
-                   "  [--sweep mass|count|drop] [--split dev|hidden]\n"
+                   "  [--sweep mass|count|drop|pareto] [--split dev|hidden]\n"
+                   "  Pareto: [--scheme mass] [--samples 100] [--pareto-seed 42]\n"
+                   "          [--factor-min 1] [--factor-max 20] [--mass-min 0.4] [--mass-max 1]\n"
+                   "  Writes .points.csv, .frontier.csv and .pareto.svg; builds once.\n"
                    "  [--method "
                    "all|TAAT_NAIVE|DAAT_WAND|DAAT_MAXSCORE|BLOCK_MAX_MAXSCORE|BLOCK_MAX_WAND|SINDI|SPARSE_WAND]\n"
                    "  [--base-limit N]  Reduced-base validation against brute force, not supplied ground truth.\n";
@@ -209,10 +220,15 @@ Parse(int argc, char** argv) {
         }
         Check(i + 1 < argc, "Missing value for " + key);
         const std::string value = argv[++i];
+        supplied.insert(key);
         if (key == "--data-dir")
             o.data = value;
         else if (key == "--output")
             o.output = value;
+        else if (key == "--quant-type")
+            o.quant_type = value;
+        else if (key == "--size-only")
+            o.size_only = std::stoi(value) != 0;
         else if (key == "--refine")
             o.refine = std::stoi(value) != 0;
         else if (key == "--mass")
@@ -221,6 +237,16 @@ Parse(int argc, char** argv) {
             o.factor = std::stof(value);
         else if (key == "--drop")
             o.drop = std::stof(value);
+        else if (key == "--scheme")
+            o.scheme = value;
+        else if (key == "--factor-min")
+            o.factor_min = std::stof(value);
+        else if (key == "--factor-max")
+            o.factor_max = std::stof(value);
+        else if (key == "--mass-min")
+            o.mass_min = std::stof(value);
+        else if (key == "--mass-max")
+            o.mass_max = std::stof(value);
         else if (key == "--sweep")
             o.sweep = value;
         else if (key == "--split")
@@ -237,7 +263,10 @@ Parse(int argc, char** argv) {
                 o.offset = n;
             else if (key == "--base-limit")
                 o.base_limit = n;
-            else if (key == "--seed") {
+            else if (key == "--pareto-seed") {
+                Check(n <= UINT32_MAX, "Pareto seed out of range");
+                o.pareto_seed = n;
+            } else if (key == "--seed") {
                 Check(n <= UINT32_MAX, "Seed out of range");
                 o.seed = n;
             } else {
@@ -246,6 +275,8 @@ Parse(int argc, char** argv) {
                     o.threads = n;
                 else if (key == "--repeats")
                     o.repeats = n;
+                else if (key == "--samples")
+                    o.samples = n;
                 else if (key == "--k")
                     o.k = n;
                 else
@@ -253,8 +284,109 @@ Parse(int argc, char** argv) {
             }
         }
     }
+    Check(o.quant_type == "fp16" || o.quant_type == "e5m7", "Unknown quantization");
+    Check((!o.size_only && o.quant_type == "fp16") || o.method == "SINDI", "Packed/size mode requires SINDI");
+    Check(!o.size_only || o.sweep.empty(), "Size measurement does not run a sweep");
     Check(!o.data.empty() && o.queries > 0 && o.threads >= 2, "Provide --data-dir, positive queries, and >=2 threads");
+    Check(o.sweep.empty() || o.sweep == "mass" || o.sweep == "count" || o.sweep == "drop" || o.sweep == "pareto",
+          "Unknown sweep: " + o.sweep);
+    Check(o.scheme == "mass", "Only the mass Pareto scheme is supported");
+    for (const auto* key :
+         {"--scheme", "--samples", "--pareto-seed", "--factor-min", "--factor-max", "--mass-min", "--mass-max"})
+        Check(o.sweep == "pareto" || !supplied.count(key), std::string(key) + " requires --sweep pareto");
+    if (o.sweep == "pareto") {
+        Check(o.method == "SINDI" && o.refine && o.drop == 0,
+              "Pareto sweep requires --method SINDI --refine 1 --drop 0");
+        Check(!supplied.count("--mass") && !supplied.count("--factor"),
+              "Use range options for a Pareto sweep, not --mass or --factor");
+        Check(std::isfinite(o.factor_min) && std::isfinite(o.factor_max) && o.factor_min >= 1 &&
+                  o.factor_min <= o.factor_max,
+              "Require finite 1 <= factor-min <= factor-max");
+        Check(std::isfinite(o.mass_min) && std::isfinite(o.mass_max) && o.mass_min > 0 && o.mass_min <= o.mass_max &&
+                  o.mass_max <= 1,
+              "Require finite 0 < mass-min <= mass-max <= 1");
+    }
     return o;
+}
+
+struct ParetoPoint {
+    size_t id;
+    float factor, mass, drop;
+    double qps, recall;
+};
+
+// Maximize both axes. Exact objective ties remain on the frontier.
+void
+WritePareto(const std::string& output, const std::vector<ParetoPoint>& points, const std::string& scheme) {
+    std::vector<size_t> order(points.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        if (points[a].recall != points[b].recall)
+            return points[a].recall > points[b].recall;
+        if (points[a].qps != points[b].qps)
+            return points[a].qps > points[b].qps;
+        return points[a].id < points[b].id;
+    });
+    std::vector<bool> frontier(points.size(), false);
+    double best_qps = -1, best_recall = -1;
+    for (auto i : order) {
+        const auto& p = points[i];
+        frontier[i] = p.qps > best_qps || (p.qps == best_qps && p.recall == best_recall);
+        if (p.qps > best_qps) {
+            best_qps = p.qps;
+            best_recall = p.recall;
+        }
+    }
+    std::ofstream all(output + ".points.csv"), edge(output + ".frontier.csv"), svg(output + ".pareto.svg");
+    for (auto* stream : {&all, &edge})
+        *stream << "sample_id,scheme,refine_k,refine_factor,sindi_query_mass,drop_ratio_search,mean_qps,mean_recall,"
+                   "pareto\n"
+                << std::setprecision(17);
+    for (auto i : order) {
+        const auto& p = points[i];
+        for (auto* stream : {&all, &edge}) {
+            if (stream == &edge && !frontier[i])
+                continue;
+            *stream << p.id << ',' << scheme << ',' << (scheme == "mass" ? p.factor : 1) << ','
+                    << (scheme == "count" ? p.factor : 1) << ',' << p.mass << ',' << p.drop << ',' << p.qps << ','
+                    << p.recall << ',' << frontier[i] << '\n';
+        }
+    }
+    const double max_qps = std::max(1.0, best_qps * 1.05);
+    auto x = [](double recall) { return 80 + 800 * recall; };
+    auto y = [&](double qps) { return 530 - 460 * qps / max_qps; };
+    svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"960\" height=\"620\" viewBox=\"0 0 960 620\">"
+           "<rect width=\"960\" height=\"620\" fill=\"white\"/>"
+           "<g font-family=\"sans-serif\" font-size=\"14\" fill=\"#222\">"
+           "<text x=\"80\" y=\"28\">SINDI "
+        << scheme << " QPS / recall Pareto frontier</text>"
+        << "<text x=\"80\" y=\"50\">Blue: all samples; red: nondominated samples (higher is better)</text>";
+    for (int tick = 0; tick <= 5; ++tick) {
+        const double recall = tick / 5.0, qps = max_qps * tick / 5;
+        svg << "<path d=\"M " << x(recall) << " 70 V 530 M 80 " << y(qps) << " H 880\" stroke=\"#ddd\"/>"
+            << "<text x=\"" << x(recall) << "\" y=\"555\" text-anchor=\"middle\">" << recall << "</text>"
+            << "<text x=\"72\" y=\"" << y(qps) + 5 << "\" text-anchor=\"end\">" << std::fixed << std::setprecision(0)
+            << qps << std::defaultfloat << std::setprecision(6) << "</text>";
+    }
+    svg << "<text x=\"480\" y=\"590\" text-anchor=\"middle\">Recall@k</text>"
+           "<text transform=\"translate(20 300) rotate(-90)\" text-anchor=\"middle\">QPS</text>"
+           "<polyline fill=\"none\" stroke=\"#d33\" stroke-width=\"2\" points=\"";
+    for (auto i : order)
+        if (frontier[i])
+            svg << x(points[i].recall) << ',' << y(points[i].qps) << ' ';
+    svg << "\"/>";
+    for (auto i : order) {
+        const auto& p = points[i];
+        svg << "<circle cx=\"" << x(p.recall) << "\" cy=\"" << y(p.qps) << "\" r=\"4\" fill=\""
+            << (frontier[i] ? "#d33" : "#4682b4") << "\"><title>sample=" << p.id
+            << (scheme == "count" ? " refine_factor=" : " refine_k=") << p.factor << " mass=" << p.mass
+            << " drop_ratio_search=" << p.drop << " QPS=" << p.qps << " recall=" << p.recall << "</title></circle>";
+    }
+    svg << "</g></svg>\n";
+    for (auto* stream : {&all, &edge, &svg}) {
+        stream->flush();
+        Check(stream->good(), "Cannot write Pareto artifacts for " + output);
+    }
 }
 
 // ID recall deliberately exposes ties and FP16 rounding relative to FP32 ground truth.
@@ -314,17 +446,24 @@ main(int argc, char** argv) {
         const auto o = Parse(argc, argv);
         const auto& ip_kernels = knowhere::sparse::inverted::sindi::get_ip_kernels();
         Dl_info accumulate_info{}, insert_info{};
-        Check(dladdr(reinterpret_cast<void*>(ip_kernels.accumulate), &accumulate_info) != 0 &&
+        Check(dladdr(o.quant_type == "e5m7"
+                         ? reinterpret_cast<void*>(knowhere::sparse::inverted::sindi::get_packed_ip_kernel())
+                         : reinterpret_cast<void*>(ip_kernels.accumulate),
+                     &accumulate_info) != 0 &&
                   accumulate_info.dli_sname != nullptr,
               "Cannot identify IP kernel");
         Check(dladdr(reinterpret_cast<void*>(ip_kernels.batch_insert), &insert_info) != 0 &&
                   insert_info.dli_sname != nullptr,
               "Cannot identify selection kernel");
+        int sve_bytes = 0;
+#if defined(__aarch64__)
         Check(std::string(accumulate_info.dli_sname).find("sve") != std::string::npos &&
                   std::string(insert_info.dli_sname).find("sve") != std::string::npos,
               "Baseline requires SVE kernels");
         const int sve_vl = prctl(PR_SVE_GET_VL);
         Check(sve_vl > 0, "Cannot read SVE vector length");
+        sve_bytes = sve_vl & PR_SVE_VL_LEN_MASK;
+#endif
         cpu_set_t affinity;
         CPU_ZERO(&affinity);
         Check(sched_getaffinity(0, sizeof(affinity), &affinity) == 0, "Cannot read CPU affinity");
@@ -332,8 +471,7 @@ main(int argc, char** argv) {
         for (int i = 0; i < CPU_SETSIZE; ++i)
             if (CPU_ISSET(i, &affinity))
                 cpus.push_back(i);
-        std::cerr << "IP kernel=" << accumulate_info.dli_sname << " SVE bytes=" << (sve_vl & PR_SVE_VL_LEN_MASK)
-                  << std::endl;
+        std::cerr << "IP kernel=" << accumulate_info.dli_sname << " SVE bytes=" << sve_bytes << std::endl;
         const std::vector<std::string> methods = {"TAAT_NAIVE",     "DAAT_WAND", "DAAT_MAXSCORE", "BLOCK_MAX_MAXSCORE",
                                                   "BLOCK_MAX_WAND", "SINDI",     "SPARSE_WAND"};
         Check(o.method == "all" || std::find(methods.begin(), methods.end(), o.method) != methods.end(),
@@ -390,7 +528,7 @@ main(int argc, char** argv) {
             {"threads", o.threads},
             {"repeats", o.repeats},
             {"index_version", version},
-            {"quant_type", "fp16"},
+            {"quant_type", o.quant_type},
             {"search_config", search},
             {"base_load_seconds", load_seconds},
             {"machine", host.machine},
@@ -401,9 +539,13 @@ main(int argc, char** argv) {
             {"ground_truth", o.base_limit ? "reduced-base FP32 brute force" : "base_full." + o.split + ".gt"},
             {"warmup_batches", 1},
             {"runs", Json::array()}};
+        if (o.sweep == "pareto")
+            metadata["pareto"] = {{"scheme", o.scheme},         {"samples", o.samples},       {"seed", o.pareto_seed},
+                                  {"factor_min", o.factor_min}, {"factor_max", o.factor_max}, {"mass_min", o.mass_min},
+                                  {"mass_max", o.mass_max}};
         metadata["effective_ip_kernel"] = accumulate_info.dli_sname;
         metadata["effective_selection_kernel"] = insert_info.dli_sname;
-        metadata["sve_vector_bytes"] = sve_vl & PR_SVE_VL_LEN_MASK;
+        metadata["sve_vector_bytes"] = sve_bytes;
         metadata["cpu_affinity"] = cpus;
         std::ifstream cpu("/proc/cpuinfo"), mem("/proc/meminfo");
         metadata["cpuinfo"] = std::string(std::istreambuf_iterator<char>(cpu), {});
@@ -421,7 +563,7 @@ main(int argc, char** argv) {
                 alias ? knowhere::IndexEnum::INDEX_SPARSE_WAND : knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
             const std::string algo = alias ? "DAAT_WAND" : method;
             Json build = {
-                {"dim", base.dim}, {"metric_type", "IP"}, {"inverted_index_algo", algo}, {"quant_type", "fp16"}};
+                {"dim", base.dim}, {"metric_type", "IP"}, {"inverted_index_algo", algo}, {"quant_type", o.quant_type}};
             const std::string codec = algo == "SINDI" ? "fixed_docid_windows" : "block_streamvbyte";
             if (algo == "SINDI") {
                 build["sindi_window_size"] = 4096;
@@ -438,6 +580,92 @@ main(int argc, char** argv) {
             Check(status == knowhere::Status::success, method + " Build failed, status=" + std::to_string(int(status)));
             const double build_seconds = Seconds(start);
             const auto bytes = index.Size();
+            if (o.size_only) {
+                auto smoke = index.Search(query_ds, search, nullptr);
+                Check(smoke.has_value(), "Pre-serialize smoke search failed: " + smoke.what());
+                Json measured = {{"build_config", build},
+                                 {"build_seconds", build_seconds},
+                                 {"index_bytes", bytes},
+                                 {"refine", o.refine},
+                                 {"quant_type", o.quant_type}};
+                const std::string path = o.output + ".index";
+                {
+                    knowhere::BinarySet binary;
+                    start = Clock::now();
+                    Check(index.Serialize(binary) == knowhere::Status::success, "Serialize failed");
+                    measured["serialize_seconds"] = Seconds(start);
+                    auto blob = binary.GetByName(type);
+                    Check(blob != nullptr, "Missing serialized index");
+                    measured["file_bytes"] = blob->size;
+                    size_t total_bytes = 0;
+                    for (const auto& item : binary.binary_map_) total_bytes += item.second->size;
+                    measured["binaryset_bytes"] = total_bytes;
+                    auto u32 = [&](size_t pos) {
+                        uint32_t v;
+                        std::memcpy(&v, blob->data.get() + pos, 4);
+                        return v;
+                    };
+                    const auto dims = u32(12), section_count = u32(32);
+                    measured["dimensions"] = dims;
+                    measured["sections"] = Json::array();
+                    for (size_t i = 0; i < section_count; ++i) {
+                        knowhere::sparse::inverted::InvertedIndexSectionHeader h;
+                        std::memcpy(&h, blob->data.get() + 36 + i * sizeof(h), sizeof(h));
+                        measured["sections"].push_back({{"type", uint32_t(h.type)}, {"bytes", h.size}});
+                        if (h.type != knowhere::sparse::inverted::InvertedIndexSectionType::POSTING_LISTS)
+                            continue;
+                        size_t pos = h.offset + (o.quant_type == "e5m7" ? 24 : 12) + (dims + 7) / 8;
+                        for (size_t d = 0; d < dims; ++d) pos += 4 + u32(pos);
+                        const uint64_t count = u32(pos + dims * 4);
+                        const uint64_t payload = o.quant_type == "e5m7"
+                                                     ? 2 * knowhere::sparse::inverted::sindi::packed12_bytes(count)
+                                                     : 4 * count;
+                        measured["retained_postings"] = count;
+                        measured["posting_payload_bytes"] = payload;
+                        measured["reported_nonpayload_bytes"] = uint64_t(bytes) - payload;
+                        measured["serialized_nonpayload_bytes"] = blob->size - payload;
+                        measured["payload_bytes_per_posting"] = count ? double(payload) / count : 0;
+                        if (o.quant_type == "e5m7") {
+                            const auto stream_bytes = knowhere::sparse::inverted::sindi::packed12_bytes(count);
+                            const auto* vals = blob->data.get() + pos + (dims + 1) * 4 + stream_bytes;
+                            uint64_t zeros = 0;
+                            for (uint64_t j = 0; j < count; ++j)
+                                zeros += knowhere::sparse::inverted::sindi::unpack12(vals, j) == 0;
+                            measured["represented_zero_postings"] = zeros;
+                        }
+                    }
+                    std::ofstream file(path, std::ios::binary);
+                    file.write(reinterpret_cast<const char*>(blob->data.get()), blob->size);
+                    file.close();
+                    Check(file.good(), "Cannot write index file");
+                }
+                // Release the built index and serialization buffer before mapping the file.
+                auto replacement = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(type, version);
+                Check(replacement.has_value(), "Create load target failed");
+                index = std::move(replacement.value());
+                start = Clock::now();
+                Check(index.DeserializeFromFile(path, Json{{"metric_type", "IP"}, {"enable_mmap", true}}) ==
+                          knowhere::Status::success,
+                      "Mmap load failed");
+                measured["mmap_load_seconds"] = Seconds(start);
+                measured["loaded_index_bytes"] = index.Size();
+                auto loaded = index.Search(query_ds, search, nullptr);
+                Check(loaded.has_value(), "Post-load smoke failed");
+                const size_t n = o.queries * o.k;
+                Check(std::memcmp(smoke.value()->GetIds(), loaded.value()->GetIds(), n * sizeof(int64_t)) == 0 &&
+                          std::memcmp(smoke.value()->GetDistance(), loaded.value()->GetDistance(), n * sizeof(float)) ==
+                              0,
+                      "Persistence changed results");
+                measured["smoke_recall"] = Recall(loaded.value(), truth, o.queries, o.k, base.rows.size());
+                measured["persistence_result_identity"] = true;
+                metadata["runs"].push_back(measured);
+                std::ofstream meta(o.output + ".json");
+                meta << metadata.dump(2) << '\n';
+                meta.close();
+                Check(meta.good(), "Cannot write size metadata");
+                std::cout << measured.dump() << std::endl;
+                continue;
+            }
             std::vector<Json> settings;
             auto add_setting = [&](float mass, float factor, float drop) {
                 auto cfg = search;
@@ -446,7 +674,20 @@ main(int argc, char** argv) {
                 cfg["drop_ratio_search"] = drop;
                 settings.push_back(cfg);
             };
-            if (o.sweep == "mass") {
+            if (o.sweep == "pareto") {
+                std::mt19937 rng(o.pareto_seed);
+                // Match the donor's reproducible engine-to-float mapping.
+                auto sample = [&](float low, float high) {
+                    const double unit = double(rng()) / 4294967296.0;
+                    return static_cast<float>(double(low) + (double(high) - low) * unit);
+                };
+                for (int i = 0; i < o.samples; ++i) {
+                    const float factor = sample(o.factor_min, o.factor_max);
+                    const float mass = sample(o.mass_min, o.mass_max);
+                    add_setting(mass, factor, 0);
+                }
+                metadata["pareto"]["settings"] = settings;
+            } else if (o.sweep == "mass") {
                 for (float mass : {1.0f, .9f, .8f, .7f, .6f, .5f})
                     for (float factor : {1.0f, 5.0f, 10.0f}) add_setting(mass, factor, 0);
             } else if (o.sweep == "count") {
@@ -456,6 +697,7 @@ main(int argc, char** argv) {
                 for (float drop : {0.0f, .3f, .5f, .7f, .9f}) add_setting(1, 1, drop);
             } else
                 add_setting(o.mass, o.factor, o.drop);
+            std::vector<ParetoPoint> points;
             size_t setting_id = 0;
             for (const auto& setting : settings) {
                 search = setting;
@@ -468,6 +710,11 @@ main(int argc, char** argv) {
                             {"build_config", build},   {"effective_codec", codec},
                             {"search_config", search}, {"build_seconds", build_seconds},
                             {"index_bytes", bytes},    {"measurements", Json::array()}};
+                run["sample_id"] = setting_id - 1;
+                run["scheme"] = o.sweep == "pareto" ? "mass" : "existing";
+                double qps_sum = 0, recall_sum = 0;
+                std::cout << "Setting " << setting_id << '/' << settings.size() << " refine_k=" << search["refine_k"]
+                          << " mass=" << search["sindi_query_mass"] << std::endl;
                 std::vector<int64_t> first_ids;
                 std::vector<float> first_scores;
                 for (int repeat = 0; repeat < o.repeats; ++repeat) {
@@ -499,15 +746,18 @@ main(int argc, char** argv) {
                               "Results changed across measured repetitions");
                     }
                     const auto recall = Recall(result.value(), truth, o.queries, o.k, base.rows.size());
-                    if (repeat == 0) {
+                    if (repeat == 0 && o.sweep != "pareto") {
                         run["recall_mismatches"] = RecallMismatches(result.value(), truth, selected, o.k);
                     }
+                    Check(seconds > 0 && std::isfinite(seconds), "Invalid search duration");
                     const double qps = o.queries / seconds;
-                    csv << method << ',' << type << ',' << version << ",fp16," << codec << ',' << base.rows.size()
-                        << ',' << o.queries << ',' << o.k << ',' << o.threads << ',' << build_seconds << ',' << bytes
-                        << ',' << repeat + 1 << ',' << seconds << ',' << qps << ',' << recall << ','
-                        << search["sindi_query_mass"] << ',' << search["refine_k"] << ',' << search["drop_ratio_search"]
-                        << ',' << o.refine << '\n';
+                    qps_sum += qps;
+                    recall_sum += recall;
+                    csv << method << ',' << type << ',' << version << ',' << o.quant_type << ',' << codec << ','
+                        << base.rows.size() << ',' << o.queries << ',' << o.k << ',' << o.threads << ','
+                        << build_seconds << ',' << bytes << ',' << repeat + 1 << ',' << seconds << ',' << qps << ','
+                        << recall << ',' << search["sindi_query_mass"] << ',' << search["refine_k"] << ','
+                        << search["drop_ratio_search"] << ',' << o.refine << '\n';
                     csv.flush();
                     Check(csv.good(), "Failed writing results");
                     run["measurements"].push_back({{"repeat", repeat + 1},
@@ -518,54 +768,65 @@ main(int argc, char** argv) {
                     std::cout << method << " repeat=" << repeat + 1 << " seconds=" << seconds << " QPS=" << qps
                               << " recall@" << o.k << '=' << recall << std::endl;
                 }
-                // Separate, untimed coverage diagnostics. Materialize exactly the coarse query.
-                SparseData selected_data;
-                selected_data.dim = queries.dim;
-                double mass_sum = 0;
-                size_t retained_nnz = 0;
-                for (const auto& q : queries.rows) {
-                    Row selected;
-                    if (o.refine)
-                        selected = knowhere::sparse::inverted::sindi::retain_query_mass(
-                            q, search["sindi_query_mass"].get<float>());
-                    else {
-                        std::vector<float> weights;
-                        for (size_t j = 0; j < q.size(); ++j) weights.push_back(q[j].val);
-                        std::sort(weights.begin(), weights.end());
-                        const size_t count = size_t(search["drop_ratio_search"].get<float>() * weights.size());
-                        float threshold = weights.empty() ? 0 : weights[std::min(count, weights.size() - 1)];
-                        std::vector<std::pair<uint32_t, float>> terms;
-                        for (size_t j = 0; j < q.size(); ++j)
-                            if (q[j].val >= threshold)
-                                terms.emplace_back(q[j].id, q[j].val);
-                        selected = Row(terms);
+                run["mean_qps"] = qps_sum / o.repeats;
+                run["mean_recall"] = recall_sum / o.repeats;
+                if (o.sweep == "pareto") {
+                    const float factor = search["refine_k"].get<float>();
+                    run["candidate_pool"] =
+                        knowhere::sparse::inverted::sindi::refinement_pool_size(o.k, factor, base.rows.size());
+                    points.push_back({setting_id - 1, factor, search["sindi_query_mass"].get<float>(), 0,
+                                      qps_sum / o.repeats, recall_sum / o.repeats});
+                    WritePareto(o.output, points, "mass");
+                } else {
+                    // Separate, untimed coverage diagnostics. Materialize exactly the coarse query.
+                    SparseData selected_data;
+                    selected_data.dim = queries.dim;
+                    double mass_sum = 0;
+                    size_t retained_nnz = 0;
+                    for (const auto& q : queries.rows) {
+                        Row selected;
+                        if (o.refine)
+                            selected = knowhere::sparse::inverted::sindi::retain_query_mass(
+                                q, search["sindi_query_mass"].get<float>());
+                        else {
+                            std::vector<float> weights;
+                            for (size_t j = 0; j < q.size(); ++j) weights.push_back(q[j].val);
+                            std::sort(weights.begin(), weights.end());
+                            const size_t count = size_t(search["drop_ratio_search"].get<float>() * weights.size());
+                            float threshold = weights.empty() ? 0 : weights[std::min(count, weights.size() - 1)];
+                            std::vector<std::pair<uint32_t, float>> terms;
+                            for (size_t j = 0; j < q.size(); ++j)
+                                if (q[j].val >= threshold)
+                                    terms.emplace_back(q[j].id, q[j].val);
+                            selected = Row(terms);
+                        }
+                        double total = 0, retained = 0;
+                        for (size_t j = 0; j < q.size(); ++j) total += q[j].val;
+                        for (size_t j = 0; j < selected.size(); ++j) retained += selected[j].val;
+                        mass_sum += total ? retained / total : 1;
+                        retained_nnz += selected.size();
+                        selected_data.rows.push_back(std::move(selected));
                     }
-                    double total = 0, retained = 0;
-                    for (size_t j = 0; j < q.size(); ++j) total += q[j].val;
-                    for (size_t j = 0; j < selected.size(); ++j) retained += selected[j].val;
-                    mass_sum += total ? retained / total : 1;
-                    retained_nnz += selected.size();
-                    selected_data.rows.push_back(std::move(selected));
+                    const size_t pool = knowhere::sparse::inverted::sindi::refinement_pool_size(
+                        o.k, search["refine_k"].get<float>(), base.rows.size());
+                    auto diagnostic = search;
+                    diagnostic["k"] = pool;
+                    diagnostic["sindi_query_mass"] = 1;
+                    diagnostic["refine_k"] = 1;
+                    diagnostic["drop_ratio_search"] = 0;
+                    auto coarse = index.Search(selected_data.Dataset(), diagnostic, nullptr);
+                    Check(coarse.has_value(), "Coarse coverage diagnostic failed");
+                    size_t covered = 0;
+                    for (size_t q = 0; q < o.queries; ++q)
+                        for (int j = 0; j < o.k; ++j)
+                            covered += std::find(coarse.value()->GetIds() + q * pool,
+                                                 coarse.value()->GetIds() + (q + 1) * pool,
+                                                 truth.ids[q * o.k + j]) != coarse.value()->GetIds() + (q + 1) * pool;
+                    run["candidate_pool"] = pool;
+                    run["candidate_coverage"] = double(covered) / (o.queries * o.k);
+                    run["retained_query_nnz_mean"] = double(retained_nnz) / o.queries;
+                    run["retained_mass_mean"] = mass_sum / o.queries;
                 }
-                const size_t pool = knowhere::sparse::inverted::sindi::refinement_pool_size(
-                    o.k, search["refine_k"].get<float>(), base.rows.size());
-                auto diagnostic = search;
-                diagnostic["k"] = pool;
-                diagnostic["sindi_query_mass"] = 1;
-                diagnostic["refine_k"] = 1;
-                diagnostic["drop_ratio_search"] = 0;
-                auto coarse = index.Search(selected_data.Dataset(), diagnostic, nullptr);
-                Check(coarse.has_value(), "Coarse coverage diagnostic failed");
-                size_t covered = 0;
-                for (size_t q = 0; q < o.queries; ++q)
-                    for (int j = 0; j < o.k; ++j)
-                        covered +=
-                            std::find(coarse.value()->GetIds() + q * pool, coarse.value()->GetIds() + (q + 1) * pool,
-                                      truth.ids[q * o.k + j]) != coarse.value()->GetIds() + (q + 1) * pool;
-                run["candidate_pool"] = pool;
-                run["candidate_coverage"] = double(covered) / (o.queries * o.k);
-                run["retained_query_nnz_mean"] = double(retained_nnz) / o.queries;
-                run["retained_mass_mean"] = mass_sum / o.queries;
                 metadata["runs"].push_back(std::move(run));
                 std::ofstream meta(o.output + ".json");
                 meta << metadata.dump(2) << '\n';
