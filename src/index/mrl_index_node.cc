@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -80,9 +81,13 @@ class TemporaryFile {
 };
 
 std::filesystem::path
-PrefixFilePath(const std::filesystem::path& source) {
+PrefixFilePath(const std::filesystem::path& source, int64_t source_dim, int64_t mrl_dim) {
     static std::atomic<uint64_t> sequence{0};
-    return source.string() + ".mrl." + std::to_string(sequence.fetch_add(1));
+    const auto run_id =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count();
+    return source.string() + ".mrl-prefix.d" + std::to_string(source_dim) + ".k" + std::to_string(mrl_dim) + ".run" +
+           std::to_string(run_id) + "." + std::to_string(sequence.fetch_add(1));
 }
 
 Status
@@ -202,7 +207,7 @@ Status
 MRLIndexNode::BuildFromFile(const DataSetPtr& dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) {
     auto& base_cfg = static_cast<BaseConfig&>(*cfg);
     const auto source_path = std::filesystem::path(base_cfg.data_path.value());
-    TemporaryFile prefix_file(PrefixFilePath(source_path));
+    TemporaryFile prefix_file(PrefixFilePath(source_path, source_dim_, mrl_dim_));
     std::ifstream input(source_path, std::ios::binary);
     std::ofstream output(prefix_file.Path(), std::ios::binary | std::ios::trunc);
     if (!input || !output) {
