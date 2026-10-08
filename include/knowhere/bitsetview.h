@@ -84,6 +84,18 @@ class BitsetView {
         return execution_ ? execution_->batch_calls : 0;
     }
 
+    size_t
+    callback_rows() const {
+        return execution_ ? execution_->rows : 0;
+    }
+
+    // Representation, not a strategy decision. Raw bitmap scans/counts are
+    // complete only for this form; other forms must use test().
+    bool
+    is_bitmap() const {
+        return candidate_evaluator_ == nullptr;
+    }
+
     const CandidateEvaluatorViewV1*
     candidate_evaluator() const {
         return candidate_evaluator_;
@@ -267,32 +279,93 @@ class BitsetView {
     // mandatory-only; an all-visible bitmap still runs the callback.
     uint64_t
     test(const int32_t* ids, uint32_t count) const {
+        return test_rows(ids, count, !has_out_ids() && id_offset_ == 0, [&](int32_t id) -> int64_t {
+            if (id < 0 || (num_bits_ == 0 && vector_count_ != 0 && static_cast<size_t>(id) >= vector_count_)) {
+                return -1;
+            }
+            size_t row = static_cast<size_t>(id) + id_offset_;
+            if (has_out_ids()) {
+                return row < out_ids_count_ ? out_ids_[row] : -1;
+            }
+            return row;
+        });
+    }
+
+    // Adapter entry for backends with their own reorder map. This map replaces
+    // the view's ID projection: its output is already in the public bitmap /
+    // segment-row domain. The non-owning map is read once per active input;
+    // no allocation, intermediate ID pass or extra indirect call is needed.
+    uint64_t
+    test_mapped(const int32_t* ids, uint32_t count, const int32_t* row_map, size_t id_count) const {
+        if (row_map == nullptr) {
+            return test_rows(ids, count, true, [=](int32_t id) -> int32_t {
+                return id < 0 || static_cast<size_t>(id) >= id_count ? -1 : id;
+            });
+        }
+        return test_rows(ids, count, false, [=](int32_t id) -> int32_t {
+            if (id < 0 || static_cast<size_t>(id) >= id_count) {
+                return -1;
+            }
+            return row_map[id];
+        });
+    }
+
+ private:
+    template <typename RowAt>
+    uint64_t
+    test_rows(const int32_t* ids, uint32_t count, bool borrow_ids, RowAt row_at) const {
         const auto lanes = CandidateEvaluatorExecution::LaneMask(count);
         if ((count != 0 && ids == nullptr) || !bound()) {
             throw std::invalid_argument("ann_fusing: invalid batch IDs or unbound filter");
         }
-        uint64_t active = 0;
-        std::array<int32_t, 64> rows;
-        for (uint32_t lane = 0; lane < count; ++lane) {
-            if (test_mandatory(ids[lane])) {
-                continue;
-            }
-            size_t row = static_cast<size_t>(ids[lane]) + id_offset_;
-            if (has_out_ids()) {
-                if (row >= out_ids_count_ || out_ids_[row] < 0) {
-                    continue;
-                }
-                row = static_cast<size_t>(out_ids_[row]);
-            }
-            if (candidate_evaluator_ != nullptr && row > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
-                throw std::out_of_range("ann_fusing: segment row exceeds callback ID domain");
-            }
-            rows[lane] = static_cast<int32_t>(row);
-            active |= uint64_t{1} << lane;
+        // Choose once per batch, not once per lane. An absent mandatory bitmap
+        // is common for all-visible sealed segments, but a zero backend count
+        // is NOT enough to omit a public-domain bitmap (see below).
+        if (num_bits_ == 0) {
+            return test_rows_impl<false, false>(ids, count, lanes, borrow_ids, row_at);
         }
-        return candidate_evaluator_ == nullptr ? lanes & ~active : execution_->test(rows.data(), count, active);
+        // With an identity projection and a count covering the entire public
+        // domain, an exact zero proves that the bitmap contains no exclusions.
+        // A window or compacted/mapped count cannot establish this property.
+        // Still check public row bounds, including an adapter's reorder map.
+        if (vector_count_ == num_bits_ && id_offset_ == 0 && !has_out_ids() && filtered_count_.value_or(1) == 0) {
+            return test_rows_impl<true, false>(ids, count, lanes, borrow_ids, row_at);
+        }
+        return test_rows_impl<true, true>(ids, count, lanes, borrow_ids, row_at);
     }
 
+    template <bool CheckBoundary, bool CheckBitmap, typename RowAt>
+    uint64_t
+    test_rows_impl(const int32_t* ids, uint32_t count, uint64_t lanes, bool borrow_ids, RowAt row_at) const {
+        // Most candidate IDs survive mandatory visibility. Clear rejected
+        // lanes only, avoiding a shift/OR for every normally active candidate.
+        uint64_t active = lanes;
+        std::array<int32_t, 64> rows;
+        for (uint32_t lane = 0; lane < count; ++lane) {
+            const auto row = row_at(ids[lane]);
+            if (row < 0 || (CheckBoundary && static_cast<size_t>(row) >= num_bits_)) {
+                active &= ~(uint64_t{1} << lane);
+                continue;
+            }
+            if constexpr (CheckBitmap) {
+                // A zero backend-domain count need not mean all public rows
+                // are visible (e.g. a sparse reorder map or a public-ID scan).
+                if (bits_[row >> 3] & (uint8_t{1} << (row & 7))) {
+                    active &= ~(uint64_t{1} << lane);
+                    continue;
+                }
+            }
+            if (!is_bitmap() && row > std::numeric_limits<int32_t>::max()) {
+                throw std::out_of_range("ann_fusing: segment row exceeds callback ID domain");
+            }
+            if (!borrow_ids) {
+                rows[lane] = static_cast<int32_t>(row);
+            }
+        }
+        return is_bitmap() ? lanes & ~active : execution_->test(borrow_ids ? ids : rows.data(), count, active);
+    }
+
+ public:
     // Return whether every backend id in [begin, end) is filtered.
     bool
     range_all_filtered(size_t begin, size_t end) const {
