@@ -19,6 +19,7 @@
 #include <fstream>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "index/data_view_dense_index/data_view_dense_index.h"
@@ -71,7 +72,7 @@ class TemporaryFile {
         std::filesystem::remove(path_, error);
     }
 
-    const std::filesystem::path&
+    [[nodiscard]] const std::filesystem::path&
     Path() const {
         return path_;
     }
@@ -218,7 +219,8 @@ MRLIndexNode::BuildFromFile(const DataSetPtr& dataset, std::shared_ptr<Config> c
     uint32_t dim = 0;
     input.read(reinterpret_cast<char*>(&rows), sizeof(rows));
     input.read(reinterpret_cast<char*>(&dim), sizeof(dim));
-    if (!input || dim != static_cast<uint32_t>(source_dim_) || mrl_dim_ > std::numeric_limits<uint32_t>::max()) {
+    if (!input || std::cmp_not_equal(dim, source_dim_) ||
+        std::cmp_greater(mrl_dim_, std::numeric_limits<uint32_t>::max())) {
         return Status::invalid_args;
     }
     const auto prefix_dim = static_cast<uint32_t>(mrl_dim_);
@@ -387,7 +389,7 @@ MRLIndexNode::Serialize(BinarySet& binset) const {
 Status
 MRLIndexNode::Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) {
     auto meta_binary = binset.GetByName(kMRLMeta);
-    if (meta_binary == nullptr || meta_binary->size != static_cast<int64_t>(sizeof(MRLMeta))) {
+    if (meta_binary == nullptr || std::cmp_not_equal(meta_binary->size, sizeof(MRLMeta))) {
         return Status::invalid_binary_set;
     }
     MRLMeta meta{};
