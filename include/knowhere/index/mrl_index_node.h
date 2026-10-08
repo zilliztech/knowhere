@@ -110,10 +110,10 @@ class MRLIndexNode final : public IndexNode {
 
     Index<IndexNode> base_index_;
     std::shared_ptr<DataViewIndexBase> refine_index_;
-    int64_t source_dim_;
-    int64_t mrl_dim_;
-    DataFormatEnum data_type_;
-    bool with_mrl_refine_;
+    int64_t source_dim_ = 0;
+    int64_t mrl_dim_ = 0;
+    DataFormatEnum data_type_ = DataFormatEnum::fp32;
+    bool with_mrl_refine_ = false;
     ViewDataOp view_data_;
 };
 
