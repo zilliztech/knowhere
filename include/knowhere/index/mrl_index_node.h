@@ -19,6 +19,13 @@ namespace knowhere {
 
 class DataViewIndexBase;
 
+/**
+ * @brief Decorates a dense IndexNode with MRL prefix search.
+ *
+ * The wrapped index builds and searches the first mrl_dim values of source_dim-wide vectors; it is not a separate ANN
+ * algorithm. Optional refinement reranks the base result with full-dimensional vectors borrowed through ViewDataOp.
+ * This wrapper does not own or serialize those raw vectors.
+ */
 class MRLIndexNode final : public IndexNode {
  public:
     MRLIndexNode(Index<IndexNode>&& base_index, int64_t source_dim, int64_t mrl_dim, DataFormatEnum data_type,
