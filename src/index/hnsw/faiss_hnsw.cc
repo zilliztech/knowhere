@@ -867,6 +867,12 @@ struct FaissHnswIteratorWorkspace {
     //   hnsw layer.
     bool initial_search_done = false;
 
+    // whether to scan the unfiltered points instead of traversing the graph.
+    //   At high filter ratios the graph traversal visits almost every node while
+    //   looking for the few unfiltered ones, so a sequential scan over the
+    //   unfiltered points is much cheaper (kHnswSearchIteratorBFFilterThreshold).
+    bool use_brute_force = false;
+
     // accumulated elements
     std::vector<DistId> dists;
 
@@ -888,10 +894,11 @@ class FaissHnswIterator : public IndexIterator {
           labels{labels_in},
           label_to_internal_offset(label_to_internal_offset_in),
           mv_base_offset(mv_base_offset_in) {
-        workspace.accumulated_alpha =
-            (bitset_in.count() >= (index->ntotal * HnswSearchThresholds::kHnswSearchKnnBFFilterThreshold))
-                ? std::numeric_limits<float>::max()
-                : 1.0f;
+        const bool high_filter_ratio =
+            (bitset_in.count() >= (index->ntotal * HnswSearchThresholds::kHnswSearchKnnBFFilterThreshold));
+        workspace.accumulated_alpha = high_filter_ratio ? std::numeric_limits<float>::max() : 1.0f;
+        workspace.use_brute_force =
+            (bitset_in.count() >= (index->ntotal * HnswSearchThresholds::kHnswSearchIteratorBFFilterThreshold));
 
         // set up a visitor
         workspace.graph_visitor = DummyVisitor();
@@ -996,6 +1003,41 @@ class FaissHnswIterator : public IndexIterator {
     }
 
  protected:
+    // Computes distances to every unfiltered point and stores them into workspace.dists.
+    //   The stored values follow the sign convention of workspace.qdis (negated for similarity
+    //   metrics), so the post-processing in next_batch() applies unchanged. If a refine index is
+    //   available, its exact distances are used, the same as the brute-force kNN Search does.
+    template <typename FilterT>
+    void
+    brute_force_scan(FilterT& filter) {
+        // workspace.qdis is already sign-wrapped; workspace.qdis_refine is not.
+        const bool use_refine = (workspace.qdis_refine != nullptr);
+        auto& qdis = use_refine ? *workspace.qdis_refine : *workspace.qdis;
+        const float sign =
+            (use_refine && faiss::cppcontrib::knowhere::is_similarity_metric(index->metric_type)) ? -1.0f : 1.0f;
+        const faiss::idx_t ntotal = index->ntotal;
+
+        faiss::idx_t ids[4];
+        size_t n_ids = 0;
+        for (faiss::idx_t i = 0; i < ntotal; i++) {
+            if (!filter.is_member(i)) {
+                continue;
+            }
+            ids[n_ids++] = i;
+            if (n_ids == 4) {
+                float dis[4];
+                qdis.distances_batch_4(ids[0], ids[1], ids[2], ids[3], dis[0], dis[1], dis[2], dis[3]);
+                for (size_t j = 0; j < 4; j++) {
+                    workspace.dists.emplace_back(ids[j], sign * dis[j]);
+                }
+                n_ids = 0;
+            }
+        }
+        for (size_t j = 0; j < n_ids; j++) {
+            workspace.dists.emplace_back(ids[j], sign * qdis(ids[j]));
+        }
+    }
+
     template <typename FilterT>
     void
     next_batch(std::function<void(const std::vector<DistId>&)> batch_handler, FilterT& filter) {
@@ -1013,9 +1055,15 @@ class FaissHnswIterator : public IndexIterator {
         // whether to track hnsw stats
         constexpr bool track_hnsw_stats = true;
 
-        // accumulate elements for a new batch?
-        if (!workspace.initial_search_done) {
-            // yes
+        if (workspace.use_brute_force) {
+            // emit every unfiltered point in a single batch; the base class keeps
+            //   them in a heap and returns them in order.
+            if (!workspace.initial_search_done) {
+                brute_force_scan(filter);
+                workspace.initial_search_done = true;
+            }
+        } else if (!workspace.initial_search_done) {
+            // accumulate elements for a new batch
             faiss::cppcontrib::knowhere::HNSWStats stats;
 
             // is the graph empty?
