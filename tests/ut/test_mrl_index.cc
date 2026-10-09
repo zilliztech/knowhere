@@ -19,10 +19,10 @@ constexpr int64_t kSourceDim = 4;
 constexpr int64_t kMRLDim = 2;
 
 knowhere::Index<knowhere::IndexNode>
-CreateMRLIndex(const float* base_data, bool with_refine) {
+CreateMRLIndex(const float* base_data, bool with_refine,
+               const std::string& index_type = knowhere::IndexEnum::INDEX_FAISS_IDMAP) {
     auto base_index = knowhere::IndexFactory::Instance()
-                          .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IDMAP,
-                                                  knowhere::Version::GetDefaultVersion().VersionNumber())
+                          .Create<knowhere::fp32>(index_type, knowhere::Version::GetDefaultVersion().VersionNumber())
                           .value();
     knowhere::ViewDataOp view_data = [base_data](size_t id) { return base_data + id * kSourceDim; };
     return knowhere::CreateMRLIndex(std::move(base_index), kSourceDim, kMRLDim, knowhere::DataFormatEnum::fp32,
@@ -101,12 +101,15 @@ TEST_CASE("MRL refinement preserves sentinel ids for fully filtered results", "[
         {knowhere::meta::DIM, kMRLDim},
         {knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
         {knowhere::meta::TOPK, 2},
+        {knowhere::indexparam::HNSW_M, 8},
+        {knowhere::indexparam::EFCONSTRUCTION, 16},
+        {knowhere::indexparam::EF, 16},
     };
 
-    auto index = CreateMRLIndex(base_data, true);
+    auto index = CreateMRLIndex(base_data, true, knowhere::IndexEnum::INDEX_HNSW);
     REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
     uint8_t bitset_data[]{0x03};
-    knowhere::BitsetView bitset(bitset_data, 2, 2);
+    knowhere::BitsetView bitset(bitset_data, 2);
     auto result = index.Search(query, config, bitset);
     REQUIRE(result.has_value());
     REQUIRE(result.value()->GetIds()[0] == -1);

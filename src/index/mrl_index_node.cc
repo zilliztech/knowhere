@@ -342,6 +342,11 @@ MRLIndexNode::HasRawData(const std::string&) const {
 }
 
 bool
+MRLIndexNode::NeedBitsetExactCount() const {
+    return base_index_.Node()->NeedBitsetExactCount();
+}
+
+bool
 MRLIndexNode::IsAdditionalScalarSupported(bool is_mv_only) const {
     return base_index_.Node()->IsAdditionalScalarSupported(is_mv_only);
 }

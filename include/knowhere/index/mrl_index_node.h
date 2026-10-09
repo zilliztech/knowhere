@@ -61,6 +61,9 @@ class MRLIndexNode final : public IndexNode {
     HasRawData(const std::string& metric_type) const override;
 
     bool
+    NeedBitsetExactCount() const override;
+
+    bool
     IsAdditionalScalarSupported(bool is_mv_only) const override;
 
     bool
