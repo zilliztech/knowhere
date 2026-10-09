@@ -24,6 +24,7 @@
 #include "pq_table.h"
 #include "utils.h"
 #include "diskann/distance.h"
+#include "diskann/navigation_runtime.h"
 #include "knowhere/thread_pool.h"
 
 #include "defaults.h"
@@ -56,12 +57,8 @@ namespace diskann {
         nullptr;          // MUST BE AT LEAST [MAX_N_SECTOR_READS * SECTOR_LEN]
     _u64 sector_idx = 0;  // index of next [SECTOR_LEN] scratch to use
 
-    float *aligned_pqtable_dist_scratch =
-        nullptr;  // MUST BE AT LEAST [256 * NCHUNKS]
     float *aligned_dist_scratch =
         nullptr;  // MUST BE AT LEAST diskann MAX_DEGREE
-    _u8 *aligned_pq_coord_scratch =
-        nullptr;  // MUST BE AT LEAST  [N_CHUNKS * MAX_DEGREE]
     T     *aligned_query_T = nullptr;
     float *aligned_query_float = nullptr;
 
@@ -148,6 +145,7 @@ namespace diskann {
     tsl::robin_set<_u64> *visited = nullptr;
     float                 query_norm = 0.0f;
     float                 max_base_norm = 0.0f;
+    std::unique_ptr<NavigationDistanceComputer> navigation;
     bool not_l2_but_zero = false;  // (cosine or ip) and query_norm == 0.
     std::vector<unsigned>      frontier;
     std::vector<AlignedRead>   frontier_read_reqs;
@@ -178,47 +176,16 @@ namespace diskann {
     std::vector<knowhere::DistId> backup_res;
   };
 
-  class PQDataGetter {
-   public:
-	virtual _u8* get_pq_data()=0;
-	virtual _u64 get_origin_id(_u64 id)=0;
-	virtual void release_pq_data(size_t offset=0, size_t size=0)=0;
-  virtual void aggregate_pq_coords(const unsigned* ids, const _u64 n_ids, const _u64 ndims, _u8* out)=0;
-	virtual ~PQDataGetter() {}
-  };
-
-  // Optional query-local navigation scorer. Null preserves resident PQ.
-  // Query inputs and thresholds are in DiskANN prepared space, with smaller
-  // scores preferred. A valid threshold is a snapshot of the full candidate
-  // pool, shared by this batch; the scorer must not modify search state.
-  // A scorer may return +infinity to explicitly reject a candidate under its
-  // configured approximate policy. That value is not an exact distance.
-  // Each scorer owns its query scratch and is not shared across queries.
-  class NavigationDistanceComputer {
-   public:
-    virtual ~NavigationDistanceComputer() = default;
-    virtual void set_query(const float* query) = 0;
-    virtual void compute_distances(const unsigned* ids, _u64 n_ids,
-                                   float* distances, float threshold,
-                                   bool threshold_valid,
-                                   QueryStats* stats) = 0;
-  };
-
   template<typename T>
-  class PQFlashIndex: public PQDataGetter {
+  class SSDGraphIndex {
    public:
-    struct NavigationMetadata {
-      uint64_t count;
-      uint64_t dimension;
-    };
-    PQFlashIndex(std::shared_ptr<AlignedFileReader> fileReader,
+    SSDGraphIndex(std::shared_ptr<AlignedFileReader> fileReader,
                  diskann::Metric metric = diskann::Metric::L2);
-    ~PQFlashIndex();
+    ~SSDGraphIndex();
 
     // load compressed data, and obtains the handle to the disk-resident index
     int load(uint32_t num_threads, const char *index_prefix,
-             bool load_pq_data = true,
-             const NavigationMetadata* navigation_metadata = nullptr);
+             const NavigationSpace& space);
 
     virtual void load_cache_list(std::vector<uint32_t> &node_list);
 
@@ -228,7 +195,8 @@ namespace diskann {
     void async_generate_cache_list_from_sample_queries(std::string sample_bin,
                                                        _u64        l_search,
                                                        _u64        beamwidth,
-                                                       _u64 num_nodes_to_cache);
+                                                       _u64 num_nodes_to_cache,
+                                                       std::shared_ptr<const NavigationStore> navigation);
 
     virtual void cache_bfs_levels(_u64                   num_nodes_to_cache,
                                   std::vector<uint32_t> &node_list,
@@ -237,11 +205,11 @@ namespace diskann {
     void cached_beam_search(
         const T *query, const _u64 k_search, const _u64 l_search, _s64 *res_ids,
         float *res_dists, const _u64 beam_width,
+        NavigationDistanceComputer& navigation,
         const bool use_reorder_data = false, QueryStats *stats = nullptr,
         const knowhere::feder::diskann::FederResultUniq &feder = nullptr,
         knowhere::BitsetView                             bitset_view = nullptr,
-        const float                                      filter_ratio = -1.0f,
-        NavigationDistanceComputer*                          approx_distance_computer = nullptr);
+        const float                                      filter_ratio = -1.0f);
 
     void calc_dist_by_ids(const T *query, const int64_t *ids, const int64_t n,
                           float *const output_dists);
@@ -267,26 +235,13 @@ namespace diskann {
 
     std::unique_ptr<IteratorWorkspace<T>> getIteratorWorkspace(
         const T *query_data, const uint64_t lsearch, const uint64_t beam_width,
-        const float filter_ratio, const knowhere::BitsetView &bitset);
+        const float filter_ratio, const knowhere::BitsetView &bitset,
+        std::unique_ptr<NavigationDistanceComputer> navigation);
 
     _u64 cal_size();
 
     // for async cache making task
     void destroy_cache_async_task();
-
-    virtual _u8* get_pq_data() override {
-    	return data.get();
-    }
-
-    virtual _u64 get_origin_id(_u64 id) override {
-    	return id;
-    }
-
-    virtual void aggregate_pq_coords(const unsigned* ids, const _u64 n_ids, const _u64 ndims, _u8* out) override {
-      aggregate_coords(ids, n_ids, get_pq_data(), ndims, out);
-    }
-
-    virtual void release_pq_data(size_t offset=0, size_t size=0) override {}
 
   protected:
     void use_medoids_data_as_centroids();
@@ -324,8 +279,8 @@ namespace diskann {
         IOContext &ctx, QueryStats *stats,
         const knowhere::feder::diskann::FederResultUniq &feder,
         knowhere::BitsetView                             bitset_view,
-		PQDataGetter* pq_data_getter,
-        NavigationDistanceComputer* approx_distance_computer = nullptr);
+        NavigationDistanceComputer& navigation,
+        const IndexIdMapping& id_mapping);
 
     // Assign the index of ids to its corresponding sector and if it is in
     // cache, write to the output_data
@@ -374,17 +329,6 @@ namespace diskann {
 
     std::shared_ptr<ThreadSafeStateController> state_controller =
         std::make_shared<ThreadSafeStateController>();
-
-    // PQ data
-    // n_chunks = # of chunks ndims is split into
-    // data: _u8 * n_chunks
-    // chunk_size = chunk size of each dimension chunk
-    // pq_tables = float* [[2^8 * [chunk_size]] * n_chunks]
-    std::unique_ptr<_u8[]> data = nullptr;
-    _u64                   n_chunks;
-    FixedChunkPQTable      pq_table;
-    // AiSAQ also needs PQ scratch although its codes are disk resident.
-    bool use_pq_navigation = true;
 
     // distance comparator
     DISTFUN<T>     dist_cmp;
@@ -462,4 +406,8 @@ namespace diskann {
     bool                           reorder_data_exists = false;
     _u64                           reoreder_data_offset = 0;
   };
+// Source compatibility for the former class name; all state and behavior
+// belong to the codec-independent graph/SSD engine.
+template<typename T>
+using PQFlashIndex = SSDGraphIndex<T>;
 }  // namespace diskann

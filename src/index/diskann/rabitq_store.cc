@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "diskann/utils.h"
+#include "diskann/percentile_stats.h"
 #include "index/diskann/diskann_config.h"
 
 namespace knowhere {
@@ -93,9 +94,9 @@ apply_rotation_single_query(const faiss::RandomRotationMatrix* rotation, const f
 
 class RaBitQNavigationDistanceComputer final : public diskann::NavigationDistanceComputer {
  public:
-    RaBitQNavigationDistanceComputer(const faiss::RandomRotationMatrix* rotation, const faiss::IndexRaBitQ* rabitq,
+    RaBitQNavigationDistanceComputer(std::shared_ptr<faiss::Index> model, const faiss::RandomRotationMatrix* rotation, const faiss::IndexRaBitQ* rabitq,
                                      uint8_t query_bits)
-        : rotation_(rotation),
+        : model_(std::move(model)), rotation_(rotation),
           rabitq_(rabitq),
           distance_computer_(rabitq->get_quantized_distance_computer(query_bits, false)),
           rabitq_distance_computer_(dynamic_cast<faiss::RaBitQDistanceComputer*>(distance_computer_.get())) {
@@ -106,8 +107,8 @@ class RaBitQNavigationDistanceComputer final : public diskann::NavigationDistanc
 
     void
     set_query(const float* query) override {
-        const int d = rotation_->d_in;
-        transformed_query_ = std::make_unique<float[]>(d);
+        if (!transformed_query_)
+            transformed_query_ = std::make_unique<float[]>(rotation_->d_in);
         apply_rotation_single_query(rotation_, query, transformed_query_.get());
         distance_computer_->set_query(transformed_query_.get());
     }
@@ -190,6 +191,7 @@ class RaBitQNavigationDistanceComputer final : public diskann::NavigationDistanc
     }
 
  private:
+    std::shared_ptr<faiss::Index> model_;
     const faiss::RandomRotationMatrix* rotation_;
     const faiss::IndexRaBitQ* rabitq_;
     std::unique_ptr<faiss::FlatCodesDistanceComputer> distance_computer_;
@@ -327,20 +329,8 @@ RaBitQStore::Validate() {
 }
 
 std::unique_ptr<diskann::NavigationDistanceComputer>
-RaBitQStore::CreateDistanceComputer(const DiskANNConfig& config) const {
-    const auto* navigation = dynamic_cast<const DiskANNNavigationConfig*>(&config);
-    if (!navigation) {
-        throw std::invalid_argument("RaBitQ navigation requires query configuration");
-    }
-    const auto query_metric = config.metric_type.value_or(metric::L2);
-    if (query_metric != metric::L2 && query_metric != metric::IP && query_metric != metric::COSINE) {
-        throw std::invalid_argument("RaBitQ navigation supports L2, IP and COSINE");
-    }
-    const auto qb = navigation->rbq_bits_query.value_or(4);
-    if (qb < 0 || qb > 8) {
-        throw std::invalid_argument("RaBitQ query bits must be in [0, 8]");
-    }
-    return CreateDistanceComputer(static_cast<uint8_t>(qb));
+RaBitQStore::CreateDistanceComputer(const diskann::NavigationQueryOptions& options) const {
+    return CreateDistanceComputer(options.query_bits);
 }
 
 std::unique_ptr<diskann::NavigationDistanceComputer>
@@ -348,7 +338,7 @@ RaBitQStore::CreateDistanceComputer(uint8_t query_bits) const {
     if (query_bits > 8) {
         throw std::invalid_argument("RaBitQ query bits must be in [0, 8]");
     }
-    return std::make_unique<RaBitQNavigationDistanceComputer>(rotation_, rabitq_, query_bits);
+    return std::make_unique<RaBitQNavigationDistanceComputer>(index_, rotation_, rabitq_, query_bits);
 }
 
 int64_t

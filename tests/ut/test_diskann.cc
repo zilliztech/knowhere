@@ -42,6 +42,7 @@
 #include "index/diskann/build_files.h"
 #include "index/diskann/diskann_config.h"
 #include "index/diskann/rabitq_store.h"
+#include "diskann/pq_navigation.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/knowhere_check.h"
 #include "knowhere/expected.h"
@@ -228,6 +229,22 @@ TEST_CASE("DiskANN discovers persisted navigation without build parameters", "[d
     knowhere::Json search = {{"metric_type", "L2"}, {"k", 10}, {"search_list_size", 100}, {"beamwidth", 8}};
     auto rbq = create();
     REQUIRE(rbq.Deserialize(empty, load) == knowhere::Status::success);
+    {
+        knowhere::DiskANNNavigationConfig selection;
+        selection.navigation_codec = "RABITQ";
+        auto model = knowhere::LoadNavigationStore(selection, rbq_prefix);
+        REQUIRE(model != nullptr);
+        REQUIRE(model->Count() == rows);
+        REQUIRE(model->Dimension() == dim);
+        auto scorer = model->CreateDistanceComputer({4});
+        scorer->set_query(static_cast<const float*>(query->GetTensor()));
+        const unsigned id = 0;
+        float before, after;
+        scorer->compute_distances(&id, 1, &before, 0, false, nullptr);
+        model.reset();
+        scorer->compute_distances(&id, 1, &after, 0, false, nullptr);
+        REQUIRE(before == after);
+    }
     auto reference = rbq.Search(query, search, nullptr);
     REQUIRE(reference.has_value());
     auto alias = create(true);
@@ -245,6 +262,50 @@ TEST_CASE("DiskANN discovers persisted navigation without build parameters", "[d
     load["index_prefix"] = pq_prefix;
     REQUIRE(create().Deserialize(empty, load) == knowhere::Status::success);
     REQUIRE(create(true).Deserialize(empty, load) == knowhere::Status::invalid_serialized_index_type);
+    {
+        // The registered PQ model owns the old-format artifacts, and each
+        // computer keeps that state alive independently of the store object.
+        knowhere::DiskANNNavigationConfig selection;
+        selection.navigation_codec = "PQ";
+        auto model = knowhere::LoadNavigationStore(selection, pq_prefix, 2);
+        REQUIRE(model != nullptr);
+        REQUIRE(model->Count() == rows);
+        REQUIRE(model->Dimension() == dim);
+        const auto reserved_size = model->MemorySize();
+        auto first = model->CreateDistanceComputer({0});
+        auto second = model->CreateDistanceComputer({8});
+        REQUIRE(model->MemorySize() == reserved_size);
+
+        size_t code_rows, chunks;
+        std::unique_ptr<uint8_t[]> codes;
+        diskann::load_bin<uint8_t>(pq_prefix + "_pq_compressed.bin", codes, code_rows, chunks);
+        diskann::FixedChunkPQTable reference;
+        reference.load_pq_centroid_bin((pq_prefix + "_pq_pivots.bin").c_str(), chunks);
+        std::vector<unsigned> ids(diskann::defaults::MAX_GRAPH_DEGREE);
+        for (size_t i = 0; i < ids.size(); ++i)
+            ids[i] = (i * 7) % rows;
+        std::vector<uint8_t> gathered(ids.size() * chunks);
+        diskann::aggregate_coords(ids.data(), ids.size(), codes.get(), chunks, gathered.data());
+        std::vector<float> lookup(256 * dim), expected(ids.size()), actual(ids.size()), other(ids.size());
+        const auto* queries = static_cast<const float*>(query->GetTensor());
+        reference.populate_chunk_distances(queries, lookup.data());
+        diskann::pq_dist_lookup(gathered.data(), ids.size(), chunks, lookup.data(), expected.data());
+        first->set_query(queries);
+        second->set_query(queries + dim);
+        second->compute_distances(ids.data(), ids.size(), other.data(), 0, false, nullptr);
+        first->compute_distances(ids.data(), ids.size(), actual.data(), 0, false, nullptr);
+        REQUIRE(actual == expected);
+        REQUIRE(other != actual);
+        first.reset();
+        second.reset();
+        REQUIRE(model->MemorySize() == reserved_size);
+        auto surviving = model->CreateDistanceComputer({});
+        surviving->set_query(queries);
+        model.reset();
+        surviving->compute_distances(ids.data(), ids.size(), actual.data(), 0, false, nullptr);
+        REQUIRE(actual == expected);
+        REQUIRE_NOTHROW(surviving->compute_distances(nullptr, 0, nullptr, 0, false, nullptr));
+    }
     const auto sidecar = knowhere::RaBitQStore::SidecarFilename(pq_prefix);
     fs::copy_file(knowhere::RaBitQStore::SidecarFilename(rbq_prefix), sidecar);
     REQUIRE(create().Deserialize(empty, load) == knowhere::Status::invalid_serialized_index_type);
@@ -1381,9 +1442,9 @@ TEST_CASE("Test DISKANN_RABITQ build and search", "[diskann][rabitq]") {
 
         if (rbq_bits == 1) {
             auto metadata_reader = std::make_shared<LinuxAlignedFileReader>();
-            diskann::PQFlashIndex<float> metadata_only_index(metadata_reader, diskann::Metric::L2);
-            const diskann::PQFlashIndex<float>::NavigationMetadata metadata{kNumRows, kDim};
-            REQUIRE(metadata_only_index.load(1, rabitq_prefix.c_str(), false, &metadata) == 0);
+            diskann::SSDGraphIndex<float> metadata_only_index(metadata_reader, diskann::Metric::L2);
+            const diskann::NavigationSpace metadata{kNumRows, kDim, kDim};
+            REQUIRE(metadata_only_index.load(1, rabitq_prefix.c_str(), metadata) == 0);
             REQUIRE(metadata_only_index.get_num_points() == kNumRows);
             REQUIRE(metadata_only_index.get_data_dim() == kDim);
             REQUIRE_FALSE(fs::exists(rabitq_prefix + "_pq_compressed.bin"));
@@ -1392,7 +1453,6 @@ TEST_CASE("Test DISKANN_RABITQ build and search", "[diskann][rabitq]") {
             std::array<float, kDim> query{};
             std::array<int64_t, 1> ids{};
             std::array<float, 1> distances{};
-            REQUIRE_THROWS(metadata_only_index.cached_beam_search(query.data(), 1, 1, ids.data(), distances.data(), 1));
 
             struct FailingNavigation : diskann::NavigationDistanceComputer {
                 bool fail_set = true;
@@ -1412,11 +1472,11 @@ TEST_CASE("Test DISKANN_RABITQ build and search", "[diskann][rabitq]") {
             for (bool fail_set : {true, false}) {
                 failing.fail_set = fail_set;
                 REQUIRE_THROWS(metadata_only_index.cached_beam_search(query.data(), 1, 16, ids.data(), distances.data(),
-                                                                      1, false, nullptr, nullptr, {}, -1, &failing));
+                                                                      1, failing, false, nullptr, nullptr, {}, -1));
                 // The one-slot scratch pool must still be usable after a throw.
                 REQUIRE_NOTHROW(metadata_only_index.cached_beam_search(query.data(), 1, 16, ids.data(),
-                                                                       distances.data(), 1, false, nullptr, nullptr, {},
-                                                                       -1, scorer.get()));
+                                                                       distances.data(), 1, *scorer, false, nullptr, nullptr, {},
+                                                                       -1));
                 REQUIRE(ids[0] >= 0);
             }
         }

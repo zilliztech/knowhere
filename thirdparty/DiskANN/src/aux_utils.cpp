@@ -862,7 +862,7 @@ namespace diskann {
   // 99.9 latency not blowing up
   template<typename T>
   uint32_t optimize_beamwidth(
-      std::unique_ptr<diskann::PQFlashIndex<T>> &pFlashIndex, T *tuning_sample,
+      std::unique_ptr<diskann::SSDGraphIndex<T>> &pFlashIndex, const NavigationStore& navigation, T *tuning_sample,
       _u64 tuning_sample_num, _u64 tuning_sample_aligned_dim, uint32_t L,
       uint32_t nthreads, uint32_t start_bw) {
     uint32_t cur_bw = start_bw;
@@ -882,10 +882,11 @@ namespace diskann {
       auto s = std::chrono::high_resolution_clock::now();
       for (_s64 i = 0; i < (int64_t) tuning_sample_num; i++) {
         futures.emplace_back(thread_pool->push([&, index = i]() {
+          auto scorer = navigation.CreateDistanceComputer({});
           pFlashIndex->cached_beam_search(
               tuning_sample + (index * tuning_sample_aligned_dim), 1, L,
               tuning_sample_result_ids_64.data() + (index * 1),
-              tuning_sample_result_dists.data() + (index * 1), cur_bw, false,
+              tuning_sample_result_dists.data() + (index * 1), cur_bw, *scorer, false,
               stats.get() + index);
         }));
       }
@@ -1999,27 +2000,27 @@ int build_disk_index(BuildConfig &config, PreparedBuildContext &context,
 
   // knowhere not support uint8/int8 diskann
   // template uint32_t optimize_beamwidth<int8_t>(
-  //     std::unique_ptr<diskann::PQFlashIndex<int8_t>> &pFlashIndex,
+  //     std::unique_ptr<diskann::SSDGraphIndex<int8_t>> &pFlashIndex,
   //     int8_t *tuning_sample, _u64 tuning_sample_num,
   //     _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
   //     uint32_t start_bw);
   // template uint32_t optimize_beamwidth<uint8_t>(
-  //     std::unique_ptr<diskann::PQFlashIndex<uint8_t>> &pFlashIndex,
+  //     std::unique_ptr<diskann::SSDGraphIndex<uint8_t>> &pFlashIndex,
   //     uint8_t *tuning_sample, _u64 tuning_sample_num,
   //     _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
   //     uint32_t start_bw);
   template uint32_t optimize_beamwidth<float>(
-      std::unique_ptr<diskann::PQFlashIndex<float>> &pFlashIndex,
+      std::unique_ptr<diskann::SSDGraphIndex<float>> &pFlashIndex, const NavigationStore& navigation,
       float *tuning_sample, _u64 tuning_sample_num,
       _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
       uint32_t start_bw);
   template uint32_t optimize_beamwidth<knowhere::fp16>(
-      std::unique_ptr<diskann::PQFlashIndex<knowhere::fp16>> &pFlashIndex,
+      std::unique_ptr<diskann::SSDGraphIndex<knowhere::fp16>> &pFlashIndex, const NavigationStore& navigation,
       knowhere::fp16 *tuning_sample, _u64 tuning_sample_num,
       _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
       uint32_t start_bw);
   template uint32_t optimize_beamwidth<knowhere::bf16>(
-      std::unique_ptr<diskann::PQFlashIndex<knowhere::bf16>> &pFlashIndex,
+      std::unique_ptr<diskann::SSDGraphIndex<knowhere::bf16>> &pFlashIndex, const NavigationStore& navigation,
       knowhere::bf16 *tuning_sample, _u64 tuning_sample_num,
       _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
       uint32_t start_bw);

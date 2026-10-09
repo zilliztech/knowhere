@@ -12,6 +12,8 @@
 #include "catch2/generators/catch_generators.hpp"
 #include "diskann/linux_aligned_file_reader.h"
 #include "diskann/pq_flash_index.h"
+#include "diskann/pq_navigation.h"
+#include "index/diskann/rabitq_store.h"
 #include "filemanager/impl/LocalFileManager.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_static.h"
@@ -25,19 +27,15 @@ constexpr const char* kDiskIndexType = "DISKANN";
 #endif
 
 // Decode the actual SSD payload for an independent scalar score reference.
-class DiskPQReference : public diskann::PQFlashIndex<float> {
+class DiskPQReference : public diskann::SSDGraphIndex<float> {
  public:
     explicit DiskPQReference(diskann::Metric metric)
-        : PQFlashIndex(std::make_shared<LinuxAlignedFileReader>(), metric) {
+        : SSDGraphIndex(std::make_shared<LinuxAlignedFileReader>(), metric) {
     }
 
     void
-    CheckExternalResources() {
-        REQUIRE(data == nullptr);
-        REQUIRE(pq_table.get_total_dims() == 0);
+    CheckGraphResources() {
         auto slot = thread_data.pop();
-        REQUIRE(slot.scratch.aligned_pq_coord_scratch == nullptr);
-        REQUIRE(slot.scratch.aligned_pqtable_dist_scratch == nullptr);
         REQUIRE(slot.scratch.coord_scratch != nullptr);
         thread_data.push(slot);
     }
@@ -203,10 +201,17 @@ TEST_CASE("DiskANN SSD scores are independent of navigation and cache", "[diskan
         else if (has_raw)
             REQUIRE(index.GetVectorByIds(knowhere::GenIdsDataSet(1, &id)).has_value());
         DiskPQReference reference(dm);
-        const DiskPQReference::NavigationMetadata metadata{rows, dim + (metric == "IP" ? 1 : 0)};
-        REQUIRE(reference.load(1, prefix.c_str(), !external, external ? &metadata : nullptr) == 0);
+        const diskann::NavigationSpace metadata{rows, dim + (metric == "IP" ? 1 : 0), dim};
+        REQUIRE(reference.load(1, prefix.c_str(), metadata) == 0);
+        reference.CheckGraphResources();
+        std::unique_ptr<diskann::NavigationStore> navigation;
         if (external)
-            reference.CheckExternalResources();
+            navigation = std::make_unique<knowhere::RaBitQStore>(prefix + "_rabitq.index");
+        else
+            navigation = std::make_unique<diskann::PQNavigationStore>(prefix);
+        REQUIRE(navigation != nullptr);
+        REQUIRE(navigation->Count() == rows);
+        REQUIRE(navigation->Dimension() == metadata.dimension);
         if (cached) {
             std::vector<uint32_t> ids(60);
             std::iota(ids.begin(), ids.end(), 0);
@@ -280,7 +285,8 @@ TEST_CASE("DiskANN SSD scores are independent of navigation and cache", "[diskan
             }
             // Explicitly observe the low-level exhausted-candidate path,
             // rather than relying only on the public iterator's buffering.
-            auto workspace = reference.getIteratorWorkspace(xq, rows + 1, 4, 0, knowhere::BitsetView());
+            auto workspace = reference.getIteratorWorkspace(xq, rows + 1, 4, 0, knowhere::BitsetView(),
+                                                             navigation->CreateDistanceComputer({}));
             reference.getIteratorNextBatch(workspace.get());
             REQUIRE_FALSE(workspace->has_candidates());
             REQUIRE(workspace->full_retset.empty());
@@ -289,6 +295,30 @@ TEST_CASE("DiskANN SSD scores are independent of navigation and cache", "[diskan
             for (const auto& item : workspace->backup_res) {
                 REQUIRE(-item.val == Catch::Approx(expected_score(item.id, xq)).epsilon(0.0002).margin(0.0002));
             }
+            struct ThrowOnceNavigation final : diskann::NavigationDistanceComputer {
+                std::unique_ptr<diskann::NavigationDistanceComputer> delegate;
+                bool fail = true;
+                explicit ThrowOnceNavigation(std::unique_ptr<diskann::NavigationDistanceComputer> scorer)
+                    : delegate(std::move(scorer)) {
+                }
+                void set_query(const float* query) override { delegate->set_query(query); }
+                void compute_distances(const unsigned* ids, uint64_t count, float* output, float threshold,
+                                       bool valid, diskann::QueryStats* stats) override {
+                    if (fail) {
+                        fail = false;
+                        throw std::runtime_error("iterator navigation failure");
+                    }
+                    delegate->compute_distances(ids, count, output, threshold, valid, stats);
+                }
+            };
+            auto retry = reference.getIteratorWorkspace(
+                xq, rows + 1, 4, 0, knowhere::BitsetView(),
+                std::make_unique<ThrowOnceNavigation>(navigation->CreateDistanceComputer({})));
+            REQUIRE_THROWS(reference.getIteratorNextBatch(retry.get()));
+            // There is only one IO scratch slot. Retrying also verifies that
+            // the failed batch returned both the slot and the read context.
+            REQUIRE_NOTHROW(reference.getIteratorNextBatch(retry.get()));
+            REQUIRE(retry->backup_res.size() > k);
         }
     }
     std::filesystem::remove_all(dir);

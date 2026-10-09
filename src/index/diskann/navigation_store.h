@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "diskann/navigation_build.h"
-#include "diskann/pq_flash_index.h"
+#include "diskann/navigation_runtime.h"
 #include "filemanager/FileManager.h"
 #include "knowhere/expected.h"
 
@@ -19,30 +19,23 @@ class DiskANNNavigationConfig;
 expected<std::string>
 DetectNavigationCodec(const DiskANNNavigationConfig& config, const std::string& prefix, milvus::FileManager& manager);
 
-// Immutable after load. Each request owns its scorer and transformed-query
-// scratch; this store must outlive those scorers. PQ remains the native engine
-// path (a null external store), without a virtual call per candidate.
-class NavigationStore {
- public:
-    virtual ~NavigationStore() = default;
-    virtual int64_t
-    Count() const = 0;
-    virtual int64_t
-    Dimension() const = 0;
-    virtual size_t
-    MemorySize() const = 0;
-    virtual std::unique_ptr<diskann::NavigationDistanceComputer>
-    CreateDistanceComputer(const DiskANNConfig& config) const = 0;
+using NavigationStore = diskann::NavigationStore;
+struct NavigationFeatures {
+    bool fp32_only;
+    bool iterator;
+    bool emb_list;
+    bool sample_cache;
 };
-
-// Factory boundary: graph/IO code never inspects a concrete quantizer or its
-// search parameters. New codecs are added here, not to cached_beam_search.
-bool
-UsesExternalNavigation(const DiskANNConfig& config);
+NavigationFeatures GetNavigationFeatures(const DiskANNConfig& config);
+diskann::NavigationQueryOptions GetNavigationQueryOptions(const DiskANNConfig& config);
+enum class NavigationInputType { FP32, FP16, BF16 };
+// Additional admission allowance beyond the legacy file-size/4 heuristic.
+// PQ is already covered by that heuristic; its actual model/workspace memory
+// is reported separately by NavigationStore::MemorySize().
 // Missing codec/model parameters require a file-size-based static estimate;
 // build defaults must not be mistaken for persisted model metadata.
 std::optional<uint64_t>
-EstimateNavigationMemory(const DiskANNConfig& config, int64_t rows, int64_t dim);
+EstimateAdditionalNavigationMemory(const DiskANNConfig& config, int64_t rows, int64_t dim);
 struct NavigationFileSet {
     std::vector<std::string> required;
     std::vector<std::string> optional;
@@ -52,7 +45,7 @@ NavigationFiles(const DiskANNConfig& config, const std::string& prefix);
 std::vector<std::string>
 AllNavigationFiles(const std::string& prefix);
 std::unique_ptr<diskann::NavigationBuilder>
-CreateNavigationBuilder(const DiskANNConfig& config, std::unique_ptr<diskann::NavigationBuilder> native_pq);
+CreateNavigationBuilder(const DiskANNConfig& config, NavigationInputType input_type);
 std::unique_ptr<NavigationStore>
-LoadNavigationStore(const DiskANNConfig& config, const std::string& prefix);
+LoadNavigationStore(const DiskANNConfig& config, const std::string& prefix, size_t workspaces = 0);
 }  // namespace knowhere

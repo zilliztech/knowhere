@@ -44,7 +44,7 @@ class RaBitQStore final : public NavigationStore {
     CreateDistanceComputer(uint8_t query_bits = 4) const;
 
     std::unique_ptr<diskann::NavigationDistanceComputer>
-    CreateDistanceComputer(const DiskANNConfig& config) const override;
+    CreateDistanceComputer(const diskann::NavigationQueryOptions& options) const override;
 
     int64_t
     Count() const override;
@@ -65,7 +65,7 @@ class RaBitQStore final : public NavigationStore {
     void
     Validate();
 
-    std::unique_ptr<faiss::Index> index_;
+    std::shared_ptr<faiss::Index> index_;
     const faiss::IndexPreTransform* pretransform_ = nullptr;
     const faiss::RandomRotationMatrix* rotation_ = nullptr;
     const faiss::IndexRaBitQ* rabitq_ = nullptr;
