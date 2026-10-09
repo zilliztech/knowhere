@@ -28,6 +28,9 @@ WITH_ASAN ?=
 WITH_SVS ?=
 WITH_CARDINAL ?=
 CARDINAL_VERSION_FORCE_CHECKOUT ?=
+WITH_C_API ?=
+WITH_JNI ?=
+WITH_C_API_TESTS ?=
 WITH_DEBUG ?=
 CONAN_PROFILE ?=
 
@@ -40,7 +43,8 @@ export CMAKE_POLICY_VERSION_MINIMUM ?= 3.5
 # variables such as WITH_ASAN to every sub-process, which causes the custom
 # folly recipe to pick up $ENV{WITH_ASAN} and compile folly itself with
 # -fsanitize=address — breaking the build on GCC.
-unexport WITH_GPU WITH_UT WITH_BENCHMARK WITH_ASAN WITH_CARDINAL CARDINAL_VERSION_FORCE_CHECKOUT WITH_DEBUG
+unexport WITH_GPU WITH_UT WITH_BENCHMARK WITH_ASAN WITH_CARDINAL CARDINAL_VERSION_FORCE_CHECKOUT WITH_DEBUG \
+	WITH_C_API WITH_JNI WITH_C_API_TESTS
 
 # ---------- Derived settings ----------
 ifdef WITH_DEBUG
@@ -97,6 +101,19 @@ ifdef WITH_CARDINAL
     CONAN_SETTINGS += -o \&:with_cardinal=True
 endif
 
+# C ABI and Java JNI bindings (WITH_JNI implies WITH_C_API). Tests need a C compiler only.
+ifdef WITH_C_API
+    CONAN_SETTINGS += -o \&:with_c_api=True
+endif
+
+ifdef WITH_JNI
+    CONAN_SETTINGS += -o \&:with_jni=True
+endif
+
+ifdef WITH_C_API_TESTS
+    CONAN_SETTINGS += -o \&:with_c_api_tests=True
+endif
+
 ifneq ($(CARDINAL_VERSION_FORCE_CHECKOUT),)
     ifneq ($(filter True true ON on 1,$(CARDINAL_VERSION_FORCE_CHECKOUT)),)
         CONAN_SETTINGS += -o \&:cardinal_version_force_checkout=True
@@ -111,7 +128,7 @@ ifdef CONAN_PROFILE
     CONAN_SETTINGS += -pr:h $(CONAN_PROFILE) -pr:b $(CONAN_PROFILE)
 endif
 
-.PHONY: build test \
+.PHONY: build test test-c-api \
 	lint format pre-commit \
 	wheel codecov \
 	clean help
@@ -120,7 +137,7 @@ all: build ## Default: CPU release build
 
 # ---------- Build ----------
 
-build: ## Build knowhere (use WITH_GPU=True, WITH_UT=True, WITH_BENCHMARK=True, WITH_ASAN=True)
+build: ## Build knowhere (use WITH_GPU=True, WITH_UT=True, WITH_BENCHMARK=True, WITH_ASAN=True, WITH_JNI=True)
 ifdef WITH_GPU
 	@$(PWD)/scripts/prepare_gpu_build.sh
 endif
@@ -132,6 +149,9 @@ endif
 
 test: ## Run unit tests (requires prior build with WITH_UT=True)
 	@$(BUILD_DIR)/$(BUILD_TYPE)/tests/ut/knowhere_tests
+
+test-c-api: ## Run C ABI tests (requires prior build with WITH_C_API_TESTS=True)
+	@ctest --test-dir $(BUILD_DIR)/$(BUILD_TYPE) -R knowhere_c_api --output-on-failure
 
 # ---------- Code quality ----------
 
@@ -176,6 +196,9 @@ help: ## Show available targets
 	@echo "  WITH_SVS=True      Enable SVS (Intel Scalable Vector Search, x86 only)"
 	@echo "  WITH_CARDINAL=True Enable Cardinal build"
 	@echo "  CARDINAL_VERSION_FORCE_CHECKOUT=True Force Cardinal checkout to configured version"
+	@echo "  WITH_C_API=True    Build the C ABI library (libknowhere_c)"
+	@echo "  WITH_JNI=True      Build the Java JNI library (implies WITH_C_API; needs a JDK 11+)"
+	@echo "  WITH_C_API_TESTS=True Build the C ABI tests (run with make test-c-api)"
 	@echo "  WITH_DEBUG=True    Debug build (default: Release)"
 	@echo "  CONAN_PROFILE=<p>  Use one custom Conan profile for host and build"
 	@echo "  LIBCXX=<lib>       Override compiler.libcxx (auto-detected from OS)"
@@ -186,6 +209,7 @@ help: ## Show available targets
 	@echo "  make WITH_UT=True WITH_ASAN=True  # CPU UT + ASAN"
 	@echo "  make WITH_GPU=True WITH_UT=True   # GPU UT"
 	@echo "  make WITH_DEBUG=True WITH_UT=True # CPU debug + UT"
+	@echo "  make WITH_JNI=True WITH_C_API_TESTS=True # C ABI + JNI bindings with C tests"
 	@echo "  make LIBCXX=libc++                # override compiler.libcxx"
 	@echo "  make CONAN_PROFILE=/path/to/profile # CPU with custom profile"
 	@echo ""
