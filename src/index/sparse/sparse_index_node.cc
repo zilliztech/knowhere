@@ -685,12 +685,11 @@ class SparseInvertedIndexNode : public IndexNode {
 
         if (version_default_to_daat_maxscore()) {
             const std::string algo = get_inverted_index_algo("DAAT_MAXSCORE");
-            const std::string codec =
-                cfg.inverted_index_codec.value_or(version_default_to_flat_codec() ? "" : "block_streamvbyte");
+            const std::string codec = cfg.inverted_index_codec.value_or(default_inverted_index_codec());
             return create_index_before_v10(algo, codec);
         } else if (is_ip) {
             const std::string algo = get_inverted_index_algo("SINDI");
-            const std::string codec = cfg.inverted_index_codec.value_or("block_streamvbyte");
+            const std::string codec = cfg.inverted_index_codec.value_or(default_inverted_index_codec());
             // When encoding is available and not FIXED_DOCID_WINDOWS, the file was not
             // built with SINDI, so use create_index_before_v10 to match the actual file encoding.
             bool use_sindi =
@@ -716,7 +715,7 @@ class SparseInvertedIndexNode : public IndexNode {
             }
         } else if (is_bm25) {
             const std::string algo = get_inverted_index_algo("DAAT_MAXSCORE");
-            const std::string codec = cfg.inverted_index_codec.value_or("block_streamvbyte");
+            const std::string codec = cfg.inverted_index_codec.value_or(default_inverted_index_codec());
             bool use_sindi =
                 algo == "SINDI" && (!encoding.has_value() ||
                                     encoding.value() == sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS);
@@ -826,6 +825,7 @@ class SparseInvertedIndexNode : public IndexNode {
 
  private:
     static constexpr int32_t kBm25AutoU8MinVersion = 11;
+    static constexpr int32_t kBlockAdaptiveDefaultMinVersion = 11;
     static constexpr int32_t kSindiMphfSectionMinVersion = 11;
 
     /**
@@ -968,6 +968,14 @@ class SparseInvertedIndexNode : public IndexNode {
 #else
         return false;
 #endif
+    }
+
+    std::string
+    default_inverted_index_codec() const {
+        if (version_default_to_flat_codec()) {
+            return "";
+        }
+        return index_version_ >= kBlockAdaptiveDefaultMinVersion ? "block_adaptive" : "block_streamvbyte";
     }
 
     // used to load index

@@ -24,6 +24,7 @@
 
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "index/sparse/inverted_index.h"
 #include "index/sparse/inverted_index_format.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview.h"
@@ -895,6 +896,43 @@ TEST_CASE("Sparse v8 and v9 serialize the legacy flat codec", "[sparse]") {
     REQUIRE(encoding == 0);
 }
 #endif
+
+TEST_CASE("Sparse v11 defaults to the block adaptive codec", "[sparse]") {
+    const auto dataset = GenSparseDataSet(100, 1000, 0.98f);
+
+    auto serialized_encoding = [&](int32_t version, const std::string& codec = "") {
+        knowhere::Json build_json;
+        build_json[knowhere::meta::DIM] = 1000;
+        build_json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+        build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "DAAT_MAXSCORE";
+        if (!codec.empty()) {
+            build_json["inverted_index_codec"] = codec;
+        }
+
+        auto index = knowhere::IndexFactory::Instance()
+                         .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version)
+                         .value();
+        REQUIRE(index.Build(dataset, build_json) == knowhere::Status::success);
+
+        knowhere::BinarySet binary_set;
+        REQUIRE(index.Serialize(binary_set) == knowhere::Status::success);
+
+        const auto binary = binary_set.GetByName(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX);
+        const auto sections = ReadSparseIndexSections(binary);
+        const auto* posting_lists =
+            FindSection(sections, knowhere::sparse::inverted::InvertedIndexSectionType::POSTING_LISTS);
+        REQUIRE(posting_lists != nullptr);
+
+        uint32_t encoding = 0;
+        std::memcpy(&encoding, binary->data.get() + posting_lists->offset, sizeof(encoding));
+        return static_cast<knowhere::sparse::inverted::InvertedIndexEncoding>(encoding);
+    };
+
+    using knowhere::sparse::inverted::InvertedIndexEncoding;
+    REQUIRE(serialized_encoding(10) == InvertedIndexEncoding::BLOCK_STREAMVBYTE);
+    REQUIRE(serialized_encoding(11) == InvertedIndexEncoding::BLOCK_ADAPTIVE);
+    REQUIRE(serialized_encoding(11, "block_streamvbyte") == InvertedIndexEncoding::BLOCK_STREAMVBYTE);
+}
 
 TEST_CASE("Test Sparse Index Dim Max Score Ratio", "[sparse]") {
     auto nb = 1000;
