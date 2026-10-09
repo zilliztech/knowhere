@@ -17,10 +17,87 @@
 #include "catch2/generators/catch_generators.hpp"
 #include "catch2/matchers/catch_matchers_floating_point.hpp"
 #include "index/sparse/codec/simd_bitpacking_kernel.h"
+#include "index/sparse/sindi_simd.h"
 #include "simd/instruction_set.h"
 #include "simd/sparse_simd.h"
 
 using namespace knowhere::sparse;
+
+TEST_CASE("Test SINDI LSX kernels", "[sparse][simd][sindi][lsx]") {
+#if defined(__loongarch__)
+    const auto ip_kernels = knowhere::sparse::inverted::sindi::get_ip_kernels();
+    const auto bm25_kernels = knowhere::sparse::inverted::sindi::get_bm25_kernels();
+
+    constexpr size_t output_size = 257;
+    constexpr float tolerance = 0.0001f;
+    std::mt19937 rng(20260826);
+    std::uniform_real_distribution<float> value_distribution(0.0f, 10.0f);
+    for (int32_t count : {0, 1, 3, 4, 7, 8, 15, 16, 31, 65}) {
+        std::vector<knowhere::fp16> fp16_values(count);
+        std::vector<uint16_t> tf_values(count);
+        std::vector<uint16_t> ids(count);
+        std::vector<float> row_sums(output_size);
+        std::vector<float> reference(output_size);
+        for (size_t i = 0; i < output_size; ++i) {
+            row_sums[i] = value_distribution(rng) + 1.0f;
+            reference[i] = value_distribution(rng);
+        }
+        for (int32_t i = 0; i < count; ++i) {
+            fp16_values[i] = value_distribution(rng);
+            tf_values[i] = static_cast<uint16_t>(rng() % 128 + 1);
+            ids[i] = static_cast<uint16_t>((static_cast<uint32_t>(i) * 17 + 3) % output_size);
+        }
+
+        auto actual = reference;
+        const float reference_ip_max = knowhere::sparse::inverted::sindi::ip_accumulate_scalar_fp16(
+            1.25f, fp16_values.data(), ids.data(), count, reference.data());
+        const float actual_ip_max = ip_kernels.accumulate(1.25f, fp16_values.data(), ids.data(), count, actual.data());
+        REQUIRE_THAT(actual_ip_max, Catch::Matchers::WithinRel(reference_ip_max, tolerance));
+        for (size_t i = 0; i < output_size; ++i) {
+            REQUIRE_THAT(actual[i], Catch::Matchers::WithinRel(reference[i], tolerance));
+        }
+
+        reference.assign(output_size, 0.0f);
+        actual = reference;
+        const float reference_bm25_max = knowhere::sparse::inverted::sindi::bm25_accumulate_scalar_u16(
+            0.75f, tf_values.data(), ids.data(), count, reference.data(), 1.2f, 0.75f, 8.0f, row_sums.data());
+        const float actual_bm25_max = bm25_kernels.accumulate(0.75f, tf_values.data(), ids.data(), count, actual.data(),
+                                                              1.2f, 0.75f, 8.0f, row_sums.data());
+        REQUIRE_THAT(actual_bm25_max, Catch::Matchers::WithinRel(reference_bm25_max, tolerance));
+        for (size_t i = 0; i < output_size; ++i) {
+            REQUIRE_THAT(actual[i], Catch::Matchers::WithinRel(reference[i], tolerance));
+        }
+    }
+
+    constexpr size_t docid_start = 5;
+    constexpr size_t topk = 7;
+    for (size_t count : {size_t{0}, size_t{1}, size_t{3}, size_t{4}, size_t{5}, size_t{16}, size_t{17}, size_t{33}}) {
+        std::vector<float> scores(count);
+        for (size_t i = 0; i < count; ++i) {
+            scores[i] = value_distribution(rng);
+        }
+        std::vector<uint8_t> bitset_data((docid_start + count + 7) / 8);
+        if (count > 2) {
+            const size_t filtered = docid_start + 2;
+            bitset_data[filtered >> 3] |= static_cast<uint8_t>(1U << (filtered & 7));
+        }
+        const knowhere::BitsetView bitset(bitset_data.data(), docid_start + count);
+        knowhere::ResultMinHeap<float, uint32_t> reference_heap(topk);
+        knowhere::ResultMinHeap<float, uint32_t> actual_heap(topk);
+        float reference_threshold = 0.0f;
+        float actual_threshold = 0.0f;
+        knowhere::sparse::inverted::sindi::batch_insert_scalar(scores.data(), docid_start, count, reference_heap,
+                                                               reference_threshold, bitset);
+        ip_kernels.batch_insert(scores.data(), docid_start, count, actual_heap, actual_threshold, bitset);
+        reference_heap.Finalize();
+        actual_heap.Finalize();
+        REQUIRE(actual_heap.Results() == reference_heap.Results());
+        REQUIRE(actual_threshold == reference_threshold);
+    }
+#else
+    SKIP("Test only runs on LoongArch platforms");
+#endif
+}
 
 // Helper function to generate random sparse posting list data for testing
 struct PostingListTestData {
