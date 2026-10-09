@@ -28,8 +28,8 @@
 namespace knowhere {
 namespace {
 constexpr const char* kMRLMeta = "MRL_META";
-constexpr const char* kBasePrefix = "MRL_BASE/";
-constexpr const char* kRefinePrefix = "MRL_REFINE/";
+constexpr const char* kBasePrefix = "MRL_BASE__";
+constexpr const char* kRefinePrefix = "MRL_REFINE__";
 constexpr uint32_t kMRLMagic = 0x4d524c31;
 constexpr uint32_t kMRLVersion = 1;
 constexpr size_t kFileBatchRows = 4096;
