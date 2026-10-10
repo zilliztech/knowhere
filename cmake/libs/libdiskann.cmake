@@ -14,6 +14,7 @@ include_directories(${double-conversion_INCLUDE_DIRS})
 set(DISKANN_SOURCES
     thirdparty/DiskANN/src/ann_exception.cpp
     thirdparty/DiskANN/src/aux_utils.cpp
+    thirdparty/DiskANN/src/navigation_build.cpp
     thirdparty/DiskANN/src/distance.cpp
     thirdparty/DiskANN/src/index.cpp
     thirdparty/DiskANN/src/linux_aligned_file_reader.cpp
