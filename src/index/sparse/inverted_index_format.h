@@ -34,6 +34,7 @@ enum class InvertedIndexQuantType : uint32_t {
     BM25_U8 = 3,
     BM25_U16 = 4,
     BM25_U32 = 5,
+    IP_E5M7 = 6,
 };
 
 static_assert(sizeof(InvertedIndexQuantType) == sizeof(uint32_t));

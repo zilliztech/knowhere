@@ -176,7 +176,8 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .for_deserialize_from_file();
         KNOWHERE_CONFIG_DECLARE_FIELD(quant_type)
             .description(
-                "quantization type for posting list values: fp16/fp32 for IP, u8/u16/u32/auto for BM25; u8 is "
+                "quantization type for posting list values: fp16/fp32/e5m7 for IP (e5m7 requires SINDI, window=4096), "
+                "u8/u16/u32/auto for BM25; u8 is "
                 "supported only by sealed SINDI with index version >= 11; BM25 auto requires index version >= 11 "
                 "and resolves to u8/u16 for sealed SINDI or u16 for other indexes; the concrete type is persisted "
                 "in the index and restored automatically on load; the load parameter is used only for legacy "
@@ -239,9 +240,9 @@ class SparseInvertedIndexConfig : public BaseConfig {
             auto qt = quant_type.value();
             auto mt = metric_type.value();
             if (mt == metric::IP) {
-                if (qt != "fp16" && qt != "fp32") {
+                if (qt != "fp16" && qt != "fp32" && qt != "e5m7") {
                     if (err_msg) {
-                        *err_msg = "quant_type for IP metric must be 'fp16' or 'fp32', got '" + qt + "'";
+                        *err_msg = "quant_type for IP metric must be 'fp16', 'fp32', or 'e5m7', got '" + qt + "'";
                     }
                     return Status::invalid_args;
                 }
