@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <limits>
 #include <string>
 
@@ -33,6 +34,16 @@
 #include "knowhere/config.h"
 
 namespace knowhere {
+
+inline bool
+IsBm25U4QuantType(const std::string& quant) {
+    return quant == "u4_lut" || quant == "u4_lut_u12" || quant == "u4_lut_u16";
+}
+
+inline std::string
+NormalizeBm25U4QuantType(const std::string& quant) {
+    return quant == "u4_lut" ? "u4_lut_u12" : quant;
+}
 
 inline std::string
 NormalizeSparseInvertedIndexAlgo(std::string algo) {
@@ -59,6 +70,11 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_FLOAT drop_ratio_build;
     CFG_FLOAT drop_ratio_search;
     CFG_INT refine_factor;
+    // Keep the legacy integer field: changing its type is not assumed ABI-compatible.
+    // Match HNSW's floating-point multiplier, including fractional pool sizes.
+    CFG_BOOL refine;
+    CFG_FLOAT refine_k;
+    CFG_FLOAT sindi_query_mass;
     CFG_FLOAT dim_max_score_ratio;
     CFG_INT bulk_query_nnz_threshold;
     CFG_INT block_max_block_size;
@@ -70,6 +86,25 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_INT sindi_window_size;
 
     KNOWHERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine)
+            .description("build SINDI IP full-query refinement support")
+            .set_default(false)
+            .for_train()
+            .for_static();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine_k)
+            .description("SINDI coarse candidate multiplier; ceil(k * refine_k)")
+            .set_default(1.0f)
+            .set_range(1.0f, std::numeric_limits<float>::max())
+            .for_search()
+            .for_range_search()
+            .for_iterator();
+        KNOWHERE_CONFIG_DECLARE_FIELD(sindi_query_mass)
+            .description("SINDI coarse query retained weight mass, not term-count fraction")
+            .set_default(1.0f)
+            .set_range(0.0f, 1.0f, false, true)
+            .for_search()
+            .for_range_search()
+            .for_iterator();
         // NOTE: drop_ratio_build has been deprecated, it won't change anything
         KNOWHERE_CONFIG_DECLARE_FIELD(drop_ratio_build)
             .description("drop ratio for build")
@@ -83,17 +118,10 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .for_search()
             .for_range_search()
             .for_iterator();
-        /**
-         * refine_factor is used for approximate search.
-         * refine_factor == 1 means no refinement, and is the default value.
-         * refine_factor > 1 means refinement. The larger the value, the more
-         * accurate the approximate result will be, but the slower the
-         * performance.
-         * Be aware that if you opt to use a large drop_ratio_search, it is
-         * necessary for you to manually modify this value.
-         */
+        // Legacy compatibility field. Current sparse search does not consume it;
+        // SINDI refinement uses the separate floating-point refine_k parameter.
         KNOWHERE_CONFIG_DECLARE_FIELD(refine_factor)
-            .description("refine factor for approximate search")
+            .description("legacy unused integer multiplier; SINDI refinement uses refine_k")
             .set_default(1)
             .for_search();
         /**
@@ -158,7 +186,9 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .for_deserialize_from_file();
         KNOWHERE_CONFIG_DECLARE_FIELD(quant_type)
             .description(
-                "quantization type for posting list values: fp16/fp32 for IP, u8/u16/u32/auto for BM25; u8 is "
+                "quantization type for posting list values: fp16/fp32/e5m7 for IP (e5m7 requires SINDI, window=4096), "
+                "u4_lut_u12/u4_lut_u16/u8/u16/u32/auto for BM25; u4_lut aliases u4_lut_u12; U4 requires sealed SINDI, "
+                "no refinement; U12 window<=4096; u8 is "
                 "supported only by sealed SINDI with index version >= 11; BM25 auto requires index version >= 11 "
                 "and resolves to u8/u16 for sealed SINDI or u16 for other indexes; the concrete type is persisted "
                 "in the index and restored automatically on load; the load parameter is used only for legacy "
@@ -183,6 +213,15 @@ class SparseInvertedIndexConfig : public BaseConfig {
 
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        const float mass = sindi_query_mass.value_or(1.0f);
+        const float factor = refine_k.value_or(1.0f);
+        if (!std::isfinite(mass) || mass <= 0 || mass > 1 || !std::isfinite(factor) || factor < 1) {
+            return HandleError(err_msg, "Invalid SINDI query mass or refine_k", Status::invalid_args);
+        }
+        if ((param_type & (RANGE_SEARCH | ITERATOR)) && (mass != 1 || factor != 1)) {
+            return HandleError(err_msg, "SINDI refinement controls support top-k search only", Status::invalid_args);
+        }
+
         if (inverted_index_algo.has_value() && !IsSupportedSparseInvertedIndexAlgo(inverted_index_algo.value())) {
             return HandleError(
                 err_msg,
@@ -212,16 +251,19 @@ class SparseInvertedIndexConfig : public BaseConfig {
             auto qt = quant_type.value();
             auto mt = metric_type.value();
             if (mt == metric::IP) {
-                if (qt != "fp16" && qt != "fp32") {
+                if (qt != "fp16" && qt != "fp32" && qt != "e5m7") {
                     if (err_msg) {
-                        *err_msg = "quant_type for IP metric must be 'fp16' or 'fp32', got '" + qt + "'";
+                        *err_msg = "quant_type for IP metric must be 'fp16', 'fp32', or 'e5m7', got '" + qt + "'";
                     }
                     return Status::invalid_args;
                 }
             } else if (mt == metric::BM25) {
-                if (qt != "u8" && qt != "u16" && qt != "u32" && qt != "auto") {
+                if (!IsBm25U4QuantType(qt) && qt != "u8" && qt != "u16" && qt != "u32" && qt != "auto") {
                     if (err_msg) {
-                        *err_msg = "quant_type for BM25 metric must be 'u8', 'u16', 'u32', or 'auto', got '" + qt + "'";
+                        *err_msg =
+                            "quant_type for BM25 metric must be 'u4_lut'/'u4_lut_u12'/'u4_lut_u16', 'u8', 'u16', "
+                            "'u32', or 'auto', got '" +
+                            qt + "'";
                     }
                     return Status::invalid_args;
                 }

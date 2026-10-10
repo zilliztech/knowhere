@@ -109,6 +109,34 @@ class SparseInvertedIndexNode : public IndexNode {
     }
 
     Status
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool = true) override {
+        const auto& cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
+        if (!IsBm25U4QuantType(cfg.quant_type.value_or("")))
+            return IndexNode::Build(dataset, std::move(config), use_knowhere_build_pool);
+        // Sealed compact builds publish only after validation, fitting and packing.
+        if (Type() != IndexEnum::INDEX_SPARSE_INVERTED_INDEX || !dataset || !cfg.bm25_k1.has_value() ||
+            !cfg.bm25_b.has_value() || !cfg.bm25_avgdl.has_value())
+            return Status::invalid_args;
+        try {
+            auto candidate = CreateIndex(cfg);
+            if (!candidate.has_value())
+                return candidate.error();
+            const auto status =
+                candidate.value()->add(static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor()),
+                                       dataset->GetRows(), dataset->GetDim());
+            if (status != Status::success)
+                return status;
+            index_ = std::move(candidate.value());
+            binary_.reset();
+            mmap_guard_.reset();
+            return Status::success;
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_WARNING_ << "Failed compact SINDI build: " << e.what();
+            return Status::sparse_inner_error;
+        }
+    }
+
+    Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
         auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
 
@@ -222,6 +250,16 @@ class SparseInvertedIndexNode : public IndexNode {
         std::string resolved_quant_type;
         bool is_ip = false;
         switch (posting_type.value()) {
+            case InvertedIndexQuantType::BM25_U4_LUT_U12:
+                resolved_quant_type = "u4_lut_u12";
+                break;
+            case InvertedIndexQuantType::BM25_U4_LUT_U16:
+                resolved_quant_type = "u4_lut_u16";
+                break;
+            case InvertedIndexQuantType::IP_E5M7:
+                resolved_quant_type = "e5m7";
+                is_ip = true;
+                break;
             case InvertedIndexQuantType::IP_FP16:
                 resolved_quant_type = "fp16";
                 is_ip = true;
@@ -246,6 +284,13 @@ class SparseInvertedIndexNode : public IndexNode {
         }
         if (!IsMetricType(cfg.metric_type.value(), is_ip ? metric::IP : metric::BM25)) {
             return Status::invalid_serialized_index_type;
+        }
+        if (IsBm25U4QuantType(resolved_quant_type) && !cfg.quant_type.value_or("").empty() &&
+            NormalizeBm25U4QuantType(cfg.quant_type.value()) != resolved_quant_type)
+            return Status::invalid_serialized_index_type;
+        if (resolved_quant_type == "e5m7" || IsBm25U4QuantType(resolved_quant_type)) {
+            cfg.inverted_index_algo = "SINDI";
+            cfg.sindi_window_size = 4096;
         }
         cfg.quant_type = resolved_quant_type;
         return Status::success;
@@ -301,8 +346,28 @@ class SparseInvertedIndexNode : public IndexNode {
         }
         auto search_params = search_params_or.value();
 
+        const bool refine = index_->refinement_enabled();
+        if ((!refine && (cfg.sindi_query_mass.value_or(1) != 1 || cfg.refine_k.value_or(1) != 1)) ||
+            (refine && (cfg.drop_ratio_search.value_or(0) != 0 || cfg.refine_factor.value_or(1) != 1))) {
+            return expected<DataSetPtr>::Err(
+                Status::invalid_args,
+                "SINDI refinement requires a refined index, drop_ratio_search=0 and refine_factor=1; use refine_k");
+        }
+
+        search_params.sindi_query_mass = cfg.sindi_query_mass.value_or(1);
+        search_params.refine_k = cfg.refine_k.value_or(1);
+
         auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
         auto nq = dataset->GetRows();
+
+        if (refine || PackedStorageEnabled()) {
+            for (int64_t i = 0; i < nq; ++i) {
+                if (!sparse::inverted::sindi::valid_refinement_row(queries[i])) {
+                    return expected<DataSetPtr>::Err(Status::invalid_args, "Invalid SINDI refinement query");
+                }
+            }
+        }
+
         auto k = cfg.k.value();
         auto p_id = std::make_unique<sparse::label_t[]>(nq * k);
         auto p_dist = std::make_unique<float[]>(nq * k);
@@ -342,6 +407,15 @@ class SparseInvertedIndexNode : public IndexNode {
         }
         auto search_params = search_params_or.value();
 
+        if (PackedStorageEnabled()) {
+            const auto* queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
+            for (int64_t i = 0; i < nq; ++i) {
+                if (!sparse::inverted::sindi::valid_refinement_row(queries[i])) {
+                    return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::invalid_args,
+                                                                              "Invalid E5M7 query");
+                }
+            }
+        }
         auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
         const auto& id_map = this->GetIdMap();
         const auto* result_id_map = this->SearchResultIdMap(id_map);
@@ -450,6 +524,19 @@ class SparseInvertedIndexNode : public IndexNode {
             LOG_KNOWHERE_ERROR_ << "Failed to create index from BinarySet with name " << Type();
             return index_or.error();
         }
+
+        if (cfg.quant_type.value_or("") == "e5m7" || IsBm25U4QuantType(cfg.quant_type.value_or(""))) {
+            auto candidate = std::move(index_or.value());
+            MemoryIOReader packed_reader(binary->data.get(), binary->size);
+            const auto status = candidate->deserialize(packed_reader);
+            if (status != Status::success) {
+                return status;
+            }
+            index_ = std::move(candidate);
+            binary_ = binary;
+            return Status::success;
+        }
+
         index_ = std::move(index_or.value());
 
         // deserialize index from binary
@@ -505,6 +592,19 @@ class SparseInvertedIndexNode : public IndexNode {
         if (!index_or.has_value()) {
             return index_or.error();
         }
+
+        if (cfg.quant_type.value_or("") == "e5m7" || IsBm25U4QuantType(cfg.quant_type.value_or(""))) {
+            auto candidate = std::move(index_or.value());
+            MemoryIOReader packed_reader(reinterpret_cast<uint8_t*>(mapped_memory), map_size);
+            const auto status = candidate->deserialize(packed_reader);
+            if (status != Status::success) {
+                return status;
+            }
+            index_ = std::move(candidate);
+            this->mmap_guard_ = std::move(mmap_guard);
+            return Status::success;
+        }
+
         index_ = std::move(index_or.value());
 
         // deserialize index from mapped memory
@@ -693,16 +793,20 @@ class SparseInvertedIndexNode : public IndexNode {
             // When encoding is available and not FIXED_DOCID_WINDOWS, the file was not
             // built with SINDI, so use create_index_before_v10 to match the actual file encoding.
             bool use_sindi =
-                algo == "SINDI" && (!encoding.has_value() ||
-                                    encoding.value() == sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS);
+                algo == "SINDI" &&
+                (!encoding.has_value() ||
+                 (encoding.value() == sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS ||
+                  encoding.value() == sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS_U12_E5M7));
             if (use_sindi) {
                 auto window_size =
                     cfg.sindi_window_size.value_or(sparse::inverted::SindiInvertedIndexIP::max_window_size);
                 IndexPtr index;
                 if (is_growable) {
-                    index = std::make_unique<sparse::inverted::GrowableSindiInvertedIndexIP>(window_size);
+                    index = std::make_unique<sparse::inverted::GrowableSindiInvertedIndexIP>(
+                        window_size, cfg.refine.value_or(false), cfg.quant_type.value_or("") == "e5m7");
                 } else {
-                    index = std::make_unique<sparse::inverted::SindiInvertedIndexIP>(window_size);
+                    index = std::make_unique<sparse::inverted::SindiInvertedIndexIP>(
+                        window_size, cfg.refine.value_or(false), cfg.quant_type.value_or("") == "e5m7");
                 }
                 ConfigureSindiSerialization(index.get());
                 index->set_build_algo(algo);
@@ -717,14 +821,19 @@ class SparseInvertedIndexNode : public IndexNode {
             const std::string algo = get_inverted_index_algo("DAAT_MAXSCORE");
             const std::string codec = cfg.inverted_index_codec.value_or(default_inverted_index_codec());
             bool use_sindi =
-                algo == "SINDI" && (!encoding.has_value() ||
-                                    encoding.value() == sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS);
+                algo == "SINDI" &&
+                (!encoding.has_value() ||
+                 (encoding.value() == sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS ||
+                  encoding.value() == sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS_U12_U4_LUT ||
+                  encoding.value() == sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS_U16_U4_LUT));
             if (use_sindi) {
                 auto window_size =
                     cfg.sindi_window_size.value_or(sparse::inverted::SindiInvertedIndexBM25::max_window_size);
                 IndexPtr index;
                 if constexpr (std::is_same_v<QType, uint8_t>) {
-                    index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25U8>(window_size);
+                    index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25U8>(
+                        window_size, false, IsBm25U4QuantType(cfg.quant_type.value_or("")),
+                        cfg.quant_type.value_or("") == "u4_lut_u16");
                 } else {
                     if (is_growable) {
                         index = std::make_unique<sparse::inverted::GrowableSindiInvertedIndexBM25>(window_size);
@@ -752,6 +861,45 @@ class SparseInvertedIndexNode : public IndexNode {
     expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>
     CreateIndex(const SparseInvertedIndexConfig& cfg, bool is_growable = false,
                 std::optional<sparse::inverted::InvertedIndexEncoding> encoding = std::nullopt) const {
+        if (IsBm25U4QuantType(cfg.quant_type.value_or(""))) {
+            const bool loading = encoding.has_value();
+            const auto window = cfg.sindi_window_size.value_or(4096);
+            const bool u16_ids = cfg.quant_type.value_or("") == "u4_lut_u16";
+            const auto expected_encoding =
+                u16_ids ? sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS_U16_U4_LUT
+                        : sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS_U12_U4_LUT;
+            if (index_version_ < 11 || is_growable || cfg.refine.value_or(false) ||
+                !IsMetricType(cfg.metric_type.value(), metric::BM25) ||
+                (!loading && (NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or("")) != "SINDI" ||
+                              window < 1024 || window > (u16_ids ? 65535 : 4096))) ||
+                !cfg.inverted_index_codec.value_or("").empty() || (loading && *encoding != expected_encoding))
+                return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
+                    Status::invalid_args,
+                    "U4 LUT requires sealed SINDI BM25, U12 window 1024..4096/U16 1024..65535, version>=11, no "
+                    "refinement/block codec");
+        }
+        if (cfg.quant_type.value_or("") == "e5m7") {
+            const bool loading = encoding.has_value();
+            if (index_version_ < 11 || !IsMetricType(cfg.metric_type.value(), metric::IP) ||
+                (!loading && NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or("")) != "SINDI") ||
+                (!loading && cfg.sindi_window_size.value_or(4096) != 4096) ||
+                !cfg.inverted_index_codec.value_or("").empty() ||
+                (loading && *encoding != sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS_U12_E5M7)) {
+                return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
+                    Status::invalid_args, "e5m7 requires SINDI IP, window=4096, version>=11, and no block codec");
+            }
+        }
+        if (cfg.refine.value_or(false)) {
+            const auto algo = NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or(""));
+            if (index_version_ < 11 || !IsMetricType(cfg.metric_type.value(), metric::IP) ||
+                (!algo.empty() && algo != "SINDI") ||
+                (!cfg.quant_type.value_or("").empty() && cfg.quant_type.value() != "fp16" &&
+                 cfg.quant_type.value() != "e5m7")) {
+                return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
+                    Status::invalid_args, "refine requires SINDI FP16/E5M7 IP version >= 11");
+            }
+        }
+
         const auto explicit_algo = NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or(""));
         const auto status = ValidateInvertedIndexAlgo(explicit_algo);
         if (status != Status::success) {
@@ -773,14 +921,14 @@ class SparseInvertedIndexNode : public IndexNode {
         using sparse::inverted::IndexScorerType;
         if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
             // version < threshold forces fp32; version >= threshold defaults to fp16, user can override to fp32
-            bool use_fp16 = version_support_fp16_quant_for_ip() && (qt == "fp16" || qt.empty());
+            bool use_fp16 = version_support_fp16_quant_for_ip() && (qt == "fp16" || qt == "e5m7" || qt.empty());
             if (use_fp16) {
                 return CreateIndexImpl<value_type, fp16, IndexScorerType::IP>(cfg, is_growable, encoding);
             } else {
                 return CreateIndexImpl<value_type, float, IndexScorerType::IP>(cfg, is_growable, encoding);
             }
         } else {
-            if (qt == "u8") {
+            if (qt == "u8" || IsBm25U4QuantType(qt)) {
                 if (index_version_ < kBm25AutoU8MinVersion || requested_algo != "SINDI" || is_growable) {
                     return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
                         Status::invalid_args, "u8 quantization requires sealed SINDI with index version >= 11");
@@ -794,6 +942,22 @@ class SparseInvertedIndexNode : public IndexNode {
                 return CreateIndexImpl<value_type, uint16_t, IndexScorerType::BM25>(cfg, is_growable, encoding);
             }
         }
+    }
+
+    bool
+    PackedStorageEnabled() const {
+        if (auto* index = dynamic_cast<const sparse::inverted::SindiInvertedIndexBM25U8*>(index_.get())) {
+            return index->packed_storage_enabled();
+        }
+        if (auto* index = dynamic_cast<const sparse::inverted::SindiInvertedIndexIP*>(index_.get())) {
+            return index->packed_storage_enabled();
+        }
+
+        if (auto* index = dynamic_cast<const sparse::inverted::GrowableSindiInvertedIndexIP*>(index_.get())) {
+            return index->packed_storage_enabled();
+        }
+
+        return false;
     }
 
     bool
@@ -911,6 +1075,13 @@ class SparseInvertedIndexNode : public IndexNode {
                 config.bm25_k1.value_or(index_->get_scorer_config().scorer_params.bm25.k1);
             search_params.scorer_config.scorer_params.bm25.b =
                 config.bm25_b.value_or(index_->get_scorer_config().scorer_params.bm25.b);
+            if (PackedStorageEnabled()) {
+                const auto& stored = index_->get_scorer_config().scorer_params.bm25;
+                const auto& requested = search_params.scorer_config.scorer_params.bm25;
+                if (requested.k1 != stored.k1 || requested.b != stored.b || requested.avgdl != stored.avgdl)
+                    return expected<sparse::inverted::InvertedIndexSearchParams>::Err(
+                        Status::invalid_args, "Packed BM25 search parameters must match the built index");
+            }
             if (search_params.algo == sparse::inverted::InvertedIndexAlgo::DAAT_WAND ||
                 search_params.algo == sparse::inverted::InvertedIndexAlgo::DAAT_MAXSCORE ||
                 search_params.algo == sparse::inverted::InvertedIndexAlgo::BLOCK_MAX_WAND ||

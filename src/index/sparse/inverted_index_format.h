@@ -34,6 +34,9 @@ enum class InvertedIndexQuantType : uint32_t {
     BM25_U8 = 3,
     BM25_U16 = 4,
     BM25_U32 = 5,
+    IP_E5M7 = 6,
+    BM25_U4_LUT_U12 = 7,  // Renamed symbol; preserve existing U12 on-disk identity.
+    BM25_U4_LUT_U16 = 8,
 };
 
 static_assert(sizeof(InvertedIndexQuantType) == sizeof(uint32_t));
@@ -81,6 +84,7 @@ enum class InvertedIndexSectionType : uint32_t {
     PROMETHEUS_BUILD_STATS = 6,
     DIM_MAP_MPHF = 7,
     BM25_U8_OVERFLOWS = 8,
+    SINDI_REFINEMENT = 9,
 };
 
 struct InvertedIndexSectionHeader {
