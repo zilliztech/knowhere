@@ -1,8 +1,45 @@
 #include "index/sparse/sindi_simd.h"
 
+#include "index/sparse/sindi_packed12.h"
 #include "simd/hook.h"
 
 namespace knowhere::sparse::inverted::sindi {
+
+float
+ip_accumulate_scalar_u12_e5m7(float q, const uint8_t* vals, const uint8_t* ids, size_t start, int32_t n, float* out) {
+    float maximum = 0;
+    for (int32_t i = 0; i < n; ++i) {
+        auto id = unpack12(ids, start + i);
+        out[id] = std::fma(q, decode_e5m7(unpack12(vals, start + i)), out[id]);
+        maximum = std::max(maximum, out[id]);
+    }
+
+    return maximum;
+}
+
+packed_ip_accumulate_fn_t
+get_packed_ip_kernel() {
+#if defined(__x86_64__)
+    namespace cpu = faiss::cppcontrib::knowhere;
+    if (cpu::cpu_support_f16c() && __builtin_cpu_supports("fma")) {
+        if (cpu::use_avx512 && cpu::cpu_support_avx512() && __builtin_cpu_supports("avx512vl") &&
+            __builtin_cpu_supports("avx512cd") && __builtin_cpu_supports("avx512f")) {
+            return ip_accumulate_avx512_u12_e5m7;
+        }
+        if (cpu::use_avx2 && cpu::cpu_support_avx2() && __builtin_cpu_supports("avx2")) {
+            return ip_accumulate_avx2_u12_e5m7;
+        }
+    }
+#endif
+
+#if defined(__aarch64__) && defined(KNOWHERE_USE_SVE)
+    if (faiss::cppcontrib::knowhere::supports_sve()) {
+        return ip_accumulate_sve_u12_e5m7;
+    }
+#endif
+
+    return ip_accumulate_scalar_u12_e5m7;
+}
 
 float
 ip_accumulate_scalar_fp16(float qval, const knowhere::fp16* vals, const uint16_t* ids, int32_t num, float* out) {

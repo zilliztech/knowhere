@@ -2693,3 +2693,596 @@ TEST_CASE("Test SINDI Index Default Algo for Version 10", "[sparse][sindi]") {
     results = idx.Search(query_ds, search_json, nullptr);
     REQUIRE(!results.has_value());
 }
+
+#include "index/sparse/inverted_index.h"
+#include "index/sparse/sindi_refinement.h"
+
+namespace {
+using RefineRow = knowhere::sparse::SparseRow<float>;
+RefineRow
+RefineTestRow(std::initializer_list<std::pair<uint32_t, float>> values) {
+    RefineRow row(values.size());
+    size_t i = 0;
+    for (auto [id, value] : values) row.set_at(i++, id, value);
+    return row;
+}
+knowhere::DataSetPtr
+RefineDataset(const std::vector<RefineRow>& rows) {
+    auto data = knowhere::GenDataSet(rows.size(), 100001, rows.data());
+    data->SetIsSparse(true);
+    return data;
+}
+knowhere::Json
+RefineBuild(bool enabled = true) {
+    return {{"metric_type", "IP"},
+            {"inverted_index_algo", "SINDI"},
+            {"refine", enabled},
+            {"sindi_window_size", 4096},
+            {"quant_type", "fp16"}};
+}
+knowhere::Json
+RefineSearch() {
+    return {{"metric_type", "IP"}, {"k", 1}, {"refine_k", 2.0}, {"refine_query_mass_percentage", 0.6}};
+}
+}  // namespace
+
+TEST_CASE("SINDI mass and legacy count selection contracts", "[sparse][sindi][refinement]") {
+    using namespace knowhere::sparse::inverted;
+    auto q = RefineTestRow({{0, 50}, {1, 20}, {2, 10}, {3, 8}, {4, 5}, {5, 3}, {6, 2}, {7, 1}, {8, .6f}, {9, .4f}});
+    auto selected = sindi::retain_query_mass(q, .7f);
+    REQUIRE(selected.size() == 2);
+    REQUIRE(selected[1].id == 1);
+    std::vector<float> weights;
+    for (size_t i = 0; i < q.size(); ++i) weights.push_back(q[i].val);
+    REQUIRE(get_query_drop_threshold(weights, .3f) == 2);
+    auto tied = RefineTestRow({{0, 1}, {1, 1}, {2, 1}, {3, 1}});
+    REQUIRE(sindi::retain_query_mass(tied, .5f).size() == 2);
+    REQUIRE(sindi::retain_query_mass(tied, 1).size() == 4);
+    auto eligible = sindi::filter_query_dimensions(RefineTestRow({{0, 100}, {1, 1}, {2, 1}}),
+                                                   [](uint32_t dim) { return dim != 0; });
+    auto filtered_tie = sindi::retain_query_mass(eligible, .5f);
+    REQUIRE(filtered_tie.size() == 1);
+    REQUIRE(filtered_tie[0].id == 1);  // weight ties still use external IDs
+
+    REQUIRE(sindi::retain_query_mass(RefineTestRow({{0, 0}}), .5f).size() == 0);
+    REQUIRE_FALSE(sindi::valid_refinement_row(RefineTestRow({{1, 1}, {0, 1}})));
+    REQUIRE_FALSE(sindi::valid_refinement_row(RefineTestRow({{0, -1}})));
+    REQUIRE(sindi::refinement_pool_size(3, 1.5f, 100) == 5);
+    REQUIRE(sindi::refinement_pool_size(10, std::numeric_limits<float>::max(), 100) == 100);
+    REQUIRE_THROWS(sindi::refinement_pool_size(10, std::numeric_limits<float>::infinity(), 100));
+}
+
+TEST_CASE("SINDI full-query refinement changes rank and persists", "[sparse][sindi][refinement]") {
+    using namespace knowhere;
+    std::vector<RefineRow> base;
+    base.push_back(RefineTestRow({{0, 10}}));
+    base.push_back(RefineTestRow({{0, 9}, {100000, 9}}));
+    std::vector<RefineRow> queries;
+    queries.push_back(RefineTestRow({{0, 2}, {100000, 1}}));
+    auto index = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+    REQUIRE(index.Build(RefineDataset(base), RefineBuild()) == Status::success);
+    const auto search = RefineSearch();
+    auto check = [&](auto& idx) {
+        auto result = idx.Search(RefineDataset(queries), search, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] == 1);
+        REQUIRE(result.value()->GetDistance()[0] == 27);
+    };
+    check(index);
+    auto one = search;
+    one["refine_k"] = 1;
+    auto result = index.Search(RefineDataset(queries), one, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == 0);  // reranking cannot recover an absent candidate
+    REQUIRE(result.value()->GetDistance()[0] == 20);
+    BinarySet binary;
+    REQUIRE(index.Serialize(binary) == Status::success);
+    auto restored = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+    REQUIRE(restored.Deserialize(binary, Json{{"metric_type", "IP"}}) == Status::success);
+    check(restored);
+    SparseQuantIndexFile file(binary.GetByName(IndexEnum::INDEX_SPARSE_INVERTED_INDEX));
+    auto mapped = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+    REQUIRE(mapped.DeserializeFromFile(file.path, Json{{"metric_type", "IP"}, {"enable_mmap", true}}) ==
+            Status::success);
+    check(mapped);
+    for (auto field : {"drop_ratio_search", "refine_factor"}) {
+        auto invalid = search;
+        invalid[field] = field == std::string("refine_factor") ? 2.0 : .2;
+        REQUIRE_FALSE(index.Search(RefineDataset(queries), invalid, nullptr).has_value());
+    }
+    for (auto field : {"refine_query_mass_percentage", "refine_k"}) {
+        auto invalid = search;
+        invalid[field] = 0;
+        REQUIRE_FALSE(index.Search(RefineDataset(queries), invalid, nullptr).has_value());
+    }
+    auto legacy = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+    REQUIRE(legacy.Build(RefineDataset(base), RefineBuild(false)) == Status::success);
+    REQUIRE_FALSE(legacy.Search(RefineDataset(queries), search, nullptr).has_value());
+    auto legacy_search = Json{{"metric_type", "IP"}, {"k", 1}, {"drop_ratio_search", .5}, {"refine_factor", 1}};
+    auto a = legacy.Search(RefineDataset(queries), legacy_search, nullptr);
+    legacy_search["refine_factor"] = 10;
+    auto b = legacy.Search(RefineDataset(queries), legacy_search, nullptr);
+    REQUIRE(a.has_value());
+    REQUIRE(b.has_value());
+    REQUIRE(a.value()->GetIds()[0] == 0);
+    REQUIRE(b.value()->GetIds()[0] == 0);
+    REQUIRE(a.value()->GetDistance()[0] == b.value()->GetDistance()[0]);
+}
+
+TEST_CASE("SINDI refinement filters absent dimensions before mass pruning", "[sparse][sindi][refinement]") {
+    using namespace knowhere;
+    const bool growable = GENERATE(false, true);
+    const auto type = growable ? IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC : IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+    std::vector<RefineRow> base;
+    base.push_back(RefineTestRow({{1, 1}}));
+    base.push_back(RefineTestRow({{2, 2}}));
+    std::vector<RefineRow> queries;
+    // The absent weight alone used to satisfy the raw-query mass target.
+    queries.push_back(RefineTestRow({{0, 100}, {1, .9f}, {2, .8f}, {3, 0}}));
+    auto index = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+    REQUIRE(index.Build(RefineDataset(base), RefineBuild()) == Status::success);
+    auto search = RefineSearch();
+    search["refine_k"] = 1;
+    auto check = [&](auto& idx) {
+        for (float mass : {.9f, 1.f}) {
+            search["refine_query_mass_percentage"] = mass;
+            auto result = idx.Search(RefineDataset(queries), search, nullptr);
+            REQUIRE(result.has_value());
+            REQUIRE(result.value()->GetIds()[0] == 1);
+            REQUIRE(result.value()->GetDistance()[0] == 1.6f);
+        }
+        std::vector<uint8_t> mask(1, 2);
+        auto filtered = idx.Search(RefineDataset(queries), search, BitsetView(mask.data(), base.size()));
+        REQUIRE(filtered.has_value());
+        REQUIRE(filtered.value()->GetIds()[0] == 0);
+        REQUIRE(filtered.value()->GetDistance()[0] == .9f);
+        std::vector<RefineRow> unknown;
+        unknown.push_back(RefineTestRow({{0, 100}, {3, 0}}));
+        auto empty = idx.Search(RefineDataset(unknown), search, nullptr);
+        REQUIRE(empty.has_value());
+        REQUIRE(empty.value()->GetIds()[0] == -1);
+    };
+    check(index);
+    if (!growable) {
+        BinarySet binary;
+        REQUIRE(index.Serialize(binary) == Status::success);
+        auto restored = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+        REQUIRE(restored.Deserialize(binary, Json{{"metric_type", "IP"}}) == Status::success);
+        check(restored);
+    }
+    if (growable) {
+        std::vector<RefineRow> added;
+        added.push_back(RefineTestRow({{0, 1}}));
+        REQUIRE(index.Add(RefineDataset(added), RefineBuild()) == Status::success);
+        search["refine_query_mass_percentage"] = .9;
+        auto result = index.Search(RefineDataset(queries), search, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] == 2);
+        REQUIRE(result.value()->GetDistance()[0] == 100);
+    }
+}
+
+TEST_CASE("SINDI refinement windows filters and growable Add", "[sparse][sindi][refinement]") {
+    using namespace knowhere;
+    const auto window = GENERATE(1024, 4096, 65535);
+    const bool growable = GENERATE(false, true);
+    std::vector<RefineRow> base(70001);
+    std::vector<uint32_t> ids = {0, 4095, 4096, 65534, 65535, 70000};
+    for (size_t i = 0; i < ids.size(); ++i) base[ids[i]] = RefineTestRow({{0, float(10 - i)}, {100000, float(i * 4)}});
+    std::vector<RefineRow> queries;
+    queries.push_back(RefineTestRow({{0, 2}, {100000, 1}}));
+    auto build = RefineBuild();
+    build["sindi_window_size"] = window;
+    auto type = growable ? IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC : IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+    auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+    if (growable) {
+        std::vector<RefineRow> first(base.begin(), base.begin() + 4096);
+        std::vector<RefineRow> rest(base.begin() + 4096, base.end());
+        REQUIRE(idx.Build(RefineDataset(first), build) == Status::success);
+        REQUIRE(idx.Add(RefineDataset(rest), build) == Status::success);
+    } else
+        REQUIRE(idx.Build(RefineDataset(base), build) == Status::success);
+    auto search = RefineSearch();
+    search["refine_k"] = 10;
+    auto result = idx.Search(RefineDataset(queries), search, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == 70000);
+    REQUIRE(result.value()->GetDistance()[0] == 30);
+    std::vector<uint8_t> mask((base.size() + 7) / 8, 0);
+    mask[70000 / 8] |= 1u << (70000 % 8);
+    BitsetView bitset(mask.data(), base.size());
+    result = idx.Search(RefineDataset(queries), search, bitset);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == 65535);
+    REQUIRE(result.value()->GetDistance()[0] == 28);
+}
+
+TEST_CASE("SINDI refinement represented-value oracle and validation", "[sparse][sindi][refinement]") {
+    using namespace knowhere;
+    std::vector<RefineRow> base;
+    for (size_t i = 0; i < 1500; ++i)
+        base.push_back(RefineTestRow({{0, 1.003f + float(i % 7) * .0007f}, {7, .5f}, {100000, float(i) / 1500}}));
+    std::vector<RefineRow> queries;
+    queries.push_back(RefineTestRow({{0, 2}, {7, .5f}, {100000, 1}}));
+    auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+    REQUIRE(idx.Build(RefineDataset(base), RefineBuild()) == Status::success);
+    auto search = RefineSearch();
+    search["k"] = 2000;
+    search["refine_k"] = 1.5;
+    search["refine_query_mass_percentage"] = .7;
+    auto result = idx.Search(RefineDataset(queries), search, nullptr);
+    REQUIRE(result.has_value());
+    for (size_t i = 0; i < 1500; ++i) {
+        const auto id = result.value()->GetIds()[i];
+        REQUIRE(id >= 0);
+        REQUIRE(id < 1500);
+        float reference = 0;
+        for (auto term : {0, 2, 1})
+            reference = std::fma(queries[0][term].val, float(fp16(base[id][term].val)), reference);
+        REQUIRE(std::abs(result.value()->GetDistance()[i] - reference) < 1e-6f);
+    }
+    for (size_t i = 1500; i < 2000; ++i) REQUIRE(result.value()->GetIds()[i] == -1);
+    auto invalid = RefineBuild();
+    invalid["inverted_index_algo"] = "DAAT_WAND";
+    auto bad = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+    REQUIRE(bad.Build(RefineDataset(base), invalid) != Status::success);
+    auto v10 = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 10).value();
+    REQUIRE(v10.Build(RefineDataset(base), RefineBuild()) != Status::success);
+    std::vector<RefineRow> negative;
+    negative.push_back(RefineTestRow({{0, -1}}));
+    REQUIRE_FALSE(idx.Search(RefineDataset(negative), RefineSearch(), nullptr).has_value());
+    auto range = RefineSearch();
+    range["radius"] = 1;
+    REQUIRE_FALSE(idx.RangeSearch(RefineDataset(queries), range, nullptr).has_value());
+    BinarySet bytes;
+    REQUIRE(idx.Serialize(bytes) == Status::success);
+    auto binary = bytes.GetByName(IndexEnum::INDEX_SPARSE_INVERTED_INDEX);
+    using namespace sparse::inverted;
+    uint32_t sections = 0;
+    std::memcpy(&sections, binary->data.get() + kInvertedIndexFileHeaderSize, 4);
+    bool corrupted = false;
+    for (uint32_t i = 0; i < sections; ++i) {
+        InvertedIndexSectionHeader header;
+        std::memcpy(&header, binary->data.get() + kInvertedIndexFileHeaderSize + 4 + i * sizeof(header),
+                    sizeof(header));
+        if (header.type == InvertedIndexSectionType::SINDI_REFINEMENT) {
+            uint32_t unsupported_version = 99;
+            std::memcpy(binary->data.get() + header.offset, &unsupported_version, 4);
+            corrupted = true;
+        }
+    }
+    REQUIRE(corrupted);
+    REQUIRE(bad.Deserialize(bytes, Json{{"metric_type", "IP"}}) != Status::success);
+}
+
+TEST_CASE("SINDI count threshold agrees with sorted reference", "[sparse][sindi][refinement]") {
+    using namespace knowhere::sparse::inverted;
+    for (size_t n : {0, 1, 2, 3, 10, 101})
+        for (float ratio : {0.f, .1f, .3f, .7f, .99f}) {
+            std::vector<float> values(n);
+            for (size_t i = 0; i < n; ++i) values[i] = float((i * 17) % 11);  // zeros and ties
+            auto sorted = values;
+            std::sort(sorted.begin(), sorted.end());
+            const auto count = static_cast<size_t>(ratio * n);
+            const float threshold = count ? sorted[count] : 0;
+            REQUIRE(get_query_drop_threshold(values, ratio) == threshold);
+            REQUIRE(std::count_if(values.begin(), values.end(), [&](float v) { return v < threshold; }) <= count);
+        }
+}
+
+TEST_CASE("Historical candidate-filter refinement agrees with direct lookup", "[sparse][sindi][refinement]") {
+    // Port of the pre-eb69fcc1 algorithm's control flow, using current FP16 SINDI
+    // for both passes. This is not a build of the historical FP32/WAND backend.
+    using namespace knowhere;
+    std::vector<RefineRow> base;
+    base.push_back(RefineTestRow({{0, 10}}));
+    base.push_back(RefineTestRow({{0, 9}, {100000, 9}}));
+    base.push_back(RefineTestRow({{0, .1f}, {100000, 100}}));
+    std::vector<RefineRow> queries;
+    queries.push_back(RefineTestRow({{0, 2}, {100000, 1}}));
+    auto make = [] {
+        return IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+    };
+    auto legacy = make(), refined = make();
+    REQUIRE(legacy.Build(RefineDataset(base), RefineBuild(false)) == Status::success);
+    REQUIRE(refined.Build(RefineDataset(base), RefineBuild(true)) == Status::success);
+    Json coarse_cfg = {{"metric_type", "IP"}, {"k", 2}, {"drop_ratio_search", .5}, {"dim_max_score_ratio", 1.05}};
+    auto coarse = legacy.Search(RefineDataset(queries), coarse_cfg, nullptr);
+    REQUIRE(coarse.has_value());
+    uint8_t mask = 0xff;
+    for (size_t i = 0; i < 2; ++i) mask &= ~(1u << coarse.value()->GetIds()[i]);
+    auto full_cfg = coarse_cfg;
+    full_cfg["k"] = 1;
+    full_cfg["drop_ratio_search"] = 0;
+    BitsetView allowed(&mask, base.size());
+    auto filtered = legacy.Search(RefineDataset(queries), full_cfg, allowed);
+    auto direct = refined.Search(RefineDataset(queries), RefineSearch(), nullptr);
+    REQUIRE(filtered.has_value());
+    REQUIRE(direct.has_value());
+    REQUIRE(filtered.value()->GetIds()[0] == 1);
+    REQUIRE(filtered.value()->GetIds()[0] == direct.value()->GetIds()[0]);
+    REQUIRE(filtered.value()->GetDistance()[0] == direct.value()->GetDistance()[0]);
+    auto unfiltered = legacy.Search(RefineDataset(queries), full_cfg, nullptr);
+    REQUIRE(unfiltered.has_value());
+    REQUIRE(unfiltered.value()->GetIds()[0] == 2);
+}
+
+TEST_CASE("SINDI refinement empty candidates and fractional API pool", "[sparse][sindi][refinement]") {
+    using namespace knowhere;
+    std::vector<RefineRow> base;
+    base.push_back(RefineTestRow({{0, 10}}));
+    base.push_back(RefineTestRow({{0, 9}, {100000, 9}}));
+    auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+    REQUIRE(idx.Build(RefineDataset(base), RefineBuild()) == Status::success);
+    std::vector<RefineRow> query;
+    query.push_back(RefineTestRow({{0, 2}, {100000, 1}}));
+    auto search = RefineSearch();
+    search["refine_k"] = 1.01;  // ceil(1 * 1.01) must retrieve two candidates.
+    auto result = idx.Search(RefineDataset(query), search, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == 1);
+    REQUIRE(result.value()->GetDistance()[0] == 27);
+    uint8_t mask = 0xff;
+    result = idx.Search(RefineDataset(query), search, BitsetView(&mask, base.size()));
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == -1);
+    for (auto row : {RefineTestRow({}), RefineTestRow({{0, 0}}), RefineTestRow({{1, 10}})}) {
+        std::vector<RefineRow> empty_coarse;
+        empty_coarse.push_back(std::move(row));
+        result = idx.Search(RefineDataset(empty_coarse), search, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] == -1);
+    }
+    std::vector<RefineRow> mixed;
+    mixed.push_back(RefineTestRow({{1, 10}, {100000, 1}}));
+    result = idx.Search(RefineDataset(mixed), search, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == 1);
+    REQUIRE(result.value()->GetDistance()[0] == 9);
+    auto unsupported = RefineBuild();
+    unsupported["metric_type"] = "BM25";
+    auto other = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+    REQUIRE(other.Build(RefineDataset(base), unsupported) != Status::success);
+    unsupported = RefineBuild();
+    unsupported["quant_type"] = "fp32";
+    REQUIRE(other.Build(RefineDataset(base), unsupported) != Status::success);
+}
+
+#include "index/sparse/sindi_packed12.h"
+#include "index/sparse/sindi_simd.h"
+namespace {
+
+float
+E5Oracle(uint16_t code) {
+    const int exponent = code >> 7, fraction = code & 127;
+    return exponent == 0 ? std::ldexp(float(fraction), -21) : std::ldexp(1.0f + float(fraction) / 128, exponent - 15);
+}
+
+float
+E5Represented(float value) {
+    knowhere::fp16 half(value);
+    uint16_t bits;
+    std::memcpy(&bits, &half, 2);
+    return E5Oracle(bits >> 3);
+}
+
+}  // namespace
+
+TEST_CASE("SINDI U12 E5M7 exhaustive codecs", "[sparse][sindi][u12]") {
+    using namespace knowhere::sparse::inverted::sindi;
+    std::vector<uint8_t> bytes(packed12_bytes(4097), 0);
+    for (size_t i = 0; i < 4097; ++i) pack12(bytes.data(), i, i & 4095);
+    for (size_t i = 0; i < 4097; ++i) REQUIRE(unpack12(bytes.data(), i) == (i & 4095));
+    REQUIRE((bytes.back() & 0xf0) == 0);
+    for (uint16_t c = 0; c < 4096; ++c) {
+        if (c < 3968)
+            REQUIRE(decode_e5m7(c) == E5Oracle(c));
+        else
+            REQUIRE_THROWS(decode_e5m7(c));
+    }
+    for (uint32_t b = 0; b < 65536; ++b) {
+        uint16_t bits = b;
+        knowhere::fp16 half;
+        std::memcpy(&half, &bits, 2);
+        if ((b & 0x8000) || (b & 0x7c00) == 0x7c00)
+            REQUIRE_THROWS(encode_e5m7(half));
+        else
+            REQUIRE(encode_e5m7(half) == (b >> 3));
+    }
+    REQUIRE_THROWS(packed12_bytes(std::numeric_limits<size_t>::max()));
+}
+
+TEST_CASE("SINDI U12 E5M7 dispatched kernel tails and unroll", "[sparse][sindi][u12]") {
+    using namespace knowhere::sparse::inverted::sindi;
+    std::vector<packed_ip_accumulate_fn_t> kernels = {ip_accumulate_scalar_u12_e5m7, get_packed_ip_kernel()};
+#if defined(__x86_64__)
+    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("f16c") && __builtin_cpu_supports("fma"))
+        kernels.push_back(ip_accumulate_avx2_u12_e5m7);
+    if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512bw") && __builtin_cpu_supports("avx512vl") &&
+        __builtin_cpu_supports("avx512dq") && __builtin_cpu_supports("avx512cd") && __builtin_cpu_supports("f16c") &&
+        __builtin_cpu_supports("fma"))
+        kernels.push_back(ip_accumulate_avx512_u12_e5m7);
+#endif
+    std::vector<size_t> lengths = {0};
+    for (size_t i = 1; i <= 129; ++i) lengths.push_back(i);
+    for (auto i : {255, 256, 257, 511, 512, 513, 4095, 4096}) lengths.push_back(i);
+    for (size_t start = 0; start < 4; ++start)
+        for (size_t n : lengths) {
+            // Deliberately unaligned byte bases; allocation ends exactly at stream end.
+            std::vector<uint8_t> ids(packed12_bytes(start + n) + 1), vals(ids.size());
+            for (size_t j = 0; j < start + n; ++j) {
+                pack12(ids.data() + 1, j, (j * 17) % 4096);
+                pack12(vals.data() + 1, j, (j * 37) % 3968);
+            }
+            std::vector<float> scores(4096, .25f), expected = scores;
+            float maximum = 0;
+            for (size_t j = start; j < start + n; ++j) {
+                const auto id = (j * 17) % 4096;
+                expected[id] = std::fma(.75f, E5Oracle((j * 37) % 3968), expected[id]);
+                maximum = std::max(maximum, expected[id]);
+            }
+            for (auto kernel : kernels) {
+                std::fill(scores.begin(), scores.end(), .25f);
+                REQUIRE(kernel(.75f, vals.data() + 1, ids.data() + 1, start, n, scores.data()) == maximum);
+                REQUIRE(scores == expected);
+            }
+        }
+}
+
+TEST_CASE("SINDI U12 E5M7 API oracle Add and persistence", "[sparse][sindi][u12]") {
+    using namespace knowhere;
+    const bool refine = GENERATE(false, true);
+    const bool growable = GENERATE(false, true);
+    std::vector<RefineRow> base;
+    for (size_t i = 0; i < 8203; ++i) {
+        if (i % 4095 == 0)
+            base.push_back(RefineTestRow({{0, 1.003f + float(i % 97) / 100}, {7, .1257f}, {100000, 2.019f}}));
+        else
+            base.push_back(RefineTestRow({{0, 1.003f + float(i % 97) / 100}}));
+    }
+    auto build = RefineBuild(refine);
+    build["quant_type"] = "e5m7";
+    const auto type = growable ? IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC : IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+    auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+    if (growable) {
+        std::vector<RefineRow> first(base.begin(), base.begin() + 4095), rest(base.begin() + 4095, base.end());
+        REQUIRE(idx.Build(RefineDataset(first), build) == Status::success);
+        REQUIRE(idx.Add(RefineDataset(rest), build) == Status::success);
+        std::vector<RefineRow> invalid{RefineTestRow({{0, -0.0f}})};
+        REQUIRE(idx.Add(RefineDataset(invalid), build) != Status::success);
+        REQUIRE(idx.Count() == base.size());
+    } else
+        REQUIRE(idx.Build(RefineDataset(base), build) == Status::success);
+    std::vector<RefineRow> query{RefineTestRow({{0, 2}, {7, .5f}, {100000, 1}})};
+    Json search{{"metric_type", "IP"}, {"k", base.size() + 3}};
+    if (refine) {
+        search["sindi_query_mass"] = .5f;
+        search["refine_k"] = 1.5f;
+    }
+    auto check = [&](auto& index) {
+        auto result = index.Search(RefineDataset(query), search, nullptr);
+        REQUIRE(result.has_value());
+        std::set<int64_t> seen;
+        for (size_t j = 0; j < base.size(); ++j) {
+            auto id = result.value()->GetIds()[j];
+            REQUIRE(id >= 0);
+            REQUIRE(id < int64_t(base.size()));
+            REQUIRE(seen.insert(id).second);
+            float score = 2 * E5Represented(base[id][0].val);
+            if (base[id].size() > 1) {
+                score = std::fma(1.0f, E5Represented(base[id][2].val), score);
+                score = std::fma(.5f, E5Represented(base[id][1].val), score);
+            }
+            REQUIRE(std::abs(result.value()->GetDistance()[j] - score) < 1e-6f);
+        }
+        REQUIRE(result.value()->GetIds()[base.size()] == -1);
+        std::vector<uint8_t> mask((base.size() + 7) / 8, 255);
+        auto empty = index.Search(RefineDataset(query), search, BitsetView(mask.data(), base.size()));
+        REQUIRE(empty.has_value());
+        REQUIRE(empty.value()->GetIds()[0] == -1);
+    };
+    check(idx);
+    if (!growable) {
+        BinarySet bytes;
+        REQUIRE(idx.Serialize(bytes) == Status::success);
+        auto restored = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+        REQUIRE(restored.Deserialize(bytes, Json{{"metric_type", "IP"}}) == Status::success);
+        check(restored);
+        SparseQuantIndexFile file(bytes.GetByName(type));
+        auto mapped = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+        REQUIRE(mapped.DeserializeFromFile(file.path, Json{{"metric_type", "IP"}, {"enable_mmap", true}}) ==
+                Status::success);
+        check(mapped);
+        auto blob = bytes.GetByName(type);
+        using namespace sparse::inverted;
+        uint32_t count;
+        std::memcpy(&count, blob->data.get() + 32, 4);
+        for (size_t i = 0; i < count; ++i) {
+            InvertedIndexSectionHeader h;
+            std::memcpy(&h, blob->data.get() + 36 + i * sizeof(h), sizeof(h));
+            if (h.type == InvertedIndexSectionType::POSTING_LISTS) {
+                uint32_t unsupported = 99;
+                std::memcpy(blob->data.get() + h.offset + 12, &unsupported, 4);
+            }
+        }
+        REQUIRE(restored.Deserialize(bytes, Json{{"metric_type", "IP"}}) != Status::success);
+    }
+}
+
+TEST_CASE("SINDI U12 E5M7 invalid build contracts", "[sparse][sindi][u12]") {
+    using namespace knowhere;
+    std::vector<RefineRow> rows{RefineTestRow({{0, 1}})};
+    auto build = RefineBuild(false);
+    build["quant_type"] = "e5m7";
+    for (auto change : {Json{{"metric_type", "BM25"}}, Json{{"inverted_index_algo", "DAAT_WAND"}},
+                        Json{{"sindi_window_size", 1024}}, Json{{"inverted_index_codec", "block_streamvbyte"}}}) {
+        auto cfg = build;
+        cfg.update(change);
+        auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+        REQUIRE(idx.Build(RefineDataset(rows), cfg) != Status::success);
+    }
+    for (float value :
+         {-1.f, -0.f, std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN(), 1e10f}) {
+        auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+        std::vector<RefineRow> invalid{RefineTestRow({{0, value}})};
+        REQUIRE(idx.Build(RefineDataset(invalid), build) != Status::success);
+    }
+}
+
+TEST_CASE("SINDI U12 E5M7 sparse windows new dimensions and failure isolation", "[sparse][sindi][u12]") {
+    using namespace knowhere;
+    for (bool growable : {false, true}) {
+        const auto type = growable ? IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC : IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+        std::vector<RefineRow> base(70001);
+        base[0] = RefineTestRow({{0, 10}});
+        base[4095] = RefineTestRow({{0, 9}});
+        base[4096] = RefineTestRow({{0, 8}, {100000, 20}});
+        base[70000] = RefineTestRow({{0, 7}, {100000, 30}});
+        auto cfg = RefineBuild();
+        cfg["quant_type"] = "e5m7";
+        auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+        if (growable) {
+            std::vector<RefineRow> first(base.begin(), base.begin() + 4096), last(base.begin() + 4096, base.end());
+            REQUIRE(idx.Build(RefineDataset(first), cfg) == Status::success);
+            REQUIRE(idx.Add(RefineDataset(last), cfg) == Status::success);
+        } else
+            REQUIRE(idx.Build(RefineDataset(base), cfg) == Status::success);
+        std::vector<RefineRow> query{RefineTestRow({{0, 2}, {100000, 1}})};
+        auto search = RefineSearch();
+        search["refine_k"] = 4;
+        auto result = idx.Search(RefineDataset(query), search, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] == 70000);
+        REQUIRE(result.value()->GetDistance()[0] == 44);
+        std::vector<uint8_t> mask((base.size() + 7) / 8, 0);
+        std::fill(mask.begin(), mask.begin() + 4096 / 8, 255);
+        mask[70000 / 8] |= 1u << (70000 % 8);
+        auto filtered = idx.Search(RefineDataset(query), search, BitsetView(mask.data(), base.size()));
+        REQUIRE(filtered.has_value());
+        REQUIRE(filtered.value()->GetIds()[0] == 4096);
+        REQUIRE(filtered.value()->GetDistance()[0] == 36);
+        Json range{{"metric_type", "IP"}, {"radius", 30}};
+        auto ranged = idx.RangeSearch(RefineDataset(query), range, nullptr);
+        REQUIRE(ranged.has_value());
+        REQUIRE(ranged.value()->GetLims()[1] == 2);
+        if (!growable) {
+            BinarySet bytes;
+            REQUIRE(idx.Serialize(bytes) == Status::success);
+            auto blob = bytes.GetByName(type);
+            auto original = std::vector<uint8_t>(blob->data.get(), blob->data.get() + blob->size);
+            using namespace sparse::inverted;
+            InvertedIndexSectionHeader h;
+            std::memcpy(&h, blob->data.get() + 36, sizeof(h));
+            const std::vector<size_t> corrupt_positions = {size_t(h.offset + 12), size_t(h.offset + 16),
+                                                           size_t(h.offset + h.size - 1)};
+            for (auto position : corrupt_positions) {
+                blob->data[position] = 255;
+                REQUIRE(idx.Deserialize(bytes, Json{{"metric_type", "IP"}}) != Status::success);
+                auto after = idx.Search(RefineDataset(query), search, nullptr);
+                REQUIRE(after.has_value());
+                REQUIRE(after.value()->GetIds()[0] == 70000);
+                std::memcpy(blob->data.get(), original.data(), original.size());
+            }
+        }
+    }
+}

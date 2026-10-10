@@ -2,7 +2,6 @@
 // Reference: https://arxiv.org/abs/2509.08395
 
 #pragma once
-
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -29,6 +28,8 @@
 #include "knowhere/bitsetview.h"
 #include "knowhere/operands.h"
 #include "simd/hook.h"
+#include "sindi_packed12.h"
+#include "sindi_refinement.h"
 
 namespace knowhere::sparse::inverted {
 
@@ -58,7 +59,10 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     static constexpr uint32_t min_window_size = 1024;
     static constexpr uint32_t max_window_size = 65535;
 
-    SindiInvertedIndex(uint32_t window_size) : window_size_(std::clamp(window_size, min_window_size, max_window_size)) {
+    SindiInvertedIndex(uint32_t window_size, bool refine = false, bool packed = false)
+        : packed_(packed), refine_(refine), window_size_(std::clamp(window_size, min_window_size, max_window_size)) {
+        if (packed_ && (!is_ip || window_size != 4096))
+            throw std::invalid_argument("U12/E5M7 requires IP window=4096");
     }
 
     SindiInvertedIndex(const SindiInvertedIndex& rhs) = delete;
@@ -68,14 +72,32 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     SindiInvertedIndex&
     operator=(SindiInvertedIndex&& rhs) noexcept = default;
 
+    bool
+    packed_storage_enabled() const noexcept {
+        return packed_;
+    }
+
+    bool
+    refinement_enabled() const noexcept override {
+        return refine_;
+    }
+
     [[nodiscard]] size_t
     size() const noexcept override {
         size_t res = sizeof(*this);
 
+        res += refinement_seek_.capacity() * sizeof(sindi::RefinementSeek);
+        for (const auto& seek : refinement_seek_) {
+            res += (seek.windows.capacity() + seek.offsets.capacity()) * sizeof(uint32_t);
+        }
+
         // Global posting lists
         res += plists_dim_offsets_span_.size() *
                sizeof(typename std::decay_t<decltype(plists_dim_offsets_span_)>::value_type);
-        if (!total_plists_ids_flat_span_.empty()) {
+        if (packed_ready_) {
+            res += packed_ids_.empty() ? packed_ids_span_.size() : packed_ids_.capacity();
+            res += packed_vals_.empty() ? packed_vals_span_.size() : packed_vals_.capacity();
+        } else if (!total_plists_ids_flat_span_.empty()) {
             res += total_plists_ids_flat_span_.size() * sizeof(uint16_t);
             res += total_plists_vals_flat_span_.size() * sizeof(QuantType);
         } else {
@@ -106,6 +128,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         res += bm25_u8_overflow_offsets_span_.size() * sizeof(uint32_t);
         res += bm25_u8_overflow_values_span_.size() * sizeof(uint16_t);
 
+        if (packed_)
+            res += max_scores_per_dim_span_.size() * sizeof(float);
         return res;
     }
 
@@ -707,6 +731,48 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             }
         }
 
+        if (packed_) {
+            if (rows > uint64_t(std::numeric_limits<uint32_t>::max()) - this->nr_rows_) {
+                return Status::invalid_args;
+            }
+
+            uint64_t postings = plists_dim_offsets_span_.empty() ? 0 : plists_dim_offsets_span_.back();
+            for (size_t i = 0; i < rows; ++i) {
+                for (size_t j = 0; j < data[i].size(); ++j) {
+                    postings += std::abs(data[i][j].val) >= std::numeric_limits<DataType>::epsilon();
+                }
+
+                if (postings > std::numeric_limits<uint32_t>::max()) {
+                    return Status::invalid_args;
+                }
+            }
+        }
+
+        if (refine_ || packed_) {
+            if constexpr (!is_ip) {
+                return Status::invalid_args;
+            }
+
+            for (size_t i = 0; i < rows; ++i) {
+                if (!sindi::valid_refinement_row(data[i])) {
+                    return Status::invalid_args;
+                }
+
+                for (size_t j = 0; j < data[i].size(); ++j) {
+                    if (!std::isfinite(static_cast<float>(knowhere::fp16(data[i][j].val))) ||
+                        (packed_ && std::signbit(data[i][j].val))) {
+                        return Status::invalid_args;
+                    }
+                }
+            }
+        }
+
+        if constexpr (AllowIncremental) {
+            if (packed_ready_) {
+                expand_for_add();
+            }
+        }
+
         const size_t old_nr_rows = this->nr_rows_;
         this->max_dim_ = std::max(this->max_dim_, static_cast<uint32_t>(dim));
         LOG_KNOWHERE_INFO_ << "SindiInvertedIndex build started: rows=" << rows << ", existing_rows=" << old_nr_rows
@@ -753,6 +819,13 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
             build_window_indexes_parallel(data, rows, std::move(posting_plan));
             this->nr_rows_ = rows;
+            if (packed_)
+                pack_postings();
+
+            if (refine_) {
+                rebuild_refinement_seek();
+            }
+
             LOG_KNOWHERE_INFO_ << "SindiInvertedIndex build completed: rows=" << this->nr_rows_
                                << ", inner_dims=" << this->nr_inner_dims_ << ", windows=" << nr_windows_
                                << ", index_bytes=" << size();
@@ -839,6 +912,14 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         }
         max_scores_per_dim_span_ = std::span<const float>(max_scores_per_dim_.data(), max_scores_per_dim_.size());
 
+        if (packed_) {
+            pack_postings();
+        }
+
+        if (refine_) {
+            rebuild_refinement_seek();
+        }
+
         LOG_KNOWHERE_INFO_ << "SindiInvertedIndex incremental build completed: rows=" << this->nr_rows_
                            << ", inner_dims=" << this->nr_inner_dims_ << ", windows=" << nr_windows_
                            << ", index_bytes=" << size();
@@ -864,7 +945,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             writer.write(&this->nr_rows_, sizeof(uint32_t));
             writer.write(&this->max_dim_, sizeof(uint32_t));
             writer.write(&this->nr_inner_dims_, sizeof(uint32_t));
-            const auto quant_type = posting_quant_type<QuantType>();
+            const auto quant_type = packed_ ? InvertedIndexQuantType::IP_E5M7 : posting_quant_type<QuantType>();
             writer.write(&quant_type, sizeof(quant_type));
             const std::array<uint8_t, kInvertedIndexHeaderReservedBytes> reserved{};
             writer.write(reserved.data(), reserved.size());
@@ -884,6 +965,10 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             if (has_bm25_u8_overflows) {
                 nr_sections += 1;
             }
+            if (refine_) {
+                nr_sections += 1;
+            }
+
             writer.write(&nr_sections, sizeof(uint32_t));
 
             const size_t nr_dims = this->nr_inner_dims_;
@@ -892,7 +977,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             uint64_t used_offset = first_section_offset(nr_sections);
             section_headers[0].type = InvertedIndexSectionType::POSTING_LISTS;
             section_headers[0].size = [&, this]() -> uint64_t {
-                size_t res = sizeof(uint32_t) * 3;
+                size_t res = sizeof(uint32_t) * (packed_ ? 6 : 3);
 
                 const size_t mask_sz = (nr_dims + 7) / 8;
                 res += mask_sz * sizeof(uint8_t);
@@ -910,8 +995,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 }
 
                 auto total_postings = plists_dim_offsets_span_[nr_dims];
-                res += total_postings * sizeof(uint16_t);
-                res += total_postings * sizeof(QuantType);
+                res += packed_ ? 2 * sindi::packed12_bytes(total_postings)
+                               : total_postings * (sizeof(uint16_t) + sizeof(QuantType));
 
                 return res;
             }();
@@ -948,15 +1033,30 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 assign_section_offset(section_headers[curr_section_idx], used_offset);
                 curr_section_idx++;
             }
+
+            if (refine_) {
+                auto& section = section_headers[curr_section_idx++];
+                section.type = InvertedIndexSectionType::SINDI_REFINEMENT;
+                section.size = 3 * sizeof(uint32_t);
+                assign_section_offset(section, used_offset);
+            }
+
             assert(curr_section_idx == nr_sections);
 
             writer.write(section_headers.data(), sizeof(InvertedIndexSectionHeader), nr_sections);
 
-            uint32_t index_encoding_type = static_cast<uint32_t>(InvertedIndexEncoding::FIXED_DOCID_WINDOWS);
+            uint32_t index_encoding_type =
+                static_cast<uint32_t>(packed_ ? InvertedIndexEncoding::FIXED_DOCID_WINDOWS_U12_E5M7
+                                              : InvertedIndexEncoding::FIXED_DOCID_WINDOWS);
             write_padding_until(writer, section_headers[0].offset);
             writer.write(&index_encoding_type, sizeof(uint32_t));
             writer.write(&this->window_size_, sizeof(uint32_t));
             writer.write(&this->nr_windows_, sizeof(uint32_t));
+            if (packed_) {
+                // Version 1, independent U12 layout tag 2 and E5M7 value-codec tag 6.
+                const uint32_t descriptor[] = {1, 2, static_cast<uint32_t>(InvertedIndexQuantType::IP_E5M7)};
+                writer.write(descriptor, sizeof(descriptor));
+            }
 
             // write plists_woffsets_formats_mask and plists_window_nnzs
             writer.write(plists_wnnzs_fmts_msk_span_.data(), sizeof(uint8_t), plists_wnnzs_fmts_msk_span_.size());
@@ -971,7 +1071,10 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             writer.write(plists_dim_offsets_span_.data(), sizeof(uint32_t), plists_dim_offsets_span_.size());
 
             // write total_plists_ids / vals per dim, concatenated
-            if (nr_windows_ > 0 && nr_dims > 0) {
+            if (packed_) {
+                writer.write(packed_ids_span_.data(), packed_ids_span_.size());
+                writer.write(packed_vals_span_.data(), packed_vals_span_.size());
+            } else if (nr_windows_ > 0 && nr_dims > 0) {
                 // ids
                 for (size_t dim_id = 0; dim_id < nr_dims; ++dim_id) {
                     const auto ids = posting_ids(dim_id);
@@ -1013,6 +1116,15 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 curr_section_idx++;
             }
 
+            if (refine_) {
+                write_padding_until(writer, section_headers[curr_section_idx].offset);
+                // Section version 1; independent ID layout (U16=1) and value codec.
+                const uint32_t metadata[] = {
+                    1, packed_ ? 2u : 1u,
+                    static_cast<uint32_t>(packed_ ? InvertedIndexQuantType::IP_E5M7 : InvertedIndexQuantType::IP_FP16)};
+                writer.write(metadata, sizeof(metadata));
+            }
+
             return Status::success;
         }
     }
@@ -1025,6 +1137,12 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         }
 
         if constexpr (!AllowIncremental) {
+            refine_ = false;
+            refinement_seek_.clear();
+            if (packed_ && !validate_packed_file(reader)) {
+                return Status::invalid_serialized_index_type;
+            }
+
             auto file_header_handler = [&, this]() {
                 uint32_t index_format_version = 0;
                 reader.read(&index_format_version, sizeof(uint32_t));
@@ -1037,7 +1155,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 reader.read(&this->nr_inner_dims_, sizeof(uint32_t));
                 InvertedIndexQuantType quant_type{};
                 reader.read(&quant_type, sizeof(quant_type));
-                if (!validate_posting_quant_type<QuantType>(quant_type)) {
+                if (packed_ ? quant_type != InvertedIndexQuantType::IP_E5M7
+                            : !validate_posting_quant_type<QuantType>(quant_type)) {
                     return Status::invalid_serialized_index_type;
                 }
                 reader.advance(kInvertedIndexHeaderReservedBytes);
@@ -1085,13 +1204,17 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                             uint32_t index_encoding_type = 0;
                             reader.read(&index_encoding_type, sizeof(uint32_t));
                             if (index_encoding_type !=
-                                static_cast<uint32_t>(InvertedIndexEncoding::FIXED_DOCID_WINDOWS)) {
+                                static_cast<uint32_t>(packed_ ? InvertedIndexEncoding::FIXED_DOCID_WINDOWS_U12_E5M7
+                                                              : InvertedIndexEncoding::FIXED_DOCID_WINDOWS)) {
                                 return Status::invalid_serialized_index_type;
                             }
 
                             // check window params
                             reader.read(&this->window_size_, sizeof(uint32_t));
                             reader.read(&this->nr_windows_, sizeof(uint32_t));
+                            if (packed_) {
+                                reader.advance(3 * sizeof(uint32_t));  // descriptor checked in preflight
+                            }
 
                             if (this->window_size_ == 0 || this->window_size_ >= 65536) {
                                 LOG_KNOWHERE_INFO_ << "SindiInvertedIndex::deserialize invalid window_size_="
@@ -1111,7 +1234,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                             }
 
                             const size_t nr_dims = this->nr_inner_dims_;
-                            const uint64_t bytes_header = static_cast<uint64_t>(sizeof(uint32_t) * 3);
+                            const uint64_t bytes_header = static_cast<uint64_t>(sizeof(uint32_t) * (packed_ ? 6 : 3));
 
                             window_index_plists_sz_.clear();
                             window_index_plists_sz_spans_.clear();
@@ -1158,15 +1281,23 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                             }
 
                             // plists dim offsets
-                            plists_dim_offsets_span_ = std::span<const uint32_t>(
-                                reinterpret_cast<const uint32_t*>(reader.data() + reader.tellg()), nr_dims + 1);
-                            reader.advance((nr_dims + 1) * sizeof(uint32_t));
+                            if (packed_) {
+                                // Packed payload has byte alignment. Metadata uses memcpy, never typed byte casts.
+                                plists_dim_offsets_.resize(nr_dims + 1);
+                                reader.read(plists_dim_offsets_.data(), (nr_dims + 1) * sizeof(uint32_t));
+                                plists_dim_offsets_span_ = plists_dim_offsets_;
+                            } else {
+                                plists_dim_offsets_span_ = std::span<const uint32_t>(
+                                    reinterpret_cast<const uint32_t*>(reader.data() + reader.tellg()), nr_dims + 1);
+                                reader.advance((nr_dims + 1) * sizeof(uint32_t));
+                            }
                             total_postings = plists_dim_offsets_span_[nr_dims];
 
                             // Validate total_postings against section size
                             const uint64_t bytes_dim_offsets = static_cast<uint64_t>(nr_dims + 1) * sizeof(uint32_t);
-                            const uint64_t bytes_postings_data =
-                                static_cast<uint64_t>(total_postings) * (sizeof(uint16_t) + sizeof(QuantType));
+                            const uint64_t bytes_postings_data = packed_ ? 2 * sindi::packed12_bytes(total_postings)
+                                                                         : static_cast<uint64_t>(total_postings) *
+                                                                               (sizeof(uint16_t) + sizeof(QuantType));
                             const uint64_t expected_section_bytes =
                                 bytes_header + bytes_mask + bytes_win_nnzs + bytes_dim_offsets + bytes_postings_data;
                             if (expected_section_bytes != section_header.size) {
@@ -1176,19 +1307,25 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                                 return Status::invalid_serialized_index_type;
                             }
 
-                            // ids region (per-dim contiguous, concatenated)
-                            const uint16_t* ids_region =
-                                reinterpret_cast<const uint16_t*>(reader.data() + reader.tellg());
-                            const uint64_t bytes_ids = static_cast<uint64_t>(total_postings) * sizeof(uint16_t);
-                            total_plists_ids_flat_span_ = std::span<const uint16_t>(ids_region, total_postings);
-                            reader.advance(total_postings * sizeof(uint16_t));
-
-                            // vals region (per-dim contiguous, concatenated)
-                            const QuantType* vals_region =
-                                reinterpret_cast<const QuantType*>(reader.data() + reader.tellg());
-                            const uint64_t bytes_vals = static_cast<uint64_t>(total_postings) * sizeof(QuantType);
-                            total_plists_vals_flat_span_ = std::span<const QuantType>(vals_region, total_postings);
-                            reader.advance(total_postings * sizeof(QuantType));
+                            const uint64_t bytes_ids =
+                                packed_ ? sindi::packed12_bytes(total_postings) : total_postings * sizeof(uint16_t);
+                            const uint64_t bytes_vals = packed_ ? bytes_ids : total_postings * sizeof(QuantType);
+                            if (packed_) {
+                                packed_ids_span_ = {reader.data() + reader.tellg(), static_cast<size_t>(bytes_ids)};
+                                reader.advance(bytes_ids);
+                                packed_vals_span_ = {reader.data() + reader.tellg(), static_cast<size_t>(bytes_vals)};
+                                reader.advance(bytes_vals);
+                                packed_ready_ = true;
+                            } else {
+                                total_plists_ids_flat_span_ = {
+                                    reinterpret_cast<const uint16_t*>(reader.data() + reader.tellg()),
+                                    static_cast<size_t>(total_postings)};
+                                reader.advance(bytes_ids);
+                                total_plists_vals_flat_span_ = {
+                                    reinterpret_cast<const QuantType*>(reader.data() + reader.tellg()),
+                                    static_cast<size_t>(total_postings)};
+                                reader.advance(bytes_vals);
+                            }
 
                             // Log breakdown for POSTING_LISTS section
                             LOG_KNOWHERE_DEBUG_ << "SindiInvertedIndex::deserialize POSTING_LISTS breakdown: "
@@ -1207,10 +1344,16 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                         }
                         case InvertedIndexSectionType::MAX_SCORES_PER_DIM: {
                             reader.seekg(section_header.offset);
-                            max_scores_per_dim_span_ = std::span<const float>(
-                                reinterpret_cast<const float*>(reader.data() + section_header.offset),
-                                this->nr_inner_dims_);
-                            reader.advance(sizeof(float) * this->nr_inner_dims_);
+                            if (packed_) {
+                                max_scores_per_dim_.resize(this->nr_inner_dims_);
+                                reader.read(max_scores_per_dim_.data(), sizeof(float) * this->nr_inner_dims_);
+                                max_scores_per_dim_span_ = max_scores_per_dim_;
+                            } else {
+                                max_scores_per_dim_span_ = std::span<const float>(
+                                    reinterpret_cast<const float*>(reader.data() + section_header.offset),
+                                    this->nr_inner_dims_);
+                                reader.advance(sizeof(float) * this->nr_inner_dims_);
+                            }
                             break;
                         }
                         case InvertedIndexSectionType::BM25_U8_OVERFLOWS: {
@@ -1228,12 +1371,14 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                             if (section_header.size != expected_size) {
                                 return Status::invalid_serialized_index_type;
                             }
+
                             const auto* offsets = reinterpret_cast<const uint32_t*>(reader.data() + reader.tellg());
                             bm25_u8_overflow_offsets_span_ = std::span<const uint32_t>(offsets, overflow_count);
                             reader.advance(static_cast<size_t>(overflow_count) * sizeof(uint32_t));
                             const auto* values = reinterpret_cast<const uint16_t*>(reader.data() + reader.tellg());
                             bm25_u8_overflow_values_span_ = std::span<const uint16_t>(values, overflow_count);
                             reader.advance(static_cast<size_t>(overflow_count) * sizeof(uint16_t));
+
                             if (!std::is_sorted(bm25_u8_overflow_offsets_span_.begin(),
                                                 bm25_u8_overflow_offsets_span_.end()) ||
                                 (!bm25_u8_overflow_offsets_span_.empty() &&
@@ -1261,6 +1406,25 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                                                 << " total_section_bytes=" << section_header.size;
                             break;
                         }
+                        case InvertedIndexSectionType::SINDI_REFINEMENT: {
+                            if (!is_ip || refine_ || section_header.size != 3 * sizeof(uint32_t) ||
+                                section_header.offset > reader.total_ ||
+                                section_header.size > reader.total_ - section_header.offset) {
+                                return Status::invalid_serialized_index_type;
+                            }
+
+                            reader.seekg(section_header.offset);
+                            uint32_t metadata[3];
+                            reader.read(metadata, sizeof(metadata));
+                            if (metadata[0] != 1 || metadata[1] != (packed_ ? 2u : 1u) ||
+                                metadata[2] != static_cast<uint32_t>(packed_ ? InvertedIndexQuantType::IP_E5M7
+                                                                             : InvertedIndexQuantType::IP_FP16)) {
+                                return Status::invalid_serialized_index_type;
+                            }
+
+                            refine_ = true;
+                            break;
+                        }
                         default:
                             // skip unknown sections
                             break;
@@ -1278,6 +1442,29 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 return status;
             }
 
+            if (refine_ || packed_) {
+                try {
+                    rebuild_refinement_seek();
+                    if (packed_) {
+                        for (size_t dim = 0; dim < this->nr_inner_dims_; ++dim) {
+                            float maximum = 0;
+                            for (size_t j = 0; j < posting_count(dim); ++j) {
+                                maximum = std::max(maximum, posting_value_at(dim, j));
+                            }
+
+                            if (max_scores_per_dim_span_[dim] != maximum) {
+                                return Status::invalid_serialized_index_type;
+                            }
+                        }
+
+                        if (!refine_) {
+                            std::vector<sindi::RefinementSeek>{}.swap(refinement_seek_);
+                        }
+                    }
+                } catch (const std::exception&) {
+                    return Status::invalid_serialized_index_type;
+                }
+            }
             LOG_KNOWHERE_INFO_ << "SindiInvertedIndex::deserialize stats: rows=" << this->nr_rows_
                                << " max_dim=" << this->max_dim_ << " inner_dims=" << this->nr_inner_dims_
                                << " sections=" << nr_sections << " window_size=" << this->window_size_
@@ -1301,8 +1488,19 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             return;
         }
 
+        if (refine_) {
+            search_with_refinement(query, k, distances, labels, bitset, search_params);
+            return;
+        }
+
         auto q_vec = parse_query_with_dim_map(query, this->dim_map_, search_params.approx.drop_ratio_search);
-        if (q_vec.empty()) {
+        search_coarse(std::move(q_vec), k, distances, labels, bitset, search_params);
+    }
+
+    void
+    search_coarse(std::vector<std::pair<uint32_t, float>> q_vec, size_t k, float* distances, label_t* labels,
+                  const BitsetView& bitset, const InvertedIndexSearchParams& search_params) const {
+        if (q_vec.empty() || k == 0) {
             return;
         }
 
@@ -1369,8 +1567,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         }
         for (auto& [qid, qval] : sorted_q_vec) {
             const auto wnnz_buf_span = encoded_window_nnzs(qid);
-            const auto ids = posting_ids(qid);
-            const auto vals = posting_vals(qid);
+            const auto ids = packed_ready_ ? std::span<const uint16_t>{} : posting_ids(qid);
+            const auto vals = packed_ready_ ? std::span<const QuantType>{} : posting_vals(qid);
 
             bool is_sparse = !plists_wnnzs_fmts_msk_span_.empty() &&
                              ((plists_wnnzs_fmts_msk_span_[qid >> 3] & static_cast<uint8_t>(0x1u << (qid & 0x7))) != 0);
@@ -1404,6 +1602,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         // Main search loop: iterate over windows and process each window
         if constexpr (is_ip) {
             const auto scatter_fn = sindi::get_ip_kernels().accumulate;
+            const auto packed_fn = packed_ ? sindi::get_packed_ip_kernel() : nullptr;
             const auto batch_insert_fn = sindi::get_ip_kernels().batch_insert;
 
             for (size_t widx = 0; widx < nr_windows_; ++widx) {
@@ -1443,10 +1642,10 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                         continue;
                     }
 
-                    const uint16_t* plist_ids = cur.ids_base + soff;
-                    const QuantType* plist_vals = cur.vals_base + soff;
-
-                    float dispatch_max = scatter_fn(cur.qval, plist_vals, plist_ids, wnnz, wscores_final);
+                    float dispatch_max =
+                        packed_ ? packed_fn(cur.qval, packed_vals_span_.data(), packed_ids_span_.data(),
+                                            size_t(plists_dim_offsets_span_[cur.dim_id]) + soff, wnnz, wscores_final)
+                                : scatter_fn(cur.qval, cur.vals_base + soff, cur.ids_base + soff, wnnz, wscores_final);
                     if (dispatch_max > curr_max_score) {
                         curr_max_score = dispatch_max;
                     }
@@ -1601,8 +1800,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         }
         for (auto& [qid, qval] : q_vec) {
             const auto nnz_span = encoded_window_nnzs(qid);
-            const auto ids = posting_ids(qid);
-            const auto vals = posting_vals(qid);
+            const auto ids = packed_ready_ ? std::span<const uint16_t>{} : posting_ids(qid);
+            const auto vals = packed_ready_ ? std::span<const QuantType>{} : posting_vals(qid);
 
             bool is_sparse = !plists_wnnzs_fmts_msk_span_.empty() &&
                              ((plists_wnnzs_fmts_msk_span_[qid >> 3] & static_cast<uint8_t>(0x1u << (qid & 0x7))) != 0);
@@ -1640,6 +1839,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         if constexpr (is_ip) {
             // IP scoring path
             const auto scatter_fn = sindi::get_ip_kernels().accumulate;
+            const auto packed_fn = packed_ ? sindi::get_packed_ip_kernel() : nullptr;
 
             for (size_t widx = 0; widx < nr_windows_; ++widx) {
                 const size_t docid_start = window_size_ * widx;
@@ -1655,10 +1855,12 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                         continue;
                     }
 
-                    const uint16_t* plist_ids = cur.ids_base + soff;
-                    const QuantType* plist_vals = cur.vals_base + soff;
-
-                    scatter_fn(cur.qval, plist_vals, plist_ids, wnnz, wscores_final);
+                    if (packed_) {
+                        packed_fn(cur.qval, packed_vals_span_.data(), packed_ids_span_.data(),
+                                  size_t(plists_dim_offsets_span_[cur.dim_id]) + soff, wnnz, wscores_final);
+                    } else {
+                        scatter_fn(cur.qval, cur.vals_base + soff, cur.ids_base + soff, wnnz, wscores_final);
+                    }
                 }
             }
         } else {
@@ -1847,13 +2049,14 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     }
 
     [[nodiscard]] QuantType
-    quantize_value(DataType value) const noexcept {
+    quantize_value(DataType value) const {
         if constexpr (is_bm25_u8) {
             return static_cast<uint8_t>(std::min<uint16_t>(bm25_u16_value(value), 255));
         } else if constexpr (is_bm25) {
             return static_cast<QuantType>(bm25_u16_value(value));
         } else {
-            return static_cast<QuantType>(static_cast<float>(value));
+            const auto half = static_cast<QuantType>(static_cast<float>(value));
+            return packed_ ? sindi::decode_e5m7_half(sindi::encode_e5m7(half)) : half;
         }
     }
 
@@ -1926,7 +2129,394 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     std::vector<float> row_sums_;
     std::span<const float> row_sums_span_;
 
+    static bool
+    validate_packed_file(const MemoryIOReader& reader) {
+        try {
+            const auto* data = reader.data();
+            const size_t size = reader.total_;
+            auto u32 = [&](size_t offset) {
+                if (offset > size || size - offset < 4)
+                    throw std::runtime_error("Truncated packed header");
+                uint32_t value;
+                std::memcpy(&value, data + offset, 4);
+                return value;
+            };
+
+            if (size < 36 || u32(0) != kInvertedIndexFileFormatVersion ||
+                u32(16) != static_cast<uint32_t>(InvertedIndexQuantType::IP_E5M7)) {
+                return false;
+            }
+
+            const size_t dims = u32(12), sections = u32(32);
+            if (sections < 3 || sections > (size - 36) / sizeof(InvertedIndexSectionHeader)) {
+                return false;
+            }
+
+            const size_t directory_end = 36 + sections * sizeof(InvertedIndexSectionHeader);
+            std::vector<InvertedIndexSectionHeader> headers(sections);
+            std::memcpy(headers.data(), data + 36, sections * sizeof(InvertedIndexSectionHeader));
+            std::unordered_set<uint32_t> types;
+            for (const auto& h : headers) {
+                switch (h.type) {
+                    case InvertedIndexSectionType::POSTING_LISTS:
+                    case InvertedIndexSectionType::DIM_MAP_REVERSE:
+                    case InvertedIndexSectionType::DIM_MAP_MPHF:
+                    case InvertedIndexSectionType::MAX_SCORES_PER_DIM:
+                    case InvertedIndexSectionType::SINDI_REFINEMENT:
+                        break;
+                    default:
+                        return false;
+                }
+
+                if (!types.insert(static_cast<uint32_t>(h.type)).second || h.offset < directory_end ||
+                    h.offset > size || h.size > size - h.offset) {
+                    return false;
+                }
+            }
+
+            auto by_offset = headers;
+            std::sort(by_offset.begin(), by_offset.end(),
+                      [](const auto& a, const auto& b) { return a.offset < b.offset; });
+            for (size_t i = 1; i < by_offset.size(); ++i) {
+                if (by_offset[i - 1].offset + by_offset[i - 1].size > by_offset[i].offset) {
+                    return false;
+                }
+            }
+
+            auto* h = find_section_header(headers, InvertedIndexSectionType::POSTING_LISTS);
+            auto* reverse = find_section_header(headers, InvertedIndexSectionType::DIM_MAP_REVERSE);
+            if (!reverse || ((reinterpret_cast<uintptr_t>(data) + reverse->offset) % alignof(uint32_t))) {
+                return false;
+            }
+
+            auto* maxima = find_section_header(headers, InvertedIndexSectionType::MAX_SCORES_PER_DIM);
+            if (!h || !maxima || !find_section_header(headers, InvertedIndexSectionType::DIM_MAP_REVERSE) ||
+                maxima->size != dims * 4 || h->size < 24 ||
+                u32(h->offset) != static_cast<uint32_t>(InvertedIndexEncoding::FIXED_DOCID_WINDOWS_U12_E5M7) ||
+                u32(h->offset + 4) != 4096 || u32(h->offset + 12) != 1 || u32(h->offset + 16) != 2 ||
+                u32(h->offset + 20) != static_cast<uint32_t>(InvertedIndexQuantType::IP_E5M7)) {
+                return false;
+            }
+
+            if (u32(h->offset + 8) != (uint64_t(u32(4)) + 4095) / 4096) {
+                return false;
+            }
+
+            size_t pos = h->offset + 24, end = h->offset + h->size;
+            auto advance = [&](size_t bytes) {
+                if (pos > end || bytes > end - pos) {
+                    throw std::runtime_error("Truncated packed postings");
+                }
+                pos += bytes;
+            };
+
+            advance((dims + 7) / 8);
+            if (dims > (end - pos) / 4) {
+                return false;
+            }
+
+            for (size_t i = 0; i < dims; ++i) {
+                advance(4);
+                const auto bytes = u32(pos - 4);
+                advance(bytes);
+            }
+
+            const size_t offsets = pos;
+            advance((dims + 1) * 4);
+            if (u32(offsets) != 0) {
+                return false;
+            }
+
+            for (size_t i = 0; i < dims; ++i) {
+                if (u32(offsets + 4 * i) > u32(offsets + 4 * (i + 1))) {
+                    return false;
+                }
+            }
+
+            const auto count = u32(offsets + dims * 4);
+            const auto bytes = sindi::packed12_bytes(count);
+            advance(bytes);
+            advance(bytes);
+
+            if (pos != end) {
+                return false;
+            }
+            if ((count & 1) && ((data[end - 1] & 0xf0) || (data[end - bytes - 1] & 0xf0))) {
+                return false;
+            }
+
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+
+    bool packed_ = false;
+    bool packed_ready_ = false;
+    std::vector<uint8_t> packed_ids_, packed_vals_;
+    std::span<const uint8_t> packed_ids_span_, packed_vals_span_;
+
+    size_t
+    posting_count(size_t dim) const {
+        return plists_dim_offsets_span_[dim + 1] - plists_dim_offsets_span_[dim];
+    }
+
+    uint16_t
+    posting_id_at(size_t dim, size_t pos) const {
+        return packed_ready_ ? sindi::unpack12(packed_ids_span_.data(), plists_dim_offsets_span_[dim] + pos)
+                             : posting_ids(dim)[pos];
+    }
+
+    float
+    posting_value_at(size_t dim, size_t pos) const {
+        return packed_ready_
+                   ? sindi::decode_e5m7(sindi::unpack12(packed_vals_span_.data(), plists_dim_offsets_span_[dim] + pos))
+                   : static_cast<float>(posting_vals(dim)[pos]);
+    }
+
+    void
+    pack_postings() {
+        if constexpr (is_ip) {
+            const size_t count = plists_dim_offsets_span_.back();
+            std::vector<uint8_t> ids(sindi::packed12_bytes(count), 0), vals(ids.size(), 0);
+            max_scores_per_dim_.assign(this->nr_inner_dims_, 0);
+            // Sequential pair ownership avoids shared-nibble races at term boundaries.
+            for (size_t dim = 0; dim < this->nr_inner_dims_; ++dim) {
+                const auto source_ids = posting_ids(dim);
+                const auto source_vals = posting_vals(dim);
+                const size_t start = plists_dim_offsets_span_[dim];
+                for (size_t j = 0; j < source_ids.size(); ++j) {
+                    const auto code = sindi::encode_e5m7(source_vals[j]);
+                    sindi::pack12(ids.data(), start + j, source_ids[j]);
+                    sindi::pack12(vals.data(), start + j, code);
+                    max_scores_per_dim_[dim] = std::max(max_scores_per_dim_[dim], sindi::decode_e5m7(code));
+                }
+            }
+
+            packed_ids_.swap(ids);
+            packed_vals_.swap(vals);
+
+            packed_ids_span_ = packed_ids_;
+            packed_vals_span_ = packed_vals_;
+            max_scores_per_dim_span_ = max_scores_per_dim_;
+            aligned_u16_vec{}.swap(total_plists_ids_flat_);
+            aligned_quant_vec{}.swap(total_plists_vals_flat_);
+            std::vector<aligned_u16_vec>{}.swap(total_plists_ids_);
+            std::vector<aligned_quant_vec>{}.swap(total_plists_vals_);
+            std::vector<std::span<const uint16_t>>{}.swap(total_plists_ids_spans_);
+            std::vector<std::span<const QuantType>>{}.swap(total_plists_vals_spans_);
+            total_plists_ids_flat_span_ = {};
+            total_plists_vals_flat_span_ = {};
+            packed_ready_ = true;
+        }
+    }
+
+    void
+    expand_for_add() {
+        if constexpr (is_ip && AllowIncremental) {
+            total_plists_ids_.resize(this->nr_inner_dims_);
+            total_plists_vals_.resize(this->nr_inner_dims_);
+            for (size_t dim = 0; dim < this->nr_inner_dims_; ++dim) {
+                const size_t count = posting_count(dim);
+                auto& ids = total_plists_ids_[dim];
+                auto& vals = total_plists_vals_[dim];
+                ids.resize(count);
+                vals.resize(count);
+                for (size_t j = 0; j < count; ++j) {
+                    ids[j] = posting_id_at(dim, j);
+                    vals[j] = static_cast<QuantType>(posting_value_at(dim, j));
+                }
+            }
+
+            packed_ready_ = false;
+            // append_window_indexes publishes fresh typed spans before packing again.
+        }
+    }
+
     bool legacy_dim_map_mphf_trailer_workaround_{true};
+    bool refine_ = false;
+    std::vector<sindi::RefinementSeek> refinement_seek_;
+
+    void
+    rebuild_refinement_seek() {
+        std::vector<sindi::RefinementSeek> seeks(this->nr_inner_dims_);
+        const uint32_t bits = 32 - __builtin_clz(window_size_);
+        const uint32_t mask = (1u << bits) - 1;
+
+        for (size_t dim = 0; dim < seeks.size(); ++dim) {
+            auto& seek = seeks[dim];
+            const auto counts = encoded_window_nnzs(dim);
+            const auto count_ids = posting_count(dim);
+
+            seek.sparse = (plists_wnnzs_fmts_msk_span_[dim >> 3] & (1u << (dim & 7))) != 0;
+            const size_t entries = seek.sparse ? counts.size() / 4 : nr_windows_;
+            if (counts.size() != entries * (seek.sparse ? 4 : 2)) {
+                throw std::runtime_error("Invalid refinement window counts");
+            }
+
+            seek.offsets.reserve(entries + 1);
+            if (seek.sparse) {
+                seek.windows.reserve(entries);
+            }
+
+            size_t sum = 0;
+            for (size_t i = 0; i < entries; ++i) {
+                uint32_t wid = i, count = 0;
+                if (seek.sparse) {
+                    uint32_t packed;
+                    std::memcpy(&packed, counts.data() + i * 4, 4);
+                    wid = packed >> bits;
+                    count = packed & mask;
+                    if (wid >= nr_windows_ || (i && seek.windows.back() >= wid)) {
+                        throw std::runtime_error("Invalid refinement sparse windows");
+                    }
+
+                    seek.windows.push_back(wid);
+                } else {
+                    uint16_t value;
+                    std::memcpy(&value, counts.data() + i * 2, 2);
+                    count = value;
+                }
+
+                if (count > window_size_ || sum + count > count_ids) {
+                    throw std::runtime_error("Invalid refinement posting count");
+                }
+
+                seek.offsets.push_back(static_cast<uint32_t>(sum));
+                // Builders emit document order; validate it also on deserialization.
+                for (size_t j = sum; j < sum + count; ++j) {
+                    const float represented = posting_value_at(dim, j);
+                    if (!std::isfinite(represented) || represented < 0 ||
+                        uint64_t(wid) * window_size_ + posting_id_at(dim, j) >= this->nr_rows_ ||
+                        posting_id_at(dim, j) >= window_size_ ||
+                        (j > sum && posting_id_at(dim, j - 1) >= posting_id_at(dim, j))) {
+                        // no good
+                        throw std::runtime_error("Invalid refinement posting IDs");
+                    }
+                }
+
+                sum += count;
+            }
+
+            if (sum != count_ids || sum > std::numeric_limits<uint32_t>::max()) {
+                throw std::runtime_error("Invalid refinement posting offsets");
+            }
+
+            seek.offsets.push_back(static_cast<uint32_t>(sum));
+        }
+
+        refinement_seek_.swap(seeks);
+    }
+
+    std::pair<uint32_t, uint32_t>
+    window_posting_range(uint32_t dim, uint32_t window) const {
+        return refinement_seek_.at(dim).range(window);
+    }
+
+    // Physical U16/FP16 lookup backend. Packed ID/value formats can replace this
+    // operation without changing mass selection, pool sizing, or final selection.
+    void
+    score_candidate_ids(uint32_t dim, uint32_t begin, uint32_t end, float weight, std::span<const uint32_t> candidates,
+                        std::span<float> scores) const {
+        if (packed_) {
+            for (size_t i = 0; i < candidates.size(); ++i) {
+                const uint32_t local = candidates[i] % window_size_;
+                uint32_t low = begin, high = end;
+                while (low < high) {
+                    const auto mid = low + (high - low) / 2;
+                    if (posting_id_at(dim, mid) < local) {
+                        low = mid + 1;
+                    } else {
+                        high = mid;
+                    }
+                }
+
+                begin = low;
+                if (low < end && posting_id_at(dim, low) == local) {
+                    scores[i] = std::fma(weight, posting_value_at(dim, low), scores[i]);
+                }
+            }
+
+            return;
+        }
+
+        const auto ids = posting_ids(dim);
+        const auto vals = posting_vals(dim);
+        if (begin == end)
+            return;
+        auto cursor = ids.begin() + begin;
+        const auto stop = ids.begin() + end;
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            const uint32_t local = candidates[i] % window_size_;
+            cursor = std::lower_bound(cursor, stop, local);
+            if (cursor != stop && *cursor == local)
+                scores[i] = std::fma(weight, static_cast<float>(vals[cursor - ids.begin()]), scores[i]);
+        }
+    }
+
+    void
+    search_with_refinement(const SparseRow<DataType>& query, size_t k, float* distances, label_t* labels,
+                           const BitsetView& bitset, const InvertedIndexSearchParams& params) const {
+        const auto count = sindi::refinement_pool_size(k, params.refine_k, this->nr_rows_);
+        if (count == 0) {
+            return;
+        }
+
+        const auto eligible =
+            sindi::filter_query_dimensions(query, [&](uint32_t dim) { return this->dim_map_.lookup(dim).has_value(); });
+        const auto selected = sindi::retain_query_mass(eligible, params.refine_query_mass_percentage);
+        auto coarse_query = parse_query_with_dim_map(selected, this->dim_map_, 0.0f);
+
+        std::vector<float> coarse_scores(count, std::numeric_limits<float>::quiet_NaN());
+        std::vector<label_t> coarse_ids(count, -1);
+        search_coarse(std::move(coarse_query), count, coarse_scores.data(), coarse_ids.data(), bitset, params);
+
+        std::vector<uint32_t> candidates;
+        candidates.reserve(count);
+        for (auto id : coarse_ids) {
+            if (id >= 0 && static_cast<size_t>(id) < this->nr_rows_ && (bitset.empty() || !bitset.test(id))) {
+                candidates.push_back(static_cast<uint32_t>(id));
+            }
+        }
+        std::sort(candidates.begin(), candidates.end());
+        candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+
+        std::vector<float> scores(candidates.size(), 0.0f);
+        auto full = parse_query_with_dim_map(query, this->dim_map_, 0.0f);
+        std::sort(full.begin(), full.end(), [&](const auto& a, const auto& b) {
+            const float x = a.second * max_scores_per_dim_span_[a.first];
+            const float y = b.second * max_scores_per_dim_span_[b.first];
+            return x != y ? x > y : a.first < b.first;
+        });
+
+        for (const auto& [dim, weight] : full) {
+            for (size_t start = 0; start < candidates.size();) {
+                const auto window = candidates[start] / window_size_;
+                size_t stop = start + 1;
+                while (stop < candidates.size() && candidates[stop] / window_size_ == window) {
+                    ++stop;
+                }
+
+                const auto [begin, end] = window_posting_range(dim, window);
+                score_candidate_ids(dim, begin, end, weight,
+                                    std::span<const uint32_t>(candidates).subspan(start, stop - start),
+                                    std::span<float>(scores).subspan(start, stop - start));
+                start = stop;
+            }
+        }
+
+        std::vector<size_t> order(candidates.size());
+        std::iota(order.begin(), order.end(), 0);
+        std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+            return scores[a] != scores[b] ? (scores[a] > scores[b]) : (candidates[a] < candidates[b]);
+        });
+
+        for (size_t i = 0; i < std::min(k, order.size()); ++i) {
+            labels[i] = candidates[order[i]];
+            distances[i] = scores[order[i]];
+        }
+    }
+
     uint32_t window_size_{max_window_size};
     uint32_t nr_windows_{0};
 

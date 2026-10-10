@@ -6,6 +6,156 @@
 
 namespace knowhere::sparse::inverted::sindi {
 
+// Direct U12-to-U32 expansion, adapted from the standalone packed12 SVE kernel.
+// Tables are generated for the current VL and nibble phase. Byte predicates bound
+// every load, including odd starts and final partial vectors.
+static inline svuint32_t
+load12(const std::uint8_t* base, std::uint32_t n, std::uint32_t phase, svuint32_t table, svuint32_t shift) {
+    const auto bytes = (n * 12 + phase + 7) / 8;
+    const auto raw = svld1_u8(svwhilelt_b8(0u, bytes), base);
+    const auto pairs = svreinterpret_u32_u8(svtbl_u8(raw, svreinterpret_u8_u32(table)));
+    return svand_n_u32_x(svptrue_b32(), svlsr_u32_x(svptrue_b32(), svand_n_u32_x(svptrue_b32(), pairs, 65535), shift),
+                         4095);
+}
+
+// Decode two full U32 vectors from one packed-byte load. The second
+// table advances by 3*vl/2 bytes; vl is always a multiple of four.
+// Preserve the starting nibble phase and predicate the exact input byte count.
+static inline svuint32x2_t
+load_pair(const std::uint8_t* packed, svbool_t bytes, svuint8_t table0, svuint8_t table1, svuint32_t shift) {
+    const auto pg = svptrue_b32();
+    const auto raw = svld1_u8(bytes, packed);
+    // Upper shuffled bytes are immaterial after the shift and U12 mask.
+    const auto a = svand_n_u32_x(pg, svlsr_u32_x(pg, svreinterpret_u32_u8(svtbl_u8(raw, table0)), shift), 4095);
+    const auto b = svand_n_u32_x(pg, svlsr_u32_x(pg, svreinterpret_u32_u8(svtbl_u8(raw, table1)), shift), 4095);
+    return svcreate2_u32(a, b);
+}
+
+static inline svfloat32_t
+expand_e5(svbool_t pg, svuint32_t code) {
+    // FCVT consumes the low binary16 half of each U32 lane, including subnormals.
+    return svcvt_f32_f16_x(pg, svreinterpret_f16_u32(svlsl_n_u32_x(pg, code, 3)));
+}
+
+float
+ip_accumulate_sve_u12_e5m7(float q, const uint8_t* __restrict vals, const uint8_t* __restrict ids, size_t start,
+                           int32_t count, float* __restrict out) {
+    if (count <= 0) {
+        return 0;
+    }
+
+    const auto vl = static_cast<std::uint32_t>(svcntw());
+    const auto pg = svptrue_b32();
+    const auto lane = svindex_u32(0, 1);
+    const auto phase = static_cast<std::uint32_t>((start & 1) * 4);
+    const auto byte = svlsr_n_u32_x(pg, svadd_n_u32_x(pg, svmul_n_u32_x(pg, lane, 12), phase), 3);
+    const auto table = svorr_u32_x(pg, byte, svlsl_n_u32_x(pg, svadd_n_u32_x(pg, byte, 1), 8));
+    const auto shift =
+        svlsl_n_u32_x(pg, svand_n_u32_x(pg, sveor_n_u32_x(pg, lane, static_cast<std::uint32_t>(start & 1)), 1), 2);
+    const auto table0 = svreinterpret_u8_u32(table);
+    const auto table1 = svadd_n_u8_x(svptrue_b8(), table0, static_cast<std::uint8_t>(vl * 3 / 2));
+
+    // All loop increments are even posting counts, so the phase and full-pair
+    // byte predicate remain constant. Hoist these instead of recomputing them
+    // for each of the four pairs in the unrolled loop.
+    const auto pair_bytes = svwhilelt_b8(0u, 3 * vl + static_cast<uint32_t>(start & 1));
+    const size_t byte_start = (start / 2) * 3 + (start & 1);
+    vals += byte_start;
+    ids += byte_start;
+
+    const auto vq = svdup_f32(q);
+    auto vmax = svdup_f32(0);
+
+    uint32_t i = 0;
+    uint32_t n = static_cast<std::uint32_t>(count);
+
+    for (; i + 8 * vl <= n; i += 8 * vl) {
+        const auto ids0 = load_pair(ids + (i / 2) * 3 + 0 * vl * 3, pair_bytes, table0, table1, shift);
+        const auto words0 = load_pair(vals + (i / 2) * 3 + 0 * vl * 3, pair_bytes, table0, table1, shift);
+        const auto id0 = svget2_u32(ids0, 0);
+        const auto id1 = svget2_u32(ids0, 1);
+        const auto v0 = expand_e5(pg, svget2_u32(words0, 0));
+        const auto v1 = expand_e5(pg, svget2_u32(words0, 1));
+        const auto ids2 = load_pair(ids + (i / 2) * 3 + 1 * vl * 3, pair_bytes, table0, table1, shift);
+        const auto words2 = load_pair(vals + (i / 2) * 3 + 1 * vl * 3, pair_bytes, table0, table1, shift);
+        const auto id2 = svget2_u32(ids2, 0);
+        const auto id3 = svget2_u32(ids2, 1);
+        const auto v2 = expand_e5(pg, svget2_u32(words2, 0));
+        const auto v3 = expand_e5(pg, svget2_u32(words2, 1));
+        const auto ids4 = load_pair(ids + (i / 2) * 3 + 2 * vl * 3, pair_bytes, table0, table1, shift);
+        const auto words4 = load_pair(vals + (i / 2) * 3 + 2 * vl * 3, pair_bytes, table0, table1, shift);
+        const auto id4 = svget2_u32(ids4, 0);
+        const auto id5 = svget2_u32(ids4, 1);
+        const auto v4 = expand_e5(pg, svget2_u32(words4, 0));
+        const auto v5 = expand_e5(pg, svget2_u32(words4, 1));
+        const auto ids6 = load_pair(ids + (i / 2) * 3 + 3 * vl * 3, pair_bytes, table0, table1, shift);
+        const auto words6 = load_pair(vals + (i / 2) * 3 + 3 * vl * 3, pair_bytes, table0, table1, shift);
+        const auto id6 = svget2_u32(ids6, 0);
+        const auto id7 = svget2_u32(ids6, 1);
+        const auto v6 = expand_e5(pg, svget2_u32(words6, 0));
+        const auto v7 = expand_e5(pg, svget2_u32(words6, 1));
+        const auto old0 = svld1_gather_u32index_f32(pg, out, id0);
+        const auto old1 = svld1_gather_u32index_f32(pg, out, id1);
+        const auto old2 = svld1_gather_u32index_f32(pg, out, id2);
+        const auto old3 = svld1_gather_u32index_f32(pg, out, id3);
+        const auto old4 = svld1_gather_u32index_f32(pg, out, id4);
+        const auto old5 = svld1_gather_u32index_f32(pg, out, id5);
+        const auto old6 = svld1_gather_u32index_f32(pg, out, id6);
+        const auto old7 = svld1_gather_u32index_f32(pg, out, id7);
+        const auto sum0 = svmad_f32_x(pg, v0, vq, old0);
+        svst1_scatter_u32index_f32(pg, out, id0, sum0);
+        vmax = svmax_f32_x(pg, vmax, sum0);
+        const auto sum1 = svmad_f32_x(pg, v1, vq, old1);
+        svst1_scatter_u32index_f32(pg, out, id1, sum1);
+        vmax = svmax_f32_x(pg, vmax, sum1);
+        const auto sum2 = svmad_f32_x(pg, v2, vq, old2);
+        svst1_scatter_u32index_f32(pg, out, id2, sum2);
+        vmax = svmax_f32_x(pg, vmax, sum2);
+        const auto sum3 = svmad_f32_x(pg, v3, vq, old3);
+        svst1_scatter_u32index_f32(pg, out, id3, sum3);
+        vmax = svmax_f32_x(pg, vmax, sum3);
+        const auto sum4 = svmad_f32_x(pg, v4, vq, old4);
+        svst1_scatter_u32index_f32(pg, out, id4, sum4);
+        vmax = svmax_f32_x(pg, vmax, sum4);
+        const auto sum5 = svmad_f32_x(pg, v5, vq, old5);
+        svst1_scatter_u32index_f32(pg, out, id5, sum5);
+        vmax = svmax_f32_x(pg, vmax, sum5);
+        const auto sum6 = svmad_f32_x(pg, v6, vq, old6);
+        svst1_scatter_u32index_f32(pg, out, id6, sum6);
+        vmax = svmax_f32_x(pg, vmax, sum6);
+        const auto sum7 = svmad_f32_x(pg, v7, vq, old7);
+        svst1_scatter_u32index_f32(pg, out, id7, sum7);
+        vmax = svmax_f32_x(pg, vmax, sum7);
+    }
+
+    for (; i + 2 * vl <= n; i += 2 * vl) {
+        const auto pair_ids = load_pair(ids + (i / 2) * 3, pair_bytes, table0, table1, shift);
+        const auto words = load_pair(vals + (i / 2) * 3, pair_bytes, table0, table1, shift);
+        const auto id0 = svget2_u32(pair_ids, 0), id1 = svget2_u32(pair_ids, 1);
+        const auto v0 = expand_e5(pg, svget2_u32(words, 0));
+        const auto v1 = expand_e5(pg, svget2_u32(words, 1));
+        const auto sum0 = svmad_f32_x(pg, v0, vq, svld1_gather_u32index_f32(pg, out, id0));
+        svst1_scatter_u32index_f32(pg, out, id0, sum0);
+        vmax = svmax_f32_x(pg, vmax, sum0);
+        const auto sum1 = svmad_f32_x(pg, v1, vq, svld1_gather_u32index_f32(pg, out, id1));
+        svst1_scatter_u32index_f32(pg, out, id1, sum1);
+        vmax = svmax_f32_x(pg, vmax, sum1);
+    }
+
+    for (; i < n; i += vl) {
+        const auto active = std::min(vl, n - i);
+        const auto tail = svwhilelt_b32(0u, active);
+        const auto tail_ids = load12(ids + (i / 2) * 3, active, phase, table, shift);
+        const auto v = expand_e5(tail, load12(vals + (i / 2) * 3, active, phase, table, shift));
+        const auto old = svld1_gather_u32index_f32(tail, out, tail_ids);
+        const auto sum = svmad_f32_x(tail, v, vq, old);
+        svst1_scatter_u32index_f32(tail, out, tail_ids, sum);
+        vmax = svmax_f32_m(tail, vmax, sum);
+    }
+
+    return svmaxv_f32(pg, vmax);
+}
+
 float
 ip_accumulate_sve_fp16(float qval, const knowhere::fp16* __restrict vals, const uint16_t* __restrict ids, int32_t num,
                        float* __restrict out) {
