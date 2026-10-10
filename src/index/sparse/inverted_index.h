@@ -288,6 +288,17 @@ class InvertedIndex {
     get_all_distances(const SparseRow<DType>& query, const BitsetView& bitset,
                       const InvertedIndexSearchParams& search_params) const = 0;
 
+    virtual bool
+    h2_enabled() const noexcept {
+        return false;
+    }
+
+    // Derived caches may bind search to the scorer used during their construction.
+    virtual bool
+    accepts_search_scorer(const IndexScorerConfig&) const noexcept {
+        return true;
+    }
+
     /**
      * @brief Set the build scorer type and parameters
      *

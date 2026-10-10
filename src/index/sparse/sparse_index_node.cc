@@ -303,6 +303,17 @@ class SparseInvertedIndexNode : public IndexNode {
 
         auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
         auto nq = dataset->GetRows();
+        if (index_->h2_enabled()) {
+            for (int64_t i = 0; i < nq; ++i) {
+                for (size_t j = 0; j < queries[i].size(); ++j) {
+                    const float value = queries[i][j].val;
+                    if (!std::isfinite(value) || value < 0) {
+                        return expected<DataSetPtr>::Err(Status::invalid_args,
+                                                         "sindi_h2 requires finite nonnegative query weights");
+                    }
+                }
+            }
+        }
         auto k = cfg.k.value();
         auto p_id = std::make_unique<sparse::label_t[]>(nq * k);
         auto p_dist = std::make_unique<float[]>(nq * k);
@@ -702,7 +713,8 @@ class SparseInvertedIndexNode : public IndexNode {
                 if (is_growable) {
                     index = std::make_unique<sparse::inverted::GrowableSindiInvertedIndexIP>(window_size);
                 } else {
-                    index = std::make_unique<sparse::inverted::SindiInvertedIndexIP>(window_size);
+                    index = std::make_unique<sparse::inverted::SindiInvertedIndexIP>(window_size,
+                                                                                     cfg.sindi_h2.value_or(false));
                 }
                 ConfigureSindiSerialization(index.get());
                 index->set_build_algo(algo);
@@ -724,12 +736,14 @@ class SparseInvertedIndexNode : public IndexNode {
                     cfg.sindi_window_size.value_or(sparse::inverted::SindiInvertedIndexBM25::max_window_size);
                 IndexPtr index;
                 if constexpr (std::is_same_v<QType, uint8_t>) {
-                    index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25U8>(window_size);
+                    index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25U8>(window_size,
+                                                                                         cfg.sindi_h2.value_or(false));
                 } else {
                     if (is_growable) {
                         index = std::make_unique<sparse::inverted::GrowableSindiInvertedIndexBM25>(window_size);
                     } else {
-                        index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25>(window_size);
+                        index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25>(
+                            window_size, cfg.sindi_h2.value_or(false));
                     }
                 }
                 ConfigureSindiSerialization(index.get());
@@ -765,6 +779,25 @@ class SparseInvertedIndexNode : public IndexNode {
         }
 
         auto qt = cfg.quant_type.value_or("");
+        if (cfg.sindi_h2.value_or(false)) {
+            const bool ip = IsMetricType(cfg.metric_type.value(), metric::IP);
+            const bool bm25 = IsMetricType(cfg.metric_type.value(), metric::BM25);
+            const auto algo =
+                NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or(ip ? "SINDI" : "DAAT_MAXSCORE"));
+            if (is_growable || index_version_ < 10 || algo != "SINDI" || (!ip && !bm25) ||
+                (ip && !qt.empty() && qt != "fp16") ||
+                (bm25 && !qt.empty() && qt != "u8" && qt != "u16" && qt != "auto") ||
+                (encoding && *encoding != sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS)) {
+                return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
+                    Status::invalid_args, "sindi_h2 requires sealed SINDI IP fp16 or BM25 u8/u16/auto, version >=10");
+            }
+            if (bm25 && (!cfg.bm25_k1 || !cfg.bm25_b || !cfg.bm25_avgdl || !std::isfinite(*cfg.bm25_k1) ||
+                         *cfg.bm25_k1 < 0 || !std::isfinite(*cfg.bm25_b) || *cfg.bm25_b < 0 || *cfg.bm25_b > 1 ||
+                         !std::isfinite(*cfg.bm25_avgdl) || *cfg.bm25_avgdl <= 0)) {
+                return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
+                    Status::invalid_args, "sindi_h2 requires finite valid BM25 scorer parameters");
+            }
+        }
         if (qt == "auto") {
             return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
                 Status::invalid_args, "quant_type=auto was not resolved before index creation");
@@ -905,6 +938,10 @@ class SparseInvertedIndexNode : public IndexNode {
                 return expected<sparse::inverted::InvertedIndexSearchParams>::Err(
                     Status::invalid_metric_type, "search metric type must be same as built index");
             }
+            if (index_->h2_enabled() && (!std::isfinite(config.bm25_avgdl.value()) || config.bm25_avgdl.value() <= 0)) {
+                return expected<sparse::inverted::InvertedIndexSearchParams>::Err(
+                    Status::invalid_args, "H2 requires a finite positive BM25 average document length");
+            }
             search_params.scorer_config.scorer_type = sparse::inverted::IndexScorerType::BM25;
             search_params.scorer_config.scorer_params.bm25.avgdl = std::max(config.bm25_avgdl.value(), 1.0f);
             search_params.scorer_config.scorer_params.bm25.k1 =
@@ -935,6 +972,10 @@ class SparseInvertedIndexNode : public IndexNode {
                                                                               "Unsupported metric type");
         }
 
+        if (!index_->accepts_search_scorer(search_params.scorer_config)) {
+            return expected<sparse::inverted::InvertedIndexSearchParams>::Err(
+                Status::invalid_args, "search scorer differs from H2 summary scorer, or H2 summaries are unavailable");
+        }
         return search_params;
     }
 
