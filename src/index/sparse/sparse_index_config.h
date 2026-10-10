@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <limits>
 #include <string>
 
@@ -59,6 +60,11 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_FLOAT drop_ratio_build;
     CFG_FLOAT drop_ratio_search;
     CFG_INT refine_factor;
+    // Keep the legacy integer field: changing its type is not assumed ABI-compatible.
+    // Match HNSW's floating-point multiplier, including fractional pool sizes.
+    CFG_BOOL refine;
+    CFG_FLOAT refine_k;
+    CFG_FLOAT refine_query_mass_percentage;
     CFG_FLOAT dim_max_score_ratio;
     CFG_INT bulk_query_nnz_threshold;
     CFG_INT block_max_block_size;
@@ -70,6 +76,25 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_INT sindi_window_size;
 
     KNOWHERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine)
+            .description("build SINDI IP full-query refinement support")
+            .set_default(false)
+            .for_train()
+            .for_static();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine_k)
+            .description("SINDI coarse candidate multiplier; ceil(k * refine_k)")
+            .set_default(1.0f)
+            .set_range(1.0f, std::numeric_limits<float>::max())
+            .for_search()
+            .for_range_search()
+            .for_iterator();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine_query_mass_percentage)
+            .description("coarse query retained weight mass fraction in (0,1], applied to indexed dimensions")
+            .set_default(1.0f)
+            .set_range(0.0f, 1.0f, false, true)
+            .for_search()
+            .for_range_search()
+            .for_iterator();
         // NOTE: drop_ratio_build has been deprecated, it won't change anything
         KNOWHERE_CONFIG_DECLARE_FIELD(drop_ratio_build)
             .description("drop ratio for build")
@@ -83,17 +108,10 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .for_search()
             .for_range_search()
             .for_iterator();
-        /**
-         * refine_factor is used for approximate search.
-         * refine_factor == 1 means no refinement, and is the default value.
-         * refine_factor > 1 means refinement. The larger the value, the more
-         * accurate the approximate result will be, but the slower the
-         * performance.
-         * Be aware that if you opt to use a large drop_ratio_search, it is
-         * necessary for you to manually modify this value.
-         */
+        // Legacy compatibility field. Current sparse search does not consume it;
+        // SINDI refinement uses the separate floating-point refine_k parameter.
         KNOWHERE_CONFIG_DECLARE_FIELD(refine_factor)
-            .description("refine factor for approximate search")
+            .description("legacy unused integer multiplier; SINDI refinement uses refine_k")
             .set_default(1)
             .for_search();
         /**
@@ -183,6 +201,15 @@ class SparseInvertedIndexConfig : public BaseConfig {
 
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        const float mass = refine_query_mass_percentage.value_or(1.0f);
+        const float factor = refine_k.value_or(1.0f);
+        if (!std::isfinite(mass) || mass <= 0 || mass > 1 || !std::isfinite(factor) || factor < 1) {
+            return HandleError(err_msg, "Invalid refine_query_mass_percentage or refine_k", Status::invalid_args);
+        }
+        if ((param_type & (RANGE_SEARCH | ITERATOR)) && (mass != 1 || factor != 1)) {
+            return HandleError(err_msg, "SINDI refinement controls support top-k search only", Status::invalid_args);
+        }
+
         if (inverted_index_algo.has_value() && !IsSupportedSparseInvertedIndexAlgo(inverted_index_algo.value())) {
             return HandleError(
                 err_msg,

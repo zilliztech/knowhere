@@ -301,8 +301,28 @@ class SparseInvertedIndexNode : public IndexNode {
         }
         auto search_params = search_params_or.value();
 
+        const bool refine = index_->refinement_enabled();
+        if ((!refine && (cfg.refine_query_mass_percentage.value_or(1) != 1 || cfg.refine_k.value_or(1) != 1)) ||
+            (refine && (cfg.drop_ratio_search.value_or(0) != 0 || cfg.refine_factor.value_or(1) != 1))) {
+            return expected<DataSetPtr>::Err(
+                Status::invalid_args,
+                "SINDI refinement requires a refined index, drop_ratio_search=0 and refine_factor=1; use refine_k");
+        }
+
+        search_params.refine_query_mass_percentage = cfg.refine_query_mass_percentage.value_or(1);
+        search_params.refine_k = cfg.refine_k.value_or(1);
+
         auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
         auto nq = dataset->GetRows();
+
+        if (refine) {
+            for (int64_t i = 0; i < nq; ++i) {
+                if (!sparse::inverted::sindi::valid_refinement_row(queries[i])) {
+                    return expected<DataSetPtr>::Err(Status::invalid_args, "Invalid SINDI refinement query");
+                }
+            }
+        }
+
         auto k = cfg.k.value();
         auto p_id = std::make_unique<sparse::label_t[]>(nq * k);
         auto p_dist = std::make_unique<float[]>(nq * k);
@@ -700,9 +720,11 @@ class SparseInvertedIndexNode : public IndexNode {
                     cfg.sindi_window_size.value_or(sparse::inverted::SindiInvertedIndexIP::max_window_size);
                 IndexPtr index;
                 if (is_growable) {
-                    index = std::make_unique<sparse::inverted::GrowableSindiInvertedIndexIP>(window_size);
+                    index = std::make_unique<sparse::inverted::GrowableSindiInvertedIndexIP>(
+                        window_size, cfg.refine.value_or(false));
                 } else {
-                    index = std::make_unique<sparse::inverted::SindiInvertedIndexIP>(window_size);
+                    index = std::make_unique<sparse::inverted::SindiInvertedIndexIP>(window_size,
+                                                                                     cfg.refine.value_or(false));
                 }
                 ConfigureSindiSerialization(index.get());
                 index->set_build_algo(algo);
@@ -752,6 +774,16 @@ class SparseInvertedIndexNode : public IndexNode {
     expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>
     CreateIndex(const SparseInvertedIndexConfig& cfg, bool is_growable = false,
                 std::optional<sparse::inverted::InvertedIndexEncoding> encoding = std::nullopt) const {
+        if (cfg.refine.value_or(false)) {
+            const auto algo = NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or(""));
+            if (index_version_ < 11 || !IsMetricType(cfg.metric_type.value(), metric::IP) ||
+                (!algo.empty() && algo != "SINDI") ||
+                (!cfg.quant_type.value_or("").empty() && cfg.quant_type.value() != "fp16")) {
+                return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
+                    Status::invalid_args, "refine requires SINDI FP16 IP version >= 11");
+            }
+        }
+
         const auto explicit_algo = NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or(""));
         const auto status = ValidateInvertedIndexAlgo(explicit_algo);
         if (status != Status::success) {

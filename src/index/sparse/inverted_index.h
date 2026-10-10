@@ -142,6 +142,8 @@ struct InvertedIndexSearchParams {
     InvertedIndexAlgo algo;
     IndexScorerConfig scorer_config;
     size_t bulk_query_nnz_threshold;
+    float refine_query_mass_percentage = 1.0f;
+    float refine_k = 1.0f;
 
     struct {
         float drop_ratio_search;
@@ -199,6 +201,11 @@ class InvertedIndex {
     operator=(InvertedIndex&&) noexcept = default;
 
     virtual ~InvertedIndex() = default;
+
+    virtual bool
+    refinement_enabled() const noexcept {
+        return false;
+    }
 
     /**
      * @brief Get total size of the index in bytes
