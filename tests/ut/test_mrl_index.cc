@@ -93,9 +93,10 @@ TEST_CASE("MRL cosine refinement preserves full-dimensional norms", "[mrl]") {
 }
 
 TEST_CASE("MRL refinement preserves sentinel ids for fully filtered results", "[mrl]") {
-    float base_data[] = {0.0f, 0.0f, 100.0f, 100.0f, 1.0f, 1.0f, 0.0f, 0.0f};
+    constexpr int64_t row_count = 10;
+    float base_data[row_count * kSourceDim] = {};
     float query_data[] = {0.0f, 0.0f, 0.0f, 0.0f};
-    auto base = knowhere::GenDataSet(2, kSourceDim, base_data);
+    auto base = knowhere::GenDataSet(row_count, kSourceDim, base_data);
     auto query = knowhere::GenDataSet(1, kSourceDim, query_data);
     knowhere::Json config = {
         {knowhere::meta::DIM, kMRLDim},
@@ -108,8 +109,8 @@ TEST_CASE("MRL refinement preserves sentinel ids for fully filtered results", "[
 
     auto index = CreateMRLIndex(base_data, true, knowhere::IndexEnum::INDEX_HNSW);
     REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
-    uint8_t bitset_data[]{0x03};
-    knowhere::BitsetView bitset(bitset_data, 2);
+    uint8_t bitset_data[]{0xff, 0x03};
+    knowhere::BitsetView bitset(bitset_data, row_count);
     auto result = index.Search(query, config, bitset);
     REQUIRE(result.has_value());
     REQUIRE(result.value()->GetIds()[0] == -1);
