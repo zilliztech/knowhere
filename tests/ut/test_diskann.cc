@@ -324,6 +324,55 @@ TEST_CASE("DiskANN discovers persisted navigation without build parameters", "[d
     REQUIRE(create().Deserialize(empty, load) != knowhere::Status::success);
 }
 
+TEST_CASE("DiskANN PQ batches preserve native chunk sums and output bounds", "[diskann][pq_batch]") {
+    const uint32_t chunks = GENERATE(1, 7, 64, 384, 512);
+    const uint32_t dim = chunks * 2;
+    constexpr uint32_t rows = 37;
+    const auto directory = kDir + "/pq_batch_" + std::to_string(chunks);
+    const auto prefix = directory + "/index";
+    fs::create_directories(directory);
+    std::vector<float> pivots(256 * dim);
+    std::vector<uint8_t> codes(rows * chunks);
+    for (size_t i = 0; i < pivots.size(); ++i)
+        pivots[i] = static_cast<float>(static_cast<int>((i * 17) % 101) - 50) / 31;
+    for (size_t i = 0; i < codes.size(); ++i)
+        codes[i] = (i * 17 + i / 13) % 256;
+    const auto pivots_file = diskann::get_pq_pivots_filename(prefix);
+    const auto codes_file = diskann::get_pq_compressed_filename(prefix);
+    diskann::save_bin<float>(pivots_file, pivots.data(), 256, dim);
+    diskann::save_bin<uint8_t>(codes_file, codes.data(), rows, chunks);
+    diskann::PQNavigationStore model(prefix);
+    auto scorer = model.CreatePQDistanceComputer();
+    diskann::FixedChunkPQTable native;
+    native.load_pq_centroid_bin(pivots_file.c_str(), chunks);
+    auto queries = GenDataSet(2, dim, 71);
+    std::vector<unsigned> ids(diskann::defaults::MAX_GRAPH_DEGREE);
+    for (size_t i = 0; i < ids.size(); ++i)
+        ids[i] = (i * 19 + i / 7) % rows;
+    std::vector<uint8_t> gathered(ids.size() * chunks);
+    diskann::aggregate_coords(ids.data(), ids.size(), codes.data(), chunks, gathered.data());
+    std::vector<float> lookup(256 * chunks);
+    for (size_t q = 0; q < 2; ++q) {
+        const auto* query = static_cast<const float*>(queries->GetTensor()) + q * dim;
+        native.populate_chunk_distances(query, lookup.data());
+        scorer->set_query(query);
+        for (size_t count : {0, 1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 127, 128, 129, 511, 512}) {
+            CAPTURE(chunks, q, count);
+            std::vector<float> expected(count + 1, -123.25f);
+            std::vector<float> resident(count + 1, -123.25f);
+            std::vector<float> encoded(count + 1, -123.25f);
+            diskann::pq_dist_lookup(gathered.data(), count, chunks, lookup.data(), expected.data());
+            scorer->compute_distances(ids.data(), count, resident.data(), 0, false, nullptr);
+            scorer->evaluate_encoded(gathered.data(), count, encoded.data());
+            REQUIRE(std::memcmp(expected.data(), resident.data(), expected.size() * sizeof(float)) == 0);
+            REQUIRE(std::memcmp(expected.data(), encoded.data(), expected.size() * sizeof(float)) == 0);
+        }
+    }
+    REQUIRE_NOTHROW(scorer->compute_distances(nullptr, 0, nullptr, 0, false, nullptr));
+    REQUIRE_NOTHROW(scorer->evaluate_encoded(nullptr, 0, nullptr));
+    fs::remove_all(directory);
+}
+
 TEST_CASE("DiskANN navigation discovery preserves FileManager errors", "[diskann][navigation_load]") {
     class QueryFailureManager : public milvus::LocalFileManager {
      public:

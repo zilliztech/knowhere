@@ -2,17 +2,76 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "diskann/pq_navigation.h"
 
+#include <cstring>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <vector>
 
-#include "diskann/parameters.h"
 #include "diskann/defaults.h"
+#include "diskann/parameters.h"
 #include "diskann/pq_table.h"
 #include "diskann/utils.h"
 
 namespace diskann {
+namespace {
+// Keep the kernel independent of the model method's register allocation.
+// Inlining this loop can spill the code indices inside the hot chunk loop.
+[[gnu::noinline]] void LookupPQCodes(const uint8_t* codes, uint64_t count,
+                                    uint64_t chunks, const float* lookup,
+                                    float* distances) {
+  if (count == 0)
+    return;
+#if defined(__SSE2__)
+  // A small chunk window retains partial sums in registers while keeping
+  // its lookup tables local. Each lane still adds chunks in the native order;
+  // there is no horizontal reduction, reassociation, or changed precision.
+  constexpr uint64_t kChunkWindow = 16;
+  std::memset(distances, 0, count * sizeof(float));
+  uint64_t chunk = 0;
+  for (; chunk + kChunkWindow <= chunks; chunk += kChunkWindow) {
+    uint64_t i = 0;
+    for (; i + 4 <= count; i += 4) {
+      auto sums = _mm_loadu_ps(distances + i);
+      const auto* block = codes + i * chunks + chunk;
+      for (uint64_t offset = 0; offset < kChunkWindow; ++offset) {
+        const auto* table = lookup + 256 * (chunk + offset);
+        const auto values = _mm_setr_ps(
+            table[block[offset]], table[block[chunks + offset]],
+            table[block[2 * chunks + offset]], table[block[3 * chunks + offset]]);
+        sums = _mm_add_ps(sums, values);
+      }
+      _mm_storeu_ps(distances + i, sums);
+    }
+    if (i + 2 <= count) {
+      auto sums = _mm_loadl_pi(_mm_setzero_ps(),
+                               reinterpret_cast<const __m64*>(distances + i));
+      const auto* block = codes + i * chunks + chunk;
+      for (uint64_t offset = 0; offset < kChunkWindow; ++offset) {
+        const auto* table = lookup + 256 * (chunk + offset);
+        const auto values = _mm_setr_ps(table[block[offset]],
+                                      table[block[chunks + offset]], 0, 0);
+        sums = _mm_add_ps(sums, values);
+      }
+      _mm_storel_pi(reinterpret_cast<__m64*>(distances + i), sums);
+      i += 2;
+    }
+    for (; i < count; ++i) {
+      float sum = distances[i];
+      for (uint64_t offset = 0; offset < kChunkWindow; ++offset)
+        sum += lookup[256 * (chunk + offset) + codes[i * chunks + chunk + offset]];
+      distances[i] = sum;
+    }
+  }
+  for (; chunk < chunks; ++chunk)
+    for (uint64_t i = 0; i < count; ++i)
+      distances[i] += lookup[256 * chunk + codes[i * chunks + chunk]];
+#else
+  pq_dist_lookup(codes, count, chunks, lookup, distances);
+#endif
+}
+}  // namespace
+
 struct PQNavigationWorkspace {
   float* lookup = nullptr;
   uint8_t* gathered = nullptr;
@@ -137,7 +196,7 @@ const float* PQNavigationDistanceComputer::lookup_table() const {
 void PQNavigationDistanceComputer::evaluate_encoded(const uint8_t* codes,
                                                      uint64_t count,
                                                      float* distances) {
-  pq_dist_lookup(codes, count, state_->chunks, workspace_->lookup, distances);
+  LookupPQCodes(codes, count, state_->chunks, workspace_->lookup, distances);
 }
 void PQNavigationDistanceComputer::compute_distances(
     const unsigned* ids, uint64_t count, float* distances, float, bool, QueryStats*) {
