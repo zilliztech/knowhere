@@ -13,8 +13,8 @@
 #include "diskann/linux_aligned_file_reader.h"
 #include "diskann/pq_flash_index.h"
 #include "diskann/pq_navigation.h"
-#include "index/diskann/rabitq_store.h"
 #include "filemanager/impl/LocalFileManager.h"
+#include "index/diskann/rabitq_store.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_static.h"
 #include "utils.h"
@@ -286,7 +286,7 @@ TEST_CASE("DiskANN SSD scores are independent of navigation and cache", "[diskan
             // Explicitly observe the low-level exhausted-candidate path,
             // rather than relying only on the public iterator's buffering.
             auto workspace = reference.getIteratorWorkspace(xq, rows + 1, 4, 0, knowhere::BitsetView(),
-                                                             navigation->CreateDistanceComputer({}));
+                                                            navigation->CreateDistanceComputer({}));
             reference.getIteratorNextBatch(workspace.get());
             REQUIRE_FALSE(workspace->has_candidates());
             REQUIRE(workspace->full_retset.empty());
@@ -301,9 +301,13 @@ TEST_CASE("DiskANN SSD scores are independent of navigation and cache", "[diskan
                 explicit ThrowOnceNavigation(std::unique_ptr<diskann::NavigationDistanceComputer> scorer)
                     : delegate(std::move(scorer)) {
                 }
-                void set_query(const float* query) override { delegate->set_query(query); }
-                void compute_distances(const unsigned* ids, uint64_t count, float* output, float threshold,
-                                       bool valid, diskann::QueryStats* stats) override {
+                void
+                set_query(const float* query) override {
+                    delegate->set_query(query);
+                }
+                void
+                compute_distances(const unsigned* ids, uint64_t count, float* output, float threshold, bool valid,
+                                  diskann::QueryStats* stats) override {
                     if (fail) {
                         fail = false;
                         throw std::runtime_error("iterator navigation failure");

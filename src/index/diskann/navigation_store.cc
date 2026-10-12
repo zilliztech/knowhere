@@ -47,7 +47,8 @@ const std::unordered_map<std::string, NavigationCodec>&
 Codecs() {
     static const std::unordered_map<std::string, NavigationCodec> codecs = {
         {"PQ",
-         {{false, true, true, true}, [](const DiskANNNavigationConfig&, std::string*) { return Status::success; },
+         {{false, true, true, true},
+          [](const DiskANNNavigationConfig&, std::string*) { return Status::success; },
           [](const DiskANNConfig&, int64_t, int64_t) -> std::optional<uint64_t> { return 0; },
           [](const std::string& prefix) {
               return NavigationFileSet{diskann::pq_navigation_files(prefix), {}};

@@ -129,7 +129,7 @@ class DiskANNIndexNode : public IndexNode {
         // The strategy has a default even for ordinary vectors. Only actual
         // embedding-list inputs select embedding-list mode.
         if (!features.emb_list && (get_el_metric_type(base_cfg.metric_type.value_or(metric::L2)).has_value() ||
-                                  base_cfg.emb_list_offset_file_path.has_value())) {
+                                   base_cfg.emb_list_offset_file_path.has_value())) {
             msg = "selected DiskANN navigation does not support embedding-list mode";
             return Status::not_implemented;
         }
@@ -279,13 +279,12 @@ class DiskANNIndexNode : public IndexNode {
      public:
         iterator(const bool transform, const DataType* query_data, const uint64_t lsearch, const uint64_t beam_width,
                  const float filter_ratio, const knowhere::BitsetView& bitset, diskann::SSDGraphIndex<DataType>* index,
-                 std::unique_ptr<diskann::NavigationDistanceComputer> navigation,
-                 bool use_knowhere_search_pool = true)
+                 std::unique_ptr<diskann::NavigationDistanceComputer> navigation, bool use_knowhere_search_pool = true)
             : IndexIterator(transform, use_knowhere_search_pool),
               index_(index),
               transform_(transform),
               workspace_(index_->getIteratorWorkspace(query_data, lsearch, beam_width, filter_ratio, bitset,
-                                                       std::move(navigation))) {
+                                                      std::move(navigation))) {
         }
 
      protected:
@@ -553,9 +552,9 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
         for (const auto& path : GetOptionalFilenames(build_conf, index_prefix_)) {
             context->own_output(path);
         }
-        constexpr auto input_type = std::is_same_v<DataType, float> ? NavigationInputType::FP32
+        constexpr auto input_type = std::is_same_v<DataType, float>  ? NavigationInputType::FP32
                                     : std::is_same_v<DataType, fp16> ? NavigationInputType::FP16
-                                                                   : NavigationInputType::BF16;
+                                                                     : NavigationInputType::BF16;
         auto navigation = CreateNavigationBuilder(build_conf, input_type);
         const int res = diskann::build_disk_index<DataType>(diskann_internal_build_config, *context, *navigation);
         if (res != 0) {
@@ -696,7 +695,8 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
     navigation_features_ = GetNavigationFeatures(prep_conf);
     if (navigation_features_.fp32_only && !std::is_same_v<DataType, float>)
         return Status::invalid_args;
-    if (!navigation_features_.emb_list && (!el_metric_type_.empty() || prep_conf.emb_list_offset_file_path.has_value())) {
+    if (!navigation_features_.emb_list &&
+        (!el_metric_type_.empty() || prep_conf.emb_list_offset_file_path.has_value())) {
         return Status::not_implemented;
     }
     bool is_ip = IsMetricType(prep_conf.metric_type.value(), knowhere::metric::IP);
@@ -713,10 +713,11 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
     }();
 
     // Load file from file manager.
-    for (auto& filename : GetNecessaryFilenames(
-             prep_conf, index_prefix_, need_norm,
-             prep_conf.search_cache_budget_gb.value() > 0 && !prep_conf.use_bfs_cache.value() && navigation_features_.sample_cache,
-             prep_conf.warm_up.value())) {
+    for (auto& filename :
+         GetNecessaryFilenames(prep_conf, index_prefix_, need_norm,
+                               prep_conf.search_cache_budget_gb.value() > 0 && !prep_conf.use_bfs_cache.value() &&
+                                   navigation_features_.sample_cache,
+                               prep_conf.warm_up.value())) {
         if (!LoadFile(filename)) {
             return Status::disk_file_error;
         }
@@ -802,8 +803,8 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
             } else {
                 LOG_KNOWHERE_INFO_ << "Use sample_queries to generate cache list";
                 if (TryDiskANNCall([&]() {
-                        graph_index_->async_generate_cache_list_from_sample_queries(warmup_query_file, 15, 6,
-                                                                                       num_nodes_to_cache, navigation_store_);
+                        graph_index_->async_generate_cache_list_from_sample_queries(
+                            warmup_query_file, 15, 6, num_nodes_to_cache, navigation_store_);
                     }) != Status::success) {
                     LOG_KNOWHERE_ERROR_ << "Failed to generate cache from sample queries for DiskANN.";
                     return Status::diskann_inner_error;
@@ -985,10 +986,10 @@ DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_pt
     try {
         for (int i = 0; i < nq; i++) {
             auto single_query = static_cast<const DataType*>(xq) + i * dim;
-            auto it = std::make_shared<iterator>(transform, single_query, lsearch, beamwidth, filter_ratio, bitset,
-                                                 graph_index_.get(),
-                                                 navigation_store_->CreateDistanceComputer(GetNavigationQueryOptions(search_conf)),
-                                                 use_knowhere_search_pool);
+            auto it = std::make_shared<iterator>(
+                transform, single_query, lsearch, beamwidth, filter_ratio, bitset, graph_index_.get(),
+                navigation_store_->CreateDistanceComputer(GetNavigationQueryOptions(search_conf)),
+                use_knowhere_search_pool);
             it->SetResultIdMap(result_id_map);
             vec[i] = it;
         }
@@ -1042,8 +1043,8 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
             auto& stats = query_stats[index];
             auto navigation = navigation_store_->CreateDistanceComputer(GetNavigationQueryOptions(search_conf));
             graph_index_->cached_beam_search(xq + (index * dim), k, lsearch, p_id_ptr + (index * k),
-                                                p_dist_ptr + (index * k), beamwidth, *navigation, false, &stats, feder_result,
-                                                bitset_, filter_ratio);
+                                             p_dist_ptr + (index * k), beamwidth, *navigation, false, &stats,
+                                             feder_result, bitset_, filter_ratio);
 #ifdef NOT_COMPILE_FOR_SWIG
             knowhere_diskann_search_hops.Observe(stats.n_hops);
 #endif
@@ -1141,7 +1142,7 @@ DiskANNIndexNode<DataType>::CalcDistByStorageIds(const DataSetPtr dataset, const
         futures.emplace_back(search_pool_->push([&, index = row, p_dist_ptr = p_dist.get()]() {
             knowhere::checkCancellation(op_context);
             graph_index_->calc_dist_by_ids(xq + (index * dim), labels_to_calc, static_cast<int64_t>(labels_len),
-                                              p_dist_ptr + index * labels_len);
+                                           p_dist_ptr + index * labels_len);
         }));
     }
     if (TryDiskANNCall([&]() { WaitAllSuccess(futures); }) != Status::success) {

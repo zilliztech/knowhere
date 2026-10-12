@@ -26,8 +26,10 @@ struct NavigationFeatures {
     bool emb_list;
     bool sample_cache;
 };
-NavigationFeatures GetNavigationFeatures(const DiskANNConfig& config);
-diskann::NavigationQueryOptions GetNavigationQueryOptions(const DiskANNConfig& config);
+NavigationFeatures
+GetNavigationFeatures(const DiskANNConfig& config);
+diskann::NavigationQueryOptions
+GetNavigationQueryOptions(const DiskANNConfig& config);
 enum class NavigationInputType { FP32, FP16, BF16 };
 // Additional admission allowance beyond the legacy file-size/4 heuristic.
 // PQ is already covered by that heuristic; its actual model/workspace memory

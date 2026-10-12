@@ -28,6 +28,7 @@
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "diskann/diskann_gpu.h"
+#include "diskann/pq_navigation.h"
 #include "diskann/utils.h"
 #include "faiss/IndexPreTransform.h"
 #include "faiss/IndexRaBitQ.h"
@@ -42,7 +43,6 @@
 #include "index/diskann/build_files.h"
 #include "index/diskann/diskann_config.h"
 #include "index/diskann/rabitq_store.h"
-#include "diskann/pq_navigation.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/knowhere_check.h"
 #include "knowhere/expected.h"
@@ -282,8 +282,7 @@ TEST_CASE("DiskANN discovers persisted navigation without build parameters", "[d
         diskann::FixedChunkPQTable reference;
         reference.load_pq_centroid_bin((pq_prefix + "_pq_pivots.bin").c_str(), chunks);
         std::vector<unsigned> ids(diskann::defaults::MAX_GRAPH_DEGREE);
-        for (size_t i = 0; i < ids.size(); ++i)
-            ids[i] = (i * 7) % rows;
+        for (size_t i = 0; i < ids.size(); ++i) ids[i] = (i * 7) % rows;
         std::vector<uint8_t> gathered(ids.size() * chunks);
         diskann::aggregate_coords(ids.data(), ids.size(), codes.get(), chunks, gathered.data());
         std::vector<float> lookup(256 * dim), expected(ids.size()), actual(ids.size()), other(ids.size());
@@ -335,8 +334,7 @@ TEST_CASE("DiskANN PQ batches preserve native chunk sums and output bounds", "[d
     std::vector<uint8_t> codes(rows * chunks);
     for (size_t i = 0; i < pivots.size(); ++i)
         pivots[i] = static_cast<float>(static_cast<int>((i * 17) % 101) - 50) / 31;
-    for (size_t i = 0; i < codes.size(); ++i)
-        codes[i] = (i * 17 + i / 13) % 256;
+    for (size_t i = 0; i < codes.size(); ++i) codes[i] = (i * 17 + i / 13) % 256;
     const auto pivots_file = diskann::get_pq_pivots_filename(prefix);
     const auto codes_file = diskann::get_pq_compressed_filename(prefix);
     diskann::save_bin<float>(pivots_file, pivots.data(), 256, dim);
@@ -347,8 +345,7 @@ TEST_CASE("DiskANN PQ batches preserve native chunk sums and output bounds", "[d
     native.load_pq_centroid_bin(pivots_file.c_str(), chunks);
     auto queries = GenDataSet(2, dim, 71);
     std::vector<unsigned> ids(diskann::defaults::MAX_GRAPH_DEGREE);
-    for (size_t i = 0; i < ids.size(); ++i)
-        ids[i] = (i * 19 + i / 7) % rows;
+    for (size_t i = 0; i < ids.size(); ++i) ids[i] = (i * 19 + i / 7) % rows;
     std::vector<uint8_t> gathered(ids.size() * chunks);
     diskann::aggregate_coords(ids.data(), ids.size(), codes.data(), chunks, gathered.data());
     std::vector<float> lookup(256 * chunks);
@@ -1523,9 +1520,8 @@ TEST_CASE("Test DISKANN_RABITQ build and search", "[diskann][rabitq]") {
                 REQUIRE_THROWS(metadata_only_index.cached_beam_search(query.data(), 1, 16, ids.data(), distances.data(),
                                                                       1, failing, false, nullptr, nullptr, {}, -1));
                 // The one-slot scratch pool must still be usable after a throw.
-                REQUIRE_NOTHROW(metadata_only_index.cached_beam_search(query.data(), 1, 16, ids.data(),
-                                                                       distances.data(), 1, *scorer, false, nullptr, nullptr, {},
-                                                                       -1));
+                REQUIRE_NOTHROW(metadata_only_index.cached_beam_search(
+                    query.data(), 1, 16, ids.data(), distances.data(), 1, *scorer, false, nullptr, nullptr, {}, -1));
                 REQUIRE(ids[0] >= 0);
             }
         }

@@ -24,8 +24,8 @@
 #include <system_error>
 #include <vector>
 
-#include "diskann/utils.h"
 #include "diskann/percentile_stats.h"
+#include "diskann/utils.h"
 #include "index/diskann/diskann_config.h"
 
 namespace knowhere {
@@ -94,9 +94,10 @@ apply_rotation_single_query(const faiss::RandomRotationMatrix* rotation, const f
 
 class RaBitQNavigationDistanceComputer final : public diskann::NavigationDistanceComputer {
  public:
-    RaBitQNavigationDistanceComputer(std::shared_ptr<faiss::Index> model, const faiss::RandomRotationMatrix* rotation, const faiss::IndexRaBitQ* rabitq,
-                                     uint8_t query_bits)
-        : model_(std::move(model)), rotation_(rotation),
+    RaBitQNavigationDistanceComputer(std::shared_ptr<faiss::Index> model, const faiss::RandomRotationMatrix* rotation,
+                                     const faiss::IndexRaBitQ* rabitq, uint8_t query_bits)
+        : model_(std::move(model)),
+          rotation_(rotation),
           rabitq_(rabitq),
           distance_computer_(rabitq->get_quantized_distance_computer(query_bits, false)),
           rabitq_distance_computer_(dynamic_cast<faiss::RaBitQDistanceComputer*>(distance_computer_.get())) {
