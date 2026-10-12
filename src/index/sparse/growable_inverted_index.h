@@ -40,10 +40,38 @@ class GrowableInvertedIndexCursor {
     }
 
     void
+    next_unfiltered() {
+        ++pos_;
+        update_cur_vec_id();
+    }
+
+    void
+    next_direct_filtered() {
+        ++pos_;
+        skip_direct_filtered_ids();
+        update_cur_vec_id();
+    }
+
+    void
     next_geq(uint32_t vec_id) {
         const auto begin = plist_ids_.begin() + std::min(pos_, plist_size_);
         pos_ = static_cast<size_t>(std::lower_bound(begin, plist_ids_.end(), vec_id) - plist_ids_.begin());
         skip_filtered_ids();
+        update_cur_vec_id();
+    }
+
+    void
+    next_geq_unfiltered(uint32_t vec_id) {
+        const auto begin = plist_ids_.begin() + std::min(pos_, plist_size_);
+        pos_ = static_cast<size_t>(std::lower_bound(begin, plist_ids_.end(), vec_id) - plist_ids_.begin());
+        update_cur_vec_id();
+    }
+
+    void
+    next_geq_direct_filtered(uint32_t vec_id) {
+        const auto begin = plist_ids_.begin() + std::min(pos_, plist_size_);
+        pos_ = static_cast<size_t>(std::lower_bound(begin, plist_ids_.end(), vec_id) - plist_ids_.begin());
+        skip_direct_filtered_ids();
         update_cur_vec_id();
     }
 
@@ -66,6 +94,13 @@ class GrowableInvertedIndexCursor {
     void
     skip_filtered_ids() {
         while (pos_ < plist_size_ && !bitset_.empty() && bitset_.test(plist_ids_[pos_])) {
+            ++pos_;
+        }
+    }
+
+    void
+    skip_direct_filtered_ids() {
+        while (pos_ < plist_size_ && bitset_.test_direct(plist_ids_[pos_])) {
             ++pos_;
         }
     }

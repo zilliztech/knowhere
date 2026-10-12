@@ -141,6 +141,34 @@ class BlockInvertedIndexCursor {
         skip_filtered_ids();
     }
 
+    // No-filter MaxScore queries can omit both the upper-bound check and the
+    // filter-state branch from every posting advance. The cursor is created
+    // without filter bounds for this path, so the index universe is its bound.
+    void
+    next_unfiltered() {
+        assert(bitset_.empty());
+        assert(valid_upper_bound_ == universe_);
+        ++pos_in_block_;
+        if (pos_in_block_ == cur_block_size_) [[unlikely]] {
+            if (cur_block_ + 1 == nr_blocks_) {
+                cur_vec_id_ = universe_;
+                return;
+            }
+            decode_vecids_block(cur_block_ + 1);
+        } else {
+            cur_vec_id_ += ids_buf_[pos_in_block_] + 1;
+        }
+    }
+
+    // The searcher establishes supports_direct_test() once per query. Keep
+    // the bitmap access inside BitsetView while bypassing its generic ID
+    // mapping and bounds logic for each posting.
+    void
+    next_direct_filtered() {
+        next_raw();
+        skip_direct_filtered_ids();
+    }
+
     /**
      * Moves to the next vector, counting from the current position,
      * with the ID equal to or greater than `lower_bound`.
@@ -168,6 +196,43 @@ class BlockInvertedIndexCursor {
         advance_to(lower_bound);
 
         skip_filtered_ids();
+    }
+
+    void
+    next_geq_unfiltered(uint32_t lower_bound) {
+        assert(bitset_.empty());
+        assert(valid_upper_bound_ == universe_);
+        if (lower_bound <= cur_vec_id_) {
+            return;
+        }
+        if (lower_bound > cur_block_maxid_) [[unlikely]] {
+            if (lower_bound > block_maxid(nr_blocks_ - 1)) {
+                cur_vec_id_ = universe_;
+                return;
+            }
+            decode_vecids_block(lower_bound_block(cur_block_ + 1, lower_bound));
+        }
+        advance_to(lower_bound);
+    }
+
+    void
+    next_geq_direct_filtered(uint32_t lower_bound) {
+        if (lower_bound <= cur_vec_id_) {
+            return;
+        }
+        if (lower_bound >= valid_upper_bound_) {
+            set_invalid();
+            return;
+        }
+        if (lower_bound > cur_block_maxid_) [[unlikely]] {
+            if (lower_bound > block_maxid(nr_blocks_ - 1)) {
+                cur_vec_id_ = universe_;
+                return;
+            }
+            decode_vecids_block(lower_bound_block(cur_block_ + 1, lower_bound));
+        }
+        advance_to(lower_bound);
+        skip_direct_filtered_ids();
     }
 
     [[nodiscard]] uint32_t
@@ -203,6 +268,14 @@ class BlockInvertedIndexCursor {
     skip_filtered_ids() {
         while (cur_block_filter_state_ == BlockFilterState::Mixed && cur_vec_id_ < universe_ &&
                bitset_.test(cur_vec_id_)) {
+            next_raw();
+        }
+    }
+
+    void
+    skip_direct_filtered_ids() {
+        while (cur_block_filter_state_ == BlockFilterState::Mixed && cur_vec_id_ < valid_upper_bound_ &&
+               bitset_.test_direct(cur_vec_id_)) {
             next_raw();
         }
     }

@@ -73,6 +73,26 @@ TEST_CASE("BitsetView test filters mapped ids outside out id view", "[bitset][id
     REQUIRE(bitset.test(-1));
 }
 
+TEST_CASE("BitsetView direct test preserves identity-mapped bitmap access", "[bitset]") {
+    auto bits = MakeBitmap(8, {1, 6});
+    knowhere::BitsetView bitset(bits.data(), 8);
+
+    REQUIRE(bitset.supports_direct_test(8));
+    REQUIRE_FALSE(bitset.supports_direct_test(9));
+    for (size_t i = 0; i < 8; ++i) {
+        REQUIRE(bitset.test_direct(i) == bitset.test(static_cast<int64_t>(i)));
+    }
+
+    auto offset_bitset = bitset;
+    offset_bitset.set_id_offset(1);
+    REQUIRE_FALSE(offset_bitset.supports_direct_test(7));
+
+    auto mapped_bitset = bitset;
+    auto out_ids = MakeIdArray({0, 1, 2, 3, 4, 5, 6, 7});
+    mapped_bitset.set_out_ids(out_ids, 8);
+    REQUIRE_FALSE(mapped_bitset.supports_direct_test(8));
+}
+
 TEST_CASE("BitsetView helpers respect mapped out ids", "[bitset][id_map]") {
     auto bits = MakeBitmap(10, {2, 6});
     const std::vector<int32_t> out_ids = {6, 2, 8, 4};

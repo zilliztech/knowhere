@@ -168,6 +168,25 @@ class BitsetView {
         return id_offset_;
     }
 
+    // Returns whether backend IDs in [0, required_bits) map directly to the
+    // corresponding bits. Callers can use test_direct() after checking this
+    // once outside a hot loop.
+    bool
+    supports_direct_test(size_t required_bits) const {
+        return !has_out_ids() && id_offset_ == 0 && num_bits_ >= required_bits;
+    }
+
+    // Fast path for identity-mapped, in-range backend IDs. Keep bitmap access
+    // encapsulated in BitsetView while avoiding the mapping and bounds checks
+    // in test() after supports_direct_test() has established the invariants.
+    bool
+    test_direct(size_t index) const {
+        assert(!has_out_ids());
+        assert(id_offset_ == 0);
+        assert(index < num_bits_);
+        return bits_[index >> 3] & (uint8_t{1} << (index & 0x7));
+    }
+
     // Returns true when a backend id should be skipped.
     bool
     test(int64_t index) const {
