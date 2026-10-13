@@ -122,7 +122,7 @@ resolve any missing-license report before distributing it. The build also
 collects licenses for statically linked and header-only dependencies; the ELF
 dependency list alone cannot identify them.
 
-The pinned `milvus-common/1.0.0-b589c5a` source currently omits the LICENSE and
+The pinned `milvus-common/1.0.0-45fca32` source currently omits the LICENSE and
 NOTICE files referenced by its recipe and source headers. Its bundled
 `flat_hash_map` additionally declares the Boost Software License. This missing
 upstream material is reported in `missing-licenses.txt`; supplying only an
