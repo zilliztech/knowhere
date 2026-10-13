@@ -29,6 +29,10 @@ namespace knowhere::faiss_vanilla {
 // Forwards keys from raw_params to faiss::ParameterSpace::set_index_parameter
 // on the given index. Converts faiss exceptions into Status::invalid_args with the
 // faiss message in *err_msg.
+//
+// Also applies is_static=true and store_vectors=false to any family that supports
+// them: this adapter builds an index once and never reconstructs from it. Both names
+// are adapter-owned, so raw_params is rejected if it carries either.
 Status
 apply_build_params(::faiss::Index* index, const Json& raw_params, std::string* err_msg);
 

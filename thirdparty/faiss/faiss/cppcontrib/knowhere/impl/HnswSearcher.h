@@ -34,6 +34,7 @@
 
 // Knowhere-specific headers
 #include <faiss/cppcontrib/knowhere/impl/Neighbor.h>
+#include <faiss/cppcontrib/knowhere/impl/HnswDistanceEvaluation.h>
 
 namespace faiss {
 namespace cppcontrib {
@@ -51,13 +52,16 @@ constexpr bool track_hnsw_stats = true;
 /// * GraphVisitorT records visited edges
 /// * VisitedT is responsible for tracking visited nodes
 /// * FilterT is resposible for filtering unneeded nodes
+/// * DistanceEvaluationT selects candidate evaluation via the compile-time
+///   policy contract in HnswDistanceEvaluation.h (independent of traversal).
 /// Interfaces of all templates are tweaked to accept standard Faiss structures
 ///   with dynamic dispatching. Custom Knowhere structures are also accepted.
 template <
         typename DistanceComputerT,
         typename GraphVisitorT,
         typename VisitedT,
-        typename FilterT>
+        typename FilterT,
+        typename DistanceEvaluationT = DefaultHnswDistanceEvaluation>
 struct v2_hnsw_searcher {
     using storage_idx_t = faiss::cppcontrib::knowhere::HNSW::storage_idx_t;
     using idx_t = faiss::idx_t;
@@ -88,6 +92,8 @@ struct v2_hnsw_searcher {
     // custom parameters of HNSW search.
     // the pointer is not owned.
     const faiss::cppcontrib::knowhere::SearchParametersHNSW* params;
+
+    DistanceEvaluationT evaluation;
 
     //
     v2_hnsw_searcher(
@@ -231,62 +237,31 @@ struct v2_hnsw_searcher {
             ndis += 1;
 
             if (counter == 4) {
-                // evaluate 4x distances at once
-                float dis[4] = {0, 0, 0, 0};
-                qdis.distances_batch_4(
-                        saved_indices[0],
-                        saved_indices[1],
-                        saved_indices[2],
-                        saved_indices[3],
-                        dis[0],
-                        dis[1],
-                        dis[2],
-                        dis[3]);
-
-                for (size_t id4 = 0; id4 < 4; id4++) {
-                    // record a traversed edge
-                    graph_visitor.visit_edge(
-                            level, node_id, saved_indices[id4], dis[id4]);
-
-                    // add a record of visited nodes
-                    knowhere::Neighbor nn(
-                            saved_indices[id4], dis[id4], saved_statuses[id4]);
-                    if (func_add_candidate(nn)) {
-#if defined(USE_PREFETCH)
-                        // TODO
-                        // _mm_prefetch(get_linklist0(v), _MM_HINT_T0);
-#endif
-                    }
-                }
+                ndis += evaluation.compute(
+                        qdis, saved_indices, saved_statuses, counter, level,
+                        [&](size_t i, float distance) {
+                            graph_visitor.visit_edge(level, node_id, saved_indices[i], distance);
+                            func_add_candidate(knowhere::Neighbor(
+                                    saved_indices[i], distance, saved_statuses[i]));
+                        });
 
                 counter = 0;
             }
         }
 
-        // process leftovers
-        for (size_t id4 = 0; id4 < counter; id4++) {
-            // evaluate a single distance
-            const float dis = qdis(saved_indices[id4]);
+        // Evaluate the remaining candidates with the same policy.
+        ndis += evaluation.compute(
+                qdis, saved_indices, saved_statuses, counter, level,
+                [&](size_t i, float distance) {
+                    graph_visitor.visit_edge(level, node_id, saved_indices[i], distance);
+                    func_add_candidate(knowhere::Neighbor(
+                            saved_indices[i], distance, saved_statuses[i]));
+                });
 
-            // record a traversed edge
-            graph_visitor.visit_edge(level, node_id, saved_indices[id4], dis);
-
-            // add a record of visited
-            knowhere::Neighbor nn(saved_indices[id4], dis, saved_statuses[id4]);
-            if (func_add_candidate(nn)) {
-#if defined(USE_PREFETCH)
-                // TODO
-                // _mm_prefetch(get_linklist0(v), _MM_HINT_T0);
-#endif
-            }
-        }
-
-        // update stats
         if (track_hnsw_stats) {
             stats.ndis = ndis;
             stats.nhops = 1;
         }
-
         // done
         return stats;
     }
@@ -326,6 +301,9 @@ struct v2_hnsw_searcher {
             }
         }
 
+        if (disqualified) {
+            retset.save_pending(*disqualified);
+        }
         // done
         return stats;
     }
@@ -369,6 +347,8 @@ struct v2_hnsw_searcher {
         // grab some needed parameters
         const int efSearch = params ? params->efSearch : hnsw.efSearch;
 
+        evaluation.begin(static_cast<size_t>(k));
+
         // yes.
         // greedy search on upper levels.
 
@@ -404,6 +384,8 @@ struct v2_hnsw_searcher {
             }
 
             visited_nodes[nearest] = true;
+            evaluation.record(d_nearest, filter.is_member(nearest)
+                    ? knowhere::Neighbor::kValid : knowhere::Neighbor::kInvalid);
         }
 
         // perform the search of the level 0.

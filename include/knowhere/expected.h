@@ -65,6 +65,11 @@ enum class Status {
     emb_list_inner_error = 31,
     aisaq_error = 32,
     knowhere_inner_error = 33,
+    // The caller asked for the operation to stop: its OpContext's
+    // cancellation token was signalled while the operation was running.
+    // Distinct from `timeout`, which is the Cardinal build-side
+    // cancel-or-timeout and cannot say which of the two happened.
+    cancelled = 34,
 };
 
 enum class StatusCategory {
@@ -77,6 +82,9 @@ enum class StatusCategory {
     // server-side and transient: a retry / replica-reroute may succeed
     // (OOM pressure, disk IO hiccup)
     transient_error = 3,
+    // the caller cancelled the operation: nothing failed, and a retry is the
+    // caller's decision, not something a policy should make on its behalf
+    cancelled = 4,
     // deprecated alias for the pre-three-way name; == permanent_error so
     // existing comparisons keep compiling with unchanged semantics
     inner_error = permanent_error,
@@ -145,6 +153,8 @@ StatusCategoryOf(knowhere::Status status) {
         case knowhere::Status::aisaq_error:
         case knowhere::Status::knowhere_inner_error:
             return StatusCategory::permanent_error;
+        case knowhere::Status::cancelled:
+            return StatusCategory::cancelled;
     }
     return StatusCategory::permanent_error;
 }
@@ -165,6 +175,13 @@ IsInnerError(knowhere::Status status) {
 inline constexpr bool
 IsTransientError(knowhere::Status status) {
     return StatusCategoryOf(status) == StatusCategory::transient_error;
+}
+
+// The operation stopped because the caller cancelled it. Not a failure: the
+// engine did nothing wrong and the result simply does not exist.
+inline constexpr bool
+IsCancelled(knowhere::Status status) {
+    return StatusCategoryOf(status) == StatusCategory::cancelled;
 }
 
 inline std::string
@@ -228,6 +245,8 @@ Status2String(knowhere::Status status) {
             return "internal AiSAQ error";
         case knowhere::Status::knowhere_inner_error:
             return "knowhere inner error";
+        case knowhere::Status::cancelled:
+            return "cancelled by the caller";
         default:
             return "unexpected status";
     }
@@ -362,6 +381,12 @@ struct expected_value<expected<T>> {
     using type = T;
 };
 
+// True when e is the exception a cancelled folly future raises. Declared here
+// and defined in a translation unit that can see folly, so this header stays
+// free of that dependency.
+bool
+IsCancellationException(const std::exception& e) noexcept;
+
 inline std::string
 ExceptionMessage(const char* prefix, const std::string& what) {
     if (what.empty()) {
@@ -422,6 +447,13 @@ GuardedCall(Func&& func, Args&&... args) noexcept {
         return detail::GuardedCallFailure<Result>(Status::malloc_error,
                                                   detail::ExceptionMessage("bad alloc", e.what()));
     } catch (const std::exception& e) {
+        // A cancellation that no index handled reaches here. It is reported as
+        // such rather than as an engine failure, so that a caller stopping its
+        // own request is never mistaken for a broken node.
+        if (detail::IsCancellationException(e)) {
+            return detail::GuardedCallFailure<Result>(Status::cancelled,
+                                                      detail::ExceptionMessage("cancelled by the caller", e.what()));
+        }
         return detail::GuardedCallFailure<Result>(Status::knowhere_inner_error,
                                                   detail::ExceptionMessage("unhandled exception", e.what()));
     } catch (...) {

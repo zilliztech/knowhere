@@ -93,6 +93,11 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
         // Base search returns compact vector ids for list candidate lookup.
         auto ann_search_res = index->Search(query_dataset, std::move(cfg), bitset, op_context);
         if (!ann_search_res.has_value()) {
+            // A cancellation is the caller's request, not a failure of this
+            // index: pass it through unchanged and do not report it as an error.
+            if (ann_search_res.error() == Status::cancelled) {
+                return expected<DataSetPtr>::Err(Status::cancelled, ann_search_res.what());
+            }
             LOG_KNOWHERE_ERROR_ << "Failed ANN search: " << ann_search_res.what();
             return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "failed ANN search");
         }
@@ -153,6 +158,9 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
                                                        mi.agg_func, ids.get() + i * k, dists.get() + i * k,
                                                        total_doc_vecs, total_distance_computations);
 
+            if (status == Status::cancelled) {
+                return expected<DataSetPtr>::Err(Status::cancelled, "rerank cancelled by the caller");
+            }
             if (status != Status::success) {
                 return expected<DataSetPtr>::Err(Status::emb_list_inner_error, "rerank distance computation error");
             }

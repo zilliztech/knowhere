@@ -23,9 +23,15 @@
 
 namespace knowhere {
 
+struct SearchParametersHNSWWrapper;
+
 struct HnswSearchThresholds {
     static constexpr float kHnswSearchKnnBFFilterThreshold = 0.93f;
     static constexpr float kHnswSearchRangeBFFilterThreshold = 0.97f;
+    // AnnIterator switches to a scan over the unfiltered points at this filter ratio. It is higher
+    //   than the kNN threshold because, at typical ef values, the graph traversal of an iterator
+    //   stays cheaper than the brute force up to ~97%.
+    static constexpr float kHnswSearchIteratorBFFilterThreshold = 0.97f;
     static constexpr float kHnswSearchBFTopkThreshold = 0.5f;
 };
 
@@ -48,6 +54,7 @@ WhetherPerformBruteForceRangeSearch(const faiss::Index* index, const FaissHnswCo
 //    index was trained with the refine.
 std::tuple<std::unique_ptr<faiss::Index>, bool>
 create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw_cfg, const bool whether_bf_search,
-                                const bool whether_to_enable_refine);
+                                const bool whether_to_enable_refine,
+                                const SearchParametersHNSWWrapper* search_params = nullptr);
 
 }  // namespace knowhere

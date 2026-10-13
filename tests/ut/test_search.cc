@@ -1042,7 +1042,10 @@ TEST_CASE("Test Search Cancellation", "[search][cancellation]") {
         // Search should return error due to cancellation
         auto results = idx.Search(query_ds, json, nullptr, &op_context);
         REQUIRE(!results.has_value());
-        REQUIRE((results.error() == knowhere::Status::faiss_inner_error ||
+        // A cancellation the caller asked for is reported as such, never as an
+        // engine failure. Cardinal still reports its own inner error until the
+        // matching change lands there.
+        REQUIRE((results.error() == knowhere::Status::cancelled ||
                  results.error() == knowhere::Status::cardinal_inner_error));
     }
 
@@ -1178,7 +1181,10 @@ TEST_CASE("Test RangeSearch Cancellation", "[range_search][cancellation]") {
         // RangeSearch should return error due to cancellation
         auto results = idx.RangeSearch(query_ds, json, nullptr, &op_context);
         REQUIRE(!results.has_value());
-        REQUIRE((results.error() == knowhere::Status::faiss_inner_error ||
+        // A cancellation the caller asked for is reported as such, never as an
+        // engine failure. Cardinal still reports its own inner error until the
+        // matching change lands there.
+        REQUIRE((results.error() == knowhere::Status::cancelled ||
                  results.error() == knowhere::Status::cardinal_inner_error));
     }
 

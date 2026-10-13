@@ -84,3 +84,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|X86_64)$")
 else()
     message(STATUS "Skipping sparse SIMD benchmark on ${CMAKE_SYSTEM_PROCESSOR} (x86_64 only)")
 endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+# Sparse CSR baseline/refinement experiment; all scoring uses the Knowhere API.
+add_executable(benchmark_sparse benchmark_sparse.cpp)
+execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE sparse_benchmark_revision OUTPUT_STRIP_TRAILING_WHITESPACE)
+target_compile_definitions(benchmark_sparse PRIVATE KNOWHERE_SPARSE_BENCHMARK_REVISION="${sparse_benchmark_revision}")
+target_link_libraries(benchmark_sparse knowhere milvus-common::milvus-common ${CMAKE_DL_LIBS})
+if(NOT APPLE)
+    target_link_options(benchmark_sparse PRIVATE "LINKER:--no-as-needed")
+    target_link_libraries(benchmark_sparse atomic)
+endif()
+endif()

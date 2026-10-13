@@ -220,6 +220,9 @@ IndexNode::RangeSearch(const DataSetPtr dataset, std::unique_ptr<Config> cfg, co
             }
         }
         WaitAllSuccess(futs);
+    } catch (const folly::FutureCancellation& e) {
+        LOG_KNOWHERE_INFO_ << "cancelled by the caller: " << e.what();
+        return expected<DataSetPtr>::Err(Status::cancelled, e.what());
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "range search error: " << e.what();
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
@@ -783,6 +786,9 @@ IndexNode::CalcDistByRawIndex(const DataSetPtr dataset, const int64_t* labels, s
             }));
         }
         WaitAllSuccess(futs);
+    } catch (const folly::FutureCancellation& e) {
+        LOG_KNOWHERE_INFO_ << "cancelled by the caller: " << e.what();
+        return expected<DataSetPtr>::Err(Status::cancelled, e.what());
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "CalcDistByRawIndex error: " << e.what();
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());

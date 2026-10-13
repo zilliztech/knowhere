@@ -36,6 +36,12 @@ endif()
 
 add_executable(knowhere_tests ${KNOWHERE_UT_SRCS})
 
+# Enable direct tests of the optional kernel only when its object is linked.
+if(FAISS_ENABLE_AVX512_VPOPCNT)
+  set_source_files_properties(test_hnsw_rabitq.cc PROPERTIES
+    COMPILE_DEFINITIONS COMPILE_SIMD_AVX512_VPOPCNT)
+endif()
+
 find_package(Catch2)
 if (NOT Catch2_FOUND)
   message("Catch2 not found, fetching Catch2 from github")

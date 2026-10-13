@@ -24,6 +24,7 @@
 #include "knowhere/bitsetview_idselector.h"
 #include "knowhere/comp/task.h"
 #include "knowhere/config.h"
+#include "knowhere/context.h"
 #include "knowhere/emb_list_utils.h"
 #include "knowhere/expected.h"
 #include "knowhere/heap.h"
@@ -655,6 +656,7 @@ BruteForceSearchWithBufImpl(const DataSetPtr base_dataset, const DataSetPtr quer
                 continue;
             }
             futs.emplace_back(pool->push([&, query_el_idx = query_el_i] {
+                knowhere::checkCancellation(op_context);
                 ThreadPool::ScopedSearchOmpSetter setter(1);
                 RETURN_IF_ERROR(brute_force_emb_list_impl<DataType>(
                     xq, query_el_idx, query_el_idx, xb, ids, dis, topk, dim, base_el_offset, query_el_offset,
@@ -692,6 +694,7 @@ BruteForceSearchWithBufImpl(const DataSetPtr base_dataset, const DataSetPtr quer
         futs.reserve(nq);
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(pool->push([&, index = i] {
+                knowhere::checkCancellation(op_context);
                 ThreadPool::ScopedSearchOmpSetter setter(1);
                 auto cur_labels = labels + topk * index;
                 auto cur_distances = distances + topk * index;
@@ -800,6 +803,7 @@ BruteForceSearchOnChunkWithBufImpl(const DataSetPtr base_dataset, const DataSetP
         futs.reserve(nq);
         for (int i = 0; i < nq; ++i) {
             futs.emplace_back(pool->push([&, query_idx = i] {
+                knowhere::checkCancellation(op_context);
                 ThreadPool::ScopedSearchOmpSetter setter(1);
                 std::vector<int64_t> tmp_labels(k);
                 std::vector<float> tmp_distances(k);
@@ -923,6 +927,7 @@ BruteForceSearchOnChunkWithBufImpl(const DataSetPtr base_dataset, const DataSetP
             }
 
             futs.emplace_back(pool->push([&, query_el_idx = query_el_i] {
+                knowhere::checkCancellation(op_context);
                 ThreadPool::ScopedSearchOmpSetter setter(1);
 
                 std::vector<int64_t> tmp_labels(k);
@@ -1093,6 +1098,7 @@ BruteForceRangeSearchImpl(const DataSetPtr base_dataset, const DataSetPtr query_
     futs.reserve(nq);
     for (int i = 0; i < nq; ++i) {
         futs.emplace_back(pool->push([&, index = i] {
+            knowhere::checkCancellation(op_context);
             if constexpr (std::is_same_v<DataType, knowhere::sparse::SparseRow<float>>) {
                 auto cur_query = static_cast<const sparse::SparseRow<float>*>(xq) + index;
                 auto xb_sparse = static_cast<const sparse::SparseRow<float>*>(xb);
@@ -1278,6 +1284,7 @@ SearchSparseWithBufImpl(const DataSetPtr base_dataset, const DataSetPtr query_da
     futs.reserve(nq);
     for (int64_t i = 0; i < nq; ++i) {
         futs.emplace_back(pool->push([&, index = i] {
+            knowhere::checkCancellation(op_context);
             auto cur_labels = labels + topk * index;
             auto cur_distances = distances + topk * index;
 
@@ -1514,6 +1521,9 @@ BruteForceAnnIteratorImpl(const DataSetPtr base_dataset, const DataSetPtr query_
             vec[i] = std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, larger_is_closer,
                                                                    use_knowhere_search_pool);
         }
+    } catch (const folly::FutureCancellation& e) {
+        LOG_KNOWHERE_INFO_ << "cancelled by the caller: " << e.what();
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::cancelled, e.what());
     } catch (const std::exception& e) {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::brute_force_inner_error, e.what());
     }
@@ -1769,6 +1779,9 @@ BruteForceAnnIteratorOnChunkImpl(const DataSetPtr base_dataset, const DataSetPtr
             vec[i] = std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, larger_is_closer,
                                                                    use_knowhere_search_pool);
         }
+    } catch (const folly::FutureCancellation& e) {
+        LOG_KNOWHERE_INFO_ << "cancelled by the caller: " << e.what();
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::cancelled, e.what());
     } catch (const std::exception& e) {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::brute_force_inner_error, e.what());
     }
@@ -1856,6 +1869,9 @@ BruteForceAnnIteratorImpl<knowhere::sparse::SparseRow<float>>(const DataSetPtr b
 
             vec[i] = std::make_shared<PrecomputedDistanceIterator>(compute_dist_func, true, use_knowhere_search_pool);
         }
+    } catch (const folly::FutureCancellation& e) {
+        LOG_KNOWHERE_INFO_ << "cancelled by the caller: " << e.what();
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::cancelled, e.what());
     } catch (const std::exception& e) {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::brute_force_inner_error, e.what());
     }

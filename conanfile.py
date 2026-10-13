@@ -53,6 +53,7 @@ class KnowhereConan(ConanFile):
         "with_diskann": False,
         "with_svs": False,
         "with_cardinal": False,
+        "metis/*:with_64bit_types": True,
         "cardinal_version_force_checkout": False,
         "with_profiler": False,
         "with_ut": False,
@@ -139,9 +140,11 @@ class KnowhereConan(ConanFile):
             self.options["openblas"].dynamic_arch = True
 
     def requirements(self):
+        if self.options.with_cardinal:
+            self.requires("metis/5.2.1#85cfe7ee0dfc0cba7c0334e92efcbbc6")
         self.requires("abseil/20250127.0#481edcc75deb0efb16500f511f0f0a1c")
         self.requires("boost/1.83.0#4e8a94ac1b88312af95eded83cd81ca8")
-        self.requires("milvus-common/1.0.0-b589c5a@milvus/dev#d431af735c8acb829feb7a94f05daf42")
+        self.requires("milvus-common/1.0.0-45fca32@milvus/dev#ac7e38699c9dcc9a83d5be95e8227900")
         self.requires("gflags/2.2.2#7671803f1dc19354cc90bd32874dcfda")
         self.requires("glog/0.7.1#a306e61d7b8311db8cb148ad62c48030")
         self.requires("nlohmann_json/3.11.3#ffb9e9236619f1c883e36662f944345d", force=True)

@@ -346,6 +346,9 @@ TryDiskANNCall(std::function<void()>&& diskann_call) {
     try {
         diskann_call();
         return Status::success;
+    } catch (const folly::FutureCancellation& e) {
+        LOG_KNOWHERE_INFO_ << "DiskANN call cancelled by the caller: " << e.what();
+        return Status::cancelled;
     } catch (const diskann::FileException& e) {
         LOG_KNOWHERE_ERROR_ << "DiskANN File Exception: " << e.what();
         return Status::disk_file_error;
@@ -923,7 +926,12 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
         }));
     }
 
-    if (TryDiskANNCall([&]() { WaitAllSuccess(futures); }) != Status::success) {
+    if (auto stat = TryDiskANNCall([&]() { WaitAllSuccess(futures); }); stat != Status::success) {
+        // A cancellation the caller asked for keeps its own status; every
+        // other failure is reported as an index error as before.
+        if (stat == Status::cancelled) {
+            return expected<DataSetPtr>::Err(stat, "search cancelled by the caller");
+        }
         return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some search failed");
     }
 
@@ -983,7 +991,10 @@ DiskANNIndexNode<DataType>::CalcDistByStorageIds(const DataSetPtr dataset, const
                                               p_dist_ptr + index * labels_len);
         }));
     }
-    if (TryDiskANNCall([&]() { WaitAllSuccess(futures); }) != Status::success) {
+    if (auto stat = TryDiskANNCall([&]() { WaitAllSuccess(futures); }); stat != Status::success) {
+        if (stat == Status::cancelled) {
+            return expected<DataSetPtr>::Err(stat, "calc dist by ids cancelled by the caller");
+        }
         return expected<DataSetPtr>::Err(Status::diskann_inner_error, "some calc dist by ids failed");
     }
 

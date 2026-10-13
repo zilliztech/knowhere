@@ -23,6 +23,8 @@ namespace cppcontrib {
 namespace knowhere {
 
 #if defined(__x86_64__)
+// Allow FAISS to select its finer SIMD tiers only in AUTO mode.
+extern bool use_simd_auto;
 extern bool use_avx512;
 extern bool use_avx2;
 extern bool use_sse4_2;
@@ -153,6 +155,11 @@ cpu_support_f16c();
 #if defined(__aarch64__)
 bool
 supports_sve();
+#endif
+
+#if defined(__loongarch__)
+bool
+cpu_support_lasx();
 #endif
 
 void

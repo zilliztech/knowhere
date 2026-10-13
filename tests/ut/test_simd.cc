@@ -262,14 +262,19 @@ TEST_CASE("Test distance") {
                               knowhere::KnowhereConfig::SimdType::AVX2, knowhere::KnowhereConfig::SimdType::SSE4_2,
                               knowhere::KnowhereConfig::SimdType::GENERIC, knowhere::KnowhereConfig::SimdType::AUTO);
     auto dim = GENERATE(as<size_t>{}, 1, 2, 4, 7, 8, 12, 14, 16, 21, 28, 32, 35, 42, 49, 56, 64, 128, 256);
+    CAPTURE(simd_type, dim);
 
     LOG_KNOWHERE_INFO_ << "simd type: " << simd_type << ", dim: " << dim;
     knowhere::KnowhereConfig::SetSimdType(simd_type);
 
     const size_t nx = 1, ny = 4;
 
-    // fp32's accuracy is 0.000001, consider the accumulation of precision loss
+    // FP32 vector reductions use a different accumulation order from the scalar reference.
+#if defined(__loongarch__)
+    const float tolerance = 0.00001f;
+#else
     const float tolerance = 0.000005f;
+#endif
     const auto x = GenRandomVector<float>(dim, nx, 314);
     const auto y = GenRandomVector<float>(dim, ny, 271);
 
@@ -544,6 +549,44 @@ TEST_CASE("Test distance") {
             REQUIRE_THAT(ip_dis[i], Catch::Matchers::WithinRel(ref_ip[i], tolerance));
             REQUIRE_THAT(l2_dis[i], Catch::Matchers::WithinRel(ref_l2[i], tolerance));
         }
+    }
+
+    SECTION("test transposed ny and nearest distance calculation") {
+        constexpr size_t transposed_ny = 13;
+        constexpr size_t d_offset = transposed_ny + 3;
+        const auto transposed_source = GenRandomVector<float>(dim, transposed_ny, 911);
+        std::vector<float> transposed_y(dim * d_offset, 0.0f);
+        std::vector<float> y_sqlen(transposed_ny);
+        for (size_t i = 0; i < transposed_ny; ++i) {
+            y_sqlen[i] = faiss::cppcontrib::knowhere::fvec_norm_L2sqr_ref(transposed_source.get() + i * dim, dim);
+            for (size_t j = 0; j < dim; ++j) {
+                transposed_y[i + j * d_offset] = transposed_source[i * dim + j];
+            }
+        }
+
+        std::vector<float> ref_distances(transposed_ny);
+        std::vector<float> distances(transposed_ny);
+        faiss::cppcontrib::knowhere::fvec_L2sqr_ny_transposed_ref(ref_distances.data(), x.get(), transposed_y.data(),
+                                                                  y_sqlen.data(), dim, d_offset, transposed_ny);
+        faiss::cppcontrib::knowhere::fvec_L2sqr_ny_transposed(distances.data(), x.get(), transposed_y.data(),
+                                                              y_sqlen.data(), dim, d_offset, transposed_ny);
+        for (size_t i = 0; i < transposed_ny; ++i) {
+            REQUIRE_THAT(distances[i], Catch::Matchers::WithinRel(ref_distances[i], tolerance));
+        }
+
+        std::vector<float> nearest_buffer(transposed_ny);
+        std::vector<float> ref_nearest_buffer(transposed_ny);
+        const size_t nearest = faiss::cppcontrib::knowhere::fvec_L2sqr_ny_nearest(
+            nearest_buffer.data(), x.get(), transposed_source.get(), dim, transposed_ny);
+        const size_t ref_nearest = faiss::cppcontrib::knowhere::fvec_L2sqr_ny_nearest_ref(
+            ref_nearest_buffer.data(), x.get(), transposed_source.get(), dim, transposed_ny);
+        REQUIRE(nearest == ref_nearest);
+
+        const size_t transposed_nearest = faiss::cppcontrib::knowhere::fvec_L2sqr_ny_nearest_y_transposed(
+            nearest_buffer.data(), x.get(), transposed_y.data(), y_sqlen.data(), dim, d_offset, transposed_ny);
+        const size_t ref_transposed_nearest = faiss::cppcontrib::knowhere::fvec_L2sqr_ny_nearest_y_transposed_ref(
+            ref_nearest_buffer.data(), x.get(), transposed_y.data(), y_sqlen.data(), dim, d_offset, transposed_ny);
+        REQUIRE(transposed_nearest == ref_transposed_nearest);
     }
 
     SECTION("test madd distance calculation") {

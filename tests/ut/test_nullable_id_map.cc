@@ -21,6 +21,7 @@
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <random>
 #include <set>
 #include <string>
 #include <system_error>
@@ -30,12 +31,14 @@
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
+#include "catch2/generators/catch_generators.hpp"
 #include "filemanager/impl/LocalFileManager.h"
 #include "index/data_view_dense_index/data_view_dense_index.h"
 #include "knowhere/binaryset.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
+#include "knowhere/config.h"
 #include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/id_map.h"
@@ -47,6 +50,7 @@
 #include "knowhere/object.h"
 #include "knowhere/thread_pool.h"
 #include "knowhere/version.h"
+#include "simd/hook.h"
 #include "utils.h"
 
 #if __has_include(<filesystem>)
@@ -1450,6 +1454,11 @@ SupportsModeBuild(const IndexRow& row, Mode mode) {
 bool
 SupportsScenario(const IndexRow& row, const Scenario& scenario) {
     const auto& caps = row.caps;
+    if ((row.index_type == knowhere::IndexEnum::INDEX_FAISS_SCANN ||
+         row.index_type == knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR) &&
+        !faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+        return false;
+    }
     if (row.index_type == knowhere::IndexEnum::INDEX_HNSW && !row.requires_current_version && VersionForRow(row) < 6 &&
         scenario.nullable_ratio != NullableRatio::R0) {
         return false;
@@ -3295,6 +3304,143 @@ TEST_CASE("Nullable IdMap primitives", "[nullable][id_map]") {
         RequireIdArrayEquals(map.InToOutIds(), {0, 2, 3, 5, 6, 8});
     }
 
+    SECTION("IdMap applies sealed validity by range and offsets") {
+        auto bitmap = MakeValidBitmap(10, {1, 4, 9});
+        knowhere::IdMap map;
+        map.SetType(knowhere::IdMap::Type::SEALED);
+        map.AddFromData(knowhere::IdMapData::FromValidBitmap(bitmap.data(), 10));
+
+        std::vector<uint8_t> range_validity(10, 2);
+        map.ApplyValidityByRange(2, range_validity.size(), [&](size_t offset, bool valid) {
+            range_validity[offset] = static_cast<uint8_t>(valid);
+        });
+        REQUIRE(range_validity == std::vector<uint8_t>{0, 0, 1, 0, 0, 0, 0, 1, 0, 0});
+
+        const int64_t offsets[] = {9, -1, 4, 4, 10, 1, 0};
+        std::vector<uint8_t> offset_validity(std::size(offsets), 2);
+        map.ApplyValidityByOffsets(offsets, std::size(offsets), [&](size_t offset, bool valid) {
+            offset_validity[offset] = static_cast<uint8_t>(valid);
+        });
+        REQUIRE(offset_validity == std::vector<uint8_t>{1, 0, 1, 1, 0, 1, 0});
+        REQUIRE_THROWS(map.ApplyValidityByOffsets(nullptr, 1, [](size_t, bool) {}));
+    }
+
+    SECTION("IdMap ANDs sealed validity into non-aligned packed targets") {
+        auto bitmap = MakeValidBitmap(257, {0, 2, 3, 7, 8, 31, 32, 127, 128, 200, 255, 256});
+        knowhere::IdMap map;
+        map.SetType(knowhere::IdMap::Type::SEALED);
+        map.AddFromData(knowhere::IdMapData::FromValidBitmap(bitmap.data(), 257));
+
+        constexpr size_t target_begin = 3;
+        constexpr size_t count = 263;
+        std::vector<uint8_t> target((target_begin + count + 7) / 8, 0xFF);
+        map.AndValidityByRange(-2, count, target.data(), target_begin);
+
+        for (size_t bit = 0; bit < target_begin; ++bit) {
+            REQUIRE((target[bit >> 3] & (1U << (bit & 7))) != 0);
+        }
+        for (size_t i = 0; i < count; ++i) {
+            const auto out_id = static_cast<int64_t>(i) - 2;
+            const auto actual = (target[(target_begin + i) >> 3] & (1U << ((target_begin + i) & 7))) != 0;
+            REQUIRE(actual == map.IsValidOutId(out_id));
+        }
+        const auto trailing_bit = target_begin + count;
+        if ((trailing_bit & 7U) != 0) {
+            REQUIRE((target[trailing_bit >> 3] & (1U << (trailing_bit & 7))) != 0);
+        }
+        REQUIRE_THROWS(map.AndValidityByRange(0, 1, nullptr));
+    }
+
+    SECTION("Growing IdMap range validity crosses append records with one snapshot") {
+        knowhere::IdMap map;
+        map.SetType(knowhere::IdMap::Type::GROWING);
+        const bool first_batch[] = {true, false, true, true, false};
+        map.AddFromData(knowhere::IdMapData::FromValidData(first_batch, std::size(first_batch)));
+        auto second_batch = MakeValidBitmap(7, {0, 3, 6});
+        map.AddFromData(knowhere::IdMapData::FromValidBitmap(second_batch.data(), 7));
+
+        std::vector<uint8_t> validity(8, 2);
+        bool appended = false;
+        map.ApplyValidityByRange(8, validity.size(), [&](size_t offset, bool valid) {
+            validity[offset] = static_cast<uint8_t>(valid);
+            if (!appended) {
+                const bool concurrent_batch[] = {true, true, true, true};
+                map.AddFromData(knowhere::IdMapData::FromValidData(concurrent_batch, std::size(concurrent_batch)));
+                appended = true;
+            }
+        });
+
+        REQUIRE(validity == std::vector<uint8_t>{1, 0, 0, 1, 0, 0, 0, 0});
+        REQUIRE(map.OutCount() == 16);
+
+        std::vector<uint8_t> refreshed(8, 2);
+        map.ApplyValidityByRange(8, refreshed.size(),
+                                 [&](size_t offset, bool valid) { refreshed[offset] = static_cast<uint8_t>(valid); });
+        REQUIRE(refreshed == std::vector<uint8_t>{1, 0, 0, 1, 1, 1, 1, 1});
+
+        const int64_t offsets[] = {0, 16};
+        std::vector<uint8_t> offset_validity(std::size(offsets), 2);
+        appended = false;
+        map.ApplyValidityByOffsets(offsets, std::size(offsets), [&](size_t offset, bool valid) {
+            offset_validity[offset] = static_cast<uint8_t>(valid);
+            if (!appended) {
+                const bool concurrent_batch[] = {true};
+                map.AddFromData(knowhere::IdMapData::FromValidData(concurrent_batch, std::size(concurrent_batch)));
+                appended = true;
+            }
+        });
+        REQUIRE(offset_validity == std::vector<uint8_t>{1, 0});
+        REQUIRE(map.IsValidOutId(16));
+    }
+
+    SECTION("IdMap ANDs growing validity across non-byte-aligned append records") {
+        knowhere::IdMap map;
+        map.SetType(knowhere::IdMap::Type::GROWING);
+        std::vector<bool> expected;
+        for (size_t batch_id = 0; batch_id < 9; ++batch_id) {
+            const auto batch_size = 29 + batch_id;
+            std::unique_ptr<bool[]> batch(new bool[batch_size]);
+            for (size_t i = 0; i < batch_size; ++i) {
+                batch[i] = ((expected.size() + i) % 5) != 1;
+                expected.push_back(batch[i]);
+            }
+            map.AddFromData(knowhere::IdMapData::FromValidData(batch.get(), batch_size));
+        }
+
+        constexpr size_t target_begin = 5;
+        const auto count = expected.size() - 7;
+        std::vector<uint8_t> target((target_begin + count + 7) / 8, 0xFF);
+        map.AndValidityByRange(7, count, target.data(), target_begin);
+        for (size_t i = 0; i < count; ++i) {
+            const auto actual = (target[(target_begin + i) >> 3] & (1U << ((target_begin + i) & 7))) != 0;
+            REQUIRE(actual == expected[i + 7]);
+        }
+    }
+
+    SECTION("Disabled IdMap batch validity preserves identity semantics") {
+        knowhere::IdMap map;
+
+        std::vector<uint8_t> range_validity(5, 2);
+        map.ApplyValidityByRange(-2, range_validity.size(), [&](size_t offset, bool valid) {
+            range_validity[offset] = static_cast<uint8_t>(valid);
+        });
+        REQUIRE(range_validity == std::vector<uint8_t>{0, 0, 1, 1, 1});
+
+        const int64_t offsets[] = {-1, 0, 100};
+        std::vector<uint8_t> offset_validity(std::size(offsets), 2);
+        map.ApplyValidityByOffsets(offsets, std::size(offsets), [&](size_t offset, bool valid) {
+            offset_validity[offset] = static_cast<uint8_t>(valid);
+        });
+        REQUIRE(offset_validity == std::vector<uint8_t>{0, 1, 1});
+
+        std::vector<uint8_t> packed(2, 0xFF);
+        map.AndValidityByRange(-2, 10, packed.data(), 3);
+        for (size_t i = 0; i < 10; ++i) {
+            const auto actual = (packed[(i + 3) >> 3] & (1U << ((i + 3) & 7))) != 0;
+            REQUIRE(actual == (i >= 2));
+        }
+    }
+
     SECTION("Growing IdMap keeps search-side prefixes stable across appends") {
         knowhere::IdMap map;
         map.SetType(knowhere::IdMap::Type::GROWING);
@@ -3757,6 +3903,129 @@ TEST_CASE("Nullable growing Index keeps visible prefix as a filter boundary", "[
     REQUIRE(node->last_search_bitset.count == 3);
     REQUIRE(node->last_search_bitset.need_filter);
     REQUIRE(node->last_search_bitset.filtered_in_ids == std::vector<int>{4, 5, 6});
+}
+
+TEST_CASE("Growing search preserves the prepared public ID boundary", "[growing_search_boundary]") {
+    const auto index_type = GENERATE(as<std::string>{}, knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC,
+                                     knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR);
+    const bool nullable = GENERATE(false, true);
+    const auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE);
+    CAPTURE(index_type, nullable, metric);
+    const bool scann = index_type == knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR;
+    if (scann && !faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+        SKIP("SCANN_DVR requires PQ fast scan support");
+    }
+
+    constexpr int64_t dim = 16;
+    constexpr int64_t initial_rows = 512;
+    const int64_t public_rows = nullable ? initial_rows * 2 : initial_rows;
+    const int64_t appended_public_id = nullable ? public_rows + 1 : public_rows;
+
+    // The backing store includes the future row from the start, so the data-view
+    // callback remains valid across Add. Only the first initial_rows are built.
+    std::vector<float> storage((initial_rows + 1) * dim, 0.0f);
+    std::mt19937 rng(51941);
+    std::uniform_real_distribution<float> value(-1.0f, 1.0f);
+    for (int64_t row = 0; row < initial_rows; ++row) {
+        for (int64_t column = 1; column < dim; ++column) {
+            storage[row * dim + column] = value(rng);
+        }
+    }
+    // All old rows are orthogonal to the query. The appended row is an exact
+    // match, making its selection independent of ties among old rows.
+    storage[initial_rows * dim] = 1.0f;
+    std::vector<float> query_data(dim, 0.0f);
+    query_data[0] = 1.0f;
+    auto query = knowhere::GenDataSet(1, dim, query_data.data());
+    auto initial = knowhere::GenDataSet(initial_rows, dim, storage.data());
+    auto appended = knowhere::GenDataSet(1, dim, storage.data() + initial_rows * dim);
+
+    auto valid = std::make_unique<bool[]>(public_rows);
+    const bool appended_valid[] = {false, true};
+    if (nullable) {
+        for (int64_t row = 0; row < public_rows; ++row) {
+            valid[row] = row % 2 == 0;
+        }
+        initial->SetIdMapData(knowhere::IdMapData::FromValidData(valid.get(), public_rows));
+        appended->SetIdMapData(knowhere::IdMapData::FromValidData(appended_valid, 2));
+    }
+
+    knowhere::Json json;
+    json[knowhere::meta::DIM] = dim;
+    json[knowhere::meta::METRIC_TYPE] = metric;
+    json[knowhere::meta::TOPK] = 1;
+    json[knowhere::indexparam::NLIST] = 1;
+    json[knowhere::indexparam::NPROBE] = 1;
+    if (scann) {
+        json[knowhere::indexparam::SUB_DIM] = 2;
+        // Refine every possible candidate, removing approximate recall as a
+        // reason the newly added exact match could be absent from the control.
+        json[knowhere::indexparam::REFINE_RATIO] = static_cast<float>(initial_rows + 1);
+    } else {
+        json[knowhere::indexparam::SSIZE] = 48;
+    }
+
+    knowhere::ViewDataOp data_view = [&storage](size_t id) { return storage.data() + id * dim; };
+    auto data_view_pack = knowhere::Pack(data_view);
+    auto created = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(
+        index_type, knowhere::Version::GetCurrentVersion().VersionNumber(), data_view_pack);
+    REQUIRE(created.has_value());
+    auto index = std::move(created.value());
+    if (nullable) {
+        index.SetIdMapType(knowhere::IdMap::Type::GROWING);
+    }
+    REQUIRE(index.Build(initial, json) == knowhere::Status::success);
+
+    std::vector<uint8_t> bits((public_rows + 7) / 8, 0);
+    knowhere::BitsetView control_view(bits.data(), public_rows);
+    knowhere::BitsetView bounded_view(bits.data(), public_rows);
+    bounded_view.set_require_id_boundary(true);
+    auto control = index.Node()->PrepareBitset(control_view);
+    auto bounded = index.Node()->PrepareBitset(bounded_view);
+    REQUIRE(control.has_value());
+    REQUIRE(bounded.has_value());
+    REQUIRE(control.value().bitset.count() == 0);
+    REQUIRE(bounded.value().bitset.count() == 0);
+    REQUIRE(control.value().bitset.empty());
+    REQUIRE_FALSE(bounded.value().bitset.empty());
+
+    auto initial_result = index.Search(query, json, bounded_view);
+    REQUIRE(initial_result.has_value());
+    REQUIRE(initial_result.value()->GetIds()[0] >= 0);
+    REQUIRE(initial_result.value()->GetIds()[0] < public_rows);
+
+    // Exercise a legal prepare/add/search ordering without racing threads or
+    // recomputing counts after Add. Calling Index::Search here would prepare a
+    // fresh view and would therefore test a different ordering.
+    REQUIRE(index.Add(appended, json) == knowhere::Status::success);
+    auto search_prepared = [&](const knowhere::BitsetView& bitset) {
+        auto cfg = index.Node()->CreateConfig();
+        auto search_json = json;
+        REQUIRE(knowhere::Config::FormatAndCheck(*cfg, search_json) == knowhere::Status::success);
+        cfg->CaptureRawJson(search_json);
+        REQUIRE(knowhere::Config::Load(*cfg, search_json, knowhere::SEARCH) == knowhere::Status::success);
+        return index.Node()->Search(query, std::move(cfg), bitset, nullptr);
+    };
+
+    auto unbounded_result = search_prepared(control.value().bitset);
+    REQUIRE(unbounded_result.has_value());
+    REQUIRE(unbounded_result.value()->GetIds()[0] == appended_public_id);
+
+    auto bounded_result = search_prepared(bounded.value().bitset);
+    REQUIRE(bounded_result.has_value());
+    const auto id = bounded_result.value()->GetIds()[0];
+    REQUIRE(id >= 0);
+    REQUIRE(id < public_rows);
+    if (nullable) {
+        REQUIRE(id % 2 == 0);
+    }
+
+    // The public entry point also accepts the boundary requirement and copies
+    // it into its newly prepared view after growth.
+    auto public_result = index.Search(query, json, bounded_view);
+    REQUIRE(public_result.has_value());
+    REQUIRE(public_result.value()->GetIds()[0] >= 0);
+    REQUIRE(public_result.value()->GetIds()[0] < public_rows);
 }
 
 TEST_CASE("Nullable Index exact bitset count filters rows outside visible bitset", "[nullable][bitset][api]") {
@@ -4538,6 +4807,9 @@ TEST_CASE("Nullable DataView cosine uses internal source ids and internal norms"
 }
 
 TEST_CASE("Nullable SCANN_DVR emb-list cosine rerank maps calc-dist ids", "[nullable][scann_dvr][emblist]") {
+    if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+        SKIP("SCANN requires PQ fast-scan SIMD support");
+    }
     IndexRow row{"SCANN_DVR", knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, DataKind::DenseFp32};
     Scenario scenario;
     scenario.mode = Mode::EmbList;
@@ -4604,6 +4876,9 @@ TEST_CASE("Nullable SCANN_DVR emb-list cosine rerank maps calc-dist ids", "[null
 }
 
 TEST_CASE("Nullable SCANN_DVR calc-dist APIs keep public and storage ids separate", "[nullable][scann_dvr][api]") {
+    if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+        SKIP("SCANN requires PQ fast-scan SIMD support");
+    }
     IndexRow row{"SCANN_DVR", knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, DataKind::DenseFp32};
     Scenario scenario;
     scenario.mode = Mode::Vector;
@@ -4987,6 +5262,9 @@ TEST_CASE("Nullable TokenANN GetEmbListByIds uses logical ids", "[nullable][embl
 
 TEST_CASE("Nullable SCANN_DVR TokenANN GetEmbListByIds reports unsupported raw retrieve",
           "[nullable][scann_dvr][emblist][api]") {
+    if (!faiss::cppcontrib::knowhere::support_pq_fast_scan) {
+        SKIP("SCANN requires PQ fast-scan SIMD support");
+    }
     IndexRow row{"SCANN_DVR", knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, DataKind::DenseFp32};
     Scenario scenario;
     scenario.mode = Mode::EmbList;

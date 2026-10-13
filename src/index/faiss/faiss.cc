@@ -13,6 +13,7 @@
 #include <faiss/Index.h>
 #include <faiss/IndexBinary.h>
 #include <faiss/IndexFlat.h>
+#include <faiss/cppcontrib/knowhere/SearchParamsDispatch.h>
 #include <faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissException.h>
@@ -88,17 +89,51 @@ class FaissIndexNode : public IndexNode {
             return st;
         }
 
+        // OOD training is on by default, but most families do not implement it (the
+        // base train_with_queries is a silent no-op, and no binary index overrides it,
+        // hence the unconditional false for bin1). The default narrows silently to what
+        // the index can do; an explicit request that cannot be honored is an error.
+        bool ood_supported = false;
+        if constexpr (std::is_same_v<DataType, fp32>) {
+            ood_supported = faiss::cppcontrib::knowhere::supports_train_with_queries(index_.get());
+        }
+        if (!ood_supported && fc->ood_training.has_value() && fc->ood_training.value()) {
+            LOG_KNOWHERE_ERROR_ << "ood_training is not supported by faiss index '" << fc->faiss_index_name.value()
+                                << "'";
+            return Status::invalid_args;
+        }
+        const bool ood = ood_supported && fc->ood_training.value_or(true);
+
         try {
             const auto* raw = dataset->GetTensor();
             const auto n = dataset->GetRows();
             if constexpr (std::is_same_v<DataType, fp32>) {
+                const auto dim = dataset->GetDim();
                 auto data = static_cast<const float*>(raw);
                 std::unique_ptr<float[]> copy;
                 if (is_cosine_) {
-                    copy = CopyAndNormalizeVecs(data, n, dataset->GetDim());
+                    copy = CopyAndNormalizeVecs(data, n, dim);
                     data = copy.get();
                 }
-                index_->train(n, data);
+                if (ood) {
+                    // Use the query sample the caller attached to the train dataset, if any.
+                    const auto* queries = dataset->Get<const float*>(meta::TRAIN_QUERY_TENSOR);
+                    const int64_t n_queries = dataset->Get<int64_t>(meta::TRAIN_QUERY_ROWS);
+                    std::unique_ptr<float[]> query_copy;
+                    if (queries != nullptr && n_queries > 0) {
+                        if (is_cosine_) {
+                            query_copy = CopyAndNormalizeVecs(queries, n_queries, dim);
+                            queries = query_copy.get();
+                        }
+                        index_->train_with_queries(n, data, n_queries, queries);
+                    } else {
+                        LOG_KNOWHERE_DEBUG_ << "ood_training without a query sample; training on the "
+                                               "database vectors instead";
+                        index_->train_with_queries(n, data, n, data);
+                    }
+                } else {
+                    index_->train(n, data);
+                }
             } else {
                 index_->train(n, static_cast<const uint8_t*>(raw));
             }

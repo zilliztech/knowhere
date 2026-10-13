@@ -10,6 +10,7 @@
 // the License for the specific language governing permissions and limitations under the License.
 
 #include "catch2/catch_test_macros.hpp"
+#include "folly/futures/Future.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/index/index.h"
 #include "knowhere/index/index_static.h"
@@ -122,6 +123,20 @@ class ThrowingIterator : public knowhere::IndexIterator {
     }
 };
 
+// Stands in for an index whose operation is stopped mid-flight: knowhere's
+// checkCancellation raises exactly this exception.
+class CancellingIterator : public knowhere::IndexIterator {
+ public:
+    CancellingIterator() : knowhere::IndexIterator(/*larger_is_closer=*/false, /*use_knowhere_search_pool=*/false) {
+    }
+
+ protected:
+    void
+    next_batch(std::function<void(const std::vector<knowhere::DistId>&)>) override {
+        throw folly::FutureCancellation();
+    }
+};
+
 class StatusThrowingIterator : public knowhere::IndexIterator {
  public:
     StatusThrowingIterator() : knowhere::IndexIterator(/*larger_is_closer=*/false, /*use_knowhere_search_pool=*/false) {
@@ -159,6 +174,15 @@ TEST_CASE("Status category separates input, transient and permanent errors", "[e
                    knowhere::StatusCategory::permanent_error);
     STATIC_REQUIRE(knowhere::StatusCategoryOf(knowhere::Status::invalid_serialized_index_type) ==
                    knowhere::StatusCategory::permanent_error);
+    // a cancellation is its own category: the request was fine and the engine
+    // did not fail, so it must not be filed under either
+    STATIC_REQUIRE(knowhere::StatusCategoryOf(knowhere::Status::cancelled) == knowhere::StatusCategory::cancelled);
+    STATIC_REQUIRE(knowhere::IsCancelled(knowhere::Status::cancelled));
+    STATIC_REQUIRE_FALSE(knowhere::IsInputError(knowhere::Status::cancelled));
+    STATIC_REQUIRE_FALSE(knowhere::IsInnerError(knowhere::Status::cancelled));
+    STATIC_REQUIRE_FALSE(knowhere::IsTransientError(knowhere::Status::cancelled));
+    STATIC_REQUIRE_FALSE(knowhere::IsCancelled(knowhere::Status::timeout));
+
     // the deprecated alias keeps compiling and keeps its meaning
     STATIC_REQUIRE(knowhere::StatusCategory::inner_error == knowhere::StatusCategory::permanent_error);
 
@@ -209,6 +233,7 @@ constexpr knowhere::Status kAllStatuses[] = {
     knowhere::Status::emb_list_inner_error,
     knowhere::Status::aisaq_error,
     knowhere::Status::knowhere_inner_error,
+    knowhere::Status::cancelled,
 };
 }  // namespace
 
@@ -232,6 +257,11 @@ TEST_CASE("ToSegcoreErrorCode agrees with StatusCategoryOf for every status", "[
                 REQUIRE((code == milvus::ErrorCode::Unsupported || code == milvus::ErrorCode::DataFormatBroken ||
                          code == milvus::ErrorCode::KnowhereError));
                 break;
+            case knowhere::StatusCategory::cancelled:
+                // the caller stopped it: neither the request's fault nor the
+                // engine's, and never retried on the caller's behalf
+                REQUIRE(code == milvus::ErrorCode::FollyCancel);
+                break;
         }
     }
 }
@@ -246,6 +276,7 @@ TEST_CASE("ToSegcoreErrorCode fine mapping spot checks", "[error_code]") {
                    milvus::ErrorCode::DataFormatBroken);
     STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::invalid_args) == milvus::ErrorCode::InvalidParameter);
     STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::timeout) == milvus::ErrorCode::KnowhereError);
+    STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::cancelled) == milvus::ErrorCode::FollyCancel);
     STATIC_REQUIRE(knowhere::ToSegcoreErrorCode(knowhere::Status::success) == milvus::ErrorCode::Success);
 }
 
@@ -298,6 +329,17 @@ TEST_CASE("Iterator APIs are noexcept and convert exceptions to error codes", "[
         REQUIRE(next.error() == knowhere::Status::malloc_error);
         // message must pass through unmodified (no extra prefixing)
         REQUIRE(next.what() == "boom status alloc");
+    }
+
+    SECTION("GuardedCall reports a cancellation as cancelled, not as an engine failure") {
+        auto it = std::make_shared<CancellingIterator>();
+
+        const auto next = it->Next();
+        REQUIRE(!next.has_value());
+        REQUIRE(next.error() == knowhere::Status::cancelled);
+        REQUIRE(knowhere::IsCancelled(next.error()));
+        // and so it carries the shared cancellation code across the boundary
+        REQUIRE(knowhere::ToSegcoreErrorCode(next.error()) == milvus::ErrorCode::FollyCancel);
     }
 
     SECTION("PrecomputedDistanceIterator converts deferred compute exceptions") {

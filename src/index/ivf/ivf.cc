@@ -1173,6 +1173,9 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
         }
         // wait for the completion
         WaitAllSuccess(futs);
+    } catch (const folly::FutureCancellation& e) {
+        LOG_KNOWHERE_INFO_ << "cancelled by the caller: " << e.what();
+        return expected<DataSetPtr>::Err(Status::cancelled, e.what());
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
@@ -1505,6 +1508,9 @@ IvfIndexNode<DataType, IndexType>::RangeSearch(const DataSetPtr dataset, std::un
         // wait for the completion
         WaitAllSuccess(futs);
         range_search_result = GetRangeSearchResult(result_dist_array, result_id_array, is_ip, nq, radius, range_filter);
+    } catch (const folly::FutureCancellation& e) {
+        LOG_KNOWHERE_INFO_ << "cancelled by the caller: " << e.what();
+        return expected<DataSetPtr>::Err(Status::cancelled, e.what());
     } catch (const std::exception& e) {
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());

@@ -140,6 +140,11 @@ class FlatIndexNode : public IndexNode {
             }
             // wait for the completion
             WaitAllSuccess(futs);
+        } catch (const folly::FutureCancellation& e) {
+            std::unique_ptr<int64_t[]> auto_delete_ids(ids);
+            std::unique_ptr<float[]> auto_delete_dis(distances);
+            LOG_KNOWHERE_INFO_ << "cancelled by the caller: " << e.what();
+            return expected<DataSetPtr>::Err(Status::cancelled, e.what());
         } catch (const std::exception& e) {
             std::unique_ptr<int64_t[]> auto_delete_ids(ids);
             std::unique_ptr<float[]> auto_delete_dis(distances);

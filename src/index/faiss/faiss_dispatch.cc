@@ -19,6 +19,8 @@
 #include <faiss/impl/FaissException.h>
 #include <faiss/impl/IDSelector.h>
 
+#include <type_traits>
+
 namespace knowhere::faiss_vanilla {
 
 namespace {
@@ -68,6 +70,34 @@ coerce_to_double(const Json& v, const std::string& key, double* out, std::string
     return Status::invalid_args;
 }
 
+// Build params owned by this adapter rather than by the caller, applied to every index
+// family that has them and rejected if raw_params carries them. Each name is gated on
+// its own capability query, since a family may well have one knob and not the other.
+//   - is_static:     a segment is built by a single Add and never mutated.
+//   - store_vectors: the raw-vector copy only backs reconstruct(), which this adapter
+//                    does not expose (HasRawData() is false).
+struct AdapterOwnedBuildParam {
+    const char* name;
+    double value;
+    bool (*supported)(const ::faiss::Index*);
+};
+constexpr AdapterOwnedBuildParam kAdapterOwnedBuildParams[] = {
+    {.name = "is_static", .value = 1.0, .supported = &::faiss::cppcontrib::knowhere::supports_static_index},
+    {.name = "store_vectors",
+     .value = 0.0,
+     .supported = &::faiss::cppcontrib::knowhere::supports_dropping_stored_vectors},
+};
+
+bool
+is_adapter_owned_build_param(const std::string& key) {
+    for (const auto& param : kAdapterOwnedBuildParams) {
+        if (key == param.name) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Apply every key in raw_params to the faiss index. raw_params has already been
 // filtered by FaissConfig::CaptureRawJson to exclude keys owned by Knowhere's own
 // config layer (fields declared via KNOWHERE_CONFIG_DECLARE_FIELD). We pre-validate
@@ -81,8 +111,32 @@ template <typename IndexT>
 Status
 apply_impl(IndexT* index, const Json& raw_params, std::string* err_msg) {
     ::faiss::ParameterSpace ps;
+
+    // Adapter-owned params first. No binary index family has them.
+    if constexpr (std::is_same_v<IndexT, ::faiss::Index>) {
+        for (const auto& param : kAdapterOwnedBuildParams) {
+            if (!param.supported(index)) {
+                continue;
+            }
+            try {
+                ps.set_index_parameter(index, param.name, param.value);
+            } catch (const ::faiss::FaissException& e) {
+                if (err_msg) {
+                    *err_msg = std::string("faiss rejected param '") + param.name + "': " + e.what();
+                }
+                return Status::invalid_args;
+            }
+        }
+    }
+
     for (auto it = raw_params.begin(); it != raw_params.end(); ++it) {
         const std::string& key = it.key();
+        if (is_adapter_owned_build_param(key)) {
+            if (err_msg) {
+                *err_msg = "faiss vanilla: build param '" + key + "' is set by this adapter and cannot be overridden";
+            }
+            return Status::invalid_args;
+        }
         if (!::faiss::cppcontrib::knowhere::is_supported_build_param(key)) {
             if (err_msg) {
                 *err_msg = "faiss vanilla: build param '" + key + "' is not recognized";

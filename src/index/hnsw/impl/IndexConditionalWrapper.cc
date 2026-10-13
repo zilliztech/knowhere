@@ -101,7 +101,7 @@ WhetherPerformBruteForceRangeSearch(const faiss::Index* index, const FaissHnswCo
 //    index was trained with the refine.
 std::tuple<std::unique_ptr<faiss::Index>, bool>
 create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw_cfg, const bool whether_bf_search,
-                                const bool whether_to_enable_refine) {
+                                const bool whether_to_enable_refine, const SearchParametersHNSWWrapper* search_params) {
     const bool is_cosine = IsMetricType(hnsw_cfg.metric_type.value(), knowhere::metric::COSINE);
 
     // check if we have a refine available.
@@ -129,7 +129,8 @@ create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw
             base_wrapper = std::make_unique<knowhere::IndexBruteForceWrapper>(index_hnsw);
         } else {
             // use hnsw-search wrapper
-            base_wrapper = std::make_unique<knowhere::IndexHNSWWrapper>(index_hnsw);
+            base_wrapper = search_params ? search_params->create_hnsw_wrapper(index_hnsw)
+                                         : std::make_unique<knowhere::IndexHNSWWrapper>(index_hnsw);
         }
 
         // check if a user wants a refined result
@@ -201,7 +202,8 @@ create_conditional_hnsw_wrapper(faiss::Index* index, const FaissHnswConfig& hnsw
             base_wrapper = std::make_unique<knowhere::IndexBruteForceWrapper>(index_hnsw);
         } else {
             // use hnsw-search wrapper
-            base_wrapper = std::make_unique<knowhere::IndexHNSWWrapper>(index_hnsw);
+            base_wrapper = search_params ? search_params->create_hnsw_wrapper(index_hnsw)
+                                         : std::make_unique<knowhere::IndexHNSWWrapper>(index_hnsw);
         }
 
         return {std::move(base_wrapper), false};
