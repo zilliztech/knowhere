@@ -618,6 +618,17 @@ class SingleThreaded {
     int omp_;
 };
 
+// faiss's BLAS kernels return before their result handler initializes the
+// output when the base is empty, since BLAS rejects empty matrices, so a batch
+// on that path would leave every slot as the caller left it. An empty base is
+// therefore answered here as a pairwise search answers it: id -1 and the
+// metric's worst distance in every slot.
+void
+WriteEmpty(knowhere_search_result* result, uint64_t count, float worst) {
+    std::fill_n(result->ids, count, int64_t{-1});
+    std::fill_n(result->distances, count, worst);
+}
+
 }  // namespace
 
 int32_t
@@ -630,7 +641,7 @@ knowhere_bruteforce_batched(const knowhere_vectors* base, const knowhere_vectors
                 "batched brute force takes FP32 base and queries");
         Require(base->dimensions == queries->dimensions, "query dimensions differ from base dimensions");
         auto json = Parameters(parameters);
-        SearchParameters(json, queries->rows, result);
+        const uint64_t count = SearchParameters(json, queries->rows, result);
         Require(json.contains(knowhere::meta::METRIC_TYPE) && json.at(knowhere::meta::METRIC_TYPE).is_string(),
                 "parameters must name metric_type");
         const std::string metric = json.at(knowhere::meta::METRIC_TYPE).get<std::string>();
@@ -647,6 +658,10 @@ knowhere_bruteforce_batched(const knowhere_vectors* base, const knowhere_vectors
         const auto k = static_cast<size_t>(result->top_k);
         const auto* xb = static_cast<const float*>(base->data);
         const auto* xq = static_cast<const float*>(queries->data);
+        if (nb == 0) {
+            WriteEmpty(result, count, l2 ? std::numeric_limits<float>::max() : std::numeric_limits<float>::lowest());
+            return;
+        }
         SingleThreaded single;
         if (l2) {
             faiss::cppcontrib::knowhere::knn_L2sqr(xq, xb, d, nq, nb, k, result->distances, result->ids, nullptr,
@@ -709,10 +724,7 @@ knowhere_bruteforce_batched_l2_rescored(const knowhere_vectors* base, const know
         const auto* xb = static_cast<const float*>(base->data);
         const auto* xq = static_cast<const float*>(queries->data);
         if (nb == 0) {
-            // faiss's BLAS path returns before it initializes the output when the
-            // base is empty, so write the -1 slots of a pairwise search here.
-            std::fill_n(result->ids, count, int64_t{-1});
-            std::fill_n(result->distances, count, std::numeric_limits<float>::max());
+            WriteEmpty(result, count, std::numeric_limits<float>::max());
             std::fill_n(rescore->counts, nq, 0);
             return;
         }

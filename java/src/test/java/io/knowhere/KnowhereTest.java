@@ -221,6 +221,25 @@ public class KnowhereTest {
     }
 
     @Test
+    public void batchedBruteForceWritesMinusOneForAnEmptyBase() {
+        // Twenty queries take faiss's BLAS path, which writes nothing itself for an empty base.
+        int queries = 20;
+        int topK = 2;
+        ByteBuffer query = randomFloats(new Random(3), queries * 2);
+        for (String metric : new String[] {"L2", "IP", "COSINE"}) {
+            ByteBuffer ids = bytes(queries * topK * Long.BYTES);
+            for (int i = 0; i < queries * topK; i++) {
+                ids.putLong(i * Long.BYTES, 777);
+            }
+            Knowhere.bruteForceBatched(DType.FLOAT32, bytes(0), 0, query, queries, 2, topK,
+                    ids, bytes(queries * topK * Float.BYTES), "{\"metric_type\":\"" + metric + "\"}");
+            for (int i = 0; i < queries * topK; i++) {
+                assertEquals(metric + " slot " + i, -1, ids.getLong(i * Long.BYTES));
+            }
+        }
+    }
+
+    @Test
     public void batchedL2RescoringComputesTheCandidatesDirectly() {
         // Far from the origin and close together: rows at squared distances 25, 25 and 0.25 from
         // every query. Twenty queries take faiss's BLAS path, whose estimates cannot separate these

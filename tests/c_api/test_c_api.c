@@ -345,6 +345,36 @@ check_batched(const char* metric, int64_t nq, int64_t nb, int64_t dim, int64_t k
     free(base_data);
 }
 
+/* An empty base gives -1 in every slot. From 20 queries faiss takes its BLAS
+ * path, which returns before it writes anything for an empty base: for IP and
+ * COSINE at every top_k, for L2 above top_k 1.
+ */
+static void
+check_empty_base(const char* metric, int64_t nq, int64_t k) {
+    float* query_data = malloc((size_t)(nq * 2) * sizeof(float));
+    int64_t* ids = malloc((size_t)(nq * k) * sizeof(int64_t));
+    float* distances = malloc((size_t)(nq * k) * sizeof(float));
+    CHECK(query_data && ids && distances);
+    fill(query_data, nq * 2, 5u);
+    for (int64_t i = 0; i < nq * k; i++) {
+        ids[i] = 777;
+        distances[i] = 7.0f;
+    }
+    knowhere_vectors base = {query_data, 0, 0, 2, KNOWHERE_FP32};
+    knowhere_vectors query = {query_data, (uint64_t)(nq * 2) * sizeof(float), nq, 2, KNOWHERE_FP32};
+    knowhere_search_result result = {ids, (uint64_t)(nq * k) * sizeof(int64_t), distances,
+                                     (uint64_t)(nq * k) * sizeof(float), k};
+    char parameters[64];
+    snprintf(parameters, sizeof(parameters), "{\"metric_type\":\"%s\"}", metric);
+    OK(knowhere_bruteforce_batched(&base, &query, &result, parameters));
+    for (int64_t i = 0; i < nq * k; i++) {
+        CHECK(ids[i] == -1);
+    }
+    free(distances);
+    free(ids);
+    free(query_data);
+}
+
 static void
 test_bruteforce_batched(void) {
     /* Above and below faiss's BLAS threshold, and the other two metrics; the
@@ -354,6 +384,11 @@ test_bruteforce_batched(void) {
     check_batched("L2", 3, 300, 24, 5);
     check_batched("IP", 40, 200, 24, 4);
     check_batched("COSINE", 40, 200, 24, 4);
+    check_empty_base("L2", 20, 2);
+    check_empty_base("L2", 20, 100);
+    check_empty_base("IP", 20, 1);
+    check_empty_base("COSINE", 20, 2);
+    check_empty_base("L2", 3, 2);
 
     float data[4] = {0, 0, 3, 4};
     float origin[2] = {0, 0};

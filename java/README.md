@@ -312,7 +312,8 @@ once an index loaded from it, chunk bounds, double close, concurrent close and
 thread pool sizing before and after searches. The batched brute force is
 compared with the per-query entry for L2 above and below the BLAS threshold, IP
 and COSINE, with six concurrent callers against one serial answer, and checked
-for the `-1` tail, zero queries and rejected metric, dtype and conflicting `k`.
+for the `-1` tail, an empty base with 20 queries for each metric, zero queries
+and rejected metric, dtype and conflicting `k`.
 The L2 rescoring entry is checked on rows far from the origin and close
 together, where every direct distance must match a pairwise Σ(x−y)² to 1e-6,
 for the computed prefix and counts at each kind of cutoff including the `-1`
