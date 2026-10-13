@@ -189,10 +189,34 @@ Knowhere.bruteForceBatched(DType.FLOAT32, base, baseRows, queries, queryRows,
 `bruteForceBatched` accepts FP32 base and queries with `metric_type` L2, IP or
 COSINE; other dtypes and metrics stay with `bruteForce`. Its IDs, distances and
 `-1` tail follow `bruteForce`. The results agree with `bruteForce` up to float
-rounding: for L2 the BLAS path computes ‖x‖² + ‖y‖² − 2x·y, so distances may
-differ in the last bits and exact ties may change order. The C entry is
-`knowhere_bruteforce_batched`; the address build reaches the existing
+rounding, which for L2 can be large: the BLAS path computes ‖x‖² + ‖y‖² − 2x·y
+in float32, whose error grows with the squared norms rather than with the
+distance. Near the origin distances differ in the last bits and exact ties may
+change order; far from it, rows close to each other can be ranked wrongly. The
+C entry is `knowhere_bruteforce_batched`; the address build reaches the existing
 `knowhere_index_build`, whose `knowhere_vectors` already carries a 64-bit length.
+
+`bruteForceBatchedL2Rescored` runs the L2 form of `bruteForceBatched`, whose IDs
+and estimated distances it writes unchanged, and then computes the candidates
+directly:
+
+```java
+// cutoffs: one float32 per query, or null; direct: float32 slots laid out like
+// the distances; counts: one int32 per query.
+Knowhere.bruteForceBatchedL2Rescored(DType.FLOAT32, base, baseRows, queries, queryRows,
+        dimension, topK, cutoffs, ids, distances, direct, counts, parameters);
+```
+
+For each query the candidates are taken in order while their estimate is below
+the query's cutoff, and each receives Σ(x−y)² from `fvec_L2sqr` in its slot of
+`direct`. The pass stops at the first estimate not below the cutoff or at the
+first `-1` ID, `counts` receives how many slots were computed, and the other
+direct slots keep their contents. A cutoff may be infinite but not NaN; null
+cutoffs compute every candidate. The pass does not change which rows are
+candidates: proving that no other row belongs in the top `topK`, or searching
+again with `bruteForce`, remains the caller's. The C entry is
+`knowhere_bruteforce_batched_l2_rescored`, with the cutoff, direct and count
+buffers in a `knowhere_rescore`.
 
 ## Memory, lifecycle and errors
 
@@ -233,9 +257,9 @@ differ in the last bits and exact ties may change order. The C entry is
   argument/state errors use the standard exceptions. C++ exceptions cannot
   cross either native boundary. An error does not produce an empty success.
 - ABI version 1 describes the C interface. The thread pool functions, the
-  batched brute-force entry and the address build were added to it without
-  changing any existing function, so a library built from an earlier revision
-  lacks their symbols while still reporting ABI 1. Maven/API version and
+  batched brute-force entry, the address build and the L2 rescoring entry were
+  added to it without changing any existing function, so a library built from
+  an earlier revision lacks their symbols while still reporting ABI 1. Maven/API version and
   Knowhere index format version are independent. Supply the original compatible index format
   version when restoring saved index blobs; the current version is not evidence
   that every historical Milvus index format is readable.
@@ -275,7 +299,9 @@ count becomes 1, because the bundled OpenBLAS is a pthreads build in which even
 `bruteForce` and index searches call faiss with one query at a time, so the
 threshold does not affect them; a BLAS-heavy build running at the same time,
 such as IVF training, uses single-threaded BLAS for that duration. On macOS the
-OpenBLAS thread control compiles out.
+OpenBLAS thread control compiles out. `bruteForceBatchedL2Rescored` runs its
+batch the same way and its direct pass after it on the calling thread, once the
+two settings are restored.
 
 ## Verification coverage
 
@@ -286,8 +312,13 @@ once an index loaded from it, chunk bounds, double close, concurrent close and
 thread pool sizing before and after searches. The batched brute force is
 compared with the per-query entry for L2 above and below the BLAS threshold, IP
 and COSINE, with six concurrent callers against one serial answer, and checked
-for the `-1` tail, zero queries and rejected metric, dtype and conflicting `k`;
-the address build's argument checks are covered, while a region larger than one
+for the `-1` tail, zero queries and rejected metric, dtype and conflicting `k`.
+The L2 rescoring entry is checked on rows far from the origin and close
+together, where every direct distance must match a pairwise Σ(x−y)² to 1e-6,
+for the computed prefix and counts at each kind of cutoff including the `-1`
+tail, without cutoffs, with top-k 1 and an empty base, and for rejected
+metrics, dtypes, NaN cutoffs and short buffers; the address build's argument
+checks are covered, while a region larger than one
 `ByteBuffer` is exercised by the consumers' integration runs, since a Java test
 has no portable way to obtain a direct buffer's address.
 DiskANN has a separate local-file test when enabled. It checks recall against

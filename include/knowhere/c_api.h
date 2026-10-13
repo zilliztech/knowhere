@@ -202,6 +202,39 @@ KNOWHERE_C_API int32_t
 knowhere_bruteforce_batched(const knowhere_vectors* base, const knowhere_vectors* queries,
                             knowhere_search_result* result, const char* parameters);
 
+/* Caller-owned buffers of knowhere_bruteforce_batched_l2_rescored, beside its
+ * knowhere_search_result. cutoffs holds one float per query, or is null. direct
+ * has the result's nq * top_k slots in the same row-major order as distances.
+ * counts holds one int32 per query. All three require 4-byte alignment.
+ */
+typedef struct knowhere_rescore {
+    const float* cutoffs;
+    uint64_t cutoffs_bytes;
+    float* direct;
+    uint64_t direct_bytes;
+    int32_t* counts;
+    uint64_t counts_bytes;
+} knowhere_rescore;
+
+/* knowhere_bruteforce_batched for metric_type L2, followed by a direct pass over
+ * its candidates. ids and distances are written as there: each query's top_k
+ * candidates by estimated distance, ascending. On the BLAS path the estimate is
+ * ||x||^2 + ||y||^2 - 2 x.y in float32, whose error grows with the squared norms
+ * rather than with the distance. Then, for each query, the candidates are taken
+ * from the first slot while their estimate is below the query's cutoff, and each
+ * receives fvec_L2sqr's sum of (x - y)^2 in its direct slot. The pass stops at
+ * the first estimate not below the cutoff or at the first -1 id. counts receives
+ * how many slots were computed; the other direct slots keep their contents. A
+ * null cutoffs computes every candidate. A cutoff may be infinite but not NaN,
+ * and top_k must not exceed INT32_MAX. The batch runs under the thread rules and
+ * process settings of knowhere_bruteforce_batched, and the direct pass after it
+ * on the calling thread.
+ */
+KNOWHERE_C_API int32_t
+knowhere_bruteforce_batched_l2_rescored(const knowhere_vectors* base, const knowhere_vectors* queries,
+                                        knowhere_search_result* result, knowhere_rescore* rescore,
+                                        const char* parameters);
+
 KNOWHERE_C_API int32_t
 knowhere_binary_set_create(knowhere_binary_set_handle* output);
 KNOWHERE_C_API int32_t

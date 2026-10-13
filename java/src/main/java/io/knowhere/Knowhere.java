@@ -102,4 +102,32 @@ public final class Knowhere {
                 NativeBuffers.region(outputDistances, true, true),
                 Objects.requireNonNull(parameters, "parameters"));
     }
+
+    /**
+     * {@link #bruteForceBatched} for metric_type L2, followed by a direct pass over its candidates.
+     * IDs and estimated distances are written as there, each query's topK ascending by estimate; on
+     * faiss's BLAS path the estimate carries an error that grows with the squared norms rather than
+     * with the distance. Then, for each query, the candidates are taken from the first slot while
+     * their estimate is below the query's cutoff, and each receives its squared L2 distance computed
+     * pairwise in the same slot of {@code outputDirect} (float32, laid out like the distances). The
+     * pass stops at the first estimate not below the cutoff or at the first -1 ID;
+     * {@code outputCounts} receives one int32 per query with the number of slots computed, and the
+     * other direct slots keep their contents. {@code cutoffs} holds one float32 per query, may be
+     * infinite but not NaN, and may be null to compute every candidate. Buffers are borrowed until
+     * return; positions and limits remain unchanged. Threads follow {@link #bruteForceBatched}.
+     */
+    public static void bruteForceBatchedL2Rescored(DType dtype, ByteBuffer base, long baseRows,
+            ByteBuffer queries, long queryRows, int dimension, int topK, ByteBuffer cutoffs,
+            ByteBuffer outputIds, ByteBuffer outputDistances, ByteBuffer outputDirect, ByteBuffer outputCounts,
+            String parameters) {
+        NativeBindings.bruteForceBatchedL2Rescored(Objects.requireNonNull(dtype, "dtype").code,
+                NativeBuffers.region(base, false, true), baseRows,
+                NativeBuffers.region(queries, false, true), queryRows, dimension, topK,
+                cutoffs == null ? null : NativeBuffers.region(cutoffs, false, true),
+                NativeBuffers.region(outputIds, true, true),
+                NativeBuffers.region(outputDistances, true, true),
+                NativeBuffers.region(outputDirect, true, true),
+                NativeBuffers.region(outputCounts, true, true),
+                Objects.requireNonNull(parameters, "parameters"));
+    }
 }

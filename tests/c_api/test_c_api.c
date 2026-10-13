@@ -8,6 +8,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -383,6 +384,164 @@ test_bruteforce_batched(void) {
           KNOWHERE_INVALID_ARGUMENT);
 }
 
+/* The reference for the direct pass: sum of (x - y)^2 in double. */
+static double
+l2sqr(const float* x, const float* y, int64_t dim) {
+    double sum = 0;
+    for (int64_t i = 0; i < dim; i++) {
+        double difference = (double)x[i] - (double)y[i];
+        sum += difference * difference;
+    }
+    return sum;
+}
+
+/* Far from the origin and close together: 16 dimensions at 1e6, base rows at
+ * squared distances 25, 25 and 0.25 from every query. Twenty queries take
+ * faiss's BLAS path, whose estimates cannot separate these rows; whichever rows
+ * it returns, their direct distances are exact.
+ */
+static void
+test_rescored_far_rows(void) {
+    enum { DIM = 16, ROWS = 3, QUERIES = 20, K = 2 };
+    static const float offsets[ROWS] = {1.25f, -1.25f, 0.125f};
+    float base_data[ROWS * DIM];
+    float query_data[QUERIES * DIM];
+    for (int i = 0; i < ROWS * DIM; i++) {
+        base_data[i] = 1e6f + offsets[i / DIM];
+    }
+    for (int i = 0; i < QUERIES * DIM; i++) {
+        query_data[i] = 1e6f;
+    }
+    int64_t ids[QUERIES * K], batch_ids[QUERIES * K];
+    float distances[QUERIES * K], batch_distances[QUERIES * K], direct[QUERIES * K];
+    int32_t counts[QUERIES];
+    knowhere_vectors base = {base_data, sizeof(base_data), ROWS, DIM, KNOWHERE_FP32};
+    knowhere_vectors query = {query_data, sizeof(query_data), QUERIES, DIM, KNOWHERE_FP32};
+    knowhere_search_result result = {ids, sizeof(ids), distances, sizeof(distances), K};
+    knowhere_search_result batch = {batch_ids, sizeof(batch_ids), batch_distances, sizeof(batch_distances), K};
+    /* A null cutoffs computes every candidate. */
+    knowhere_rescore rescore = {NULL, 0, direct, sizeof(direct), counts, sizeof(counts)};
+    OK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, &rescore, "{\"metric_type\":\"L2\"}"));
+    OK(knowhere_bruteforce_batched(&base, &query, &batch, "{\"metric_type\":\"L2\"}"));
+    /* The candidates and their estimates are the batched entry's. */
+    CHECK(memcmp(ids, batch_ids, sizeof(ids)) == 0);
+    CHECK(memcmp(distances, batch_distances, sizeof(distances)) == 0);
+    for (int q = 0; q < QUERIES; q++) {
+        CHECK(counts[q] == K);
+        for (int i = 0; i < K; i++) {
+            int64_t id = ids[q * K + i];
+            CHECK(id >= 0 && id < ROWS);
+            double expected = l2sqr(query_data + q * DIM, base_data + id * DIM, DIM);
+            double error = direct[q * K + i] - expected;
+            CHECK((error < 0 ? -error : error) <= 1e-6 * expected);
+        }
+    }
+}
+
+/* Small integers keep the estimates exact: four rows at squared distances 9,
+ * 16, 1 and 4 from every query, and top_k 6 leaves two -1 slots. Each query's
+ * cutoff selects a different prefix of the candidates 1, 4, 9, 16.
+ */
+static void
+test_rescored_cutoffs(void) {
+    enum { DIM = 2, ROWS = 4, QUERIES = 22, K = 6, CUTOFFS = 11 };
+    float base_data[ROWS * DIM] = {1, 5, 5, 2, 2, 2, 1, 4};
+    float query_data[QUERIES * DIM];
+    for (int q = 0; q < QUERIES; q++) {
+        query_data[q * DIM] = 1;
+        query_data[q * DIM + 1] = 2;
+    }
+    static const float choices[CUTOFFS] = {-INFINITY, 0, 1, 1.5f, 4, 4.5f, 9, 10, 16, 16.5f, INFINITY};
+    static const int32_t prefixes[CUTOFFS] = {0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4};
+    static const int64_t order[ROWS] = {2, 3, 0, 1};
+    static const float exact[ROWS] = {1, 4, 9, 16};
+    float cutoffs[QUERIES];
+    for (int q = 0; q < QUERIES; q++) {
+        cutoffs[q] = choices[q % CUTOFFS];
+    }
+    int64_t ids[QUERIES * K];
+    float distances[QUERIES * K], direct[QUERIES * K];
+    int32_t counts[QUERIES];
+    for (int i = 0; i < QUERIES * K; i++) {
+        direct[i] = -7;
+    }
+    knowhere_vectors base = {base_data, sizeof(base_data), ROWS, DIM, KNOWHERE_FP32};
+    knowhere_vectors query = {query_data, sizeof(query_data), QUERIES, DIM, KNOWHERE_FP32};
+    knowhere_search_result result = {ids, sizeof(ids), distances, sizeof(distances), K};
+    knowhere_rescore rescore = {cutoffs, sizeof(cutoffs), direct, sizeof(direct), counts, sizeof(counts)};
+    const char* l2 = "{\"metric_type\":\"L2\"}";
+    OK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, &rescore, l2));
+    for (int q = 0; q < QUERIES; q++) {
+        CHECK(counts[q] == prefixes[q % CUTOFFS]);
+        for (int i = 0; i < K; i++) {
+            CHECK(ids[q * K + i] == (i < ROWS ? order[i] : -1));
+            if (i < ROWS) {
+                CHECK(distances[q * K + i] == exact[i]);
+            }
+            /* Only the prefix is computed; the other slots keep their contents. */
+            CHECK(direct[q * K + i] == (i < counts[q] ? exact[i] : -7.0f));
+        }
+    }
+    /* Without cutoffs every candidate is computed, up to the -1 slots. */
+    rescore.cutoffs = NULL;
+    OK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, &rescore, l2));
+    for (int q = 0; q < QUERIES; q++) {
+        CHECK(counts[q] == ROWS);
+        for (int i = 0; i < K; i++) {
+            CHECK(direct[q * K + i] == (i < ROWS ? exact[i] : -7.0f));
+        }
+    }
+    /* top_k 1 takes faiss's nearest-neighbor path instead of the BLAS one. */
+    knowhere_search_result nearest = {ids, sizeof(int64_t) * QUERIES, distances, sizeof(float) * QUERIES, 1};
+    OK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &nearest, &rescore, l2));
+    for (int q = 0; q < QUERIES; q++) {
+        CHECK(ids[q] == order[0] && distances[q] == exact[0] && direct[q] == exact[0] && counts[q] == 1);
+    }
+    /* An empty base gives only -1 slots, which faiss's BLAS path leaves unwritten. */
+    base.rows = 0;
+    OK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, &rescore, l2));
+    for (int q = 0; q < QUERIES; q++) {
+        CHECK(counts[q] == 0);
+        for (int i = 0; i < K; i++) {
+            CHECK(ids[q * K + i] == -1);
+        }
+    }
+    base.rows = ROWS;
+    rescore.cutoffs = cutoffs;
+    /* Zero queries validate and leave the outputs as they were. */
+    query.rows = 0;
+    counts[0] = -9;
+    OK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, &rescore, l2));
+    CHECK(counts[0] == -9);
+    query.rows = QUERIES;
+    CHECK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, &rescore, "{\"metric_type\":\"IP\"}") ==
+          KNOWHERE_INVALID_ARGUMENT);
+    CHECK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, &rescore, "{\"metric_type\":\"COSINE\"}") ==
+          KNOWHERE_INVALID_ARGUMENT);
+    CHECK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, &rescore, "{}") == KNOWHERE_INVALID_ARGUMENT);
+    CHECK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, &rescore,
+                                                  "{\"metric_type\":\"L2\",\"k\":1}") == KNOWHERE_INVALID_ARGUMENT);
+    CHECK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, NULL, l2) == KNOWHERE_INVALID_ARGUMENT);
+    uint16_t half[4] = {0, 0, 0x4200, 0x4400};
+    knowhere_vectors half_base = {half, sizeof(half), 2, 2, KNOWHERE_FP16};
+    knowhere_vectors half_query = {half, 4, 1, 2, KNOWHERE_FP16};
+    CHECK(knowhere_bruteforce_batched_l2_rescored(&half_base, &half_query, &result, &rescore, l2) ==
+          KNOWHERE_INVALID_ARGUMENT);
+    /* Each buffer must cover every query, and a cutoff must not be NaN. */
+    rescore.cutoffs_bytes -= 1;
+    CHECK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, &rescore, l2) == KNOWHERE_INVALID_ARGUMENT);
+    rescore.cutoffs_bytes += 1;
+    rescore.direct_bytes -= 1;
+    CHECK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, &rescore, l2) == KNOWHERE_INVALID_ARGUMENT);
+    rescore.direct_bytes += 1;
+    rescore.counts_bytes -= 1;
+    CHECK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, &rescore, l2) == KNOWHERE_INVALID_ARGUMENT);
+    rescore.counts_bytes += 1;
+    cutoffs[QUERIES - 1] = NAN;
+    CHECK(knowhere_bruteforce_batched_l2_rescored(&base, &query, &result, &rescore, l2) == KNOWHERE_INVALID_ARGUMENT);
+    CHECK(strstr(knowhere_last_error(), "NaN") != NULL);
+}
+
 int
 main(void) {
     float fp32[] = {0, 0, 1, 0, 0, 2};
@@ -398,6 +557,8 @@ main(void) {
     test_invalid();
     test_failed_initialization();
     test_bruteforce_batched();
+    test_rescored_far_rows();
+    test_rescored_cutoffs();
     test_typed(KNOWHERE_FP32, fp32, sizeof(fp32), fp32, 8, 2, "FLAT", "L2", 0);
     test_typed(KNOWHERE_FP16, fp16, sizeof(fp16), fp16, 4, 2, "FLAT", "L2", 0);
     test_typed(KNOWHERE_BF16, bf16, sizeof(bf16), bf16, 4, 2, "FLAT", "L2", 0);

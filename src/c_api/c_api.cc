@@ -13,6 +13,7 @@
 
 #include <omp.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -666,6 +667,79 @@ knowhere_bruteforce_batched(const knowhere_vectors* base, const knowhere_vectors
             }
             faiss::cppcontrib::knowhere::knn_cosine(normalized.get(), xb, inverse_norms.data(), d, nq, nb, k,
                                                     result->distances, result->ids, nullptr);
+        }
+    });
+}
+
+int32_t
+knowhere_bruteforce_batched_l2_rescored(const knowhere_vectors* base, const knowhere_vectors* queries,
+                                        knowhere_search_result* result, knowhere_rescore* rescore,
+                                        const char* parameters) {
+    return Boundary([&] {
+        CheckVectors(base);
+        CheckVectors(queries);
+        Require(base->dtype == KNOWHERE_FP32 && queries->dtype == KNOWHERE_FP32,
+                "batched L2 rescoring takes FP32 base and queries");
+        Require(base->dimensions == queries->dimensions, "query dimensions differ from base dimensions");
+        auto json = Parameters(parameters);
+        const uint64_t count = SearchParameters(json, queries->rows, result);
+        Require(json.contains(knowhere::meta::METRIC_TYPE) && json.at(knowhere::meta::METRIC_TYPE).is_string(),
+                "parameters must name metric_type");
+        Require(knowhere::IsMetricType(json.at(knowhere::meta::METRIC_TYPE).get<std::string>(), knowhere::metric::L2),
+                "batched L2 rescoring takes metric_type L2");
+        Require(result->top_k <= std::numeric_limits<int32_t>::max(), "top_k must fit the int32 counts");
+        Require(rescore != nullptr, "rescore buffers must not be null");
+        if (rescore->cutoffs != nullptr) {
+            CheckBuffer(rescore->cutoffs, rescore->cutoffs_bytes, CheckedBytes(queries->rows, sizeof(float)),
+                        alignof(float));
+            for (int64_t row = 0; row < queries->rows; ++row) {
+                Require(!std::isnan(rescore->cutoffs[row]), "cutoffs must not be NaN");
+            }
+        }
+        CheckBuffer(rescore->direct, rescore->direct_bytes, CheckedBytes(count, sizeof(float)), alignof(float));
+        CheckBuffer(rescore->counts, rescore->counts_bytes, CheckedBytes(queries->rows, sizeof(int32_t)),
+                    alignof(int32_t));
+        if (queries->rows == 0) {
+            return;
+        }
+        const auto d = static_cast<size_t>(base->dimensions);
+        const auto nb = static_cast<size_t>(base->rows);
+        const auto nq = static_cast<size_t>(queries->rows);
+        const auto k = static_cast<size_t>(result->top_k);
+        const auto* xb = static_cast<const float*>(base->data);
+        const auto* xq = static_cast<const float*>(queries->data);
+        if (nb == 0) {
+            // faiss's BLAS path returns before it initializes the output when the
+            // base is empty, so write the -1 slots of a pairwise search here.
+            std::fill_n(result->ids, count, int64_t{-1});
+            std::fill_n(result->distances, count, std::numeric_limits<float>::max());
+            std::fill_n(rescore->counts, nq, 0);
+            return;
+        }
+        {
+            SingleThreaded single;
+            faiss::cppcontrib::knowhere::knn_L2sqr(xq, xb, d, nq, nb, k, result->distances, result->ids, nullptr,
+                                                   nullptr);
+        }
+        // The direct pass uses neither BLAS nor OpenMP, so the process settings
+        // are already restored. Each query's candidates ascend by estimate: the
+        // ones below its cutoff form a prefix, and a -1 id, whose estimate
+        // FLT_MAX is still below an infinite cutoff, ends the base rows.
+        const float* cutoffs = rescore->cutoffs;
+        for (size_t row = 0; row < nq; ++row) {
+            const float* query = xq + row * d;
+            const size_t first = row * k;
+            size_t slot = 0;
+            for (; slot < k; ++slot) {
+                const int64_t id = result->ids[first + slot];
+                if (id < 0 || (cutoffs != nullptr && !(result->distances[first + slot] < cutoffs[row]))) {
+                    break;
+                }
+                Require(static_cast<uint64_t>(id) < nb, "batched search returned an id outside the base");
+                rescore->direct[first + slot] =
+                    faiss::cppcontrib::knowhere::fvec_L2sqr(query, xb + static_cast<size_t>(id) * d, d);
+            }
+            rescore->counts[row] = static_cast<int32_t>(slot);
         }
     });
 }

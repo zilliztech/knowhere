@@ -202,6 +202,23 @@ Result(JNIEnv* env, jobject ids, jobject distances, jint top_k) {
             distance_region.bytes, top_k};
 }
 
+knowhere_rescore
+Rescore(JNIEnv* env, jobject cutoffs, jobject direct, jobject counts) {
+    knowhere_rescore rescore{};
+    if (cutoffs != nullptr) {
+        Region cutoff_region(env, cutoffs);
+        rescore.cutoffs = static_cast<const float*>(cutoff_region.data);
+        rescore.cutoffs_bytes = cutoff_region.bytes;
+    }
+    Region direct_region(env, direct, true);
+    Region count_region(env, counts, true);
+    rescore.direct = static_cast<float*>(direct_region.data);
+    rescore.direct_bytes = direct_region.bytes;
+    rescore.counts = static_cast<int32_t*>(count_region.data);
+    rescore.counts_bytes = count_region.bytes;
+    return rescore;
+}
+
 uint64_t
 Unsigned(jlong value) {
     if (value < 0) {
@@ -379,6 +396,22 @@ Java_io_knowhere_NativeBindings_bruteForceBatched(JNIEnv* env, jclass, jint dtyp
         auto result = Result(env, ids, distances, top_k);
         Utf8 config(env, parameters);
         CheckStatus(env, knowhere_bruteforce_batched(&base, &queries, &result, config.get()));
+        return 0;
+    });
+}
+JNIEXPORT void JNICALL
+Java_io_knowhere_NativeBindings_bruteForceBatchedL2Rescored(JNIEnv* env, jclass, jint dtype, jobject base_data,
+                                                            jlong base_rows, jobject query_data, jlong query_rows,
+                                                            jint dimension, jint top_k, jobject cutoffs, jobject ids,
+                                                            jobject distances, jobject direct, jobject counts,
+                                                            jstring parameters) {
+    Call(env, 0, [&] {
+        auto base = Vectors(env, base_data, base_rows, dimension, dtype);
+        auto queries = Vectors(env, query_data, query_rows, dimension, dtype);
+        auto result = Result(env, ids, distances, top_k);
+        auto rescore = Rescore(env, cutoffs, direct, counts);
+        Utf8 config(env, parameters);
+        CheckStatus(env, knowhere_bruteforce_batched_l2_rescored(&base, &queries, &result, &rescore, config.get()));
         return 0;
     });
 }

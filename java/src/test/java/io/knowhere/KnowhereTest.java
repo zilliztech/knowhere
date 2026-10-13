@@ -221,6 +221,154 @@ public class KnowhereTest {
     }
 
     @Test
+    public void batchedL2RescoringComputesTheCandidatesDirectly() {
+        // Far from the origin and close together: rows at squared distances 25, 25 and 0.25 from
+        // every query. Twenty queries take faiss's BLAS path, whose estimates cannot separate these
+        // rows; whichever rows it returns, their direct distances are exact.
+        int rows = 3;
+        int queries = 20;
+        int dimension = 16;
+        int topK = 2;
+        float[] offsets = {1.25f, -1.25f, 0.125f};
+        ByteBuffer base = bytes(rows * dimension * Float.BYTES);
+        for (int i = 0; i < rows * dimension; i++) {
+            base.putFloat(i * Float.BYTES, 1e6f + offsets[i / dimension]);
+        }
+        ByteBuffer query = bytes(queries * dimension * Float.BYTES);
+        for (int i = 0; i < queries * dimension; i++) {
+            query.putFloat(i * Float.BYTES, 1e6f);
+        }
+        ByteBuffer ids = bytes(queries * topK * Long.BYTES);
+        ByteBuffer distances = bytes(queries * topK * Float.BYTES);
+        ByteBuffer direct = bytes(queries * topK * Float.BYTES);
+        ByteBuffer counts = bytes(queries * Integer.BYTES);
+        Knowhere.bruteForceBatchedL2Rescored(DType.FLOAT32, base, rows, query, queries, dimension, topK,
+                null, ids, distances, direct, counts, L2);
+        // The candidates and their estimates are the batched entry's.
+        ByteBuffer batchedIds = bytes(queries * topK * Long.BYTES);
+        ByteBuffer batchedDistances = bytes(queries * topK * Float.BYTES);
+        Knowhere.bruteForceBatched(DType.FLOAT32, base, rows, query, queries, dimension, topK,
+                batchedIds, batchedDistances, L2);
+        assertEquals(batchedIds, ids);
+        assertEquals(batchedDistances, distances);
+        for (int q = 0; q < queries; q++) {
+            assertEquals(topK, counts.getInt(q * Integer.BYTES));
+            for (int i = 0; i < topK; i++) {
+                long id = ids.getLong((q * topK + i) * Long.BYTES);
+                assertTrue("query " + q + " id " + id, id >= 0 && id < rows);
+                double expected = 0;
+                for (int j = 0; j < dimension; j++) {
+                    double difference = (double) query.getFloat((q * dimension + j) * Float.BYTES)
+                            - base.getFloat(((int) id * dimension + j) * Float.BYTES);
+                    expected += difference * difference;
+                }
+                assertEquals("query " + q, expected, direct.getFloat((q * topK + i) * Float.BYTES),
+                        1e-6 * expected);
+            }
+        }
+    }
+
+    @Test
+    public void batchedL2RescoringStopsAtTheCutoff() {
+        // Small integers keep the estimates exact: rows at squared distances 9, 16, 1 and 4 from
+        // every query, and topK 6 leaves two -1 slots. Each query's cutoff selects a different
+        // prefix of the candidates 1, 4, 9, 16.
+        float[] choices = {Float.NEGATIVE_INFINITY, 0, 1, 1.5f, 4, 4.5f, 9, 10, 16, 16.5f, Float.POSITIVE_INFINITY};
+        int[] prefixes = {0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4};
+        float[] exact = {1, 4, 9, 16};
+        int queries = 22;
+        int topK = 6;
+        ByteBuffer base = floats(1, 5, 5, 2, 2, 2, 1, 4);
+        ByteBuffer query = bytes(queries * 2 * Float.BYTES);
+        ByteBuffer cutoffs = bytes(queries * Float.BYTES);
+        for (int q = 0; q < queries; q++) {
+            query.putFloat(q * 2 * Float.BYTES, 1).putFloat((q * 2 + 1) * Float.BYTES, 2);
+            cutoffs.putFloat(q * Float.BYTES, choices[q % choices.length]);
+        }
+        ByteBuffer ids = bytes(queries * topK * Long.BYTES);
+        ByteBuffer distances = bytes(queries * topK * Float.BYTES);
+        ByteBuffer direct = bytes(queries * topK * Float.BYTES);
+        for (int i = 0; i < queries * topK; i++) {
+            direct.putFloat(i * Float.BYTES, -7);
+        }
+        ByteBuffer counts = bytes(queries * Integer.BYTES);
+        Knowhere.bruteForceBatchedL2Rescored(DType.FLOAT32, base, 4, query, queries, 2, topK,
+                cutoffs, ids, distances, direct, counts, L2);
+        for (int q = 0; q < queries; q++) {
+            int count = counts.getInt(q * Integer.BYTES);
+            assertEquals("query " + q, prefixes[q % choices.length], count);
+            for (int i = 0; i < topK; i++) {
+                // Only the prefix is computed; the other slots keep their contents.
+                assertEquals("query " + q + " slot " + i, i < count ? exact[i] : -7f,
+                        direct.getFloat((q * topK + i) * Float.BYTES), 0f);
+            }
+            assertEquals(-1, ids.getLong((q * topK + 4) * Long.BYTES));
+        }
+        // Without cutoffs every candidate is computed, up to the -1 slots.
+        Knowhere.bruteForceBatchedL2Rescored(DType.FLOAT32, base, 4, query, queries, 2, topK,
+                null, ids, distances, direct, counts, L2);
+        for (int q = 0; q < queries; q++) {
+            assertEquals(4, counts.getInt(q * Integer.BYTES));
+            for (int i = 0; i < topK; i++) {
+                assertEquals(i < 4 ? exact[i] : -7f, direct.getFloat((q * topK + i) * Float.BYTES), 0f);
+            }
+        }
+        // An empty base gives only -1 slots.
+        Knowhere.bruteForceBatchedL2Rescored(DType.FLOAT32, base, 0, query, queries, 2, topK,
+                null, ids, distances, direct, counts, L2);
+        for (int q = 0; q < queries; q++) {
+            assertEquals(0, counts.getInt(q * Integer.BYTES));
+            assertEquals(-1, ids.getLong(q * topK * Long.BYTES));
+        }
+        assertEquals(0, cutoffs.position());
+        Knowhere.bruteForceBatchedL2Rescored(DType.FLOAT32, base, 4, bytes(0), 0, 2, topK,
+                bytes(0), bytes(0), bytes(0), bytes(0), bytes(0), L2);
+    }
+
+    @Test
+    public void batchedL2RescoringTakesFloat32AndL2Only() {
+        for (final String metric : new String[] {"IP", "COSINE"}) {
+            assertThrows(KnowhereException.class, new ThrowingRunnable() {
+                public void run() {
+                    Knowhere.bruteForceBatchedL2Rescored(DType.FLOAT32, floats(0, 0), 1, floats(0, 0), 1, 2, 1,
+                            null, bytes(8), bytes(4), bytes(4), bytes(4), "{\"metric_type\":\"" + metric + "\"}");
+                }
+            });
+        }
+        assertThrows(KnowhereException.class, new ThrowingRunnable() {
+            public void run() {
+                Knowhere.bruteForceBatchedL2Rescored(DType.FLOAT16, bytes(4), 1, bytes(4), 1, 2, 1,
+                        null, bytes(8), bytes(4), bytes(4), bytes(4), L2);
+            }
+        });
+        assertThrows(KnowhereException.class, new ThrowingRunnable() {
+            public void run() {
+                Knowhere.bruteForceBatchedL2Rescored(DType.FLOAT32, floats(0, 0), 1, floats(0, 0), 1, 2, 1,
+                        floats(Float.NaN), bytes(8), bytes(4), bytes(4), bytes(4), L2);
+            }
+        });
+        // One int32 count per query.
+        assertThrows(KnowhereException.class, new ThrowingRunnable() {
+            public void run() {
+                Knowhere.bruteForceBatchedL2Rescored(DType.FLOAT32, floats(0, 0), 1, floats(0, 0), 1, 2, 1,
+                        null, bytes(8), bytes(4), bytes(4), bytes(2), L2);
+            }
+        });
+        assertThrows(IllegalArgumentException.class, new ThrowingRunnable() {
+            public void run() {
+                Knowhere.bruteForceBatchedL2Rescored(DType.FLOAT32, floats(0, 0), 1, floats(0, 0), 1, 2, 1,
+                        null, bytes(8), bytes(4), ByteBuffer.allocate(4), bytes(4), L2);
+            }
+        });
+        assertThrows(IllegalArgumentException.class, new ThrowingRunnable() {
+            public void run() {
+                Knowhere.bruteForceBatchedL2Rescored(DType.FLOAT32, floats(0, 0), 1, floats(0, 0), 1, 2, 1,
+                        null, bytes(8), bytes(4), bytes(4), bytes(4).asReadOnlyBuffer(), L2);
+            }
+        });
+    }
+
+    @Test
     public void threadPoolsResizeBeforeAndAfterSearches() {
         assertThrows(KnowhereException.class, new ThrowingRunnable() {
             public void run() { Knowhere.resizeSearchThreadPool(0); }

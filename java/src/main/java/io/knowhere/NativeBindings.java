@@ -46,6 +46,9 @@ final class NativeBindings {
             ByteBuffer ids, ByteBuffer distances, String parameters);
     static native void bruteForceBatched(int dtype, ByteBuffer base, long baseRows, ByteBuffer queries,
             long rows, int dimension, int topK, ByteBuffer ids, ByteBuffer distances, String parameters);
+    static native void bruteForceBatchedL2Rescored(int dtype, ByteBuffer base, long baseRows, ByteBuffer queries,
+            long rows, int dimension, int topK, ByteBuffer cutoffs, ByteBuffer ids, ByteBuffer distances,
+            ByteBuffer direct, ByteBuffer counts, String parameters);
     static native long binarySetCreate();
     static native void binarySetDestroy(long handle);
     static native long binarySetCount(long handle);
