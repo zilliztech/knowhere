@@ -1440,6 +1440,51 @@ TEST_CASE("Test SINDI Sparse Inverted Index CC Train Multi Add Cross Window Sear
     }
 }
 
+TEST_CASE("SINDI growing Add preserves partial windows and late dimensions", "[sparse][sindi]") {
+    constexpr int32_t window_size = 1024;
+    constexpr int32_t dim = 16;
+    const auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
+    std::vector<std::map<int32_t, float>> initial_rows(window_size - 1);
+    for (auto& row : initial_rows) {
+        for (int32_t term = 0; term < 8; ++term) {
+            row[term] = 1.0f;
+        }
+    }
+
+    knowhere::Json json;
+    json[knowhere::meta::DIM] = dim;
+    json[knowhere::meta::METRIC_TYPE] = metric;
+    json[knowhere::meta::TOPK] = 1;
+    if (metric == knowhere::metric::BM25) {
+        json[knowhere::meta::BM25_K1] = 1.2f;
+        json[knowhere::meta::BM25_B] = 0.75f;
+        json[knowhere::meta::BM25_AVGDL] = 8.0f;
+        json["quant_type"] = "u16";
+    }
+    json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "SINDI";
+    json[knowhere::indexparam::SEARCH_ALGO] = "SINDI";
+    json["sindi_window_size"] = window_size;
+
+    const auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, version)
+                     .value();
+    REQUIRE(index.Build(GenSparseDataSet(initial_rows, dim), json) == knowhere::Status::success);
+
+    REQUIRE(index.Add(GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{1, 2.0f}}}, dim), json) ==
+            knowhere::Status::success);
+    REQUIRE(index.Add(GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{1, 3.0f}, {15, 4.0f}}}, dim), json) ==
+            knowhere::Status::success);
+    REQUIRE(index.Add(GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{15, 5.0f}}}, dim), json) ==
+            knowhere::Status::success);
+
+    auto queries = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{1, 1.0f}}, {{15, 1.0f}}}, dim);
+    auto result = index.Search(queries, json, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == (metric == knowhere::metric::BM25 ? window_size - 1 : window_size));
+    REQUIRE(result.value()->GetIds()[1] == window_size + 1);
+}
+
 TEST_CASE("Test SINDI Index Build and Search", "[sparse][sindi]") {
     auto [nb, dim, doc_sparsity, query_sparsity] = GENERATE(table<int32_t, int32_t, float, float>({
         {2000, 300, 0.95, 0.97},
