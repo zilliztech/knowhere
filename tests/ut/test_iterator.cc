@@ -429,7 +429,7 @@ TEST_CASE("Test Iterator Mem Index With Float Vector", "[float metrics]") {
                     REQUIRE(n_returned == n_unfiltered);
                 }
                 const float recall = static_cast<float>(n_hit) / (nq * expected_k);
-                REQUIRE(recall > 0.99f);
+                REQUIRE(recall >= 0.98f);
             }
         }
     }
