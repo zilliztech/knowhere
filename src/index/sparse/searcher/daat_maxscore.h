@@ -33,14 +33,16 @@ class DaatMaxScoreSearcher : public RankedSearcher {
             return index_cursor.vec_id();
         }
 
+        template <PostingFilterMode FilterMode>
         void
         next() noexcept {
-            index_cursor.next();
+            NextPosting<FilterMode>(index_cursor);
         }
 
+        template <PostingFilterMode FilterMode>
         void
         next_geq(uint32_t vec_id) noexcept {
-            index_cursor.next_geq(vec_id);
+            NextPostingGEQ<FilterMode>(index_cursor, vec_id);
         }
     };
 
@@ -55,7 +57,8 @@ class DaatMaxScoreSearcher : public RankedSearcher {
               make_cursors(index, query, search_scorer, bm25_context_, bitset, dim_max_score_ratio, filter_bounds_)),
           max_vec_id_(filter_bounds_.upper_bound),
           scorer_type_(search_scorer->config().scorer_type),
-          bulk_query_nnz_threshold_(bulk_query_nnz_threshold) {
+          bulk_query_nnz_threshold_(bulk_query_nnz_threshold),
+          filter_mode_(GetPostingFilterMode(bitset, max_vec_id_)) {
     }
 
     [[nodiscard]] auto
@@ -94,7 +97,7 @@ class DaatMaxScoreSearcher : public RankedSearcher {
     enum class UpdateResult : bool { Continue, ShortCircuit };
     enum class VectorStatus : bool { Insert, Skip };
 
-    template <IndexScorerType ScorerType>
+    template <IndexScorerType ScorerType, PostingFilterMode FilterMode>
     void
     run_sorted_linear(std::vector<Cursor>& cursors, uint32_t max_vec_id) {
         auto upper_bounds = calc_upper_bounds(cursors);
@@ -152,7 +155,7 @@ class DaatMaxScoreSearcher : public RankedSearcher {
                 std::for_each(cursors.begin(), first_lookup, [&](auto& cursor) {
                     if (cursor.vec_id() == current_vec_id) {
                         current_score += score_term(cursor);
-                        cursor.next();
+                        cursor.template next<FilterMode>();
                         if constexpr (ScorerType == IndexScorerType::BM25) {
                             // Prefetch row_sums_ for next iterations that will be used by the BM25 scorer
                             // Experiments show this prefetch pattern is optimal vs only prefetching next_vec_id
@@ -174,7 +177,7 @@ class DaatMaxScoreSearcher : public RankedSearcher {
                         status = VectorStatus::Skip;
                         break;
                     }
-                    cursor.next_geq(current_vec_id);
+                    cursor.template next_geq<FilterMode>(current_vec_id);
                     if (cursor.vec_id() == current_vec_id) {
                         current_score += score_term(cursor);
                     }
@@ -187,7 +190,7 @@ class DaatMaxScoreSearcher : public RankedSearcher {
         }
     }
 
-    template <IndexScorerType ScorerType>
+    template <IndexScorerType ScorerType, PostingFilterMode FilterMode>
     void
     run_sorted_bulk(std::vector<Cursor>& cursors, uint32_t max_vec_id) {
         // Amortize cursor dispatch over a document window. This follows the same high-level shape as
@@ -226,7 +229,7 @@ class DaatMaxScoreSearcher : public RankedSearcher {
                     return;
                 }
                 auto& cursor = cursors[i];
-                cursor.next_geq(current_vec_id);
+                cursor.template next_geq<FilterMode>(current_vec_id);
                 if (cursor.vec_id() == current_vec_id) {
                     current_score += score_term(cursor, doc_norm);
                 }
@@ -274,7 +277,7 @@ class DaatMaxScoreSearcher : public RankedSearcher {
                         doc_norm = bm25_context_.doc_norm(current_vec_id);
                     }
                     const float current_score = score_term(cursor, doc_norm);
-                    cursor.next();
+                    cursor.template next<FilterMode>();
                     if constexpr (ScorerType == IndexScorerType::BM25) {
                         if (cursor.vec_id() < max_vec_id) {
                             bm25_context_.prefetch_document(cursor.vec_id());
@@ -306,7 +309,7 @@ class DaatMaxScoreSearcher : public RankedSearcher {
                     const uint32_t offset = vec_id - window_min;
                     window_scores[offset] += score_term(cursor, doc_norm);
                     window_matches[offset / 64] |= uint64_t{1} << (offset % 64);
-                    cursor.next();
+                    cursor.template next<FilterMode>();
                 }
                 if constexpr (ScorerType == IndexScorerType::BM25) {
                     if (cursor.vec_id() < max_vec_id) {
@@ -338,13 +341,31 @@ class DaatMaxScoreSearcher : public RankedSearcher {
         }
     }
 
-    template <IndexScorerType ScorerType>
+    template <IndexScorerType ScorerType, PostingFilterMode FilterMode>
     void
     run_sorted(std::vector<Cursor>& cursors, uint32_t max_vec_id) {
         if (cursors.size() >= bulk_query_nnz_threshold_) {
-            run_sorted_bulk<ScorerType>(cursors, max_vec_id);
+            run_sorted_bulk<ScorerType, FilterMode>(cursors, max_vec_id);
         } else {
-            run_sorted_linear<ScorerType>(cursors, max_vec_id);
+            run_sorted_linear<ScorerType, FilterMode>(cursors, max_vec_id);
+        }
+    }
+
+    template <IndexScorerType ScorerType>
+    void
+    run_sorted_dispatch(std::vector<Cursor>& cursors, uint32_t max_vec_id) {
+        // TODO: Check whether template-based handling of filter_mode_ is really needed, or whether passing
+        // filter_mode_ directly as a field to the hot path performs equally well.
+        switch (filter_mode_) {
+            case PostingFilterMode::None:
+                run_sorted<ScorerType, PostingFilterMode::None>(cursors, max_vec_id);
+                break;
+            case PostingFilterMode::Direct:
+                run_sorted<ScorerType, PostingFilterMode::Direct>(cursors, max_vec_id);
+                break;
+            case PostingFilterMode::Generic:
+                run_sorted<ScorerType, PostingFilterMode::Generic>(cursors, max_vec_id);
+                break;
         }
     }
 
@@ -355,9 +376,9 @@ class DaatMaxScoreSearcher : public RankedSearcher {
         }
         auto cursors = sorted(cursors_);
         if (scorer_type_ == IndexScorerType::BM25) {
-            run_sorted<IndexScorerType::BM25>(cursors, max_vec_id_);
+            run_sorted_dispatch<IndexScorerType::BM25>(cursors, max_vec_id_);
         } else {
-            run_sorted<IndexScorerType::IP>(cursors, max_vec_id_);
+            run_sorted_dispatch<IndexScorerType::IP>(cursors, max_vec_id_);
         }
         std::swap(cursors, cursors_);
     }
@@ -383,6 +404,7 @@ class DaatMaxScoreSearcher : public RankedSearcher {
     uint32_t max_vec_id_;
     IndexScorerType scorer_type_;
     const size_t bulk_query_nnz_threshold_;
+    const PostingFilterMode filter_mode_;
 };
 
 }  // namespace knowhere::sparse::inverted

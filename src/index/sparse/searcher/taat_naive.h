@@ -31,9 +31,10 @@ class TaatNaiveSearcher : public RankedSearcher {
             return scorer(index_cursor.vec_id(), index_cursor.val());
         }
 
+        template <PostingFilterMode FilterMode>
         void
         next() noexcept {
-            index_cursor.next();
+            NextPosting<FilterMode>(index_cursor);
         }
 
         [[nodiscard]] size_t
@@ -53,7 +54,8 @@ class TaatNaiveSearcher : public RankedSearcher {
         : RankedSearcher(k),
           filter_bounds_(GetFilterBounds(bitset, max_vec_id)),
           cursors_(make_cursors(index, query, search_scorer, bitset, filter_bounds_)),
-          max_vec_id_(filter_bounds_.upper_bound) {
+          max_vec_id_(filter_bounds_.upper_bound),
+          filter_mode_(GetPostingFilterMode(bitset, max_vec_id_)) {
     }
 
     void
@@ -62,12 +64,29 @@ class TaatNaiveSearcher : public RankedSearcher {
             return;
         }
 
+        switch (filter_mode_) {
+            case PostingFilterMode::None:
+                run<PostingFilterMode::None>();
+                break;
+            case PostingFilterMode::Direct:
+                run<PostingFilterMode::Direct>();
+                break;
+            case PostingFilterMode::Generic:
+                run<PostingFilterMode::Generic>();
+                break;
+        }
+    }
+
+ private:
+    template <PostingFilterMode FilterMode>
+    void
+    run() {
         std::vector<float> distances(max_vec_id_ - filter_bounds_.lower_bound, 0.0f);
 
         for (auto& en : cursors_) {
             while (en.valid()) {
                 distances[en.vec_id() - filter_bounds_.lower_bound] += en.score();
-                en.next();
+                en.template next<FilterMode>();
             }
         }
 
@@ -81,7 +100,6 @@ class TaatNaiveSearcher : public RankedSearcher {
         }
     }
 
- private:
     static std::vector<Cursor>
     make_cursors(const IndexType& index, const std::vector<std::pair<uint32_t, float>>& query,
                  const std::shared_ptr<IndexScorer>& index_scorer, const BitsetView& bitset,
@@ -98,6 +116,7 @@ class TaatNaiveSearcher : public RankedSearcher {
     FilterBounds filter_bounds_;
     std::vector<Cursor> cursors_;
     uint32_t max_vec_id_;
+    const PostingFilterMode filter_mode_;
 };
 
 }  // namespace knowhere::sparse::inverted

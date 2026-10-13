@@ -37,14 +37,16 @@ class DaatWandSearcher : public RankedSearcher {
             return scorer(index_cursor.vec_id(), index_cursor.val());
         }
 
+        template <PostingFilterMode FilterMode>
         void
         next() noexcept {
-            index_cursor.next();
+            NextPosting<FilterMode>(index_cursor);
         }
 
+        template <PostingFilterMode FilterMode>
         void
         next_geq(uint32_t vec_id) noexcept {
-            index_cursor.next_geq(vec_id);
+            NextPostingGEQ<FilterMode>(index_cursor, vec_id);
         }
 
         [[nodiscard]] bool
@@ -62,7 +64,8 @@ class DaatWandSearcher : public RankedSearcher {
           cursors_(
               make_cursors(index, query, search_scorer, bm25_context_, bitset, dim_max_score_ratio, filter_bounds_)),
           max_vec_id_(filter_bounds_.upper_bound),
-          scorer_type_(search_scorer->config().scorer_type) {
+          scorer_type_(search_scorer->config().scorer_type),
+          filter_mode_(GetPostingFilterMode(bitset, max_vec_id_)) {
     }
 
     void
@@ -72,14 +75,14 @@ class DaatWandSearcher : public RankedSearcher {
         }
 
         if (scorer_type_ == IndexScorerType::BM25) {
-            run<IndexScorerType::BM25>();
+            run_dispatch<IndexScorerType::BM25>();
         } else {
-            run<IndexScorerType::IP>();
+            run_dispatch<IndexScorerType::IP>();
         }
     }
 
  private:
-    template <IndexScorerType ScorerType>
+    template <IndexScorerType ScorerType, PostingFilterMode FilterMode>
     void
     run() {
         std::vector<Cursor*> ordered_cursors;
@@ -134,7 +137,7 @@ class DaatWandSearcher : public RankedSearcher {
                     } else {
                         score += en->score();
                     }
-                    en->next();
+                    en->template next<FilterMode>();
                 }
                 this->topk_.Push(score, pivot_id);  // Access base class topk_
                 // resort by vector id
@@ -144,7 +147,7 @@ class DaatWandSearcher : public RankedSearcher {
                 uint64_t next_list = pivot;
                 for (; ordered_cursors[next_list]->vec_id() == pivot_id; --next_list) {
                 }
-                ordered_cursors[next_list]->next_geq(pivot_id);
+                ordered_cursors[next_list]->template next_geq<FilterMode>(pivot_id);
                 // bubble down the advanced list
                 for (size_t i = next_list + 1; i < ordered_cursors.size(); ++i) {
                     if (ordered_cursors[i]->vec_id() >= ordered_cursors[i - 1]->vec_id()) {
@@ -153,6 +156,22 @@ class DaatWandSearcher : public RankedSearcher {
                     std::swap(ordered_cursors[i], ordered_cursors[i - 1]);
                 }
             }
+        }
+    }
+
+    template <IndexScorerType ScorerType>
+    void
+    run_dispatch() {
+        switch (filter_mode_) {
+            case PostingFilterMode::None:
+                run<ScorerType, PostingFilterMode::None>();
+                break;
+            case PostingFilterMode::Direct:
+                run<ScorerType, PostingFilterMode::Direct>();
+                break;
+            case PostingFilterMode::Generic:
+                run<ScorerType, PostingFilterMode::Generic>();
+                break;
         }
     }
 
@@ -175,5 +194,6 @@ class DaatWandSearcher : public RankedSearcher {
     std::vector<Cursor> cursors_;
     uint32_t max_vec_id_;
     IndexScorerType scorer_type_;
+    const PostingFilterMode filter_mode_;
 };
 }  // namespace knowhere::sparse::inverted

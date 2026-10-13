@@ -18,6 +18,55 @@ struct FilterBounds {
     uint32_t upper_bound;
 };
 
+enum class PostingFilterMode : uint8_t {
+    // The bitset is empty, so postings can advance without any filter checks.
+    None,
+    // Backend IDs map directly to an in-range bitset. The posting cursor can
+    // use BitsetView::test_direct() without repeated mapping or bounds checks.
+    Direct,
+    // The non-empty bitset needs the full BitsetView::test() semantics, such
+    // as output-ID mapping, an ID offset, or out-of-range handling.
+    Generic,
+};
+
+inline PostingFilterMode
+GetPostingFilterMode(const BitsetView& bitset, size_t required_bits) {
+    // An empty BitsetView represents an unfiltered search.
+    if (bitset.empty()) {
+        return PostingFilterMode::None;
+    }
+    // Direct is safe only when supports_direct_test() has established all of
+    // test_direct()'s invariants; every other non-empty filter is Generic.
+    return bitset.supports_direct_test(required_bits) ? PostingFilterMode::Direct : PostingFilterMode::Generic;
+}
+
+template <PostingFilterMode FilterMode, typename Cursor>
+inline void
+NextPosting(Cursor& cursor) noexcept {
+    if constexpr (FilterMode == PostingFilterMode::None) {
+        cursor.next_unfiltered();
+    } else if constexpr (FilterMode == PostingFilterMode::Direct) {
+        cursor.next_direct_filtered();
+    } else {
+        cursor.next();
+    }
+}
+
+template <PostingFilterMode FilterMode, typename Cursor>
+inline void
+NextPostingGEQ(Cursor& cursor, uint32_t vec_id) noexcept {
+    if (cursor.vec_id() >= vec_id) {
+        return;
+    }
+    if constexpr (FilterMode == PostingFilterMode::None) {
+        cursor.next_geq_unfiltered(vec_id);
+    } else if constexpr (FilterMode == PostingFilterMode::Direct) {
+        cursor.next_geq_direct_filtered(vec_id);
+    } else {
+        cursor.next_geq(vec_id);
+    }
+}
+
 inline FilterBounds
 GetFilterBounds(const BitsetView& bitset, uint32_t max_vec_id) {
     if (bitset.empty()) {
