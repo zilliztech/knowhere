@@ -182,14 +182,15 @@ MRLIndexNode::CreateRefineIndex(const BaseConfig& cfg) {
 }
 
 Status
-MRLIndexNode::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) {
+MRLIndexNode::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+                    milvus::OpContext* op_context) {
     auto base_cfg = dynamic_cast<BaseConfig*>(cfg.get());
     if (base_cfg == nullptr) {
         return Status::invalid_args;
     }
     RETURN_IF_ERROR(SetConfigDim(cfg.get(), mrl_dim_));
     if (base_cfg->data_path.has_value()) {
-        return BuildFromFile(dataset, std::move(cfg), use_knowhere_build_pool);
+        return BuildFromFile(dataset, std::move(cfg), use_knowhere_build_pool, op_context);
     }
 
     RETURN_IF_ERROR(ValidateDataSet(dataset));
@@ -197,7 +198,7 @@ MRLIndexNode::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool 
         RETURN_IF_ERROR(CreateRefineIndex(*base_cfg));
     }
     auto prefix_dataset = PreparePrefixDataSet(dataset);
-    RETURN_IF_ERROR(base_index_.Node()->Build(prefix_dataset, cfg, use_knowhere_build_pool));
+    RETURN_IF_ERROR(base_index_.Node()->Build(prefix_dataset, cfg, use_knowhere_build_pool, op_context));
     if (refine_index_ != nullptr) {
         refine_index_->Add(dataset->GetRows(), dataset->GetTensor(), nullptr, use_knowhere_build_pool);
     }
@@ -205,7 +206,8 @@ MRLIndexNode::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool 
 }
 
 Status
-MRLIndexNode::BuildFromFile(const DataSetPtr& dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) {
+MRLIndexNode::BuildFromFile(const DataSetPtr& dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+                            milvus::OpContext* op_context) {
     auto& base_cfg = static_cast<BaseConfig&>(*cfg);
     const auto source_path = std::filesystem::path(base_cfg.data_path.value());
     TemporaryFile prefix_file(PrefixFilePath(source_path, source_dim_, mrl_dim_));
@@ -256,7 +258,7 @@ MRLIndexNode::BuildFromFile(const DataSetPtr& dataset, std::shared_ptr<Config> c
     output.close();
 
     base_cfg.data_path = prefix_file.Path().string();
-    return base_index_.Node()->Build(dataset, std::move(cfg), use_knowhere_build_pool);
+    return base_index_.Node()->Build(dataset, std::move(cfg), use_knowhere_build_pool, op_context);
 }
 
 Status

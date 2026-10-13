@@ -35,6 +35,7 @@ TEST_CASE("MRL index searches the prefix and optionally reranks with source vect
     float query_data[] = {0.0f, 0.0f, 0.0f, 0.0f};
     auto base = knowhere::GenDataSet(2, kSourceDim, base_data);
     auto query = knowhere::GenDataSet(1, kSourceDim, query_data);
+    milvus::OpContext op_context;
     knowhere::Json config = {
         {knowhere::meta::DIM, kMRLDim},
         {knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
@@ -43,7 +44,7 @@ TEST_CASE("MRL index searches the prefix and optionally reranks with source vect
 
     SECTION("prefix search") {
         auto index = CreateMRLIndex(base_data, false);
-        REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
+        REQUIRE(index.Build(base, config, false, &op_context) == knowhere::Status::success);
         auto result = index.Search(query, config, nullptr);
         REQUIRE(result.has_value());
         REQUIRE(result.value()->GetIds()[0] == 0);
@@ -51,7 +52,7 @@ TEST_CASE("MRL index searches the prefix and optionally reranks with source vect
 
     SECTION("full-dimensional rerank") {
         auto index = CreateMRLIndex(base_data, true);
-        REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
+        REQUIRE(index.Build(base, config, false, &op_context) == knowhere::Status::success);
         auto result = index.Search(query, config, nullptr);
         REQUIRE(result.has_value());
         REQUIRE(result.value()->GetIds()[0] == 1);

@@ -23,9 +23,9 @@ namespace knowhere {
 template <typename DataType>
 Status
 IndexNodeDataMockWrapper<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
-                                          bool use_knowhere_build_pool) {
+                                          bool use_knowhere_build_pool, milvus::OpContext* op_context) {
     auto ds_ptr = ConvertFromDataTypeIfNeeded<DataType>(dataset);
-    return index_node_->Build(ds_ptr, std::move(cfg), use_knowhere_build_pool);
+    return index_node_->Build(ds_ptr, std::move(cfg), use_knowhere_build_pool, op_context);
 }
 
 template <typename DataType>

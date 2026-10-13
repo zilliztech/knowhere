@@ -146,6 +146,21 @@ TEST_CASE("Test index node") {
     SECTION("Test IndexNode") {
         KNOWHERE_SIMPLE_REGISTER_GLOBAL(BASE_FLAT, BaseFlatIndexNode, fp32, knowhere::feature::FLOAT32);
         auto index = IndexFactory::Instance().Create<fp32>("BASE_FLAT", version).value();
+        auto admitted = index.TryReserveBuild(ds, {});
+        REQUIRE(admitted.has_value());
+        REQUIRE(admitted.value());
+
+        Json invalid_config = {{meta::DIM, "invalid"}};
+        auto cfg = index.Node()->CreateConfig();
+        std::string msg;
+        const auto status = Config::FormatAndCheck(*cfg, invalid_config, &msg);
+        REQUIRE(status != Status::success);
+        REQUIRE_FALSE(msg.empty());
+        auto rejected = index.TryReserveBuild(ds, invalid_config);
+        REQUIRE_FALSE(rejected.has_value());
+        REQUIRE(rejected.error() == status);
+        REQUIRE(rejected.what() == msg);
+
         REQUIRE(index.Build(ds, {}) == Status::success);
         std::shared_ptr<Config> async_cfg = index.Node()->CreateConfig();
         REQUIRE(index.Node()->BuildAsync(ds, std::move(async_cfg)) == Status::success);

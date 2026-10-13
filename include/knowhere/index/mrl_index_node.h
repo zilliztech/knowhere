@@ -34,7 +34,8 @@ class MRLIndexNode final : public IndexNode {
     ~MRLIndexNode() override;
 
     Status
-    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+          milvus::OpContext* op_context) override;
 
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
@@ -110,7 +111,8 @@ class MRLIndexNode final : public IndexNode {
     PreparePrefixDataSet(const DataSetPtr& dataset) const;
 
     Status
-    BuildFromFile(const DataSetPtr& dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool);
+    BuildFromFile(const DataSetPtr& dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+                  milvus::OpContext* op_context);
 
     Status
     CreateRefineIndex(const BaseConfig& cfg);
