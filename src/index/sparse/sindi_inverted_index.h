@@ -126,76 +126,25 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     }
 
     void
-    encode_window_nnzs(bool parallel) {
-        const size_t dim_count = this->nr_inner_dims_;
-        plists_window_nnzs_flat_.clear();
-        plists_window_nnzs_offsets_.clear();
-        plists_window_nnzs_.resize(dim_count);
-        plists_window_nnzs_spans_.resize(dim_count);
-        std::vector<uint8_t> sparse_formats(dim_count, 0);
-
-        // Encode window nnzs with sparse/dense format selection
-        // Sparse format: (wid, wnnz) pairs when cnt_nonempty * 4 < nr_windows * 2
-        // Dense format: one uint16_t per window otherwise
-        auto encode_dim_nnzs = [&](size_t dim_id) {
-            size_t nonempty_windows = 0;
-            for (size_t wid = 0; wid < nr_windows_; ++wid) {
-                nonempty_windows += window_index_plists_sz_spans_[wid][dim_id] != 0;
-            }
-
-            const bool use_sparse = nonempty_windows * sizeof(uint32_t) < nr_windows_ * sizeof(uint16_t);
-            sparse_formats[dim_id] = use_sparse;
-            auto& encoded = plists_window_nnzs_[dim_id];
-            if (use_sparse) {
-                // Sparse format: [wid | wnnz] packed into 32 bits
-                encoded.resize(nonempty_windows * sizeof(uint32_t));
-                auto* output = encoded.data();
-                const auto wnnz_bits = 32 - __builtin_clz(window_size_);
-                for (size_t wid = 0; wid < nr_windows_; ++wid) {
-                    const auto wnnz = window_index_plists_sz_spans_[wid][dim_id];
-                    if (wnnz != 0) {
-                        const auto packed = (static_cast<uint32_t>(wid) << wnnz_bits) | wnnz;
-                        std::memcpy(output, &packed, sizeof(uint32_t));
-                        output += sizeof(uint32_t);
-                    }
-                }
-            } else {
-                // Dense format: one uint16_t per window
-                encoded.resize(nr_windows_ * sizeof(uint16_t));
-                auto* output = encoded.data();
-                for (size_t wid = 0; wid < nr_windows_; ++wid) {
-                    const auto wnnz = window_index_plists_sz_spans_[wid][dim_id];
-                    std::memcpy(output, &wnnz, sizeof(uint16_t));
-                    output += sizeof(uint16_t);
-                }
-            }
-            plists_window_nnzs_spans_[dim_id] = std::span<const uint8_t>(encoded.data(), encoded.size());
-        };
-
-        if (parallel) {
-            parallel_for(dim_count, encode_dim_nnzs);
-        } else {
-            for (size_t dim_id = 0; dim_id < dim_count; ++dim_id) {
-                encode_dim_nnzs(dim_id);
+    append_encoded_window_nnz(uint32_t dim_id, uint32_t window_id) {
+        // Growing postings arrive in document order, so the last encoded window
+        // is the only count that can change. A new dimension needs no entries
+        // for the windows that preceded its first posting.
+        auto& encoded = plists_window_nnzs_[dim_id];
+        const uint32_t wnnz_bits = 32 - __builtin_clz(window_size_);
+        if (!encoded.empty()) {
+            uint32_t last;
+            std::memcpy(&last, encoded.data() + encoded.size() - sizeof(last), sizeof(last));
+            if ((last >> wnnz_bits) == window_id) {
+                ++last;
+                std::memcpy(encoded.data() + encoded.size() - sizeof(last), &last, sizeof(last));
+                return;
             }
         }
-
-        plists_wnnzs_fmts_msk_.assign((dim_count + 7) / 8, 0);
-        size_t sparse_dim_count = 0;
-        size_t encoded_bytes = 0;
-        for (size_t dim_id = 0; dim_id < dim_count; ++dim_id) {
-            if (sparse_formats[dim_id] != 0) {
-                plists_wnnzs_fmts_msk_[dim_id >> 3] |= static_cast<uint8_t>(1u << (dim_id & 0x7));
-                ++sparse_dim_count;
-            }
-            encoded_bytes += plists_window_nnzs_[dim_id].size();
-        }
-        plists_wnnzs_fmts_msk_span_ =
-            std::span<const uint8_t>(plists_wnnzs_fmts_msk_.data(), plists_wnnzs_fmts_msk_.size());
-        LOG_KNOWHERE_INFO_ << "SindiInvertedIndex window NNZ encoding completed: dims=" << dim_count
-                           << ", windows=" << nr_windows_ << ", sparse_format_dims=" << sparse_dim_count
-                           << ", dense_format_dims=" << (dim_count - sparse_dim_count)
-                           << ", encoded_bytes=" << encoded_bytes << ", parallel=" << parallel;
+        const uint32_t entry = (window_id << wnnz_bits) | 1u;
+        const size_t offset = encoded.size();
+        encoded.resize(offset + sizeof(entry));
+        std::memcpy(encoded.data() + offset, &entry, sizeof(entry));
     }
 
     void
@@ -394,12 +343,14 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         plists_dim_offsets_.resize(dim_count + 1, 0);
 
         nr_windows_ = (this->nr_rows_ + rows + window_size_ - 1) / window_size_;
-        window_index_plists_sz_.resize(nr_windows_);
-        window_index_plists_sz_spans_.resize(nr_windows_);
-
-        for (auto& wif : window_index_plists_sz_) {
-            wif.resize(dim_count);
+        const size_t old_dim_count = plists_window_nnzs_.size();
+        plists_window_nnzs_.resize(dim_count);
+        plists_window_nnzs_spans_.resize(dim_count);
+        plists_wnnzs_fmts_msk_.resize((dim_count + 7) / 8, 0);
+        for (size_t dim_id = old_dim_count; dim_id < dim_count; ++dim_id) {
+            plists_wnnzs_fmts_msk_[dim_id >> 3] |= static_cast<uint8_t>(1u << (dim_id & 0x7));
         }
+        std::vector<uint8_t> touched_dims(dim_count, 0);
 
         for (size_t vecid = 0; vecid < rows; ++vecid) {
             const uint32_t global_vecid = static_cast<uint32_t>(this->nr_rows_ + vecid);
@@ -417,7 +368,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 auto dim_id = inner_dim.value();
                 total_plists_ids_[dim_id].push_back(local_id);
                 total_plists_vals_[dim_id].push_back(quantize_value(val));
-                ++window_index_plists_sz_[widx][dim_id];
+                append_encoded_window_nnz(dim_id, widx);
+                touched_dims[dim_id] = 1;
             }
         }
 
@@ -434,13 +386,14 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         plists_dim_offsets_[dim_count] = total_postings;
         plists_dim_offsets_span_ = std::span<const uint32_t>(plists_dim_offsets_.data(), plists_dim_offsets_.size());
 
-        // Update window_index_plists_sz_spans_
-        for (size_t wid = 0; wid < nr_windows_; ++wid) {
-            window_index_plists_sz_spans_[wid] =
-                std::span<const uint16_t>(window_index_plists_sz_[wid].data(), window_index_plists_sz_[wid].size());
+        for (size_t dim_id = 0; dim_id < dim_count; ++dim_id) {
+            if (touched_dims[dim_id]) {
+                const auto& encoded = plists_window_nnzs_[dim_id];
+                plists_window_nnzs_spans_[dim_id] = std::span<const uint8_t>(encoded.data(), encoded.size());
+            }
         }
-
-        encode_window_nnzs(/*parallel=*/false);
+        plists_wnnzs_fmts_msk_span_ =
+            std::span<const uint8_t>(plists_wnnzs_fmts_msk_.data(), plists_wnnzs_fmts_msk_.size());
     }
 
     template <typename WindowId>
@@ -738,9 +691,11 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
         const size_t old_nr_rows = this->nr_rows_;
         this->max_dim_ = std::max(this->max_dim_, static_cast<uint32_t>(dim));
-        LOG_KNOWHERE_INFO_ << "SindiInvertedIndex build started: rows=" << rows << ", existing_rows=" << old_nr_rows
-                           << ", max_dim=" << this->max_dim_ << ", window_size=" << window_size_
-                           << ", metric=" << (is_ip ? "IP" : "BM25") << ", incremental=" << AllowIncremental;
+        if (!AllowIncremental || old_nr_rows == 0) {
+            LOG_KNOWHERE_INFO_ << "SindiInvertedIndex build started: rows=" << rows << ", existing_rows=" << old_nr_rows
+                               << ", max_dim=" << this->max_dim_ << ", window_size=" << window_size_
+                               << ", metric=" << (is_ip ? "IP" : "BM25") << ", incremental=" << AllowIncremental;
+        }
 
         if constexpr (AllowIncremental) {
             for (size_t i = 0; i < rows; ++i) {
@@ -876,9 +831,11 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         if (refine_)
             rebuild_refinement_seek();
 
-        LOG_KNOWHERE_INFO_ << "SindiInvertedIndex incremental build completed: rows=" << this->nr_rows_
-                           << ", inner_dims=" << this->nr_inner_dims_ << ", windows=" << nr_windows_
-                           << ", index_bytes=" << size();
+        if (old_nr_rows == 0) {
+            LOG_KNOWHERE_INFO_ << "SindiInvertedIndex incremental build completed: rows=" << this->nr_rows_
+                               << ", inner_dims=" << this->nr_inner_dims_ << ", windows=" << nr_windows_
+                               << ", index_bytes=" << size();
+        }
 
         return Status::success;
     }
