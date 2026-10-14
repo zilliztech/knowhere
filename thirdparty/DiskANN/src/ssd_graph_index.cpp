@@ -3,7 +3,7 @@
 
 #include "diskann/aligned_file_reader.h"
 #include "diskann/logger.h"
-#include "diskann/pq_flash_index.h"
+#include "diskann/ssd_graph_index.h"
 #include <malloc.h>
 #include "diskann/percentile_stats.h"
 
@@ -193,7 +193,7 @@ namespace diskann {
   }
 
   template<typename T>
-  PQFlashIndex<T>::PQFlashIndex(std::shared_ptr<AlignedFileReader> fileReader,
+  SSDGraphIndex<T>::SSDGraphIndex(std::shared_ptr<AlignedFileReader> fileReader,
                                 diskann::Metric                    m)
       : reader(fileReader), metric(m) {
     if (m == diskann::Metric::INNER_PRODUCT || m == diskann::Metric::COSINE) {
@@ -214,7 +214,7 @@ namespace diskann {
   }
 
   template<typename T>
-  PQFlashIndex<T>::~PQFlashIndex() {
+  SSDGraphIndex<T>::~SSDGraphIndex() {
     destroy_cache_async_task();
 
     if (centroid_data != nullptr)
@@ -232,7 +232,7 @@ namespace diskann {
   }
 
   template<typename T>
-  void PQFlashIndex<T>::setup_thread_data(_u64 nthreads) {
+  void SSDGraphIndex<T>::setup_thread_data(_u64 nthreads) {
     LOG(INFO) << "Setting up thread-specific contexts for nthreads: "
               << nthreads;
     for (_s64 thread = 0; thread < (_s64) nthreads; thread++) {
@@ -243,13 +243,8 @@ namespace diskann {
       diskann::alloc_aligned((void **) &scratch.sector_scratch,
                              (_u64) diskann::defaults::MAX_N_SECTOR_READS * read_len_for_node,
                              diskann::defaults::SECTOR_LEN);
-      diskann::alloc_aligned(
-          (void **) &scratch.aligned_pq_coord_scratch,
-          (_u64) diskann::defaults::MAX_GRAPH_DEGREE * (_u64) this->aligned_dim * sizeof(_u8),
-          256);
-      diskann::alloc_aligned((void **) &scratch.aligned_pqtable_dist_scratch,
-                             256 * (_u64) this->aligned_dim * sizeof(float),
-                             256);
+      scratch.navigation =
+          navigation_->CreateDistanceComputer(aligned_dim).release();
       diskann::alloc_aligned((void **) &scratch.aligned_dist_scratch,
                              (_u64) diskann::defaults::MAX_GRAPH_DEGREE * sizeof(float), 256);
       diskann::alloc_aligned((void **) &scratch.aligned_query_T,
@@ -272,15 +267,12 @@ namespace diskann {
   }
 
   template<typename T>
-  _u64 PQFlashIndex<T>::get_thread_data_size() {
+  _u64 SSDGraphIndex<T>::get_thread_data_size() {
     _u64 thread_data_size = 0;
     thread_data_size += ROUND_UP(sizeof(T) * this->aligned_dim, 256);
     thread_data_size +=
         ROUND_UP((_u64) diskann::defaults::MAX_N_SECTOR_READS * read_len_for_node, diskann::defaults::SECTOR_LEN);
-    thread_data_size += ROUND_UP(
-        (_u64) diskann::defaults::MAX_GRAPH_DEGREE * (_u64) this->aligned_dim * sizeof(_u8), 256);
-    thread_data_size +=
-        ROUND_UP(256 * (_u64) this->aligned_dim * sizeof(float), 256);
+    thread_data_size += navigation_->QueryMemorySize(aligned_dim);
     thread_data_size += ROUND_UP((_u64) diskann::defaults::MAX_GRAPH_DEGREE * sizeof(float), 256);
     thread_data_size += ROUND_UP(this->aligned_dim * sizeof(T), 8 * sizeof(T));
     thread_data_size +=
@@ -289,7 +281,7 @@ namespace diskann {
   }
 
   template<typename T>
-  void PQFlashIndex<T>::destroy_thread_data() {
+  void SSDGraphIndex<T>::destroy_thread_data() {
     LOG_KNOWHERE_DEBUG_ << "Clearing scratch";
     assert(this->thread_data.size() == this->max_nthreads);
     while (this->thread_data.size() > 0) {
@@ -301,8 +293,7 @@ namespace diskann {
       auto &scratch = data.scratch;
       diskann::aligned_free((void *) scratch.coord_scratch);
       diskann::aligned_free((void *) scratch.sector_scratch);
-      diskann::aligned_free((void *) scratch.aligned_pq_coord_scratch);
-      diskann::aligned_free((void *) scratch.aligned_pqtable_dist_scratch);
+      delete scratch.navigation;
       diskann::aligned_free((void *) scratch.aligned_dist_scratch);
       diskann::aligned_free((void *) scratch.aligned_query_float);
       diskann::aligned_free((void *) scratch.aligned_query_T);
@@ -312,7 +303,7 @@ namespace diskann {
   }
 
   template<typename T>
-  void PQFlashIndex<T>::load_cache_list(std::vector<uint32_t> &node_list) {
+  void SSDGraphIndex<T>::load_cache_list(std::vector<uint32_t> &node_list) {
     _u64 num_cached_nodes = node_list.size();
     LOG_KNOWHERE_DEBUG_ << "Loading the cache list(" << num_cached_nodes
                         << " points) into memory...";
@@ -385,7 +376,7 @@ namespace diskann {
   }
 
   template<typename T>
-  void PQFlashIndex<T>::async_generate_cache_list_from_sample_queries(
+  void SSDGraphIndex<T>::async_generate_cache_list_from_sample_queries(
       std::string sample_bin, _u64 l_search, _u64 beamwidth,
       _u64 num_nodes_to_cache) {
     this->search_counter.store(0);
@@ -456,7 +447,7 @@ namespace diskann {
 
         if (state_controller->status.load() ==
             ThreadSafeStateController::Status::STOPPING) {
-          stream << "pq_flash_index is destoried, async thread should be exit."
+          stream << "ssd_graph_index is destoried, async thread should be exit."
                  << std::endl;
           throw diskann::ANNException(stream.str(), -1);
         }
@@ -518,7 +509,7 @@ namespace diskann {
   }
 
   template<typename T>
-  void PQFlashIndex<T>::cache_bfs_levels(_u64 num_nodes_to_cache,
+  void SSDGraphIndex<T>::cache_bfs_levels(_u64 num_nodes_to_cache,
                                          std::vector<uint32_t> &node_list) {
     std::random_device rng;
     std::mt19937       urng(rng());
@@ -643,7 +634,7 @@ namespace diskann {
   }
 
   template<typename T>
-  void PQFlashIndex<T>::use_medoids_data_as_centroids() {
+  void SSDGraphIndex<T>::use_medoids_data_as_centroids() {
     if (centroid_data != nullptr)
       aligned_free(centroid_data);
     alloc_aligned(((void **) &centroid_data),
@@ -697,11 +688,21 @@ namespace diskann {
   }
 
   template<typename T>
-  int PQFlashIndex<T>::load(uint32_t num_threads, const char *index_prefix) {
-    std::string pq_table_bin =
-        get_pq_pivots_filename(std::string(index_prefix));
-    std::string pq_compressed_vectors =
-        get_pq_compressed_filename(std::string(index_prefix));
+  int SSDGraphIndex<T>::load(uint32_t num_threads, const char *index_prefix,
+                             const std::optional<std::string> &navigation_codec) {
+    const auto codec = ReadNavigationCodec({index_prefix, {}, {}});
+    if (navigation_codec && *navigation_codec != codec)
+      throw NavigationTypeError("Requested navigation codec does not match stored model");
+    auto navigation = CreateNavigationStore(codec);
+    int result = navigation->Load(index_prefix);
+    if (result != 0)
+      return result;
+    return load(num_threads, index_prefix, std::move(navigation));
+  }
+
+  template<typename T>
+  int SSDGraphIndex<T>::load(uint32_t num_threads, const char *index_prefix,
+                            std::unique_ptr<NavigationStore> navigation) {
     std::string disk_index_file =
         get_disk_index_filename(std::string(index_prefix));
     std::string medoids_file =
@@ -709,36 +710,13 @@ namespace diskann {
     std::string centroids_file =
         get_disk_index_centroids_filename(std::string(disk_index_file));
 
-    size_t pq_file_dim, pq_file_num_centroids;
-    get_bin_metadata(pq_table_bin, pq_file_num_centroids, pq_file_dim);
-
+    navigation_ = std::move(navigation);
     this->disk_index_file = disk_index_file;
-    if (pq_file_num_centroids != 256) {
-      LOG(ERROR) << "Error. Number of PQ centroids is not 256. Exitting.";
-      return -1;
-    }
-
-    this->data_dim = pq_file_dim;
-    // will reset later if we use PQ on disk
+    this->num_points = navigation_->Count();
+    this->data_dim = navigation_->Dimension();
     this->disk_data_dim = this->data_dim;
-    // will change later if we use PQ on disk or if we are using
-    // inner product without PQ
     this->disk_bytes_per_point = this->data_dim * sizeof(T);
-    this->aligned_dim = ROUND_UP(pq_file_dim, 8);
-
-    size_t npts_u64, nchunks_u64;
-    diskann::load_bin<_u8>(pq_compressed_vectors, this->data, npts_u64,
-                           nchunks_u64);
-
-    this->num_points = npts_u64;
-    this->n_chunks = nchunks_u64;
-
-    pq_table.load_pq_centroid_bin(pq_table_bin.c_str(), nchunks_u64);
-
-    LOG(INFO)
-        << "Loaded PQ centroids and in-memory compressed vectors. #points: "
-        << num_points << " #dim: " << data_dim
-        << " #aligned_dim: " << aligned_dim << " #chunks: " << n_chunks;
+    this->aligned_dim = ROUND_UP(this->data_dim, 8);
 
     std::string disk_pq_pivots_path = this->disk_index_file + "_pq_pivots.bin";
     if (file_exists(disk_pq_pivots_path)) {
@@ -896,7 +874,7 @@ namespace diskann {
   }
 
   template<typename T>
-  std::optional<float> PQFlashIndex<T>::init_thread_data(ThreadData<T> &data,
+  std::optional<float> SSDGraphIndex<T>::init_thread_data(ThreadData<T> &data,
                                                          const T *query1) {
     // copy query to thread specific aligned and allocated memory (for distance
     // calculations we need aligned data)
@@ -936,21 +914,19 @@ namespace diskann {
   }
 
   template<typename T>
-  void PQFlashIndex<T>::brute_force_beam_search(
+  void SSDGraphIndex<T>::brute_force_beam_search(
       ThreadData<T> &data, const float query_norm, const _u64 k_search,
       _s64 *indices, float *distances, const _u64 beam_width_param,
       IOContext &ctx, QueryStats *stats,
       const knowhere::feder::diskann::FederResultUniq &feder,
-      knowhere::BitsetView                             bitset_view,
-	  PQDataGetter* pq_data_getter) {
+      knowhere::BitsetView bitset_view, NavigationDistanceComputer &navigation,
+      const std::function<_u64(_u64)> &origin_id) {
     auto         query_scratch = &(data.scratch);
     const T     *query = data.scratch.aligned_query_T;
     auto         beam_width = beam_width_param * kRefineBeamWidthFactor;
     const float *query_float = data.scratch.aligned_query_float;
-    float       *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
-    pq_table.populate_chunk_distances(query_float, pq_dists);
+    navigation.set_query(query_float);
     float         *dist_scratch = query_scratch->aligned_dist_scratch;
-    _u8           *pq_coord_scratch = query_scratch->aligned_pq_coord_scratch;
     constexpr _u32 pq_batch_size = diskann::defaults::MAX_GRAPH_DEGREE;
     std::vector<unsigned> pq_batch_ids;
     pq_batch_ids.reserve(pq_batch_size);
@@ -964,29 +940,23 @@ namespace diskann {
     _u64 &sector_scratch_idx = query_scratch->sector_idx;
     knowhere::ResultMaxHeap<float, _u64> max_heap(k_search);
     Timer                                io_timer, query_timer;
-    size_t pq_offset = 0;
     // scan un-marked points and calculate pq dists
 
     for (_u64 id = 0; id < num_points; ++id) {
-      _u64 origin_id = pq_data_getter->get_origin_id(id);
-      if (bitset_view.empty() || !bitset_view.test(origin_id)) {
-    	  pq_batch_ids.push_back(id);
+      _u64 mapped_id = origin_id ? origin_id(id) : id;
+      if (bitset_view.empty() || !bitset_view.test(mapped_id)) {
+        pq_batch_ids.push_back(id);
       }
 
       if (pq_batch_ids.size() == pq_batch_size || id == num_points - 1) {
         const size_t sz = pq_batch_ids.size();
-        pq_data_getter->aggregate_pq_coords(pq_batch_ids.data(), sz, this->n_chunks, pq_coord_scratch);
-        pq_dist_lookup(pq_coord_scratch, sz, this->n_chunks, pq_dists,
-                       dist_scratch);
+        navigation.compute_distances(pq_batch_ids.data(), sz, dist_scratch);
         for (size_t i = 0; i < sz; ++i) {
           pq_max_heap.Push(dist_scratch[i], pq_batch_ids[i]);
         }
-        pq_data_getter->release_pq_data(pq_offset,id*this->n_chunks-pq_offset);
-        pq_offset = id*this->n_chunks;
         pq_batch_ids.clear();
       }
     }
-    pq_data_getter->release_pq_data();
     // deduplicate sectors by ids
     while (const auto opt = pq_max_heap.Pop()) {
       const auto [dist, id] = opt.value();
@@ -1060,7 +1030,7 @@ namespace diskann {
       }
       if (const auto op = max_heap.Pop()) {
         const auto [dis, id] = op.value();
-        indices[i] = pq_data_getter->get_origin_id(id);
+        indices[i] = origin_id ? origin_id(id) : id;
         if (distances != nullptr) {
           distances[i] = dis;
           if (metric == diskann::Metric::INNER_PRODUCT) {
@@ -1083,7 +1053,7 @@ namespace diskann {
   }
 
   template<typename T>
-  void PQFlashIndex<T>::cached_beam_search(
+  void SSDGraphIndex<T>::cached_beam_search(
       const T *query1, const _u64 k_search, const _u64 l_search, _s64 *indices,
       float *distances, const _u64 beam_width, const bool use_reorder_data,
       QueryStats *stats, const knowhere::feder::diskann::FederResultUniq &feder,
@@ -1137,7 +1107,8 @@ namespace diskann {
 
       if (bv_cnt >= bitset_view.size() * filter_threshold) {
         brute_force_beam_search(data, query_norm, k_search, indices, distances,
-                                beam_width, ctx, stats, feder, bitset_view, this);
+                                beam_width, ctx, stats, feder, bitset_view,
+                                *data.scratch.navigation);
         this->thread_data.push(data);
         this->thread_data.push_notify_all();
         this->reader->put_ctx(ctx);
@@ -1148,7 +1119,8 @@ namespace diskann {
     // Turn to BF is k_search is too large
     if (k_search > 0.5 * (num_points - bv_cnt)) {
       brute_force_beam_search(data, query_norm, k_search, indices, distances,
-                              beam_width, ctx, stats, feder, bitset_view, this);
+                              beam_width, ctx, stats, feder, bitset_view,
+                              *data.scratch.navigation);
       this->thread_data.push(data);
       this->thread_data.push_notify_all();
       this->reader->put_ctx(ctx);
@@ -1178,22 +1150,12 @@ namespace diskann {
         cached_nhoods;
     cached_nhoods.reserve(2 * beam_width);
 
-    // query <-> PQ chunk centers distances
-    float *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
-    pq_table.populate_chunk_distances(query_float, pq_dists);
-
-    // query <-> neighbor list
+    auto *navigation = query_scratch->navigation;
+    navigation->set_query(query_float);
     float *dist_scratch = query_scratch->aligned_dist_scratch;
-    _u8   *pq_coord_scratch = query_scratch->aligned_pq_coord_scratch;
-
-    // lambda to batch compute query<-> node distances in PQ space
-    auto compute_dists = [this, pq_coord_scratch, pq_dists](const unsigned *ids,
-                                                            const _u64 n_ids,
-                                                            float *dists_out) {
-      aggregate_coords(ids, n_ids, this->data.get(), this->n_chunks,
-                       pq_coord_scratch);
-      pq_dist_lookup(pq_coord_scratch, n_ids, this->n_chunks, pq_dists,
-                     dists_out);
+    auto   compute_dists = [navigation](const unsigned *ids, const _u64 n_ids,
+                                      float *dists_out) {
+      navigation->compute_distances(ids, n_ids, dists_out);
     };
     Timer                 cpu_timer;
     std::vector<Neighbor> retset(l_search + 1);
@@ -1526,7 +1488,7 @@ namespace diskann {
   }
 
   template<typename T>
-  void PQFlashIndex<T>::calc_dist_by_ids(const T *query_, const int64_t *ids,
+  void SSDGraphIndex<T>::calc_dist_by_ids(const T *query_, const int64_t *ids,
                                          const int64_t n,
                                          float *const  output_dists) {
     ThreadData<T> data = this->thread_data.pop();
@@ -1663,7 +1625,7 @@ namespace diskann {
   }
 
   template<typename T>
-  inline void PQFlashIndex<T>::copy_vec_base_data(T *des, const int64_t des_idx,
+  inline void SSDGraphIndex<T>::copy_vec_base_data(T *des, const int64_t des_idx,
                                                   void *src) {
     if (metric == Metric::INNER_PRODUCT) {
       assert(max_base_norm != 0);
@@ -1680,7 +1642,7 @@ namespace diskann {
 
   template<typename T>
   std::unordered_map<_u64, std::vector<_u64>>
-  PQFlashIndex<T>::get_sectors_layout_and_write_data_from_cache(
+  SSDGraphIndex<T>::get_sectors_layout_and_write_data_from_cache(
       const int64_t *ids, int64_t n, T *output_data) {
     std::unordered_map<_u64, std::vector<_u64>> sectors_to_visit;
     for (int64_t i = 0; i < n; ++i) {
@@ -1699,7 +1661,7 @@ namespace diskann {
   }
 
   template<typename T>
-  void PQFlashIndex<T>::get_vector_by_ids(const int64_t *ids, const int64_t n,
+  void SSDGraphIndex<T>::get_vector_by_ids(const int64_t *ids, const int64_t n,
                                           T *output_data) {
     auto sectors_to_visit =
         get_sectors_layout_and_write_data_from_cache(ids, n, output_data);
@@ -1773,37 +1735,37 @@ namespace diskann {
   }
 
   template<typename T>
-  _u64 PQFlashIndex<T>::get_num_points() const noexcept {
+  _u64 SSDGraphIndex<T>::get_num_points() const noexcept {
     return num_points;
   }
 
   template<typename T>
-  _u64 PQFlashIndex<T>::get_data_dim() const noexcept {
+  _u64 SSDGraphIndex<T>::get_data_dim() const noexcept {
     return data_dim;
   }
 
   template<typename T>
-  _u64 PQFlashIndex<T>::get_max_degree() const noexcept {
+  _u64 SSDGraphIndex<T>::get_max_degree() const noexcept {
     return max_degree;
   }
 
   template<typename T>
-  _u32 *PQFlashIndex<T>::get_medoids() const noexcept {
+  _u32 *SSDGraphIndex<T>::get_medoids() const noexcept {
     return medoids.get();
   }
 
   template<typename T>
-  size_t PQFlashIndex<T>::get_num_medoids() const noexcept {
+  size_t SSDGraphIndex<T>::get_num_medoids() const noexcept {
     return num_medoids;
   }
 
   template<typename T>
-  diskann::Metric PQFlashIndex<T>::get_metric() const noexcept {
+  diskann::Metric SSDGraphIndex<T>::get_metric() const noexcept {
     return metric;
   }
 
   template<typename T>
-  void PQFlashIndex<T>::getIteratorNextBatch(IteratorWorkspace<T> *workspace) {
+  void SSDGraphIndex<T>::getIteratorNextBatch(IteratorWorkspace<T> *workspace) {
     if (workspace->beam_width > defaults::MAX_N_SECTOR_READS)
       throw ANNException("Beamwidth can not be higher than MAX_N_SECTOR_READS",
                          -1, __FUNCSIG__, __FILE__, __LINE__);
@@ -1828,22 +1790,12 @@ namespace diskann {
     char *sector_scratch = data.scratch.sector_scratch;
     _u64 &sector_scratch_idx = data.scratch.sector_idx;
 
-    // query <-> PQ chunk centers distances
-    float *pq_dists = data.scratch.aligned_pqtable_dist_scratch;
-    pq_table.populate_chunk_distances(workspace->aligned_query_float, pq_dists);
-
-    // query <-> neighbor list
+    auto *navigation = data.scratch.navigation;
+    navigation->set_query(workspace->aligned_query_float);
     float *dist_scratch = data.scratch.aligned_dist_scratch;
-    _u8   *pq_coord_scratch = data.scratch.aligned_pq_coord_scratch;
-
-    // lambda to batch compute query<-> node distances in PQ space
-    auto compute_dists = [this, pq_coord_scratch, pq_dists](const unsigned *ids,
-                                                            const _u64 n_ids,
-                                                            float *dists_out) {
-      aggregate_coords(ids, n_ids, this->data.get(), this->n_chunks,
-                       pq_coord_scratch);
-      pq_dist_lookup(pq_coord_scratch, n_ids, this->n_chunks, pq_dists,
-                     dists_out);
+    auto   compute_dists = [navigation](const unsigned *ids, const _u64 n_ids,
+                                      float *dists_out) {
+      navigation->compute_distances(ids, n_ids, dists_out);
     };
 
     if (!workspace->initialized) {
@@ -2026,7 +1978,7 @@ namespace diskann {
   }
 
   template<typename T>
-  std::unique_ptr<IteratorWorkspace<T>> PQFlashIndex<T>::getIteratorWorkspace(
+  std::unique_ptr<IteratorWorkspace<T>> SSDGraphIndex<T>::getIteratorWorkspace(
       const T *query_data, const uint64_t lsearch, const uint64_t beam_width,
       const float filter_ratio, const knowhere::BitsetView &bitset) {
     float alpha = kAlpha;
@@ -2036,7 +1988,7 @@ namespace diskann {
   }
 
   template<typename T>
-  _u64 PQFlashIndex<T>::cal_size() {
+  _u64 SSDGraphIndex<T>::cal_size() {
     _u64 index_mem_size = 0;
     index_mem_size += sizeof(*this);
     // thread data size:
@@ -2052,12 +2004,7 @@ namespace diskann {
     // get entry points:
     index_mem_size += ROUND_UP(num_medoids * aligned_dim * sizeof(float), 32);
     index_mem_size += num_medoids * aligned_dim * sizeof(uint32_t);
-    // get pq data and pq_table:
-    index_mem_size += this->num_points * this->n_chunks * sizeof(uint8_t);
-    index_mem_size += this->pq_table.get_total_dims() * 256 * sizeof(float) * 2;
-    index_mem_size +=
-        this->pq_table.get_total_dims() * (sizeof(uint32_t) + sizeof(float));
-    index_mem_size += (this->pq_table.get_num_chunks() + 1) * sizeof(uint32_t);
+    index_mem_size += navigation_->MemorySize();
     // base norms:
     if (this->metric == diskann::Metric::COSINE) {
       index_mem_size += sizeof(float) * this->num_points;
@@ -2067,7 +2014,7 @@ namespace diskann {
   }
 
   template<typename T>
-  void PQFlashIndex<T>::destroy_cache_async_task() {
+  void SSDGraphIndex<T>::destroy_cache_async_task() {
     std::unique_lock<std::mutex> guard(state_controller->status_mtx);
     if (this->state_controller->status.load() ==
         ThreadSafeStateController::Status::DONE) {
@@ -2092,10 +2039,10 @@ namespace diskann {
   template struct IteratorWorkspace<knowhere::fp16>;
 
   // knowhere not support uint8/int8 diskann
-  // template class PQFlashIndex<_u8>;
-  // template class PQFlashIndex<_s8>;
-  template class PQFlashIndex<float>;
-  template class PQFlashIndex<knowhere::fp16>;
-  template class PQFlashIndex<knowhere::bf16>;
+  // template class SSDGraphIndex<_u8>;
+  // template class SSDGraphIndex<_s8>;
+  template class SSDGraphIndex<float>;
+  template class SSDGraphIndex<knowhere::fp16>;
+  template class SSDGraphIndex<knowhere::bf16>;
 
 }  // namespace diskann

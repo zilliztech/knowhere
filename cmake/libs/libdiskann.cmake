@@ -20,7 +20,9 @@ set(DISKANN_SOURCES
     thirdparty/DiskANN/src/math_utils.cpp
     thirdparty/DiskANN/src/memory_mapper.cpp
     thirdparty/DiskANN/src/partition_and_pq.cpp
-    thirdparty/DiskANN/src/pq_flash_index.cpp
+    thirdparty/DiskANN/src/ssd_graph_index.cpp
+    thirdparty/DiskANN/src/navigation_runtime.cpp
+    thirdparty/DiskANN/src/pq_navigation.cpp
     thirdparty/DiskANN/src/pq_flash_aisaq_index.cpp
     thirdparty/DiskANN/src/aisaq_utils.cpp
     thirdparty/DiskANN/src/aisaq_pq_reader.cpp

@@ -26,6 +26,8 @@ constexpr const CFG_INT::value_type kDefaultSearchListSizeForBuild = 128;
 
 class DiskANNConfig : public BaseConfig {
  public:
+    // Omission uses legacy PQ behavior; keep it distinct from an explicit choice.
+    CFG_STRING navigation_codec;
     // This is the degree of the graph index, typically between 60 and 150. Larger R will result in larger indices and
     // longer indexing times, but better search quality.
     CFG_INT max_degree;
@@ -85,6 +87,11 @@ class DiskANNConfig : public BaseConfig {
     // use PQ + Refine. Default to -1.0f, negative vlaues will use dynamic threshold calculator given topk.
     CFG_FLOAT filter_threshold;
     KNOWHERE_DECLARE_CONFIG(DiskANNConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(navigation_codec)
+            .description("navigation codec: build defaults to PQ; load reads the stored type, optionally constrained")
+            .allow_empty_without_default()
+            .for_train()
+            .for_deserialize();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_degree)
             .description("the degree of the graph index.")
             .set_default(48)
@@ -168,6 +175,11 @@ class DiskANNConfig : public BaseConfig {
 
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        if (navigation_codec && (navigation_codec->empty() ||
+                                 (param_type == PARAM_TYPE::TRAIN && *navigation_codec != "PQ"))) {
+            return HandleError(err_msg, "Unsupported DiskANN navigation codec: " + navigation_codec.value(),
+                               Status::invalid_args);
+        }
         switch (param_type) {
             case PARAM_TYPE::TRAIN: {
                 if (!search_list_size.has_value()) {
