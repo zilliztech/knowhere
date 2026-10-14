@@ -92,7 +92,7 @@ constexpr float kCosineRangeAp = 0.9;
 TEST_CASE("Disk index static parameter ownership", "[diskann][disk-parameters]") {
     using namespace knowhere;
     auto type = GENERATE(kNativeDiskANNType, "AISAQ");
-    const auto version = Version::GetMaximumVersion();
+    const auto version = Version::GetMaximumVersion().VersionNumber();
     std::string message;
     REQUIRE(IndexStaticFaced<fp32>::ConfigCheck(type, version, Json::object(), message) == Status::success);
     auto cfg = IndexStaticFaced<fp32>::CreateConfig(type, version);
@@ -185,7 +185,7 @@ TEST_CASE("Disk index budgets use actual typed vector metadata", "[diskann][disk
 TEST_CASE("Disk index rejects effective zero PQ budget before runtime", "[diskann][disk-parameters]") {
     using namespace knowhere;
     auto type = GENERATE(kNativeDiskANNType, "AISAQ");
-    const auto version = Version::GetMaximumVersion();
+    const auto version = Version::GetMaximumVersion().VersionNumber();
     std::string message;
     for (const Json& invalid : std::vector<Json>{{{"pq_code_budget_gb", 0}},
                                                  {{"pq_code_budget_gb_ratio", 0}},
@@ -211,7 +211,7 @@ TEST_CASE("Disk index public search parameters at each stage", "[diskann][disk-p
     using namespace knowhere;
     auto stage = GENERATE(SEARCH, RANGE_SEARCH, ITERATOR);
     auto type = GENERATE(kNativeDiskANNType, "AISAQ");
-    auto cfg = IndexStaticFaced<fp32>::CreateConfig(type, Version::GetMaximumVersion());
+    auto cfg = IndexStaticFaced<fp32>::CreateConfig(type, Version::GetMaximumVersion().VersionNumber());
     REQUIRE(Config::Load(*cfg, {{"search_list", 67}, {"beamwidth", 4}, {"vectors_beamwidth", 2}}, stage) ==
             Status::success);
     auto& disk = static_cast<DiskANNConfig&>(*cfg);
@@ -1976,7 +1976,7 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
     WriteRawDataToDisk<DataType>(raw, static_cast<const DataType*>(base->GetTensor()), rows, dimension);
     std::shared_ptr<milvus::FileManager> manager = std::make_shared<milvus::LocalFileManager>();
     auto pack = Pack(manager);
-    const auto version = Version::GetMaximumVersion();
+    const auto version = Version::GetMaximumVersion().VersionNumber();
     Json build = {{"data_path", raw}, {"index_prefix", prefix}, {"build_dram_budget_gb", .25}, {"num_build_thread", 2}};
     if (explicit_settings) {
         build.update({{"max_degree", 24},
@@ -2185,7 +2185,7 @@ CheckDiskArrayBudgets() {
                   {"vec_field_size_gb", 0}};
     std::shared_ptr<milvus::FileManager> manager = std::make_shared<milvus::LocalFileManager>();
     auto pack = Pack(manager);
-    const auto version = Version::GetMaximumVersion();
+    const auto version = Version::GetMaximumVersion().VersionNumber();
     BinarySet binary;
     {
         auto index = IndexFactory::Instance().Create<DataType>(kNativeDiskANNType, version, pack).value();
