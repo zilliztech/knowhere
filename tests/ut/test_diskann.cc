@@ -574,7 +574,7 @@ TEST_CASE("Valid diskann build params test", "[diskann]") {
         res = knowhere::Config::Load(*cfg, json_, knowhere::PARAM_TYPE::TRAIN, &msg);
         REQUIRE(res == knowhere::Status::success);
 
-        knowhere::DiskANNConfig diskCfg = static_cast<const knowhere::DiskANNConfig&>(*cfg);
+        const auto& diskCfg = static_cast<const knowhere::DiskANNConfig&>(*cfg);
         REQUIRE(knowhere::GetPQNavigationBudget(diskCfg) == std::max(pq_code_budget_gb, 1.0f * ratio));
         REQUIRE(diskCfg.search_cache_budget_gb == std::max(search_cache_budget_gb, 1.0f * ratio));
     }
