@@ -70,15 +70,16 @@ class AisaqIndexNode : public IndexNode {
 
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
-        if (static_cast<const AisaqConfig&>(config).disk_pq_dims.value_or(0) > 0)
-            return false;
         const auto metric_type = config.metric_type.value_or("");
-        return IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE);
+        const auto metric = IsMetricType(metric_type, knowhere::metric::L2)       ? diskann::Metric::L2
+                            : IsMetricType(metric_type, knowhere::metric::COSINE) ? diskann::Metric::COSINE
+                                                                                  : diskann::Metric::INNER_PRODUCT;
+        return diskann::StorageHasRawData(static_cast<const AisaqConfig&>(config).disk_pq_dims.value_or(0) > 0, metric);
     }
 
     bool
     HasRawData(const std::string& metric_type) const override {
-        if (pq_flash_index_ && pq_flash_index_->uses_disk_pq())
+        if (pq_flash_index_ && !pq_flash_index_->has_raw_data())
             return false;
         return IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE);
     }
@@ -746,8 +747,9 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
     if (!is_prepared_.load() || !pq_flash_index_) {
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
-    if (pq_flash_index_->uses_disk_pq()) {
-        return expected<DataSetPtr>::Err(Status::not_implemented, "SSD PQ does not retain original vectors");
+    if (!pq_flash_index_->has_raw_data()) {
+        return expected<DataSetPtr>::Err(Status::not_implemented,
+                                         "Stored vectors do not provide original data for this metric");
     }
     auto dim = Dim();
     auto rows = dataset->GetRows();

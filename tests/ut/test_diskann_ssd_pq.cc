@@ -20,6 +20,7 @@
 #include "diskann/linux_aligned_file_reader.h"
 #include "diskann/pq_flash_index.h"
 #include "diskann/pq_navigation.h"
+#include "diskann/pq_table.h"
 #include "filemanager/impl/LocalFileManager.h"
 #include "index/diskann/rabitq_store.h"
 #include "knowhere/index/index_factory.h"
@@ -51,11 +52,15 @@ class DiskPQReference : public diskann::SSDGraphIndex<float> {
     Score(const std::string& prefix, unsigned id, const float* query, size_t dim) {
         std::ifstream file(prefix + "_disk.index", std::ios::binary);
         file.seekg(get_node_sector_offset(id) + (long_node ? 0 : (id % nnodes_per_sector) * max_node_len));
-        std::vector<uint8_t> code(disk_pq_n_chunks);
+        if (!reference_table_) {
+            reference_table_ = std::make_unique<diskann::FixedChunkPQTable>();
+            reference_table_->load_pq_centroid_bin((prefix + "_disk.index_pq_pivots.bin").c_str(), 0);
+        }
+        std::vector<uint8_t> code(reference_table_->get_num_chunks());
         file.read(reinterpret_cast<char*>(code.data()), code.size());
         REQUIRE(file.good());
         std::vector<float> decoded(data_dim);
-        disk_pq_table.inflate_vector(code.data(), decoded.data());
+        reference_table_->inflate_vector(code.data(), decoded.data());
         double dot = 0, norm = 0, l2 = 0;
         for (size_t j = 0; j < dim; ++j) {
             dot += double(query[j]) * decoded[j];
@@ -63,11 +68,14 @@ class DiskPQReference : public diskann::SSDGraphIndex<float> {
             l2 += (double(query[j]) - decoded[j]) * (double(query[j]) - decoded[j]);
         }
         if (metric == diskann::Metric::INNER_PRODUCT)
-            return dot * max_base_norm;
+            return dot * storage_codec_->MaxBaseNorm();
         if (metric == diskann::Metric::COSINE)
             return dot / std::sqrt(norm);
         return l2;
     }
+
+ private:
+    std::unique_ptr<diskann::FixedChunkPQTable> reference_table_;
 };
 // Read the persisted layout independently of either graph searcher's scorer.
 class AisaqPayloadReference {
@@ -269,9 +277,11 @@ TEST_CASE("DiskANN SSD scores are independent of navigation and cache", "[diskan
         REQUIRE(index.HasRawData(metric) == has_raw);
         REQUIRE(knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(index_type, version, config) == has_raw);
         int64_t id = 0;
-        if (disk_pq_dims > 0)
-            REQUIRE_FALSE(index.GetVectorByIds(knowhere::GenIdsDataSet(1, &id)).has_value());
-        else if (has_raw)
+        if (!has_raw) {
+            auto original = index.GetVectorByIds(knowhere::GenIdsDataSet(1, &id));
+            REQUIRE_FALSE(original.has_value());
+            REQUIRE(original.error() == knowhere::Status::not_implemented);
+        } else if (has_raw)
             REQUIRE(index.GetVectorByIds(knowhere::GenIdsDataSet(1, &id)).has_value());
         DiskPQReference reference(dm);
         const diskann::NavigationSpace metadata{rows, dim + (metric == "IP" ? 1 : 0), dim};

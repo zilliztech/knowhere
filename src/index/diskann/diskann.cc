@@ -110,12 +110,12 @@ class DiskANNIndexNode : public IndexNode {
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
         const auto* disk_config = dynamic_cast<const DiskANNConfig*>(&config);
-        if (disk_config && disk_config->disk_pq_dims.value_or(0) > 0) {
-            return false;
-        }
-        knowhere::MetricType metric_type = config.metric_type.has_value() ? config.metric_type.value() : "";
+        const auto metric_type = config.metric_type.value_or("");
         const auto& base_metric = get_sub_metric_type(metric_type).value_or(metric_type);
-        return IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::COSINE);
+        const auto metric = IsMetricType(base_metric, knowhere::metric::L2)       ? diskann::Metric::L2
+                            : IsMetricType(base_metric, knowhere::metric::COSINE) ? diskann::Metric::COSINE
+                                                                                  : diskann::Metric::INNER_PRODUCT;
+        return diskann::StorageHasRawData(disk_config && disk_config->disk_pq_dims.value_or(0) > 0, metric);
     }
 
     static Status
@@ -143,7 +143,7 @@ class DiskANNIndexNode : public IndexNode {
 
     bool
     HasRawData(const std::string& metric_type) const override {
-        if (graph_index_ && graph_index_->uses_disk_pq()) {
+        if (graph_index_ && !graph_index_->has_raw_data()) {
             return false;
         }
         const auto& base_metric = get_sub_metric_type(metric_type).value_or(metric_type);
@@ -1197,8 +1197,9 @@ DiskANNIndexNode<DataType>::GetVectorByStorageIds(const DataSetPtr dataset, milv
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
-    if (graph_index_->uses_disk_pq()) {
-        return expected<DataSetPtr>::Err(Status::not_implemented, "SSD PQ does not retain original vectors");
+    if (!graph_index_->has_raw_data()) {
+        return expected<DataSetPtr>::Err(Status::not_implemented,
+                                         "Stored vectors do not provide original data for this metric");
     }
     auto dim = Dim();
     auto rows = dataset->GetRows();

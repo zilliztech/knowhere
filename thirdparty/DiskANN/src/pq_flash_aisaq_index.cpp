@@ -879,18 +879,9 @@ void PQFlashAisaqIndex<T>::use_medoids_data_as_centroids() {
 
     for (uint64_t cur_m = 0; cur_m < this->num_medoids; cur_m++) {
         if (read_status[cur_m] == true) {
-            if (!this->use_disk_index_pq) {
-                for (uint32_t i = 0; i < this->data_dim; i++)
-                    this->centroid_data[cur_m * this->aligned_dim + i] =
-                        medoid_bufs[cur_m][i];
-            } else {
-                this->disk_pq_table.inflate_vector(
-                    (uint8_t *)medoid_bufs[cur_m],
-                    (this->centroid_data + cur_m * this->aligned_dim));
-            }
+            this->storage_codec_->Decode(medoid_bufs[cur_m], this->centroid_data + cur_m * this->aligned_dim);
         } else {
-            throw ANNException("Unable to read a medoid", -1, __FUNCSIG__,
-                               __FILE__, __LINE__);
+            throw ANNException("Unable to read a medoid", -1, __FUNCSIG__, __FILE__, __LINE__);
         }
         delete[] medoid_bufs[cur_m];
     }
@@ -961,22 +952,8 @@ int PQFlashAisaqIndex<T>::aisaq_load_from_separate_paths(
                                     __LINE__);
     }
 
-    std::string disk_pq_pivots_path =
-        std::string(index_filepath) + "_pq_pivots.bin";
-    if (file_exists(disk_pq_pivots_path)) {
-        this->use_disk_index_pq = true;
-        // giving 0 chunks to make the _pq_table infer from the
-        // chunk_offsets file the correct value
-        this->disk_pq_table.load_pq_centroid_bin(disk_pq_pivots_path.c_str(),
-                                                 0);
-        this->disk_pq_n_chunks = this->disk_pq_table.get_num_chunks();
-        this->disk_bytes_per_point =
-            this->disk_pq_n_chunks *
-            sizeof(uint8_t); // revising disk_bytes_per_point since DISK PQ is
-                             // used.
-        LOG_KNOWHERE_DEBUG_ << "Disk index uses PQ data compressed down to "
-                           << this->disk_pq_n_chunks << " bytes per point.";
-    }
+    this->storage_codec_ = LoadDiskStorageCodec<T>(index_filepath, this->metric, this->data_dim, this->num_points);
+    this->disk_bytes_per_point = this->storage_codec_->PayloadBytes();
 
     // read index metadata
     std::ifstream index_metadata(this->disk_index_file, std::ios::binary);
@@ -1139,23 +1116,6 @@ int PQFlashAisaqIndex<T>::aisaq_load_from_separate_paths(
         use_medoids_data_as_centroids();
     }
 
-    std::string norm_file = std::string(index_filepath) + "_max_base_norm.bin";
-
-    if (file_exists(norm_file) &&
-        this->metric == diskann::Metric::INNER_PRODUCT) {
-        uint64_t dumr, dumc;
-        std::unique_ptr<float[]> norm_val = nullptr;
-        diskann::load_bin<float>(norm_file, norm_val, dumr, dumc);
-        this->max_base_norm = norm_val[0];
-        LOG_KNOWHERE_DEBUG_ << "Setting re-scaling factor of base vectors to "
-                           << this->max_base_norm;
-    }
-    if (file_exists(norm_file) && this->metric == diskann::Metric::COSINE) {
-        _u64 dumr, dumc;
-        diskann::load_bin<float>(norm_file, this->base_norms, dumr, dumc);
-        LOG_KNOWHERE_DEBUG_ << "Setting base vector norms";
-    }
-    LOG_KNOWHERE_DEBUG_ << "done..";
     return 0;
 }
 
@@ -1803,17 +1763,7 @@ void PQFlashAisaqIndex<T>::prepare_search_results(std::vector<Neighbor> &full_re
             _aisaq_rearranged_index ? full_retset[i].rid : full_retset[i].id;
 
         if (distances != nullptr) {
-            distances[i] = full_retset[i].distance;
-            if (this->metric == diskann::Metric::INNER_PRODUCT) {
-                // convert l2 distance to ip distance
-                distances[i] = 1.0 - distances[i] / 2.0;
-                // rescale to revert back to original norms (cancelling the effect of
-                // base and query pre-processing)
-                if (this->max_base_norm != 0)
-                    distances[i] *= (this->max_base_norm * query_norm);
-            } else if (this->metric == diskann::Metric::COSINE) {
-                distances[i] = -distances[i];
-            }
+            distances[i] = this->storage_codec_->Restore(full_retset[i].distance, query_norm);
         }
     }
 }

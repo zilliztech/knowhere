@@ -169,13 +169,7 @@ namespace diskann {
 
   template<typename T>
   float IteratorWorkspace<T>::output_distance(float distance) const {
-    if (metric == diskann::Metric::INNER_PRODUCT) {
-      distance = distance / 2.0f - 1.0f;
-      if (max_base_norm != 0) {
-        distance *= (max_base_norm * query_norm);
-      }
-    }
-    return distance;
+    return SSDIteratorScore(metric, distance, query_norm, max_base_norm);
   }
 
   template<typename T>
@@ -201,21 +195,7 @@ namespace diskann {
   SSDGraphIndex<T>::SSDGraphIndex(std::shared_ptr<AlignedFileReader> fileReader,
                                 diskann::Metric                    m)
       : reader(fileReader), metric(m) {
-    if (m == diskann::Metric::INNER_PRODUCT || m == diskann::Metric::COSINE) {
-      if (!knowhere::KnowhereFloatTypeCheck<T>::value) {
-        LOG(WARNING) << "Cannot normalize integral data types."
-                     << " This may result in erroneous results or poor recall."
-                     << " Consider using L2 distance with integral data types.";
-      }
-      if (m == diskann::Metric::INNER_PRODUCT) {
-        LOG(INFO) << "Cosine metric chosen for (normalized) float data."
-                     "Changing distance to L2 to boost accuracy.";
-        m = diskann::Metric::L2;
-      }
-    }
 
-    this->dist_cmp = diskann::get_distance_function<T>(m);
-    this->dist_cmp_float = diskann::get_distance_function<float>(m);
   }
 
   template<typename T>
@@ -681,14 +661,7 @@ namespace diskann {
       T *medoid_disk_coords = OFFSET_TO_NODE_COORDS(medoid_node_buf);
       memcpy(medoid_coords, medoid_disk_coords, disk_bytes_per_point);
 
-      if (!use_disk_index_pq) {
-        for (uint32_t i = 0; i < data_dim; i++) {
-          centroid_data[cur_m * aligned_dim + i] = medoid_coords[i];
-        }
-      } else {
-        disk_pq_table.inflate_vector((_u8 *) medoid_coords,
-                                     (centroid_data + cur_m * aligned_dim));
-      }
+      storage_codec_->Decode(medoid_coords, centroid_data + cur_m * aligned_dim);
     }
 
     // return ctx
@@ -709,27 +682,12 @@ namespace diskann {
     const auto medoids_file = get_disk_index_medoids_filename(this->disk_index_file);
     const auto centroids_file = get_disk_index_centroids_filename(this->disk_index_file);
     this->data_dim = space.dimension;
-    this->disk_data_dim = this->data_dim;
     this->disk_bytes_per_point = this->data_dim * sizeof(T);
     this->aligned_dim = ROUND_UP(this->data_dim, 8);
     this->num_points = space.count;
 
-    std::string disk_pq_pivots_path = this->disk_index_file + "_pq_pivots.bin";
-    if (file_exists(disk_pq_pivots_path)) {
-      use_disk_index_pq = true;
-      // giving 0 chunks to make the pq_table infer from the
-      // chunk_offsets file the correct value
-      disk_pq_table.load_pq_centroid_bin(disk_pq_pivots_path.c_str(), 0);
-      if (disk_pq_table.get_total_dims() != data_dim) {
-        throw ANNException("SSD PQ and navigation dimensions do not match", -1);
-      }
-      disk_pq_n_chunks = disk_pq_table.get_num_chunks();
-      disk_bytes_per_point =
-          disk_pq_n_chunks *
-          sizeof(_u8);  // revising disk_bytes_per_point since DISK PQ is used.
-      LOG_KNOWHERE_INFO_ << "Disk index uses PQ data compressed down to "
-                << disk_pq_n_chunks << " bytes per point.";
-    }
+    storage_codec_ = LoadDiskStorageCodec<T>(disk_index_file, metric, data_dim, num_points);
+    disk_bytes_per_point = storage_codec_->PayloadBytes();
 
     // read index metadata
     std::ifstream index_metadata(disk_index_file, std::ios::binary);
@@ -789,7 +747,7 @@ namespace diskann {
 
     READ_U64(index_metadata, this->reorder_data_exists);
     if (this->reorder_data_exists) {
-      if (this->use_disk_index_pq == false) {
+      if (!storage_codec_->SupportsReorder()) {
         throw ANNException(
             "Reordering is designed for used with disk PQ compression option",
             -1, __FUNCSIG__, __FILE__, __LINE__);
@@ -849,24 +807,6 @@ namespace diskann {
       medoids = std::make_unique<uint32_t[]>(1);
       medoids[0] = (_u32) (medoid_id_on_file);
       use_medoids_data_as_centroids();
-    }
-
-    std::string norm_file =
-        get_disk_index_max_base_norm_file(std::string(disk_index_file));
-
-    if (file_exists(norm_file) && metric == diskann::Metric::INNER_PRODUCT) {
-      _u64                     dumr, dumc;
-      std::unique_ptr<float[]> norm_val = nullptr;
-      diskann::load_bin<float>(norm_file, norm_val, dumr, dumc);
-      this->max_base_norm = norm_val[0];
-      LOG_KNOWHERE_DEBUG_ << "Setting re-scaling factor of base vectors to "
-                          << this->max_base_norm;
-    }
-
-    if (file_exists(norm_file) && metric == diskann::Metric::COSINE) {
-      _u64 dumr, dumc;
-      diskann::load_bin<float>(norm_file, base_norms, dumr, dumc);
-      LOG_KNOWHERE_DEBUG_ << "Setting base vector norms";
     }
 
     return 0;
@@ -1030,15 +970,7 @@ namespace diskann {
         const auto [dis, id] = op.value();
         indices[i] = id_mapping.get_origin_id(id);
         if (distances != nullptr) {
-          distances[i] = dis;
-          if (metric == diskann::Metric::INNER_PRODUCT) {
-            distances[i] = 1.0 - distances[i] / 2.0;
-            if (max_base_norm != 0) {
-              distances[i] *= (max_base_norm * query_norm);
-            }
-          } else if (metric == diskann::Metric::COSINE) {
-            distances[i] = -distances[i];
-          }
+          distances[i] = storage_codec_->Restore(dis, query_norm);
         }
       } else {
         LOG(ERROR) << "Size is incorrect";
@@ -1468,17 +1400,7 @@ namespace diskann {
       }
       indices[i] = full_retset[i].id;
       if (distances != nullptr) {
-        distances[i] = full_retset[i].distance;
-        if (metric == diskann::Metric::INNER_PRODUCT) {
-          // convert l2 distance to ip distance
-          distances[i] = 1.0 - distances[i] / 2.0;
-          // rescale to revert back to original norms (cancelling the effect of
-          // base and query pre-processing)
-          if (max_base_norm != 0)
-            distances[i] *= (max_base_norm * query_norm);
-        } else if (metric == diskann::Metric::COSINE) {
-          distances[i] = -distances[i];
-        }
+        distances[i] = storage_codec_->Restore(full_retset[i].distance, query_norm);
       }
     }
 
@@ -1522,19 +1444,10 @@ namespace diskann {
       // dist_cmp_wrap returns DiskANN's internal distance representation.
       // Convert it before returning, regardless of whether vectors came from
       // the coordinate cache or disk.
-      if (metric == diskann::Metric::INNER_PRODUCT) {
-        for (int64_t i = 0; i < n; ++i) {
-          output_dists[i] = 1.0 - output_dists[i] / 2.0;
-          if (max_base_norm != 0) {
-            output_dists[i] *= (max_base_norm * query_norm);
-          }
-        }
-      } else if (metric == diskann::Metric::COSINE) {
-        for (int64_t i = 0; i < n; ++i) {
-          output_dists[i] = -output_dists[i];
-        }
+      for (int64_t i = 0; i < n; ++i) {
+        if (ids[i] >= 0 && static_cast<uint64_t>(ids[i]) < num_points)
+          output_dists[i] = storage_codec_->Restore(output_dists[i], query_norm);
       }
-
       this->reader->put_ctx(ctx);
       this->thread_data.push(data);
       this->thread_data.push_notify_all();
@@ -1637,17 +1550,7 @@ namespace diskann {
   template<typename T>
   inline void SSDGraphIndex<T>::copy_vec_base_data(T *des, const int64_t des_idx,
                                                   void *src) {
-    if (metric == Metric::INNER_PRODUCT) {
-      assert(max_base_norm != 0);
-      const auto original_dim = data_dim - 1;
-      memcpy(des + des_idx * original_dim, src, original_dim * sizeof(T));
-      for (size_t i = 0; i < original_dim; ++i) {
-        des[des_idx * original_dim + i] =
-            (T) (max_base_norm * (float) des[des_idx * original_dim + i]);
-      }
-    } else {
-      memcpy(des + des_idx * data_dim, src, data_dim * sizeof(T));
-    }
+    storage_codec_->CopyOriginal(src, des + des_idx * data_dim);
   }
 
   template<typename T>
@@ -1673,7 +1576,7 @@ namespace diskann {
   template<typename T>
   void SSDGraphIndex<T>::get_vector_by_ids(const int64_t *ids, const int64_t n,
                                           T *output_data) {
-    if (use_disk_index_pq) {
+    if (!storage_codec_->HasRawData()) {
       throw ANNException("SSD PQ does not retain original vectors", -1);
     }
     auto sectors_to_visit =
@@ -1990,7 +1893,7 @@ namespace diskann {
     float alpha = kAlpha;
     auto workspace = std::make_unique<IteratorWorkspace<T>>(
         query_data, metric, this->aligned_dim, this->data_dim, alpha, lsearch,
-        beam_width, filter_ratio, this->max_base_norm, bitset);
+        beam_width, filter_ratio, storage_codec_->MaxBaseNorm(), bitset);
     workspace->navigation = std::move(navigation);
     if (!workspace->not_l2_but_zero)
       workspace->navigation->set_query(workspace->aligned_query_float);
@@ -2014,16 +1917,7 @@ namespace diskann {
     // get entry points:
     index_mem_size += ROUND_UP(num_medoids * aligned_dim * sizeof(float), 32);
     index_mem_size += num_medoids * aligned_dim * sizeof(uint32_t);
-    if (use_disk_index_pq) {
-      index_mem_size += disk_pq_table.get_total_dims() *
-          (256 * sizeof(float) * 2 + sizeof(uint32_t) + sizeof(float));
-      index_mem_size += (disk_pq_table.get_num_chunks() + 1) * sizeof(uint32_t);
-    }
-    // base norms:
-    if (this->metric == diskann::Metric::COSINE) {
-      index_mem_size += sizeof(float) * this->num_points;
-    }
-
+    index_mem_size += storage_codec_ ? storage_codec_->MemorySize() : 0;
     return index_mem_size;
   }
 

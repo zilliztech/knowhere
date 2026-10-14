@@ -21,7 +21,7 @@
 #include "neighbor.h"
 #include "parameters.h"
 #include "percentile_stats.h"
-#include "pq_table.h"
+#include "diskann/storage_codec.h"
 #include "utils.h"
 #include "diskann/distance.h"
 #include "diskann/navigation_runtime.h"
@@ -189,7 +189,9 @@ namespace diskann {
 
     virtual void load_cache_list(std::vector<uint32_t> &node_list);
 
-    bool uses_disk_pq() const noexcept { return use_disk_index_pq; }
+    bool has_raw_data() const noexcept { return storage_codec_ && storage_codec_->HasRawData(); }
+    // Compatibility accessor for the two existing SSD encodings.
+    bool uses_disk_pq() const noexcept { return storage_codec_ && storage_codec_->IsCompressed(); }
 
     // asynchronously collect the access frequency of each node in the graph
     void async_generate_cache_list_from_sample_queries(std::string sample_bin,
@@ -301,13 +303,6 @@ namespace diskann {
 
     diskann::Metric metric = diskann::Metric::L2;
 
-    // used only for inner product search to re-scale the result value
-    // (due to the pre-processing of base during index build)
-    float max_base_norm = 0.0f;
-
-    // used only for cosine search to re-scale the caculated distance.
-    std::unique_ptr<float[]> base_norms = nullptr;
-
     // data info
     bool long_node = false;
     _u64 nsectors_per_node = 0;
@@ -316,8 +311,6 @@ namespace diskann {
     _u64 num_frozen_points = 0;
     _u64 frozen_location = 0;
     _u64 data_dim = 0;
-    _u64 disk_data_dim = 0;  // will be different from data_dim only if we use
-                             // PQ for disk data (very large dimensionality)
     _u64 aligned_dim = 0;
     _u64 disk_bytes_per_point = 0;
 
@@ -330,49 +323,17 @@ namespace diskann {
     std::shared_ptr<ThreadSafeStateController> state_controller =
         std::make_shared<ThreadSafeStateController>();
 
-    // distance comparator
-    DISTFUN<T>     dist_cmp;
-    DISTFUN<float> dist_cmp_float;
+    std::unique_ptr<DiskStorageCodec<T>> storage_codec_;
 
-    float dist_cmp_wrap(const T *x, const T *y, size_t d, int32_t u) {
-      if (metric == Metric::COSINE) {
-        return dist_cmp(x, y, d) / base_norms[u];
-      } else {
-        return dist_cmp(x, y, d);
-      }
+    float dist_cmp_wrap(const T* query, const T* vector, size_t dimensions, int32_t id) {
+      return storage_codec_->RawDistance(query, vector, dimensions, id);
     }
-
-    // SSD payload scoring, independent of the resident navigation codec.
-    // Keep the same internal score convention as the uncompressed path.
-    float disk_distance(const T *query, const float *query_float,
-                        const T *payload, int32_t id) {
-      if (!use_disk_index_pq) {
-        return dist_cmp_wrap(query, payload, aligned_dim, id);
-      }
-      auto *code = reinterpret_cast<_u8 *>(const_cast<T *>(payload));
-      if (metric == Metric::INNER_PRODUCT) {
-        return 2.0f + 2.0f * disk_pq_table.inner_product(query_float, code);
-      }
-      if (metric == Metric::COSINE) {
-        // Disk PQ encodes the normalized base, not the original vectors.
-        return disk_pq_table.inner_product(query_float, code);
-      }
-      return disk_pq_table.l2_distance(query_float, code);
+    float disk_distance(const T* query, const float* query_float, const T* payload, int32_t id) {
+      return storage_codec_->Score(query, query_float, payload, id);
     }
-
-    float dist_cmp_float_wrap(const float *x, const float *y, size_t d,
-                              int32_t u) {
-      if (metric == Metric::COSINE) {
-        return dist_cmp_float(x, y, d) / base_norms[u];
-      } else {
-        return dist_cmp_float(x, y, d);
-      }
+    float dist_cmp_float_wrap(const float* query, const float* vector, size_t dimensions, int32_t id) {
+      return storage_codec_->DecodedDistance(query, vector, dimensions, id);
     }
-
-    // for very large datasets: we use PQ even for the disk resident index
-    bool              use_disk_index_pq = false;
-    _u64              disk_pq_n_chunks = 0;
-    FixedChunkPQTable disk_pq_table;
 
     // medoid/start info
 
