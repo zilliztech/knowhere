@@ -44,6 +44,14 @@ error "Missing the <filesystem> header."
 #include <fstream>
 
 namespace {
+// Parameter ownership tests must select the native implementation even when
+// Cardinal registers its own implementation under the public DISKANN name.
+#ifdef KNOWHERE_WITH_CARDINAL
+constexpr const char* kNativeDiskANNType = "DISKANN_DEPRECATED";
+#else
+constexpr const char* kNativeDiskANNType = "DISKANN";
+#endif
+
 std::string kDir = fs::current_path().string() + "/diskann_test";
 std::string kRawDataPath = kDir + "/raw_data";
 std::string kL2IndexDir = kDir + "/l2_index";
@@ -83,7 +91,7 @@ constexpr float kCosineRangeAp = 0.9;
 }  // namespace
 TEST_CASE("Disk index static parameter ownership", "[diskann][disk-parameters]") {
     using namespace knowhere;
-    auto type = GENERATE("DISKANN", "AISAQ");
+    auto type = GENERATE(kNativeDiskANNType, "AISAQ");
     const auto version = Version::GetMaximumVersion();
     std::string message;
     REQUIRE(IndexStaticFaced<fp32>::ConfigCheck(type, version, Json::object(), message) == Status::success);
@@ -176,7 +184,7 @@ TEST_CASE("Disk index budgets use actual typed vector metadata", "[diskann][disk
 
 TEST_CASE("Disk index rejects effective zero PQ budget before runtime", "[diskann][disk-parameters]") {
     using namespace knowhere;
-    auto type = GENERATE("DISKANN", "AISAQ");
+    auto type = GENERATE(kNativeDiskANNType, "AISAQ");
     const auto version = Version::GetMaximumVersion();
     std::string message;
     for (const Json& invalid : std::vector<Json>{{{"pq_code_budget_gb", 0}},
@@ -202,7 +210,7 @@ TEST_CASE("Disk index rejects effective zero PQ budget before runtime", "[diskan
 TEST_CASE("Disk index public search parameters at each stage", "[diskann][disk-parameters]") {
     using namespace knowhere;
     auto stage = GENERATE(SEARCH, RANGE_SEARCH, ITERATOR);
-    auto type = GENERATE("DISKANN", "AISAQ");
+    auto type = GENERATE(kNativeDiskANNType, "AISAQ");
     auto cfg = IndexStaticFaced<fp32>::CreateConfig(type, Version::GetMaximumVersion());
     REQUIRE(Config::Load(*cfg, {{"search_list", 67}, {"beamwidth", 4}, {"vectors_beamwidth", 2}}, stage) ==
             Status::success);
@@ -503,13 +511,8 @@ TEST_CASE("Test DiskANN CalcDistByIDs with all vectors cached", "[diskann]") {
     fs::remove_all(kDir);
     REQUIRE_NOTHROW(fs::create_directories(kCOSINEIndexDir));
 
-#ifdef KNOWHERE_WITH_CARDINAL
     // This case verifies native DiskANN's cached-node file contract.
-    // Cardinal-backed DISKANN keeps its cache inside Cardinal storage instead.
-    constexpr const char* diskann_type = "DISKANN_DEPRECATED";
-#else
-    constexpr const char* diskann_type = "DISKANN";
-#endif
+    constexpr const char* diskann_type = kNativeDiskANNType;
 
     auto version = GenTestVersionList();
     auto base_ds = knowhere::ConvertToDataTypeIfNeeded<knowhere::fp16>(GenDataSet(kNumRows, kDim, 30));
@@ -2105,7 +2108,7 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
     REQUIRE(ratio_small > zero);
     REQUIRE(ratio_large > ratio_small);
     const auto default_cache = load_and_search(Json::object());
-    if (type == "DISKANN") {
+    if (type == kNativeDiskANNType) {
         REQUIRE(default_cache == ratio_small);
     } else {
         REQUIRE(default_cache == zero);
@@ -2132,7 +2135,7 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
 }
 
 TEST_CASE("Disk parameter defaults reach native consumers", "[diskann][disk-parameters-native]") {
-    auto type = GENERATE(as<std::string>{}, "DISKANN", "AISAQ");
+    auto type = GENERATE(as<std::string>{}, kNativeDiskANNType, "AISAQ");
     SECTION("fp32") {
         CheckDiskParameterConsumers<knowhere::fp32>(type, false);
     }
@@ -2145,7 +2148,7 @@ TEST_CASE("Disk parameter defaults reach native consumers", "[diskann][disk-para
 }
 
 TEST_CASE("Disk parameter overrides reach native consumers", "[diskann][disk-parameters-native]") {
-    auto type = GENERATE(as<std::string>{}, "DISKANN", "AISAQ");
+    auto type = GENERATE(as<std::string>{}, kNativeDiskANNType, "AISAQ");
     CheckDiskParameterConsumers<knowhere::fp32>(type, true);
 }
 
@@ -2185,7 +2188,7 @@ CheckDiskArrayBudgets() {
     const auto version = Version::GetMaximumVersion();
     BinarySet binary;
     {
-        auto index = IndexFactory::Instance().Create<DataType>("DISKANN", version, pack).value();
+        auto index = IndexFactory::Instance().Create<DataType>(kNativeDiskANNType, version, pack).value();
         REQUIRE(index.Build(nullptr, build) == Status::success);
         REQUIRE(index.Serialize(binary) == Status::success);
     }
@@ -2194,7 +2197,7 @@ CheckDiskArrayBudgets() {
     REQUIRE(code_rows == inner_rows);
     REQUIRE(code_bytes == dimension * sizeof(DataType) / 8);
     {
-        auto index = IndexFactory::Instance().Create<DataType>("DISKANN", version, pack).value();
+        auto index = IndexFactory::Instance().Create<DataType>(kNativeDiskANNType, version, pack).value();
         REQUIRE(index.Deserialize(binary, {{"metric_type", "MAX_SIM_L2"}, {"index_prefix", prefix}}) ==
                 Status::success);
         auto result = index.Search(query, {{"metric_type", "MAX_SIM_L2"}, {"k", 1}, {"search_list", 40}}, nullptr);
