@@ -23,6 +23,7 @@
 #include "diskann/utils.h"
 #include "filemanager/FileManager.h"
 #include "filemanager/impl/LocalFileManager.h"
+#include "index/diskann/aisaq_config.h"
 #include "index/diskann/diskann_config.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/knowhere_check.h"
@@ -80,51 +81,139 @@ constexpr float kL2RangeAp = 0.9;
 constexpr float kIpRangeAp = 0.9;
 constexpr float kCosineRangeAp = 0.9;
 }  // namespace
-TEST_CASE("Valid diskann build params test", "[diskann]") {
-    int rows_num = 1000000;
-    auto version = GenTestVersionList();
-
-    auto ratio = GENERATE(as<float>{}, 0.01, 0.1, 0.125);
-
-    float pq_code_budget_gb = sizeof(float) * kDim * rows_num * 0.125 / (1024 * 1024 * 1024);
-    float search_cache_budget_gb = sizeof(float) * kDim * rows_num * 0.05 / (1024 * 1024 * 1024);
-
-    auto test_gen = [&]() {
-        knowhere::Json json;
-        json["dim"] = kDim;
-        json["metric_type"] = "L2";
-        json["k"] = 100;
-        json["index_prefix"] = kL2IndexPrefix;
-        json["data_path"] = kRawDataPath;
-        json["max_degree"] = 24;
-        json["search_list_size"] = 64;
-        json["vec_field_size_gb"] = 1.0;
-        json["pq_code_budget_gb_ratio"] = ratio;
-        json["pq_code_budget_gb"] = pq_code_budget_gb;
-        json["build_dram_budget_gb"] = 32.0;
-        json["search_cache_budget_gb_ratio"] = ratio;
-        json["search_cache_budget_gb"] = search_cache_budget_gb;
-        json["beamwidth"] = 8;
-        json["min_k"] = 10;
-        json["max_k"] = 8000;
-        return json;
-    };
-
-    SECTION("Dynamic param check") {
-        knowhere::Json test_json = test_gen();
-
-        auto cfg = knowhere::IndexStaticFaced<float>::CreateConfig(knowhere::IndexEnum::INDEX_DISKANN, version);
-        knowhere::Json json_(test_json);
-        std::string msg;
-        auto res = knowhere::Config::FormatAndCheck(*cfg, json_, &msg);
-        REQUIRE(res == knowhere::Status::success);
-        res = knowhere::Config::Load(*cfg, json_, knowhere::PARAM_TYPE::TRAIN, &msg);
-        REQUIRE(res == knowhere::Status::success);
-
-        knowhere::DiskANNConfig diskCfg = static_cast<const knowhere::DiskANNConfig&>(*cfg);
-        REQUIRE(diskCfg.pq_code_budget_gb == std::max(pq_code_budget_gb, 1.0f * ratio));
-        REQUIRE(diskCfg.search_cache_budget_gb == std::max(search_cache_budget_gb, 1.0f * ratio));
+TEST_CASE("Disk index static parameter ownership", "[diskann][disk-parameters]") {
+    using namespace knowhere;
+    auto type = GENERATE("DISKANN", "AISAQ");
+    const auto version = Version::GetMaximumVersion();
+    std::string message;
+    REQUIRE(IndexStaticFaced<fp32>::ConfigCheck(type, version, Json::object(), message) == Status::success);
+    auto cfg = IndexStaticFaced<fp32>::CreateConfig(type, version);
+    REQUIRE(Config::Load(*cfg, Json::object(), TRAIN, &message) == Status::success);
+    auto& disk = static_cast<DiskANNConfig&>(*cfg);
+    REQUIRE(disk.max_degree == 56);
+    REQUIRE(disk.search_list_size == 100);
+    REQUIRE(disk.pq_code_budget_gb_ratio == 0.125f);
+    REQUIRE_FALSE(disk.pq_code_budget_gb.has_value());
+    REQUIRE_FALSE(disk.search_cache_budget_gb.has_value());
+    REQUIRE_FALSE(disk.disk_pq_dims.has_value());
+    if (std::string(type) == "AISAQ") {
+        auto& aisaq = static_cast<AisaqConfig&>(*cfg);
+        REQUIRE(aisaq.disk_pq_code_budget_gb_ratio == 0.25f);
+        REQUIRE(aisaq.search_cache_budget_gb_ratio == 0);
+        REQUIRE(aisaq.inline_pq == -1);
+        REQUIRE(aisaq.num_entry_points == 100);
+        REQUIRE(aisaq.rearrange == true);
+        REQUIRE(aisaq.pq_cache_size == 0);
+        REQUIRE(aisaq.pq_read_page_cache_size == 0);
+    } else {
+        REQUIRE(disk.disk_pq_code_budget_gb_ratio == 0);
+        REQUIRE(disk.search_cache_budget_gb_ratio == 0.10f);
     }
+    for (const auto& invalid : std::vector<Json>{{{"max_degree", 0}},
+                                                 {{"max_degree", diskann::defaults::MAX_GRAPH_DEGREE + 1}},
+                                                 {{"disk_pq_dims", -1}},
+                                                 {{"dim", 16}, {"disk_pq_dims", 17}},
+                                                 {{"disk_pq_code_budget_gb_ratio", -0.1}},
+                                                 {{"disk_pq_code_budget_gb_ratio", 1.1}},
+                                                 {{"pq_code_budget_gb_ratio", -1}},
+                                                 {{"search_cache_budget_gb_ratio", -1}},
+                                                 {{"pq_code_budget_gb", "bad"}},
+                                                 {{"accelerate_build", "bad"}},
+                                                 {{"num_build_thread", 0}}}) {
+        CAPTURE(type, invalid.dump());
+        REQUIRE(IndexStaticFaced<fp32>::ConfigCheck(type, version, invalid, message) != Status::success);
+    }
+    if (std::string(type) == "AISAQ") {
+        for (const auto& invalid : std::vector<Json>{{{"inline_pq", 57}},
+                                                     {{"num_entry_points", -1}},
+                                                     {{"pq_cache_size", -1}},
+                                                     {{"pq_read_page_cache_size", -1}},
+                                                     {{"pq_read_io_engine", "invalid"}},
+                                                     {{"pq_read_io_engine", "uring"}}}) {
+            CAPTURE(invalid.dump());
+            REQUIRE(IndexStaticFaced<fp32>::ConfigCheck(type, version, invalid, message) != Status::success);
+        }
+    }
+}
+
+TEST_CASE("Disk index budgets use actual typed vector metadata", "[diskann][disk-parameters]") {
+    using namespace knowhere;
+    auto element_bytes = GENERATE(2, 4);
+    auto explicit_zero = GENERATE(false, true);
+    AisaqConfig cfg;
+    Json params = {{"vec_field_size_gb", 9000}};  // stale outer-row estimate must have no effect
+    if (explicit_zero) {
+        params.update({{"search_cache_budget_gb", 0},
+                       {"disk_pq_dims", 0},
+                       {"rearrange", false},
+                       {"inline_pq", 0},
+                       {"num_entry_points", 0}});
+    }
+    REQUIRE(Config::Load(cfg, params, TRAIN) == Status::success);
+    REQUIRE(cfg.ResolveBuildBudgets(512, 32, element_bytes) == Status::success);
+    REQUIRE(cfg.pq_code_budget_gb.value() == 512 * 32 * element_bytes * .125 / (1024 * 1024 * 1024));
+    REQUIRE(cfg.disk_pq_dims.value() == (explicit_zero ? 0 : 32 * element_bytes / 4));
+    if (explicit_zero) {
+        REQUIRE(cfg.search_cache_budget_gb == 0);
+        REQUIRE(cfg.rearrange == false);
+        REQUIRE(cfg.inline_pq == 0);
+        REQUIRE(cfg.num_entry_points == 0);
+    }
+    DiskANNConfig absolute;
+    REQUIRE(Config::Load(absolute,
+                         {{"pq_code_budget_gb", .001},
+                          {"pq_code_budget_gb_ratio", 1},
+                          {"search_cache_budget_gb", .002},
+                          {"search_cache_budget_gb_ratio", 1},
+                          {"disk_pq_dims", 3},
+                          {"disk_pq_code_budget_gb_ratio", .5}},
+                         TRAIN) == Status::success);
+    REQUIRE(absolute.ResolveBuildBudgets(1000000, 128, element_bytes) == Status::success);
+    REQUIRE(absolute.pq_code_budget_gb.value() == Catch::Approx(.001));
+    REQUIRE(absolute.search_cache_budget_gb.value() == Catch::Approx(.002));
+    REQUIRE(absolute.disk_pq_dims == 3);
+}
+
+TEST_CASE("Disk index rejects effective zero PQ budget before runtime", "[diskann][disk-parameters]") {
+    using namespace knowhere;
+    auto type = GENERATE("DISKANN", "AISAQ");
+    const auto version = Version::GetMaximumVersion();
+    std::string message;
+    for (const Json& invalid : std::vector<Json>{{{"pq_code_budget_gb", 0}},
+                                                 {{"pq_code_budget_gb_ratio", 0}},
+                                                 {{"pq_code_budget_gb", 0}, {"pq_code_budget_gb_ratio", .5}}}) {
+        CAPTURE(type, invalid.dump());
+        REQUIRE(IndexStaticFaced<fp32>::ConfigCheck(type, version, invalid, message) == Status::out_of_range_in_json);
+        REQUIRE(message.find("pq_code_budget_gb") != std::string::npos);
+    }
+    Json valid = {{"pq_code_budget_gb", .001},
+                  {"pq_code_budget_gb_ratio", 0},
+                  {"disk_pq_dims", 0},
+                  {"max_degree", diskann::defaults::MAX_GRAPH_DEGREE}};
+    REQUIRE(IndexStaticFaced<fp32>::ConfigCheck(type, version, valid, message) == Status::success);
+    auto cfg = IndexStaticFaced<fp32>::CreateConfig(type, version);
+    REQUIRE(Config::Load(*cfg, valid, TRAIN) == Status::success);
+    auto& disk = static_cast<DiskANNConfig&>(*cfg);
+    REQUIRE(disk.ResolveBuildBudgets(512, 32, sizeof(float)) == Status::success);
+    REQUIRE(disk.pq_code_budget_gb.value() == Catch::Approx(.001));
+    REQUIRE(disk.disk_pq_dims == 0);
+}
+
+TEST_CASE("Disk index public search parameters at each stage", "[diskann][disk-parameters]") {
+    using namespace knowhere;
+    auto stage = GENERATE(SEARCH, RANGE_SEARCH, ITERATOR);
+    auto type = GENERATE("DISKANN", "AISAQ");
+    auto cfg = IndexStaticFaced<fp32>::CreateConfig(type, Version::GetMaximumVersion());
+    REQUIRE(Config::Load(*cfg, {{"search_list", 67}, {"beamwidth", 4}, {"vectors_beamwidth", 2}}, stage) ==
+            Status::success);
+    auto& disk = static_cast<DiskANNConfig&>(*cfg);
+    REQUIRE(disk.search_list_size == 67);
+    REQUIRE(disk.beamwidth == 4);
+    if (std::string(type) == "AISAQ") {
+        REQUIRE(static_cast<AisaqConfig&>(*cfg).vectors_beamwidth == 2);
+    }
+    REQUIRE(Config::Load(*cfg, {{"search_list", 67}, {"search_list_size", 68}}, stage) ==
+            Status::invalid_param_in_json);
 }
 
 TEST_CASE("Invalid diskann params test", "[diskann]") {
@@ -1187,26 +1276,26 @@ base_AiSAQ_param_test() {
             test_json = build_gen();
             test_json["disk_pq_dims"] = -2;
             test_stat = diskann.Build(ds_ptr, test_json);
-            REQUIRE(test_stat == knowhere::Status::aisaq_error);
+            REQUIRE(test_stat == knowhere::Status::out_of_range_in_json);
             LOG_KNOWHERE_INFO_ << "Test disk_pq_dims parameter value more than maximum";
             test_json = build_gen();
             test_json["disk_pq_dims"] = kDim + 2;
             test_stat = diskann.Build(ds_ptr, test_json);
-            REQUIRE(test_stat == knowhere::Status::aisaq_error);
+            REQUIRE(test_stat == knowhere::Status::out_of_range_in_json);
             LOG_KNOWHERE_INFO_ << "Test inline_pq parameter value more than max_degree";
             test_json = build_gen();
             test_json["inline_pq"] = 68;
             test_stat = diskann.Build(ds_ptr, test_json);
-            REQUIRE(test_stat == knowhere::Status::aisaq_error);
+            REQUIRE(test_stat == knowhere::Status::out_of_range_in_json);
             LOG_KNOWHERE_INFO_ << "Test max_degree parameter value more than maximum";
             test_json = build_gen();
             test_json["max_degree"] = diskann::defaults::MAX_AISAQ_MAX_DEGREE + 1;
             test_stat = diskann.Build(ds_ptr, test_json);
-            REQUIRE(test_stat == knowhere::Status::aisaq_error);
+            REQUIRE(test_stat == knowhere::Status::out_of_range_in_json);
             test_json = build_gen();
             test_json["search_list_size"] = diskann::defaults::MAX_AISAQ_SEARCH_LIST_SIZE + 1;
             test_stat = diskann.Build(ds_ptr, test_json);
-            REQUIRE(test_stat == knowhere::Status::aisaq_error);
+            REQUIRE(test_stat == knowhere::Status::out_of_range_in_json);
 
             test_stat = diskann.Train(ds_ptr, json);
             REQUIRE(test_stat == knowhere::Status::not_implemented);
@@ -1245,7 +1334,7 @@ base_AiSAQ_param_test() {
             test_json = knn_search_without_beamwidth_gen();
             test_json["vectors_beamwidth"] = 4;
             search_stat = diskann.Search(query_ds, test_json, nullptr);
-            REQUIRE(search_stat.error() == knowhere::Status::aisaq_error);
+            REQUIRE(search_stat.error() == knowhere::Status::out_of_range_in_json);
             LOG_KNOWHERE_INFO_ << "Test vectors_beamwidth parameter value less than minimum";
             test_json = knn_search_gen();
             test_json["vectors_beamwidth"] = 0;
@@ -1865,4 +1954,265 @@ TEST_CASE("Test DiskANN Search Cancellation", "[diskann][cancellation]") {
 
     fs::remove_all(kDir);
     fs::remove(kDir);
+}
+
+template <typename DataType>
+void
+CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, bool rearranged = false,
+                            int inline_pq = 0) {
+    using namespace knowhere;
+    constexpr size_t rows = 512;
+    constexpr size_t dimension = 32;
+    const auto directory = fs::current_path() / "disk_parameter_ownership";
+    fs::remove_all(directory);
+    fs::create_directories(directory);
+    const std::string prefix = (directory / "index").string();
+    const std::string raw = (directory / "raw").string();
+    auto base = ConvertToDataTypeIfNeeded<DataType>(GenDataSet(rows, dimension, 30));
+    auto query = ConvertToDataTypeIfNeeded<DataType>(GenDataSet(1, dimension, 30));
+    WriteRawDataToDisk<DataType>(raw, static_cast<const DataType*>(base->GetTensor()), rows, dimension);
+    std::shared_ptr<milvus::FileManager> manager = std::make_shared<milvus::LocalFileManager>();
+    auto pack = Pack(manager);
+    const auto version = Version::GetMaximumVersion();
+    Json build = {{"data_path", raw}, {"index_prefix", prefix}, {"build_dram_budget_gb", .25}, {"num_build_thread", 2}};
+    if (explicit_settings) {
+        build.update({{"max_degree", 24},
+                      {"search_list_size", 48},
+                      {"pq_code_budget_gb_ratio", .0625},
+                      {"disk_pq_code_budget_gb_ratio", .125},
+                      {"disk_pq_dims", 0},
+                      {"search_cache_budget_gb", .000001},
+                      {"inline_pq", inline_pq},
+                      {"rearrange", rearranged},
+                      {"num_entry_points", 0}});
+    }
+    BinarySet binary;
+    {
+        auto index = IndexFactory::Instance().Create<DataType>(type, version, pack).value();
+        REQUIRE(index.Build(nullptr, build) == Status::success);
+        REQUIRE(index.Serialize(binary) == Status::success);
+    }
+    // The serialized PQ codes prove that the real builder consumed the ratio and element width.
+    size_t code_rows, code_bytes;
+    diskann::get_bin_metadata(diskann::get_pq_compressed_filename(prefix), code_rows, code_bytes);
+    REQUIRE(code_rows == rows);
+    REQUIRE(code_bytes == dimension * sizeof(DataType) * (explicit_settings ? .0625 : .125));
+    const auto disk_pivots = diskann::get_disk_index_pq_pivots_filename(diskann::get_disk_index_filename(prefix));
+    REQUIRE(fs::exists(disk_pivots) == (type == "AISAQ" && !explicit_settings));
+    if (fs::exists(disk_pivots)) {
+        size_t chunks, columns;
+        diskann::get_bin_metadata(diskann::get_pq_chunk_offsets_filename(disk_pivots), chunks, columns);
+        REQUIRE(chunks == dimension * sizeof(DataType) / 4 + 1);
+    }
+    const bool uses_rearrangement = type == "AISAQ" && (!explicit_settings || (rearranged && inline_pq < 24));
+    if (type == "AISAQ") {
+        REQUIRE(fs::exists(diskann::get_index_entry_points_filename(prefix)) == !explicit_settings);
+        REQUIRE(fs::exists(diskann::get_index_rearranged_filename(prefix)) == uses_rearrangement);
+    }
+    size_t metadata_rows, metadata_columns;
+    std::unique_ptr<uint64_t[]> metadata;
+    diskann::load_bin<uint64_t>(diskann::get_disk_index_filename(prefix), metadata, metadata_rows, metadata_columns);
+    const size_t degree = explicit_settings ? 24 : 56;
+    const size_t disk_vector_bytes =
+        type == "AISAQ" && !explicit_settings ? dimension * sizeof(DataType) / 4 : dimension * sizeof(DataType);
+    const size_t node_without_inline = (degree + 1) * sizeof(uint32_t) + disk_vector_bytes;
+    if (type != "AISAQ" || !explicit_settings) {
+        // -1 disables inline PQ, independently of the enabled rearrangement default.
+        REQUIRE(metadata[3] == node_without_inline);
+        if (type == "AISAQ") {
+            REQUIRE(metadata[9] == 0);
+        }
+    } else {
+        REQUIRE(metadata[9] == degree);
+        if (inline_pq == 0) {
+            // Automatic placement consumes otherwise unused sector space, not the full neighborhood.
+            REQUIRE(metadata[3] > node_without_inline);
+            REQUIRE(diskann::defaults::SECTOR_LEN / metadata[3] == diskann::defaults::SECTOR_LEN / node_without_inline);
+        } else if (inline_pq == static_cast<int>(degree)) {
+            REQUIRE(metadata[3] == node_without_inline + degree * code_bytes);
+        } else {
+            REQUIRE(metadata[3] >= node_without_inline + inline_pq * code_bytes);
+            REQUIRE(metadata[3] < node_without_inline + degree * code_bytes);
+        }
+    }
+    // Retain the real build-produced candidate file. A larger load budget must grow beyond it.
+    const auto cache_file = diskann::get_cached_nodes_file(prefix);
+    size_t saved_nodes = 0, saved_columns = 0;
+    if (fs::exists(cache_file)) {
+        diskann::get_bin_metadata(cache_file, saved_nodes, saved_columns);
+    }
+    if (explicit_settings) {
+        REQUIRE(saved_nodes > 0);
+        REQUIRE(saved_nodes < 8);
+    }
+    auto load_and_search = [&](Json load) {
+        load["index_prefix"] = prefix;
+        // BFS is synchronous, so measured memory reflects fully populated cache nodes.
+        load["use_bfs_cache"] = true;
+        if (uses_rearrangement) {
+            load["pq_read_page_cache_size"] = 8192;
+        }
+        auto index = IndexFactory::Instance().Create<DataType>(type, version, pack).value();
+        REQUIRE(index.Deserialize(binary, load) == Status::success);
+        auto meta = index.GetIndexMeta(Json::object());
+        REQUIRE(meta.has_value());
+        auto build_meta = Json::parse(meta.value()->GetJsonInfo())["build_params_"];
+        REQUIRE(build_meta["pq_code_budget_gb"].get<float>() ==
+                Catch::Approx(code_rows * code_bytes / (1024.0 * 1024 * 1024)));
+        REQUIRE(build_meta["disk_pq_dims"] ==
+                (type == "AISAQ" && !explicit_settings ? dimension * sizeof(DataType) / 4 : 0));
+        Json search = {{"k", 1},
+                       {"search_list", 40},
+                       {"beamwidth", 4},
+                       {"vectors_beamwidth", 2},
+                       {"trace_visit", true},
+                       {"pq_read_page_cache_size", 0}};
+        auto result = index.Search(query, search, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] >= 0);
+        const auto trace = Json::parse(result.value()->GetJsonInfo())["query_params_"];
+        REQUIRE(trace["search_list_size"] == 40);
+        REQUIRE(trace["beamwidth"] == 4);
+        if (type == "AISAQ") {
+            REQUIRE(trace["vectors_beamwidth"] == 2);
+        } else {
+            auto iterators = index.AnnIterator(query, {{"search_list", 19}, {"beamwidth", 2}}, nullptr);
+            REQUIRE(iterators.has_value());
+            REQUIRE(iterators.value()[0]->HasNext());
+            auto ranges =
+                index.RangeSearch(query, {{"search_list", 19}, {"beamwidth", 2}, {"radius", 1000000}}, nullptr);
+            REQUIRE(ranges.has_value());
+        }
+        if (uses_rearrangement) {
+            // Missing search value inherits the load policy; an explicit zero disables it again.
+            search.erase("pq_read_page_cache_size");
+            REQUIRE(index.Search(query, search, nullptr).has_value());
+            search["pq_read_page_cache_size"] = 4096;
+            REQUIRE(index.Search(query, search, nullptr).has_value());
+            search["pq_read_page_cache_size"] = 0;
+            REQUIRE(index.Search(query, search, nullptr).has_value());
+        }
+        return index.Size();
+    };
+    const auto zero = load_and_search({{"search_cache_budget_gb", 0}});
+    const auto small = load_and_search({{"search_cache_budget_gb", .00001}});
+    const auto large = load_and_search({{"search_cache_budget_gb", .0001}});
+    REQUIRE(small > zero);
+    REQUIRE(large > small);
+    REQUIRE(large - zero <= .0001 * 1024 * 1024 * 1024);
+    const auto ratio_small = load_and_search({{"search_cache_budget_gb_ratio", .1}});
+    const auto ratio_large = load_and_search({{"search_cache_budget_gb_ratio", .2}});
+    REQUIRE(ratio_small > zero);
+    REQUIRE(ratio_large > ratio_small);
+    const auto default_cache = load_and_search(Json::object());
+    if (type == "DISKANN") {
+        REQUIRE(default_cache == ratio_small);
+    } else {
+        REQUIRE(default_cache == zero);
+    }
+    if (saved_nodes > 0) {
+        size_t unchanged_nodes, columns;
+        diskann::get_bin_metadata(cache_file, unchanged_nodes, columns);
+        REQUIRE(unchanged_nodes == saved_nodes);
+    }
+    if (type == "AISAQ" && explicit_settings) {
+        const auto pq_cache = load_and_search({{"search_cache_budget_gb", 0}, {"pq_cache_size", 512}});
+        if (inline_pq == 24) {
+            REQUIRE(pq_cache == zero);  // no redundant cache when every PQ code is inline
+        } else {
+            REQUIRE(pq_cache > zero);
+        }
+    }
+    fs::remove(cache_file);
+    const auto generated_zero = load_and_search({{"search_cache_budget_gb", 0}, {"use_bfs_cache", true}});
+    const auto generated_cache = load_and_search({{"search_cache_budget_gb", .00001}, {"use_bfs_cache", true}});
+    REQUIRE(generated_zero == zero);
+    REQUIRE(generated_cache > generated_zero);
+    fs::remove_all(directory);
+}
+
+TEST_CASE("Disk parameter defaults reach native consumers", "[diskann][disk-parameters-native]") {
+    auto type = GENERATE(as<std::string>{}, "DISKANN", "AISAQ");
+    SECTION("fp32") {
+        CheckDiskParameterConsumers<knowhere::fp32>(type, false);
+    }
+    SECTION("fp16") {
+        CheckDiskParameterConsumers<knowhere::fp16>(type, false);
+    }
+    SECTION("bf16") {
+        CheckDiskParameterConsumers<knowhere::bf16>(type, false);
+    }
+}
+
+TEST_CASE("Disk parameter overrides reach native consumers", "[diskann][disk-parameters-native]") {
+    auto type = GENERATE(as<std::string>{}, "DISKANN", "AISAQ");
+    CheckDiskParameterConsumers<knowhere::fp32>(type, true);
+}
+
+TEST_CASE("AiSAQ rearrangement and page-cache load policy", "[diskann][disk-parameters-native]") {
+    CheckDiskParameterConsumers<knowhere::fp32>("AISAQ", true, true);
+}
+
+TEST_CASE("AiSAQ partial and full inline layouts reach disk artifacts", "[diskann][disk-parameters-native]") {
+    auto inline_pq = GENERATE(4, 24);
+    CheckDiskParameterConsumers<knowhere::fp32>("AISAQ", true, true, inline_pq);
+}
+
+template <typename DataType>
+void
+CheckDiskArrayBudgets() {
+    using namespace knowhere;
+    constexpr size_t inner_rows = 512;
+    constexpr size_t dimension = 32;
+    constexpr size_t vectors_per_array = 8;
+    auto base = ConvertToDataTypeIfNeeded<DataType>(GenEmbListDataSet(inner_rows, dimension, 42, vectors_per_array));
+    auto query = ConvertToDataTypeIfNeeded<DataType>(GenQueryEmbListDataSet(1, dimension, 42));
+    const auto directory = fs::current_path() / "disk_array_parameter_ownership";
+    fs::remove_all(directory);
+    fs::create_directories(directory);
+    const auto raw = (directory / "raw").string();
+    const auto prefix = (directory / "index").string();
+    const auto offsets_path = (directory / "offsets").string();
+    auto offsets = GenEmbListOffset(inner_rows, vectors_per_array);
+    WriteRawDataToDisk<DataType>(raw, static_cast<const DataType*>(base->GetTensor()), inner_rows, dimension);
+    WriteEmbListOffsetToDisk(offsets_path, offsets.data(), offsets.size());
+    Json build = {{"metric_type", "MAX_SIM_L2"}, {"data_path", raw},
+                  {"index_prefix", prefix},      {"emb_list_offset_file_path", offsets_path},
+                  {"build_dram_budget_gb", .25}, {"num_build_thread", 2},
+                  {"vec_field_size_gb", 0}};
+    std::shared_ptr<milvus::FileManager> manager = std::make_shared<milvus::LocalFileManager>();
+    auto pack = Pack(manager);
+    const auto version = Version::GetMaximumVersion();
+    BinarySet binary;
+    {
+        auto index = IndexFactory::Instance().Create<DataType>("DISKANN", version, pack).value();
+        REQUIRE(index.Build(nullptr, build) == Status::success);
+        REQUIRE(index.Serialize(binary) == Status::success);
+    }
+    size_t code_rows, code_bytes;
+    diskann::get_bin_metadata(diskann::get_pq_compressed_filename(prefix), code_rows, code_bytes);
+    REQUIRE(code_rows == inner_rows);
+    REQUIRE(code_bytes == dimension * sizeof(DataType) / 8);
+    {
+        auto index = IndexFactory::Instance().Create<DataType>("DISKANN", version, pack).value();
+        REQUIRE(index.Deserialize(binary, {{"metric_type", "MAX_SIM_L2"}, {"index_prefix", prefix}}) ==
+                Status::success);
+        auto result = index.Search(query, {{"metric_type", "MAX_SIM_L2"}, {"k", 1}, {"search_list", 40}}, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] >= 0);
+        REQUIRE(result.value()->GetIds()[0] < inner_rows / vectors_per_array);
+    }
+    fs::remove_all(directory);
+}
+
+TEST_CASE("Disk parameter defaults count inner array vectors", "[diskann][disk-parameters-native]") {
+    SECTION("fp32") {
+        CheckDiskArrayBudgets<knowhere::fp32>();
+    }
+    SECTION("fp16") {
+        CheckDiskArrayBudgets<knowhere::fp16>();
+    }
+    SECTION("bf16") {
+        CheckDiskArrayBudgets<knowhere::bf16>();
+    }
 }

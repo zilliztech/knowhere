@@ -20,7 +20,7 @@ namespace knowhere {
 namespace {
 
 constexpr const CFG_INT::value_type kSearchListSizeMinValue = 16;
-constexpr const CFG_INT::value_type kDefaultSearchListSizeForBuild = 128;
+constexpr const CFG_INT::value_type kDefaultSearchListSizeForBuild = 100;
 
 }  // namespace
 
@@ -34,10 +34,11 @@ class DiskANNConfig : public BaseConfig {
     // complexity. Plz set this value larger than the max_degree unless you need to build indices really quickly and can
     // somewhat compromise on quality.
     CFG_INT search_list_size;
+    // Public search spelling. Both spellings must agree when supplied together.
+    CFG_INT search_list;
 
-    // The ratio of the size reserved for the pq code to the size of the raw data (defined with vec_field_size_gb)
-    // This parameter will replace pq_code_budget_gb to avoid calculating the actual size on the Milvus side.
-    // The index can indirectly obtain pq_code_budget_gb by vec_field_size_gb * pq_code_budget_gb_ratio
+    // Ratios use actual raw vector bytes at Build/Deserialize, including the element type.
+    // Explicit absolute budgets take precedence, including zero.
     CFG_FLOAT pq_code_budget_gb_ratio;
     // Limit the size of the PQ code after the raw vector has been PQ-encoded. PQ code is a (pq_code_budget_gb * 1024 *
     // 1024 * 1024) / row_num)-dimensional uint8 vector. If pq_code_budget_gb is too large, it will be adjusted to the
@@ -53,13 +54,11 @@ class DiskANNConfig : public BaseConfig {
     // SSD. This will trade off the recall. You would also want this to be greater than the number of bytes used for the
     // PQ compressed data stored in-memory
     CFG_INT disk_pq_dims;
+    CFG_FLOAT disk_pq_code_budget_gb_ratio;
     // This is the flag to enable fast build, in which we will not build vamana graph by full 2 round. This can
     // accelerate index build ~30% with an ~1% recall regression.
     CFG_BOOL accelerate_build;
 
-    // The ratio of the size reserved for the search cache to the size of the raw data (defined with vec_field_size_gb)
-    // This parameter will replace pq_code_budget_gb to avoid calculating the actual size on the Milvus side.
-    // The index can indirectly obtain search_cache_budget_gb by vec_field_size_gb * search_cache_budget_gb_ratio
     CFG_FLOAT search_cache_budget_gb_ratio;
 
     // While serving the index, the entire graph is stored on SSD. For faster search performance, you can cache a few
@@ -85,51 +84,78 @@ class DiskANNConfig : public BaseConfig {
     // use PQ + Refine. Default to -1.0f, negative vlaues will use dynamic threshold calculator given topk.
     CFG_FLOAT filter_threshold;
     KNOWHERE_DECLARE_CONFIG(DiskANNConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(data_path).allow_empty_without_default().for_train().for_feder();
+        KNOWHERE_CONFIG_DECLARE_FIELD(num_build_thread)
+            .allow_empty_without_default()
+            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
+            .for_train()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_degree)
             .description("the degree of the graph index.")
-            .set_default(48)
-            .set_range(1, 2048)
-            .for_train();
+            .set_default(56)
+            .set_range(1, diskann::defaults::MAX_GRAPH_DEGREE)
+            .for_train()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_list_size)
             .description("the size of search list during the index build or search.")
             .allow_empty_without_default()
             .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_train()
+            .for_feder()
+            .for_search()
+            .for_range_search()
+            .for_iterator();
+        KNOWHERE_CONFIG_DECLARE_FIELD(search_list)
+            .description("alias of search_list_size for search.")
+            .allow_empty_without_default()
+            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
             .for_search()
             .for_range_search()
             .for_iterator();
         KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb_ratio)
             .description("the size of PQ compared with vector field data")
-            .set_default(0)
+            .set_default(0.125f)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
-            .for_train();
+            .for_train()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb)
-            .description("the ratio of the size reserved for the pq code to the size of the raw data.")
-            .set_default(0)
+            .description("the absolute size of the PQ code in GB; overrides the ratio.")
+            .allow_empty_without_default()
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
-            .for_train();
+            .for_train()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(build_dram_budget_gb)
             .description("limit on the memory allowed for building the index in GB.")
             .set_default(0)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
-            .for_train();
+            .for_train()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(disk_pq_dims)
             .description("the dimension of compressed vectors stored on the ssd, use 0 to store uncompressed data.")
+            .allow_empty_without_default()
+            .set_range(0, std::numeric_limits<CFG_INT::value_type>::max())
+            .for_train()
+            .for_feder();
+        KNOWHERE_CONFIG_DECLARE_FIELD(disk_pq_code_budget_gb_ratio)
+            .description("disk PQ bytes divided by raw vector bytes; explicit disk_pq_dims takes precedence.")
             .set_default(0)
-            .for_train();
+            .set_range(0, 1)
+            .for_train()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(accelerate_build)
             .description("a flag to enbale fast build.")
             .set_default(false)
-            .for_train();
+            .for_train()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_cache_budget_gb_ratio)
             .description("the ratio of the size reserved for the search cache to the size of the raw data.")
-            .set_default(0)
+            .set_default(0.10f)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .for_train()
             .for_deserialize();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_cache_budget_gb)
-            .description("the size of cached nodes in GB.")
-            .set_default(0)
+            .description("the size of cached nodes in GB; overrides the ratio.")
+            .allow_empty_without_default()
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .for_train()
             .for_deserialize();
@@ -166,17 +192,58 @@ class DiskANNConfig : public BaseConfig {
             .for_iterator();
     }
 
+    // Called only after the raw file metadata is available. Static validation needs no worker facts.
+    Status
+    ResolveBuildBudgets(size_t count, size_t dimension, size_t element_size) {
+        if (count == 0 || dimension == 0 || disk_pq_dims.value_or(0) > static_cast<int64_t>(dimension)) {
+            return Status::out_of_range_in_json;
+        }
+        const double raw_gb = static_cast<double>(count) * dimension * element_size / (1024.0 * 1024 * 1024);
+        if (!pq_code_budget_gb.has_value()) {
+            pq_code_budget_gb = raw_gb * pq_code_budget_gb_ratio.value();
+        }
+        ResolveCacheBudget(count, dimension, element_size);
+        if (!disk_pq_dims.has_value()) {
+            const double bytes = dimension * static_cast<double>(element_size) * disk_pq_code_budget_gb_ratio.value();
+            disk_pq_dims = bytes == 0 ? 0 : static_cast<int>(std::max(1.0, std::min<double>(dimension, bytes)));
+        }
+        return Status::success;
+    }
+
+    void
+    ResolveCacheBudget(size_t count, size_t dimension, size_t element_size) {
+        if (!search_cache_budget_gb.has_value()) {
+            const double raw_gb = static_cast<double>(count) * dimension * element_size / (1024.0 * 1024 * 1024);
+            search_cache_budget_gb = raw_gb * search_cache_budget_gb_ratio.value();
+        }
+    }
+
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        if (param_type == PARAM_TYPE::SEARCH || param_type == PARAM_TYPE::RANGE_SEARCH ||
+            param_type == PARAM_TYPE::ITERATOR) {
+            if (search_list.has_value()) {
+                if (search_list_size.has_value() && search_list_size != search_list) {
+                    return HandleError(err_msg, "search_list and search_list_size disagree",
+                                       Status::invalid_param_in_json);
+                }
+                search_list_size = search_list;
+            }
+        }
         switch (param_type) {
+            case PARAM_TYPE::FEDER:
             case PARAM_TYPE::TRAIN: {
                 if (!search_list_size.has_value()) {
                     search_list_size = kDefaultSearchListSizeForBuild;
                 }
-                pq_code_budget_gb =
-                    std::max(pq_code_budget_gb.value(), pq_code_budget_gb_ratio.value() * vec_field_size_gb.value());
-                search_cache_budget_gb = std::max(search_cache_budget_gb.value(),
-                                                  search_cache_budget_gb_ratio.value() * vec_field_size_gb.value());
+                if (param_type == PARAM_TYPE::TRAIN &&
+                    pq_code_budget_gb.value_or(pq_code_budget_gb_ratio.value()) <= 0) {
+                    return HandleError(err_msg, "effective pq_code_budget_gb must be positive",
+                                       Status::out_of_range_in_json);
+                }
+                if (dim.has_value() && disk_pq_dims.value_or(0) > dim.value()) {
+                    return HandleError(err_msg, "disk_pq_dims exceeds vector dimension", Status::out_of_range_in_json);
+                }
                 break;
             }
             case PARAM_TYPE::SEARCH: {

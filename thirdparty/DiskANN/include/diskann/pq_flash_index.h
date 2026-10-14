@@ -226,6 +226,10 @@ namespace diskann {
 
     _u64 get_max_degree() const noexcept;
 
+    _u64 get_pq_code_size() const noexcept { return n_chunks; }
+
+    _u64 get_disk_pq_dims() const noexcept { return disk_pq_n_chunks; }
+
     _u32 *get_medoids() const noexcept;
 
     size_t get_num_medoids() const noexcept;
