@@ -6,6 +6,13 @@
 #include <filesystem>
 #include <fstream>
 #include <numeric>
+#include <set>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#if __GLIBC_PREREQ(2, 33)
+#define KNOWHERE_TEST_HAS_MALLINFO2
+#endif
+#endif
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
@@ -519,6 +526,98 @@ TEST_CASE("AiSAQ raw-vector declarations and calls agree with SSD encoding", "[d
         const auto* vector = static_cast<const float*>(retrieved.value()->GetTensor());
         for (size_t j = 0; j < dim; ++j) REQUIRE(vector[j] == xb[id * dim + j]);
     }
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("PQ iterators retain chunk-sized LUTs and share bounded gather buffers", "[diskann][pq_memory]") {
+    constexpr uint32_t rows = 300, dim = 960, chunks = 64, count = 64;
+    const auto dir = std::filesystem::current_path() / "pq_iterator_memory";
+    std::filesystem::create_directories(dir);
+    const auto prefix = (dir / "index").string();
+    const auto raw = (dir / "base.bin").string();
+    auto base = GenDataSet(rows, dim, 61);
+    auto query = GenDataSet(2, dim, 31);
+    WriteRawDataToDisk<float>(raw, static_cast<const float*>(base->GetTensor()), rows, dim);
+    auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(std::make_shared<milvus::LocalFileManager>()));
+    auto built =
+        knowhere::IndexFactory::Instance().Create<knowhere::fp32>(kDiskIndexType, GenTestVersionList(), pack).value();
+    knowhere::Json config = {{"dim", dim},
+                             {"metric_type", "L2"},
+                             {"index_prefix", prefix},
+                             {"data_path", raw},
+                             {"max_degree", 16},
+                             {"search_list_size", 32},
+                             {"pq_code_budget_gb", rows * 64.25 / (1ULL << 30)},
+                             {"build_dram_budget_gb", 1},
+                             {"search_cache_budget_gb", 0},
+                             {"search_cache_budget_gb_ratio", 0}};
+    REQUIRE(built.Build(nullptr, config) == knowhere::Status::success);
+    diskann::PQNavigationStore model(prefix);
+    REQUIRE(model.ChunkCount() == chunks);
+    model.PrepareWorkspaces(2);
+    diskann::SSDGraphIndex<float> graph(std::make_shared<LinuxAlignedFileReader>(), diskann::Metric::L2);
+    REQUIRE(graph.load(1, prefix.c_str(), {rows, dim, dim}) == 0);
+    const auto reserved = model.MemorySize();
+    constexpr size_t lut_bytes = 256 * chunks * sizeof(float);
+    std::vector<std::unique_ptr<diskann::IteratorWorkspace<float>>> iterators;
+    iterators.reserve(count);
+    std::set<const float*> tables;
+#ifdef KNOWHERE_TEST_HAS_MALLINFO2
+    const auto before = mallinfo2();
+#endif
+    for (size_t i = 0; i < count; ++i) {
+        const auto* q = static_cast<const float*>(query->GetTensor()) + (i % 2) * dim;
+        auto workspace = graph.getIteratorWorkspace(q, 16, 4, 0, {}, model.CreatePQDistanceComputer());
+        auto* scorer = dynamic_cast<diskann::PQNavigationDistanceComputer*>(workspace->navigation.get());
+        REQUIRE(scorer != nullptr);
+        tables.insert(scorer->lookup_table());
+#if defined(__GLIBC__)
+        // Inspect the allocator's actual block, independently of MemorySize().
+        REQUIRE(malloc_usable_size(const_cast<float*>(scorer->lookup_table())) >= lut_bytes);
+        REQUIRE(malloc_usable_size(const_cast<float*>(scorer->lookup_table())) <= lut_bytes + 256);
+#endif
+        iterators.push_back(std::move(workspace));
+    }
+    REQUIRE(tables.size() == count);
+    REQUIRE(model.MemorySize() == reserved + (count - 2) * lut_bytes);
+#ifdef KNOWHERE_TEST_HAS_MALLINFO2
+    const auto active = mallinfo2();
+    REQUIRE(active.uordblks + active.hblkhd >= before.uordblks + before.hblkhd + count * lut_bytes / 2);
+#endif
+    const auto active_size = model.MemorySize();
+    for (auto& workspace : iterators) {
+        graph.getIteratorNextBatch(workspace.get());
+        REQUIRE_FALSE(workspace->backup_res.empty());
+        REQUIRE(model.MemorySize() == active_size);  // Serial consumption never adds per-iterator gathers.
+    }
+    iterators.clear();
+    REQUIRE(model.MemorySize() == reserved);  // Both idle pools are bounded by the prepared capacity.
+#ifdef KNOWHERE_TEST_HAS_MALLINFO2
+    const auto released = mallinfo2();
+    REQUIRE(released.uordblks + released.hblkhd <= before.uordblks + before.hblkhd + (1ULL << 20));
+#endif
+    struct ThrowOnceSource : diskann::PQCodeSource {
+        std::unique_ptr<uint8_t[]> codes;
+        bool fail = true;
+        void
+        gather(const unsigned* ids, uint64_t n, uint64_t c, uint8_t* output) override {
+            if (fail) {
+                fail = false;
+                throw std::runtime_error("gather failure");
+            }
+            diskann::aggregate_coords(ids, n, codes.get(), c, output);
+        }
+    } source;
+    size_t n, c;
+    diskann::load_bin<uint8_t>(diskann::get_pq_compressed_filename(prefix), source.codes, n, c);
+    auto scorer = model.CreatePQDistanceComputer(&source);
+    scorer->set_query(static_cast<const float*>(query->GetTensor()));
+    const unsigned id = 0;
+    float distance;
+    REQUIRE_THROWS_AS(scorer->compute_distances(&id, 1, &distance, 0, false, nullptr), std::runtime_error);
+    REQUIRE(model.MemorySize() == reserved);
+    REQUIRE_NOTHROW(scorer->compute_distances(&id, 1, &distance, 0, false, nullptr));
+    REQUIRE(model.MemorySize() == reserved);
     std::filesystem::remove_all(dir);
 }
 

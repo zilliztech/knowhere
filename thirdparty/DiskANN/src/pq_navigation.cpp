@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "diskann/pq_navigation.h"
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -75,29 +76,25 @@ namespace diskann {
     }
   }  // namespace
 
-  struct PQNavigationWorkspace {
-    float*   lookup = nullptr;
-    uint8_t* gathered = nullptr;
-    PQNavigationWorkspace(uint64_t dimension, uint64_t) {
-      // Preserve the native reserve sizes and allocation order. Only the first
-      // chunks columns are used; this refactor does not shrink the native
-      // buffers.
-      const auto aligned_dimension = ROUND_UP(dimension, 8);
-      alloc_aligned(
-          reinterpret_cast<void**>(&gathered),
-          ROUND_UP(defaults::MAX_GRAPH_DEGREE * aligned_dimension, 256), 256);
-      try {
-        alloc_aligned(reinterpret_cast<void**>(&lookup),
-                      ROUND_UP(256 * aligned_dimension * sizeof(float), 256),
-                      256);
-      } catch (...) {
-        aligned_free(gathered);
-        throw;
-      }
+  struct PQNavigationQueryTable {
+    float* lookup = nullptr;
+    explicit PQNavigationQueryTable(uint64_t chunks) {
+      alloc_aligned(reinterpret_cast<void**>(&lookup),
+                    ROUND_UP(256 * chunks * sizeof(float), 256), 256);
     }
-    ~PQNavigationWorkspace() {
+    ~PQNavigationQueryTable() {
       aligned_free(lookup);
-      aligned_free(gathered);
+    }
+  };
+
+  struct PQNavigationGatherBuffer {
+    uint8_t* codes = nullptr;
+    explicit PQNavigationGatherBuffer(uint64_t chunks) {
+      alloc_aligned(reinterpret_cast<void**>(&codes),
+                    ROUND_UP(defaults::MAX_GRAPH_DEGREE * chunks, 256), 256);
+    }
+    ~PQNavigationGatherBuffer() {
+      aligned_free(codes);
     }
   };
 
@@ -106,28 +103,61 @@ namespace diskann {
     std::unique_ptr<uint8_t[]> codes;
     uint64_t                   rows = 0, dimension = 0, chunks = 0;
     mutable std::mutex         pool_mutex;
-    mutable std::vector<std::unique_ptr<PQNavigationWorkspace>> pool;
-    mutable size_t allocated_workspaces = 0;
+    mutable std::vector<std::unique_ptr<PQNavigationQueryTable>>   tables;
+    mutable std::vector<std::unique_ptr<PQNavigationGatherBuffer>> gathers;
+    mutable size_t allocated_tables = 0, allocated_gathers = 0;
+    mutable size_t pool_capacity = 1;
 
-    std::unique_ptr<PQNavigationWorkspace> acquire() const {
+    template<typename Buffer>
+    std::unique_ptr<Buffer> acquire(std::vector<std::unique_ptr<Buffer>>& pool,
+                                    size_t& allocated) const {
       std::lock_guard<std::mutex> lock(pool_mutex);
       if (!pool.empty()) {
-        auto workspace = std::move(pool.back());
+        auto buffer = std::move(pool.back());
         pool.pop_back();
-        return workspace;
+        return buffer;
       }
-      auto workspace =
-          std::make_unique<PQNavigationWorkspace>(dimension, chunks);
-      ++allocated_workspaces;
-      return workspace;
+      auto buffer = std::make_unique<Buffer>(chunks);
+      ++allocated;
+      return buffer;
     }
-    void release(
-        std::unique_ptr<PQNavigationWorkspace> workspace) const noexcept {
+
+    template<typename Buffer>
+    void release(std::unique_ptr<Buffer>               buffer,
+                 std::vector<std::unique_ptr<Buffer>>& pool,
+                 size_t& allocated) const noexcept {
       std::lock_guard<std::mutex> lock(pool_mutex);
-      try {
-        pool.push_back(std::move(workspace));
-      } catch (...) {
-        --allocated_workspaces;
+      if (pool.size() < pool_capacity) {
+        try {
+          pool.push_back(std::move(buffer));
+          return;
+        } catch (...) {
+          // Returning a workspace must not throw from a scorer destructor.
+        }
+      }
+      --allocated;
+    }
+
+    void prepare(size_t count) const {
+      std::lock_guard<std::mutex> lock(pool_mutex);
+      pool_capacity = std::max<size_t>(1, count);
+      while (tables.size() > pool_capacity) {
+        tables.pop_back();
+        --allocated_tables;
+      }
+      while (gathers.size() > pool_capacity) {
+        gathers.pop_back();
+        --allocated_gathers;
+      }
+      tables.reserve(pool_capacity);
+      gathers.reserve(pool_capacity);
+      while (tables.size() < pool_capacity) {
+        tables.push_back(std::make_unique<PQNavigationQueryTable>(chunks));
+        ++allocated_tables;
+      }
+      while (gathers.size() < pool_capacity) {
+        gathers.push_back(std::make_unique<PQNavigationGatherBuffer>(chunks));
+        ++allocated_gathers;
       }
     }
   };
@@ -174,22 +204,17 @@ namespace diskann {
   size_t PQNavigationStore::MemorySize() const {
     std::lock_guard<std::mutex> lock(state_->pool_mutex);
     const auto                  dimension = state_->dimension;
-    const auto                  aligned_dimension = ROUND_UP(dimension, 8);
     return (state_->codes ? state_->rows * state_->chunks : 0) +
            dimension *
                (256 * sizeof(float) * 2 + sizeof(uint32_t) + sizeof(float)) +
            (state_->chunks + 1) * sizeof(uint32_t) +
-           state_->allocated_workspaces *
-               (ROUND_UP(256 * aligned_dimension * sizeof(float), 256) +
-                ROUND_UP(defaults::MAX_GRAPH_DEGREE * aligned_dimension, 256));
+           state_->allocated_tables *
+               ROUND_UP(256 * state_->chunks * sizeof(float), 256) +
+           state_->allocated_gathers *
+               ROUND_UP(defaults::MAX_GRAPH_DEGREE * state_->chunks, 256);
   }
   void PQNavigationStore::PrepareWorkspaces(size_t count) const {
-    std::vector<std::unique_ptr<PQNavigationWorkspace>> workspaces;
-    workspaces.reserve(count);
-    for (size_t i = 0; i < count; ++i)
-      workspaces.push_back(state_->acquire());
-    for (auto& workspace : workspaces)
-      state_->release(std::move(workspace));
+    state_->prepare(count);
   }
   std::unique_ptr<NavigationDistanceComputer>
   PQNavigationStore::CreateDistanceComputer(
@@ -203,11 +228,13 @@ namespace diskann {
 
   PQNavigationDistanceComputer::PQNavigationDistanceComputer(
       std::shared_ptr<PQNavigationState> state, PQCodeSource* source)
-      : state_(std::move(state)), workspace_(state_->acquire()),
+      : state_(std::move(state)),
+        workspace_(state_->acquire(state_->tables, state_->allocated_tables)),
         source_(source) {
   }
   PQNavigationDistanceComputer::~PQNavigationDistanceComputer() {
-    state_->release(std::move(workspace_));
+    state_->release(std::move(workspace_), state_->tables,
+                    state_->allocated_tables);
   }
   void PQNavigationDistanceComputer::set_query(const float* query) {
     state_->table.populate_chunk_distances(query, workspace_->lookup);
@@ -229,15 +256,26 @@ namespace diskann {
     if (count > defaults::MAX_GRAPH_DEGREE)
       throw std::invalid_argument(
           "Navigation batch exceeds graph scratch capacity");
+    // Iterators retain only their chunk-sized query table. The gather buffer
+    // belongs to this scoring batch and is returned even if the code source
+    // fails.
+    auto release_gather = [this](PQNavigationGatherBuffer* buffer) {
+      state_->release(std::unique_ptr<PQNavigationGatherBuffer>(buffer),
+                      state_->gathers, state_->allocated_gathers);
+    };
+    std::unique_ptr<PQNavigationGatherBuffer, decltype(release_gather)>
+        gathered(state_->acquire(state_->gathers, state_->allocated_gathers)
+                     .release(),
+                 release_gather);
     if (source_) {
-      source_->gather(ids, count, state_->chunks, workspace_->gathered);
+      source_->gather(ids, count, state_->chunks, gathered->codes);
     } else if (state_->codes) {
       aggregate_coords(ids, count, state_->codes.get(), state_->chunks,
-                       workspace_->gathered);
+                       gathered->codes);
     } else {
       throw std::logic_error(
           "PQ navigation requires a resident or reader-backed code source");
     }
-    evaluate_encoded(workspace_->gathered, count, distances);
+    evaluate_encoded(gathered->codes, count, distances);
   }
 }  // namespace diskann

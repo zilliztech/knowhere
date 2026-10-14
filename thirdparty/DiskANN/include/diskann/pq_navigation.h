@@ -9,7 +9,7 @@
 
 namespace diskann {
   struct PQNavigationState;
-  struct PQNavigationWorkspace;
+  struct PQNavigationQueryTable;
 
   // PQ-only encoding source. AiSAQ supplies reader-backed codes; ordinary PQ
   // owns resident codes. This interface is not part of the common graph engine.
@@ -36,9 +36,9 @@ namespace diskann {
     const float* lookup_table() const;
 
    private:
-    std::shared_ptr<PQNavigationState>     state_;
-    std::unique_ptr<PQNavigationWorkspace> workspace_;
-    PQCodeSource*                          source_;
+    std::shared_ptr<PQNavigationState>      state_;
+    std::unique_ptr<PQNavigationQueryTable> workspace_;
+    PQCodeSource*                           source_;
   };
 
   class PQNavigationStore final : public NavigationStore {
