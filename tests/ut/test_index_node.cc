@@ -269,7 +269,7 @@ TEST_CASE("HNSW validates embedding-list bitsets after build and load", "[index_
     const Json config = {
         {meta::METRIC_TYPE, "MAX_SIM_IP"}, {meta::DIM, dim},   {meta::TOPK, 1}, {indexparam::HNSW_M, 4},
         {indexparam::EFCONSTRUCTION, 8},   {indexparam::EF, 8}};
-    const auto version = Version::GetCurrentVersion().VersionNumber();
+    const auto version = Version::GetMaximumVersion().VersionNumber();
     auto index = IndexFactory::Instance().Create<fp32>(IndexEnum::INDEX_HNSW, version).value();
     REQUIRE(index.Build(dataset, config, false) == Status::success);
 
