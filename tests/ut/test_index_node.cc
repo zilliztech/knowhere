@@ -257,12 +257,14 @@ TEST_CASE("HNSW validates embedding-list bitsets after build and load", "[index_
     auto list_offsets = std::make_unique<size_t[]>(offsets.size());
     std::copy(offsets.begin(), offsets.end(), list_offsets.get());
     dataset->Set(meta::EMB_LIST_OFFSET, static_cast<const size_t*>(list_offsets.release()));
+    dataset->Set(meta::EMB_LIST_COUNT, static_cast<int64_t>(num_lists));
 
     auto query = ::GenDataSet(1, dim);
     auto query_offsets = std::make_unique<size_t[]>(2);
     query_offsets[0] = 0;
     query_offsets[1] = 1;
     query->Set(meta::EMB_LIST_OFFSET, static_cast<const size_t*>(query_offsets.release()));
+    query->Set(meta::EMB_LIST_COUNT, int64_t{1});
 
     const Json config = {
         {meta::METRIC_TYPE, "MAX_SIM_IP"}, {meta::DIM, dim},   {meta::TOPK, 1}, {indexparam::HNSW_M, 4},
