@@ -12,6 +12,7 @@
 #include "filemanager/FileManager.h"
 #include "fmt/core.h"
 #include "index/diskann/aisaq_config.h"
+#include "index/diskann/diskann_utils.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/context.h"
 #include "knowhere/dataset.h"
@@ -329,7 +330,7 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
     index_prefix_ = build_conf.index_prefix.value();
     size_t count;
     size_t dim;
-    diskann::get_bin_metadata(build_conf.data_path.value(), count, dim);
+    RETURN_IF_ERROR(ReadDiskANNRawMetadata(data_path, sizeof(DataType), count, dim));
     RETURN_IF_ERROR(build_conf.ResolveBuildBudgets(count, dim, sizeof(DataType)));
     count_.store(count);
     dim_.store(dim);

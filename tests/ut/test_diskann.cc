@@ -298,6 +298,61 @@ TEST_CASE("Disk index public search parameters at each stage", "[diskann][disk-p
             Status::invalid_param_in_json);
 }
 
+TEST_CASE("Disk build rejects invalid raw artifacts before resolving budgets", "[diskann][disk-parameters-native]") {
+    using namespace knowhere;
+    const auto type = GENERATE(kNativeDiskANNType, "AISAQ");
+    const auto fault = GENERATE("missing", "empty", "short-header", "zero-rows", "zero-dim", "negative-rows",
+                                "short-payload", "directory", "valid-shape-invalid-pq");
+    CAPTURE(type, fault);
+    const auto directory = fs::temp_directory_path() / "knowhere_disk_raw_metadata";
+    fs::remove_all(directory);
+    fs::create_directories(directory);
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() {
+            std::error_code error;
+            fs::remove_all(path, error);
+        }
+    } cleanup{directory};
+    const auto raw = directory / "raw.bin";
+    const std::string failure = fault;
+    if (failure == "directory") {
+        fs::create_directory(raw);
+    } else if (failure != "missing") {
+        std::ofstream output(raw, std::ios::binary);
+        int32_t shape[] = {1, 1};
+        if (failure == "zero-rows") {
+            shape[0] = 0;
+        } else if (failure == "zero-dim") {
+            shape[1] = 0;
+        } else if (failure == "negative-rows") {
+            shape[0] = -1;
+        }
+        if (failure != "empty") {
+            output.write(reinterpret_cast<const char*>(shape), failure == "short-header" ? 4 : sizeof(shape));
+        }
+        if (failure == "valid-shape-invalid-pq") {
+            const float value = 1;
+            output.write(reinterpret_cast<const char*>(&value), sizeof(value));
+        }
+    }
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+    auto pack = Pack(file_manager);
+    auto index = IndexFactory::Instance().Create<fp32>(type, Version::GetMaximumVersion().VersionNumber(), pack);
+    REQUIRE(index.has_value());
+    Json config = {{"metric_type", "L2"},
+                   {"index_prefix", (directory / "index").string()},
+                   {"data_path", raw.string()},
+                   {"build_dram_budget_gb", .25}};
+    if (failure == "valid-shape-invalid-pq") {
+        // Valid file: the request's disk-PQ width is the error, not the artifact.
+        config["disk_pq_dims"] = 2;
+        REQUIRE(index.value().Build(nullptr, config) == Status::out_of_range_in_json);
+    } else {
+        REQUIRE(index.value().Build(nullptr, config) == Status::disk_file_error);
+    }
+}
+
 TEST_CASE("Invalid diskann params test", "[diskann]") {
     fs::remove_all(kDir);
     fs::remove(kDir);
@@ -2035,6 +2090,16 @@ TEST_CASE("Test DiskANN Search Cancellation", "[diskann][cancellation]") {
     fs::remove(kDir);
 }
 
+void
+ReadDiskTestBinMetadata(const std::string& path, size_t& rows, size_t& columns) {
+    CAPTURE(path);
+    std::array<uint32_t, 2> shape{};
+    std::ifstream input(path, std::ios::binary);
+    REQUIRE(input.read(reinterpret_cast<char*>(shape.data()), sizeof(shape)).good());
+    rows = shape[0];
+    columns = shape[1];
+}
+
 std::array<uint64_t, 11>
 ReadDiskNodeMetadata(const std::string& prefix, const std::string& type) {
     std::array<uint64_t, 11> metadata{};
@@ -2234,19 +2299,24 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
         REQUIRE(index.Build(nullptr, build) == Status::success);
         REQUIRE(index.Serialize(binary) == Status::success);
     }
+    // Rearrangement replaces the ordinary PQ artifact. Its first two uint32 fields
+    // still encode the vector count and code width (followed by the page size).
+    const bool uses_rearrangement = type == "AISAQ" && (!explicit_settings || (rearranged && inline_pq < 24));
+    const auto code_file = uses_rearrangement ? diskann::get_pq_compressed_rearranged_filename(prefix)
+                                              : diskann::get_pq_compressed_filename(prefix);
+    REQUIRE(fs::exists(diskann::get_pq_compressed_filename(prefix)) == !uses_rearrangement);
     // The serialized PQ codes prove that the real builder consumed the ratio and element width.
     size_t code_rows, code_bytes;
-    diskann::get_bin_metadata(diskann::get_pq_compressed_filename(prefix), code_rows, code_bytes);
+    ReadDiskTestBinMetadata(code_file, code_rows, code_bytes);
     REQUIRE(code_rows == rows);
     REQUIRE(code_bytes == dimension * sizeof(DataType) * (explicit_settings ? .0625 : .125));
     const auto disk_pivots = diskann::get_disk_index_pq_pivots_filename(diskann::get_disk_index_filename(prefix));
     REQUIRE(fs::exists(disk_pivots) == (disk_pq_dims != 0));
     if (fs::exists(disk_pivots)) {
         size_t chunks, columns;
-        diskann::get_bin_metadata(diskann::get_pq_chunk_offsets_filename(disk_pivots), chunks, columns);
+        ReadDiskTestBinMetadata(diskann::get_pq_chunk_offsets_filename(disk_pivots), chunks, columns);
         REQUIRE(chunks == disk_pq_dims + 1);
     }
-    const bool uses_rearrangement = type == "AISAQ" && (!explicit_settings || (rearranged && inline_pq < 24));
     if (type == "AISAQ") {
         REQUIRE(fs::exists(diskann::get_index_entry_points_filename(prefix)) == !explicit_settings);
         REQUIRE(fs::exists(diskann::get_index_rearranged_filename(prefix)) == uses_rearrangement);
@@ -2278,11 +2348,17 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
     const auto cache_file = diskann::get_cached_nodes_file(prefix);
     size_t saved_nodes = 0, saved_columns = 0;
     if (fs::exists(cache_file)) {
-        diskann::get_bin_metadata(cache_file, saved_nodes, saved_columns);
+        ReadDiskTestBinMetadata(cache_file, saved_nodes, saved_columns);
     }
+    // Load accounts for raw aligned coordinates even when the disk graph uses PQ.
+    const size_t load_node_bytes = type == "AISAQ" ? metadata[3] + dimension * sizeof(DataType)
+                                                   : (degree + 1) * sizeof(uint32_t) + dimension * sizeof(DataType);
+    constexpr float small_load_budget = .00001f;
     if (explicit_settings) {
         REQUIRE(saved_nodes > 0);
-        REQUIRE(saved_nodes < 8);
+        const auto requested_nodes = std::min<size_t>(
+            static_cast<double>(small_load_budget) * 1024 * 1024 * 1024 / (load_node_bytes * 1.2f), rows / 3);
+        REQUIRE(saved_nodes < requested_nodes);
     }
     auto load_and_search = [&](Json load) {
         load["index_prefix"] = prefix;
@@ -2385,7 +2461,16 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
                      {"disk_pq_dims", disk_pq_dims != 0 ? 0 : 8},
                      {"disk_pq_code_budget_gb_ratio", disk_pq_dims != 0 ? 0 : .25}});
     const auto zero = load_and_search({{"search_cache_budget_gb", 0}});
-    const auto small = load_and_search({{"search_cache_budget_gb", .00001}});
+    // Establish actual memory with exactly the build-produced number of candidates,
+    // then require the larger load request to populate more than that saved list.
+    int64_t saved_population = zero;
+    if (explicit_settings) {
+        const float saved_budget = (saved_nodes + .5) * load_node_bytes * 1.2f / (1024.0 * 1024 * 1024);
+        saved_population = load_and_search({{"search_cache_budget_gb", saved_budget}});
+        REQUIRE(saved_population > zero);
+    }
+    const auto small = load_and_search({{"search_cache_budget_gb", small_load_budget}});
+    REQUIRE(small > saved_population);
     const auto large = load_and_search({{"search_cache_budget_gb", .0001}});
     REQUIRE(small > zero);
     REQUIRE(large > small);
@@ -2402,7 +2487,7 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
     }
     if (saved_nodes > 0) {
         size_t unchanged_nodes, columns;
-        diskann::get_bin_metadata(cache_file, unchanged_nodes, columns);
+        ReadDiskTestBinMetadata(cache_file, unchanged_nodes, columns);
         REQUIRE(unchanged_nodes == saved_nodes);
     }
     if (type == "AISAQ" && explicit_settings) {
@@ -2480,7 +2565,7 @@ CheckDiskArrayBudgets() {
         REQUIRE(index.Serialize(binary) == Status::success);
     }
     size_t code_rows, code_bytes;
-    diskann::get_bin_metadata(diskann::get_pq_compressed_filename(prefix), code_rows, code_bytes);
+    ReadDiskTestBinMetadata(diskann::get_pq_compressed_filename(prefix), code_rows, code_bytes);
     REQUIRE(code_rows == inner_rows);
     REQUIRE(code_bytes == dimension * sizeof(DataType) / 8);
     {
