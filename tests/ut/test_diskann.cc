@@ -1394,28 +1394,30 @@ TEST_CASE("DiskANN RaBitQ batches preserve scalar decisions", "[diskann][rabitq]
                 batch->compute_distances(ids.data(), ids.size(), full.data(), 0, false, nullptr);
                 auto sorted = full;
                 std::sort(sorted.begin(), sorted.end());
-                for (const float threshold : {0.0f, sorted[4], sorted[8], sorted[16] * 2}) {
-                    for (const size_t count : {0, 1, 3, 4, 5, 7, 16, 17}) {
-                        CAPTURE(threshold, count);
-                        std::array<float, 17> actual{}, expected{};
-                        diskann::QueryStats scalar_stats{}, batch_stats{};
-                        for (size_t i = 0; i < count; ++i) {
-                            scalar->compute_distances(ids.data() + i, 1, expected.data() + i, threshold, true,
-                                                      &scalar_stats);
-                        }
-                        batch->compute_distances(ids.data(), count, actual.data(), threshold, true, &batch_stats);
-                        REQUIRE(scalar_stats.n_approx_estimates == batch_stats.n_approx_estimates);
-                        REQUIRE(scalar_stats.n_approx_pruned == batch_stats.n_approx_pruned);
-                        REQUIRE(scalar_stats.n_approx_refinements == batch_stats.n_approx_refinements);
-                        for (size_t i = 0; i < count; ++i) {
-                            if (std::isinf(expected[i])) {
-                                REQUIRE(actual[i] == expected[i]);
-                            } else {
-                                REQUIRE(actual[i] == Catch::Approx(expected[i]).epsilon(1e-5).margin(1e-3));
+                for (const bool threshold_valid : {false, true})
+                    for (const float threshold : {0.0f, sorted[4], sorted[8], sorted[16] * 2}) {
+                        for (const size_t count : {0, 1, 3, 4, 5, 7, 16, 17}) {
+                            CAPTURE(threshold, count, threshold_valid);
+                            std::array<float, 17> actual{}, expected{};
+                            diskann::QueryStats scalar_stats{}, batch_stats{};
+                            for (size_t i = 0; i < count; ++i) {
+                                scalar->compute_distances(ids.data() + i, 1, expected.data() + i, threshold,
+                                                          threshold_valid, &scalar_stats);
+                            }
+                            batch->compute_distances(ids.data(), count, actual.data(), threshold, threshold_valid,
+                                                     &batch_stats);
+                            REQUIRE(scalar_stats.n_approx_estimates == batch_stats.n_approx_estimates);
+                            REQUIRE(scalar_stats.n_approx_pruned == batch_stats.n_approx_pruned);
+                            REQUIRE(scalar_stats.n_approx_refinements == batch_stats.n_approx_refinements);
+                            for (size_t i = 0; i < count; ++i) {
+                                if (std::isinf(expected[i])) {
+                                    REQUIRE(actual[i] == expected[i]);
+                                } else {
+                                    REQUIRE(actual[i] == Catch::Approx(expected[i]).epsilon(1e-5).margin(1e-3));
+                                }
                             }
                         }
                     }
-                }
             }
             // Concurrent callers have independent query transforms and query bits.
             std::array<std::vector<float>, 2> sequential, concurrent;

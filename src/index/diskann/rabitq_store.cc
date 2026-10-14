@@ -117,31 +117,28 @@ class RaBitQNavigationDistanceComputer final : public diskann::NavigationDistanc
     void
     compute_distances(const unsigned* ids, _u64 n_ids, float* distances, float threshold, bool threshold_valid,
                       diskann::QueryStats* stats) override {
-        const bool can_prune = threshold_valid && rabitq_->rabitq.nb_bits > 1;
-        if (!can_prune) {
+        // For one-bit databases the coarse estimate is the complete score.
+        // Its qb=4, non-centered implementation has an actual four-code kernel;
+        // other query modes retain the distance computer's scalar fallback.
+        if (rabitq_->rabitq.nb_bits == 1) {
             _u64 i = 0;
             for (; i + 4 <= n_ids; i += 4) {
-                distance_computer_->distances_batch_4(ids[i], ids[i + 1], ids[i + 2], ids[i + 3], distances[i],
-                                                      distances[i + 1], distances[i + 2], distances[i + 3]);
+                std::array<const uint8_t*, 4> codes{};
+                for (size_t j = 0; j < 4; ++j)
+                    codes[j] = rabitq_->codes.data() + static_cast<size_t>(ids[i + j]) * rabitq_->code_size;
+                rabitq_distance_computer_->distance_to_code_1bit_batch_4(codes.data(), distances + i);
             }
-            for (; i < n_ids; ++i) {
-                distances[i] = (*distance_computer_)(ids[i]);
-            }
-            if (stats != nullptr && rabitq_->rabitq.nb_bits > 1) {
-                stats->n_approx_refinements += n_ids;
-            }
+            for (; i < n_ids; ++i)
+                distances[i] = rabitq_distance_computer_->distance_to_code_1bit(
+                    rabitq_->codes.data() + static_cast<size_t>(ids[i]) * rabitq_->code_size);
             return;
         }
-
-        std::array<faiss::idx_t, 4> refine_ids{};
-        std::array<_u64, 4> refine_positions{};
-        size_t pending_refinements = 0;
-        const auto flush_refinements = [&]() {
-            distance_computer_->distances_batch_4(refine_ids[0], refine_ids[1], refine_ids[2], refine_ids[3],
-                                                  distances[refine_positions[0]], distances[refine_positions[1]],
-                                                  distances[refine_positions[2]], distances[refine_positions[3]]);
-            pending_refinements = 0;
-        };
+        if (!threshold_valid) {
+            for (_u64 i = 0; i < n_ids; ++i) distances[i] = (*distance_computer_)(ids[i]);
+            if (stats)
+                stats->n_approx_refinements += n_ids;
+            return;
+        }
 
         const auto process_estimate = [&](_u64 i, const uint8_t* code, float estimate) {
             if (stats != nullptr) {
@@ -155,15 +152,12 @@ class RaBitQNavigationDistanceComputer final : public diskann::NavigationDistanc
                 }
                 return;
             }
-            refine_ids[pending_refinements] = ids[i];
-            refine_positions[pending_refinements] = i;
-            ++pending_refinements;
-            if (stats != nullptr) {
+            // Full multi-bit evaluation currently has no cross-code batch
+            // kernel. Score accepted candidates directly instead of buffering
+            // four calls that ultimately fall back to independent evaluations.
+            distances[i] = rabitq_distance_computer_->distance_to_code_full(code);
+            if (stats != nullptr)
                 ++stats->n_approx_refinements;
-            }
-            if (pending_refinements == 4) {
-                flush_refinements();
-            }
         };
 
         // Batch independent estimates, then retain the original neighbor order
@@ -183,11 +177,6 @@ class RaBitQNavigationDistanceComputer final : public diskann::NavigationDistanc
         for (; i < n_ids; ++i) {
             const uint8_t* code = rabitq_->codes.data() + static_cast<size_t>(ids[i]) * rabitq_->code_size;
             process_estimate(i, code, rabitq_distance_computer_->distance_to_code_1bit(code));
-        }
-        for (size_t i = 0; i < pending_refinements; ++i) {
-            const auto id = refine_ids[i];
-            const uint8_t* code = rabitq_->codes.data() + static_cast<size_t>(id) * rabitq_->code_size;
-            distances[refine_positions[i]] = rabitq_distance_computer_->distance_to_code_full(code);
         }
     }
 
