@@ -2296,7 +2296,7 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
         auto meta = index.GetIndexMeta(Json::object());
         REQUIRE(meta.has_value());
         auto build_meta = Json::parse(meta.value()->GetJsonInfo())["build_params_"];
-        REQUIRE(build_meta["pq_code_budget_gb"].get<float>() ==
+        REQUIRE(build_meta["pq_code_budget_gb"].template get<float>() ==
                 Catch::Approx(code_rows * code_bytes / (1024.0 * 1024 * 1024)));
         REQUIRE(build_meta["disk_pq_dims"] == disk_pq_dims);
         REQUIRE(index.HasRawData(metric::L2) == (disk_pq_dims == 0));
@@ -2362,7 +2362,9 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
         } else {
             auto iterators = index.AnnIterator(query, {{"search_list", 19}, {"beamwidth", 2}}, nullptr);
             REQUIRE(iterators.has_value());
-            REQUIRE(iterators.value()[0]->HasNext());
+            auto has_next = iterators.value()[0]->HasNext();
+            REQUIRE(has_next.has_value());
+            REQUIRE(has_next.value());
             auto ranges =
                 index.RangeSearch(query, {{"search_list", 19}, {"beamwidth", 2}, {"radius", 1000000}}, nullptr);
             REQUIRE(ranges.has_value());
