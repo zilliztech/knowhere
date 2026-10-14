@@ -29,7 +29,11 @@ class AisaqConfig : public DiskANNConfig {
     CFG_INT num_entry_points;
 
     KNOWHERE_DECLARE_CONFIG(AisaqConfig) {
-        KNOWHERE_CONFIG_DECLARE_FIELD(disk_pq_code_budget_gb_ratio).set_default(0.25f).set_range(0, 1).for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(disk_pq_code_budget_gb_ratio)
+            .set_default(0.25f)
+            .set_range(0, 1)
+            .for_train()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_cache_budget_gb_ratio)
             .set_default(0)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())

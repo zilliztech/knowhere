@@ -126,6 +126,8 @@ namespace diskann {
 
     void pop_pq_retset();
 
+    float output_distance(float distance) const;
+
     void move_full_retset_to_backup();
 
     void move_last_full_retset_to_backup();
@@ -381,6 +383,18 @@ namespace diskann {
     bool              use_disk_index_pq = false;
     _u64              disk_pq_n_chunks = 0;
     FixedChunkPQTable disk_pq_table;
+
+    // Keep disk-PQ candidates in the same internal distance representation as
+    // raw candidates. IP output/iterator consumers expect 2 - 2 * normalized dot.
+    float disk_pq_candidate_distance(const float *query, _u8 *codes) {
+      if (metric == Metric::INNER_PRODUCT) {
+        return 2.0f + 2.0f * disk_pq_table.inner_product(query, codes);
+      }
+      if (metric == Metric::COSINE) {
+        return disk_pq_table.inner_product(query, codes);
+      }
+      return disk_pq_table.l2_distance(query, codes);
+    }
 
     // medoid/start info
 

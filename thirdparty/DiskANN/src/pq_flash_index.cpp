@@ -167,17 +167,21 @@ namespace diskann {
   }
 
   template<typename T>
+  float IteratorWorkspace<T>::output_distance(float distance) const {
+    if (metric == diskann::Metric::INNER_PRODUCT) {
+      distance = distance / 2.0f - 1.0f;
+      if (max_base_norm != 0) {
+        distance *= (max_base_norm * query_norm);
+      }
+    }
+    return distance;
+  }
+
+  template<typename T>
   void IteratorWorkspace<T>::move_full_retset_to_backup() {
     if (is_good_pq_enough() && !full_retset.empty()) {
       auto &nbr = full_retset.top();
-      auto  dist = nbr.distance;
-      if (metric == diskann::Metric::INNER_PRODUCT) {
-        dist = dist / 2.0f - 1.0f;
-        if (max_base_norm != 0) {
-          dist *= (max_base_norm * query_norm);
-        }
-      }
-      backup_res.emplace_back(nbr.id, dist);
+      backup_res.emplace_back(nbr.id, output_distance(nbr.distance));
       full_retset.pop();
       next_count++;
     }
@@ -187,7 +191,7 @@ namespace diskann {
   void IteratorWorkspace<T>::move_last_full_retset_to_backup() {
     while (!full_retset.empty()) {
       auto &nbr = full_retset.top();
-      backup_res.emplace_back(nbr.id, nbr.distance);
+      backup_res.emplace_back(nbr.id, output_distance(nbr.distance));
       full_retset.pop();
     }
   }
@@ -947,6 +951,14 @@ namespace diskann {
     const T     *query = data.scratch.aligned_query_T;
     auto         beam_width = beam_width_param * kRefineBeamWidthFactor;
     const float *query_float = data.scratch.aligned_query_float;
+    // Disk-PQ payloads contain codes, not T vectors. Match graph search's
+    // distance semantics for both cached and freshly read candidates.
+    auto candidate_distance = [&](T *coords, _u64 id) {
+      if (!use_disk_index_pq) {
+        return dist_cmp_wrap(query, coords, (size_t) aligned_dim, id);
+      }
+      return disk_pq_candidate_distance(query_float, (_u8 *) coords);
+    };
     float       *pq_dists = query_scratch->aligned_pqtable_dist_scratch;
     pq_table.populate_chunk_distances(query_float, pq_dists);
     float         *dist_scratch = query_scratch->aligned_dist_scratch;
@@ -995,8 +1007,7 @@ namespace diskann {
       {
         std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
         if (coord_cache.find(id) != coord_cache.end()) {
-          float dist = dist_cmp_wrap(query, coord_cache.at(id),
-                                     (size_t) aligned_dim, id);
+          float dist = candidate_distance(coord_cache.at(id), id);
           max_heap.Push(dist, id);
           continue;
         }
@@ -1036,8 +1047,7 @@ namespace diskann {
             char *node_buf = get_offset_to_node(sector_buf, cur_id);
             memcpy(node_fp_coords_copy, node_buf,
                    disk_bytes_per_point);  // Do we really need memcpy here?
-            float dist = dist_cmp_wrap(query, node_fp_coords_copy,
-                                       (size_t) aligned_dim, cur_id);
+            float dist = candidate_distance(node_fp_coords_copy, cur_id);
             max_heap.Push(dist, cur_id);
             if (feder != nullptr) {
               feder->visit_info_.AddTopCandidateInfo(cur_id, dist);
@@ -1341,13 +1351,8 @@ namespace diskann {
             cur_expanded_dist = dist_cmp_wrap(query, node_fp_coords_copy,
                                               (size_t) aligned_dim, node_id);
           } else {
-            if (metric == diskann::Metric::INNER_PRODUCT ||
-                metric == diskann::Metric::COSINE)
-              cur_expanded_dist = disk_pq_table.inner_product(
-                  query_float, (_u8 *) node_fp_coords_copy);
-            else
-              cur_expanded_dist = disk_pq_table.l2_distance(
-                  query_float, (_u8 *) node_fp_coords_copy);
+            cur_expanded_dist = disk_pq_candidate_distance(
+                query_float, (_u8 *) node_fp_coords_copy);
           }
           full_retset.push_back(
               Neighbor((unsigned) node_id, cur_expanded_dist, true));
@@ -1908,13 +1913,8 @@ namespace diskann {
               dist_cmp_wrap(workspace->aligned_query_T, node_fp_coords_copy,
                             (size_t) aligned_dim, node_id);
         } else {
-          if (metric == diskann::Metric::INNER_PRODUCT ||
-              metric == diskann::Metric::COSINE)
-            cur_expanded_dist = disk_pq_table.inner_product(
-                workspace->aligned_query_float, (_u8 *) node_fp_coords_copy);
-          else
-            cur_expanded_dist = disk_pq_table.l2_distance(
-                workspace->aligned_query_float, (_u8 *) node_fp_coords_copy);
+          cur_expanded_dist = disk_pq_candidate_distance(
+              workspace->aligned_query_float, (_u8 *) node_fp_coords_copy);
         }
         workspace->insert_to_full((unsigned) node_id, cur_expanded_dist);
       }

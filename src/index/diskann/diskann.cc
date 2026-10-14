@@ -106,7 +106,8 @@ class DiskANNIndexNode : public IndexNode {
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
         knowhere::MetricType metric_type = config.metric_type.has_value() ? config.metric_type.value() : "";
         const auto& base_metric = get_sub_metric_type(metric_type).value_or(metric_type);
-        return IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::COSINE);
+        return !static_cast<const DiskANNConfig&>(config).UsesDiskPQ() &&
+               (IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::COSINE));
     }
 
     static Status
@@ -123,7 +124,8 @@ class DiskANNIndexNode : public IndexNode {
     bool
     HasRawData(const std::string& metric_type) const override {
         const auto& base_metric = get_sub_metric_type(metric_type).value_or(metric_type);
-        return IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::COSINE);
+        return is_prepared_.load() && pq_flash_index_ && pq_flash_index_->get_disk_pq_dims() == 0 &&
+               (IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::COSINE));
     }
 
     expected<DataSetPtr>
@@ -534,7 +536,11 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
                                                bool use_knowhere_build_pool) {
     assert(file_manager_ != nullptr);
     std::scoped_lock lock(preparation_lock_);
-    auto& config = static_cast<BaseConfig&>(*cfg);
+    auto& config = static_cast<DiskANNConfig&>(*cfg);
+    if (config.UsesDiskPQ() && dataset != nullptr && dataset->Get<const size_t*>(meta::EMB_LIST_OFFSET) != nullptr) {
+        LOG_KNOWHERE_ERROR_ << "disk PQ is unsupported for embedding-list exact reranking";
+        return Status::invalid_param_in_json;
+    }
     auto el_metric_type_or = get_el_metric_type(config.metric_type.value());
     if (!el_metric_type_or.has_value()) {
         // If not emb_list metric type, use the default build method
@@ -980,6 +986,9 @@ DiskANNIndexNode<DataType>::CalcDistByStorageIds(const DataSetPtr dataset, const
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<DataSetPtr>::Err(Status::empty_index, "DiskANN not loaded");
     }
+    if (pq_flash_index_->get_disk_pq_dims() != 0) {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "exact distances are unavailable with disk PQ");
+    }
     if (!search_pool_) {
         LOG_KNOWHERE_ERROR_ << "Search thread pool is not initialized.";
         return expected<DataSetPtr>::Err(Status::internal_error, "search pool not initialized");
@@ -1041,6 +1050,9 @@ DiskANNIndexNode<DataType>::GetVectorByStorageIds(const DataSetPtr dataset, milv
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+    }
+    if (pq_flash_index_->get_disk_pq_dims() != 0) {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "raw vectors are unavailable with disk PQ");
     }
     auto dim = Dim();
     auto rows = dataset->GetRows();

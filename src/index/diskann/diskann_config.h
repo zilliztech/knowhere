@@ -14,6 +14,7 @@
 
 #include "diskann/defaults.h"
 #include "knowhere/config.h"
+#include "knowhere/emb_list_utils.h"
 
 namespace knowhere {
 
@@ -135,13 +136,15 @@ class DiskANNConfig : public BaseConfig {
             .allow_empty_without_default()
             .set_range(0, std::numeric_limits<CFG_INT::value_type>::max())
             .for_train()
-            .for_feder();
+            .for_feder()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(disk_pq_code_budget_gb_ratio)
             .description("disk PQ bytes divided by raw vector bytes; explicit disk_pq_dims takes precedence.")
             .set_default(0)
             .set_range(0, 1)
             .for_train()
-            .for_feder();
+            .for_feder()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(accelerate_build)
             .description("a flag to enbale fast build.")
             .set_default(false)
@@ -192,6 +195,11 @@ class DiskANNConfig : public BaseConfig {
             .for_iterator();
     }
 
+    bool
+    UsesDiskPQ() const {
+        return disk_pq_dims.has_value() ? disk_pq_dims.value() > 0 : disk_pq_code_budget_gb_ratio.value_or(0) > 0;
+    }
+
     // Called only after the raw file metadata is available. Static validation needs no worker facts.
     Status
     ResolveBuildBudgets(size_t count, size_t dimension, size_t element_size) {
@@ -229,6 +237,11 @@ class DiskANNConfig : public BaseConfig {
                 }
                 search_list_size = search_list;
             }
+        }
+        if (param_type == PARAM_TYPE::TRAIN && UsesDiskPQ() &&
+            (get_el_metric_type(metric_type.value_or("")).has_value() || emb_list_offset_file_path.has_value())) {
+            return HandleError(err_msg, "disk PQ is unsupported for embedding-list exact reranking",
+                               Status::invalid_param_in_json);
         }
         switch (param_type) {
             case PARAM_TYPE::FEDER:

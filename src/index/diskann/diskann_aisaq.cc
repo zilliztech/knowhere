@@ -70,12 +70,14 @@ class AisaqIndexNode : public IndexNode {
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
         knowhere::MetricType metric_type = config.metric_type.has_value() ? config.metric_type.value() : "";
-        return IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE);
+        return !static_cast<const DiskANNConfig&>(config).UsesDiskPQ() &&
+               (IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE));
     }
 
     bool
     HasRawData(const std::string& metric_type) const override {
-        return IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE);
+        return is_prepared_.load() && pq_flash_index_ && pq_flash_index_->get_disk_pq_dims() == 0 &&
+               (IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE));
     }
 
     expected<DataSetPtr>
@@ -752,6 +754,9 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
     if (!is_prepared_.load() || !pq_flash_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load AiSAQ.";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+    }
+    if (pq_flash_index_->get_disk_pq_dims() != 0) {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "raw vectors are unavailable with disk PQ");
     }
     auto* data = new DataType[dim * rows];
     if (data == nullptr) {

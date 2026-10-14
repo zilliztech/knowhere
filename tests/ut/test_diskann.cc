@@ -11,15 +11,21 @@
 
 #include <sys/resource.h>
 
+#include <array>
 #include <atomic>
+#include <numeric>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "../DiskANN/include/diskann/defaults.h"
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "diskann/diskann_gpu.h"
+#include "diskann/pq_flash_index.h"
+#include "diskann/pq_table.h"
 #include "diskann/utils.h"
 #include "filemanager/FileManager.h"
 #include "filemanager/impl/LocalFileManager.h"
@@ -142,6 +148,74 @@ TEST_CASE("Disk index static parameter ownership", "[diskann][disk-parameters]")
             REQUIRE(IndexStaticFaced<fp32>::ConfigCheck(type, version, invalid, message) != Status::success);
         }
     }
+}
+
+TEST_CASE("Disk iterator final batch preserves metric conversion", "[diskann][disk-parameters]") {
+    const auto metric = GENERATE(diskann::Metric::L2, diskann::Metric::INNER_PRODUCT, diskann::Metric::COSINE);
+    const float query[] = {3, 4, 0};
+    diskann::IteratorWorkspace<float> workspace(query, metric, 8, 3, .15f, 0, 4, -1, 10, knowhere::BitsetView());
+    const float internal_distance = metric == diskann::Metric::COSINE ? -.2f : 1.6f;
+    // IP's normalized dot .2 becomes score 10 after ||q||=5 and M=10;
+    // the workspace exposes negative IP for the min-heap iterator adapter.
+    const float expected = metric == diskann::Metric::INNER_PRODUCT ? -10 : internal_distance;
+    workspace.insert_to_full(0, internal_distance);
+    workspace.move_full_retset_to_backup();
+    workspace.insert_to_full(1, internal_distance);
+    workspace.move_last_full_retset_to_backup();
+    REQUIRE(workspace.backup_res.size() == 2);
+    REQUIRE(workspace.backup_res[0].val == Catch::Approx(expected));
+    REQUIRE(workspace.backup_res[1].val == Catch::Approx(expected));
+}
+
+TEST_CASE("Disk raw-data capability reflects effective compression", "[diskann][disk-parameters]") {
+    using namespace knowhere;
+    const auto type = GENERATE(kNativeDiskANNType, "AISAQ");
+    const auto metric_type = GENERATE("L2", "COSINE", "IP");
+    const auto version = Version::GetMaximumVersion().VersionNumber();
+    const bool raw_metric = std::string(metric_type) != "IP";
+    Json params = {{"metric_type", metric_type}};
+    REQUIRE(IndexStaticFaced<fp32>::HasRawData(type, version, params) == (raw_metric && std::string(type) != "AISAQ"));
+    params.update({{"disk_pq_dims", 0}, {"disk_pq_code_budget_gb_ratio", .25}});
+    REQUIRE(IndexStaticFaced<fp32>::HasRawData(type, version, params) == raw_metric);
+    params.update({{"disk_pq_dims", 8}, {"disk_pq_code_budget_gb_ratio", 0}});
+    REQUIRE_FALSE(IndexStaticFaced<fp32>::HasRawData(type, version, params));
+    params.erase("disk_pq_dims");
+    REQUIRE(IndexStaticFaced<fp32>::HasRawData(type, version, params) == raw_metric);
+    params["disk_pq_code_budget_gb_ratio"] = .25;
+    REQUIRE_FALSE(IndexStaticFaced<fp32>::HasRawData(type, version, params));
+}
+
+TEST_CASE("Disk arrays reject compression before building or reranking", "[diskann][disk-parameters]") {
+    using namespace knowhere;
+    const auto version = Version::GetMaximumVersion().VersionNumber();
+    const auto metric_type = GENERATE("MAX_SIM_L2", "MAX_SIM_COSINE", "L2");
+    Json params = {{"metric_type", metric_type}};
+    if (std::string(metric_type) == "L2") {
+        // Offset metadata also identifies arrays when building an element-space index.
+        params["emb_list_offset_file_path"] = "unused-offsets";
+    }
+    std::shared_ptr<milvus::FileManager> manager = std::make_shared<milvus::LocalFileManager>();
+    auto index = IndexFactory::Instance().Create<fp32>(kNativeDiskANNType, version, Pack(manager)).value();
+    std::string message;
+    for (const auto& compression : std::vector<Json>{{{"disk_pq_code_budget_gb_ratio", .25}},
+                                                     {{"disk_pq_dims", 8}, {"disk_pq_code_budget_gb_ratio", 0}}}) {
+        auto invalid = params;
+        invalid.update(compression);
+        REQUIRE(IndexStaticFaced<fp32>::ConfigCheck(kNativeDiskANNType, version, invalid, message) ==
+                Status::invalid_param_in_json);
+        REQUIRE(message.find("disk PQ") != std::string::npos);
+        REQUIRE(message.find("embedding-list") != std::string::npos);
+        // No paths or raw files are needed to reject the unsupported combination.
+        REQUIRE(index.Build(nullptr, invalid) == Status::invalid_param_in_json);
+    }
+    params.update({{"disk_pq_dims", 0}, {"disk_pq_code_budget_gb_ratio", .25}});
+    REQUIRE(IndexStaticFaced<fp32>::ConfigCheck(kNativeDiskANNType, version, params, message) == Status::success);
+    params.erase("disk_pq_dims");
+    params["disk_pq_code_budget_gb_ratio"] = 0;
+    REQUIRE(IndexStaticFaced<fp32>::ConfigCheck(kNativeDiskANNType, version, params, message) == Status::success);
+
+    auto arrays = GenEmbListDataSet(16, 8, 42, 2);
+    REQUIRE(index.Build(arrays, {{"metric_type", "L2"}, {"disk_pq_dims", 4}}) == Status::invalid_param_in_json);
 }
 
 TEST_CASE("Disk index budgets use actual typed vector metadata", "[diskann][disk-parameters]") {
@@ -851,10 +925,10 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
                 auto ret = index.Deserialize(binset, deserialize_json);
                 REQUIRE(ret == knowhere::Status::success);
 
-                REQUIRE(diskann.HasRawData(knowhere::metric::L2) ==
+                REQUIRE(index.HasRawData(knowhere::metric::L2) ==
                         knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData("DISKANN", version, json));
 
-                if (!diskann.HasRawData(knowhere::metric::L2)) {
+                if (!index.HasRawData(knowhere::metric::L2)) {
                     continue;
                 }
 
@@ -1045,6 +1119,8 @@ TEST_CASE("Test_AiSAQ_GetVectorByIds", "[diskann]") {
             json["search_list_size"] = kK;
             json["pq_code_budget_gb"] = sizeof(float) * dim * kNumRows * 0.03125 / (1024 * 1024 * 1024);
             json["build_dram_budget_gb"] = 32.0;
+            // Exact raw-vector retrieval requires uncompressed disk vectors.
+            json["disk_pq_dims"] = 0;
             json["rearrange"] = false;
             return json;
         };
@@ -1083,7 +1159,7 @@ TEST_CASE("Test_AiSAQ_GetVectorByIds", "[diskann]") {
                 auto ret = index.Deserialize(binset, deserialize_json);
                 REQUIRE(ret == knowhere::Status::success);
 
-                REQUIRE(diskann.HasRawData(knowhere::metric::L2) ==
+                REQUIRE(index.HasRawData(knowhere::metric::L2) ==
                         knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData("AISAQ", version, json));
 
                 std::vector<double> ids_sizes = {1, kNumRows * 0.2, kNumRows * 0.7, kNumRows};
@@ -1959,10 +2035,167 @@ TEST_CASE("Test DiskANN Search Cancellation", "[diskann][cancellation]") {
     fs::remove(kDir);
 }
 
+std::array<uint64_t, 11>
+ReadDiskNodeMetadata(const std::string& prefix, const std::string& type) {
+    std::array<uint64_t, 11> metadata{};
+    std::ifstream input(diskann::get_disk_index_filename(prefix), std::ios::binary);
+    // Only AISAQ prefixes its metadata with the two uint32 bin dimensions.
+    input.seekg(type == "AISAQ" ? 2 * sizeof(uint32_t) : 0);
+    input.read(reinterpret_cast<char*>(metadata.data()), sizeof(metadata));
+    REQUIRE(input.good());
+    return metadata;
+}
+
+// Independent metric oracle: read actual stored codes, inflate their prototypes,
+// then calculate vector arithmetic without the backend candidate-distance helper.
+std::vector<float>
+ReadDecodedDiskPQScores(const std::string& prefix, const std::string& type, const knowhere::DataSetPtr& query,
+                        size_t rows, const std::string& metric_type) {
+    const auto disk_file = diskann::get_disk_index_filename(prefix);
+    const auto metadata = ReadDiskNodeMetadata(prefix, type);
+    REQUIRE(metadata[4] > 0);  // This small fixture packs multiple nodes per sector.
+    diskann::FixedChunkPQTable table;
+    table.load_pq_centroid_bin(diskann::get_disk_index_pq_pivots_filename(disk_file).c_str(), 0);
+    const auto dimension = query->GetDim();
+    REQUIRE(table.get_total_dims() == dimension + (metric_type == "IP" ? 1 : 0));
+    const auto* original_query = static_cast<const float*>(query->GetTensor());
+    float query_norm = 0;
+    for (int64_t col = 0; col < dimension; ++col) {
+        query_norm += original_query[col] * original_query[col];
+    }
+    query_norm = std::sqrt(query_norm);
+    REQUIRE(query_norm > 0);
+    float max_base_norm = 1;
+    if (metric_type == "IP") {
+        std::unique_ptr<float[]> norms;
+        size_t norm_rows, norm_columns;
+        diskann::load_bin<float>(diskann::get_disk_index_max_base_norm_file(disk_file), norms, norm_rows, norm_columns);
+        REQUIRE(norm_rows == 1);
+        REQUIRE(norm_columns == 1);
+        max_base_norm = norms[0];
+        REQUIRE(max_base_norm > 0);
+    }
+    std::ifstream input(disk_file, std::ios::binary);
+    std::vector<uint8_t> codes(table.get_num_chunks());
+    std::vector<float> decoded(table.get_total_dims());
+    std::vector<float> scores(rows);
+    for (size_t id = 0; id < rows; ++id) {
+        const auto offset = (id / metadata[4] + 1) * diskann::defaults::SECTOR_LEN + (id % metadata[4]) * metadata[3];
+        input.seekg(offset);
+        input.read(reinterpret_cast<char*>(codes.data()), codes.size());
+        REQUIRE(input.good());
+        table.inflate_vector(codes.data(), decoded.data());
+        double value = 0;
+        for (int64_t col = 0; col < dimension; ++col) {
+            if (metric_type == "L2") {
+                const double delta = original_query[col] - decoded[col];
+                value += delta * delta;
+            } else {
+                const float normalized_query = original_query[col] / query_norm;
+                value += static_cast<double>(normalized_query) * decoded[col];
+            }
+        }
+        // The augmented IP coordinate has query value zero. Undo only the
+        // actual query normalization and stored maximum-base-norm scaling.
+        scores[id] = metric_type == "IP" ? value * max_base_norm * query_norm : value;
+    }
+    return scores;
+}
+
+void
+CheckDiskPQScore(const std::vector<float>& scores, int64_t id, float score) {
+    REQUIRE(id >= 0);
+    REQUIRE(id < static_cast<int64_t>(scores.size()));
+    REQUIRE(score == Catch::Approx(scores[id]).margin(.001));
+}
+
+void
+CheckDiskPQIPIteratorAndRange(knowhere::Index<knowhere::IndexNode>& index, const knowhere::DataSetPtr& query,
+                              const std::vector<float>& scores) {
+    using namespace knowhere;
+    auto iterators =
+        index.AnnIterator(query, {{"metric_type", "IP"}, {"search_list", scores.size()}, {"beamwidth", 4}}, nullptr);
+    REQUIRE(iterators.has_value());
+    size_t count = 0;
+    while (true) {
+        auto has_next = iterators.value()[0]->HasNext();
+        REQUIRE(has_next.has_value());
+        if (!has_next.value()) {
+            break;
+        }
+        auto next = iterators.value()[0]->Next();
+        REQUIRE(next.has_value());
+        CheckDiskPQScore(scores, next.value().first, next.value().second);
+        REQUIRE(++count <= scores.size());
+    }
+    REQUIRE(count >= 16);
+    auto ordered_scores = scores;
+    std::sort(ordered_scores.begin(), ordered_scores.end());
+    // Use a real gap so floating-point roundoff cannot change threshold membership.
+    size_t split = 1;
+    for (size_t i = 2; i < ordered_scores.size(); ++i) {
+        if (ordered_scores[i] - ordered_scores[i - 1] > ordered_scores[split] - ordered_scores[split - 1]) {
+            split = i;
+        }
+    }
+    REQUIRE(ordered_scores[split] - ordered_scores[split - 1] > .01);
+    const float radius = (ordered_scores[split - 1] + ordered_scores[split]) / 2;
+    auto range = index.RangeSearch(
+        query, {{"metric_type", "IP"}, {"search_list", scores.size()}, {"beamwidth", 4}, {"radius", radius}}, nullptr);
+    REQUIRE(range.has_value());
+    const auto found = range.value()->GetLims()[1];
+    REQUIRE(found > 0);
+    for (size_t i = 0; i < found; ++i) {
+        const auto id = range.value()->GetIds()[i];
+        CheckDiskPQScore(scores, id, range.value()->GetDistance()[i]);
+        REQUIRE(scores[id] > radius);
+    }
+}
+
+// Restrict BF to exactly the graph result's candidates, so PQ distances and ranking
+// can be compared without incorrectly treating lossy PQ as exact raw-vector distance.
+void
+CheckForcedDiskPQSearch(knowhere::Index<knowhere::IndexNode>& index, const knowhere::DataSetPtr& query,
+                        const knowhere::DataSetPtr& graph, size_t rows, const std::string& metric_type,
+                        const std::vector<float>* decoded_scores = nullptr) {
+    using namespace knowhere;
+    const auto k = graph->GetDim();
+    std::vector<uint8_t> bits((rows + 7) / 8, 0xff);
+    std::unordered_map<int64_t, float> expected;
+    for (int64_t i = 0; i < k; ++i) {
+        const auto id = graph->GetIds()[i];
+        REQUIRE(id >= 0);
+        REQUIRE(id < static_cast<int64_t>(rows));
+        if (decoded_scores != nullptr) {
+            CheckDiskPQScore(*decoded_scores, id, graph->GetDistance()[i]);
+        }
+        expected.emplace(id, graph->GetDistance()[i]);
+        bits[id / 8] &= ~(uint8_t(1) << (id % 8));
+    }
+    REQUIRE(expected.size() == static_cast<size_t>(k));
+    auto actual = index.Search(
+        query,
+        {{"metric_type", metric_type}, {"k", k}, {"search_list", rows}, {"beamwidth", 4}, {"filter_threshold", 0}},
+        BitsetView(bits.data(), rows));
+    REQUIRE(actual.has_value());
+    for (int64_t i = 0; i < k; ++i) {
+        const auto id = actual.value()->GetIds()[i];
+        REQUIRE(expected.count(id) == 1);
+        if (decoded_scores != nullptr) {
+            CheckDiskPQScore(*decoded_scores, id, actual.value()->GetDistance()[i]);
+        }
+        // Ties may reorder IDs, but values and sorted ranks must agree.
+        REQUIRE(actual.value()->GetDistance()[i] == Catch::Approx(expected.at(id)).margin(.0001));
+        REQUIRE(actual.value()->GetDistance()[i] == Catch::Approx(graph->GetDistance()[i]).margin(.0001));
+        expected.erase(id);
+    }
+    REQUIRE(expected.empty());
+}
+
 template <typename DataType>
 void
-CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, bool rearranged = false,
-                            int inline_pq = 0) {
+CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, bool rearranged = false, int inline_pq = 0,
+                            bool compressed_diskann = false) {
     using namespace knowhere;
     constexpr size_t rows = 512;
     constexpr size_t dimension = 32;
@@ -1989,6 +2222,12 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
                       {"rearrange", rearranged},
                       {"num_entry_points", 0}});
     }
+    if (compressed_diskann) {
+        build["disk_pq_dims"] = 8;
+        build["disk_pq_code_budget_gb_ratio"] = 0;  // Positive absolute wins.
+    }
+    const size_t disk_pq_dims =
+        compressed_diskann ? 8 : (type == "AISAQ" && !explicit_settings ? dimension * sizeof(DataType) / 4 : 0);
     BinarySet binary;
     {
         auto index = IndexFactory::Instance().Create<DataType>(type, version, pack).value();
@@ -2001,23 +2240,20 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
     REQUIRE(code_rows == rows);
     REQUIRE(code_bytes == dimension * sizeof(DataType) * (explicit_settings ? .0625 : .125));
     const auto disk_pivots = diskann::get_disk_index_pq_pivots_filename(diskann::get_disk_index_filename(prefix));
-    REQUIRE(fs::exists(disk_pivots) == (type == "AISAQ" && !explicit_settings));
+    REQUIRE(fs::exists(disk_pivots) == (disk_pq_dims != 0));
     if (fs::exists(disk_pivots)) {
         size_t chunks, columns;
         diskann::get_bin_metadata(diskann::get_pq_chunk_offsets_filename(disk_pivots), chunks, columns);
-        REQUIRE(chunks == dimension * sizeof(DataType) / 4 + 1);
+        REQUIRE(chunks == disk_pq_dims + 1);
     }
     const bool uses_rearrangement = type == "AISAQ" && (!explicit_settings || (rearranged && inline_pq < 24));
     if (type == "AISAQ") {
         REQUIRE(fs::exists(diskann::get_index_entry_points_filename(prefix)) == !explicit_settings);
         REQUIRE(fs::exists(diskann::get_index_rearranged_filename(prefix)) == uses_rearrangement);
     }
-    size_t metadata_rows, metadata_columns;
-    std::unique_ptr<uint64_t[]> metadata;
-    diskann::load_bin<uint64_t>(diskann::get_disk_index_filename(prefix), metadata, metadata_rows, metadata_columns);
+    const auto metadata = ReadDiskNodeMetadata(prefix, type);
     const size_t degree = explicit_settings ? 24 : 56;
-    const size_t disk_vector_bytes =
-        type == "AISAQ" && !explicit_settings ? dimension * sizeof(DataType) / 4 : dimension * sizeof(DataType);
+    const size_t disk_vector_bytes = disk_pq_dims != 0 ? disk_pq_dims : dimension * sizeof(DataType);
     const size_t node_without_inline = (degree + 1) * sizeof(uint32_t) + disk_vector_bytes;
     if (type != "AISAQ" || !explicit_settings) {
         // -1 disables inline PQ, independently of the enabled rearrangement default.
@@ -2062,8 +2298,48 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
         auto build_meta = Json::parse(meta.value()->GetJsonInfo())["build_params_"];
         REQUIRE(build_meta["pq_code_budget_gb"].get<float>() ==
                 Catch::Approx(code_rows * code_bytes / (1024.0 * 1024 * 1024)));
-        REQUIRE(build_meta["disk_pq_dims"] ==
-                (type == "AISAQ" && !explicit_settings ? dimension * sizeof(DataType) / 4 : 0));
+        REQUIRE(build_meta["disk_pq_dims"] == disk_pq_dims);
+        REQUIRE(index.HasRawData(metric::L2) == (disk_pq_dims == 0));
+        REQUIRE(index.HasRawData(metric::COSINE) == (disk_pq_dims == 0));
+        REQUIRE_FALSE(index.HasRawData(metric::IP));
+        // Exercise all ids on every load: populated-cache and uncached nodes both remain safe.
+        std::vector<int64_t> raw_ids(rows);
+        std::iota(raw_ids.begin(), raw_ids.end(), 0);
+        auto empty_vectors = index.GetVectorByIds(GenIdsDataSet(0, raw_ids.data()));
+        REQUIRE(empty_vectors.has_value());
+        REQUIRE(empty_vectors.value()->GetRows() == 0);
+        auto vectors = index.GetVectorByIds(GenIdsDataSet(rows, raw_ids.data()));
+        if (disk_pq_dims != 0) {
+            REQUIRE_FALSE(vectors.has_value());
+            REQUIRE(vectors.error() == Status::not_implemented);
+        } else {
+            REQUIRE(vectors.has_value());
+            const auto* actual = static_cast<const DataType*>(vectors.value()->GetTensor());
+            const auto* original = static_cast<const DataType*>(base->GetTensor());
+            for (size_t i = 0; i < rows * dimension; ++i) {
+                REQUIRE(static_cast<float>(actual[i]) == static_cast<float>(original[i]));
+            }
+        }
+        if (type != "AISAQ") {
+            auto distances = index.CalcDistByIDs(query, nullptr, raw_ids.data(), raw_ids.size(), false);
+            if (disk_pq_dims != 0) {
+                REQUIRE_FALSE(distances.has_value());
+                REQUIRE(distances.error() == Status::not_implemented);
+            } else {
+                REQUIRE(distances.has_value());
+                const auto* original = static_cast<const DataType*>(base->GetTensor());
+                const auto* query_data = static_cast<const DataType*>(query->GetTensor());
+                for (size_t row = 0; row < rows; ++row) {
+                    float distance = 0;
+                    for (size_t col = 0; col < dimension; ++col) {
+                        const float delta =
+                            static_cast<float>(original[row * dimension + col]) - static_cast<float>(query_data[col]);
+                        distance += delta * delta;
+                    }
+                    REQUIRE(distances.value()->GetDistance()[row] == Catch::Approx(distance).margin(.001));
+                }
+            }
+        }
         Json search = {{"k", 1},
                        {"search_list", 40},
                        {"beamwidth", 4},
@@ -2073,6 +2349,11 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
         auto result = index.Search(query, search, nullptr);
         REQUIRE(result.has_value());
         REQUIRE(result.value()->GetIds()[0] >= 0);
+        if (disk_pq_dims != 0) {
+            auto graph = index.Search(query, {{"k", 16}, {"search_list", rows}, {"beamwidth", 4}}, nullptr);
+            REQUIRE(graph.has_value());
+            CheckForcedDiskPQSearch(index, query, graph.value(), rows, metric::L2);
+        }
         const auto trace = Json::parse(result.value()->GetJsonInfo())["query_params_"];
         REQUIRE(trace["search_list_size"] == 40);
         REQUIRE(trace["beamwidth"] == 4);
@@ -2097,6 +2378,10 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
         }
         return index.Size();
     };
+    // Load-time parameters must never change the capability of an existing artifact.
+    load_and_search({{"search_cache_budget_gb", 0},
+                     {"disk_pq_dims", disk_pq_dims != 0 ? 0 : 8},
+                     {"disk_pq_code_budget_gb_ratio", disk_pq_dims != 0 ? 0 : .25}});
     const auto zero = load_and_search({{"search_cache_budget_gb", 0}});
     const auto small = load_and_search({{"search_cache_budget_gb", .00001}});
     const auto large = load_and_search({{"search_cache_budget_gb", .0001}});
@@ -2206,6 +2491,98 @@ CheckDiskArrayBudgets() {
         REQUIRE(result.value()->GetIds()[0] < inner_rows / vectors_per_array);
     }
     fs::remove_all(directory);
+}
+
+TEST_CASE("Compressed disk filtered refinement matches graph distances", "[diskann][disk-parameters-native]") {
+    using namespace knowhere;
+    const auto type = GENERATE(kNativeDiskANNType, "AISAQ");
+    const auto metric_type = GENERATE("L2", "COSINE", "IP");
+    constexpr size_t rows = 512, dimension = 32, k = 16;
+    const auto directory = fs::current_path() / "disk_pq_filtered_refinement";
+    fs::remove_all(directory);
+    fs::create_directories(directory);
+    const auto prefix = (directory / "index").string();
+    const auto raw = (directory / "raw").string();
+    auto base = GenDataSet(rows, dimension, 30);
+    auto query = GenDataSet(1, dimension, 42);
+    WriteRawDataToDisk<float>(raw, static_cast<const float*>(base->GetTensor()), rows, dimension);
+    std::shared_ptr<milvus::FileManager> manager = std::make_shared<milvus::LocalFileManager>();
+    auto pack = Pack(manager);
+    const auto version = Version::GetMaximumVersion().VersionNumber();
+    Json build = {
+        {"metric_type", metric_type}, {"data_path", raw}, {"index_prefix", prefix}, {"build_dram_budget_gb", .25},
+        {"num_build_thread", 2},      {"max_degree", 24}, {"search_list_size", 48}, {"disk_pq_dims", 8},
+        {"rearrange", false},         {"inline_pq", -1},  {"num_entry_points", 0}};
+    BinarySet binary;
+    {
+        auto index = IndexFactory::Instance().Create<fp32>(type, version, pack).value();
+        REQUIRE(index.Build(nullptr, build) == Status::success);
+        REQUIRE(index.Serialize(binary) == Status::success);
+    }
+    const auto decoded_scores = ReadDecodedDiskPQScores(prefix, type, query, rows, metric_type);
+    Json load = {{"metric_type", metric_type}, {"index_prefix", prefix}, {"search_cache_budget_gb", 0}};
+    DataSetPtr graph;
+    uint64_t uncached_size;
+    {
+        auto index = IndexFactory::Instance().Create<fp32>(type, version, pack).value();
+        REQUIRE(index.Deserialize(binary, load) == Status::success);
+        auto metadata = index.GetIndexMeta(Json::object());
+        REQUIRE(metadata.has_value());
+        REQUIRE(Json::parse(metadata.value()->GetJsonInfo())["build_params_"]["disk_pq_dims"] == 8);
+        // Empty bitset and k <= rows/2 keep this reference on graph search.
+        auto reference = index.Search(
+            query, {{"metric_type", metric_type}, {"k", k}, {"search_list", rows}, {"beamwidth", 4}}, nullptr);
+        REQUIRE(reference.has_value());
+        graph = reference.value();
+        CheckForcedDiskPQSearch(index, query, graph, rows, metric_type, &decoded_scores);
+        if (std::string(type) != "AISAQ" && std::string(metric_type) == "IP") {
+            CheckDiskPQIPIteratorAndRange(index, query, decoded_scores);
+        }
+        uncached_size = index.Size();
+    }
+    // This separate fixture deliberately controls cache membership. The cache-budget
+    // growth tests above retain their genuine, small build-produced candidate lists.
+    std::vector<uint32_t> cache_order;
+    std::unordered_set<uint32_t> candidates;
+    for (size_t i = 0; i < k; ++i) {
+        candidates.insert(graph->GetIds()[i]);
+        if (i < k / 2) {
+            cache_order.push_back(graph->GetIds()[i]);
+        }
+    }
+    for (uint32_t id = 0; id < rows; ++id) {
+        if (candidates.count(id) == 0) {
+            cache_order.push_back(id);
+        }
+    }
+    for (size_t i = k / 2; i < k; ++i) {
+        cache_order.push_back(graph->GetIds()[i]);
+    }
+    REQUIRE(cache_order.size() == rows);
+    diskann::save_bin<uint32_t>(diskann::get_cached_nodes_file(prefix), cache_order.data(), rows, 1);
+    {
+        // The 1/3 backend cap loads the first half of our candidates and excludes
+        // the second half, exercising cached and uncached BF refinement together.
+        load["search_cache_budget_gb"] = 1;
+        auto index = IndexFactory::Instance().Create<fp32>(type, version, pack).value();
+        REQUIRE(index.Deserialize(binary, load) == Status::success);
+        REQUIRE(index.Size() > uncached_size);
+        auto cached_graph = index.Search(
+            query, {{"metric_type", metric_type}, {"k", k}, {"search_list", rows}, {"beamwidth", 4}}, nullptr);
+        REQUIRE(cached_graph.has_value());
+        for (size_t i = 0; i < k; ++i) {
+            CheckDiskPQScore(decoded_scores, cached_graph.value()->GetIds()[i], cached_graph.value()->GetDistance()[i]);
+        }
+        CheckForcedDiskPQSearch(index, query, graph, rows, metric_type, &decoded_scores);
+        if (std::string(type) != "AISAQ" && std::string(metric_type) == "IP") {
+            CheckDiskPQIPIteratorAndRange(index, query, decoded_scores);
+        }
+    }
+    fs::remove_all(directory);
+}
+
+TEST_CASE("Compressed DiskANN rejects raw vectors and exact distances", "[diskann][disk-parameters-native]") {
+    CheckDiskParameterConsumers<knowhere::fp32>(kNativeDiskANNType, true, false, 0, true);
 }
 
 TEST_CASE("Disk parameter defaults count inner array vectors", "[diskann][disk-parameters-native]") {
