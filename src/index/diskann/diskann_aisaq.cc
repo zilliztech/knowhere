@@ -70,12 +70,16 @@ class AisaqIndexNode : public IndexNode {
 
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
-        knowhere::MetricType metric_type = config.metric_type.has_value() ? config.metric_type.value() : "";
+        if (static_cast<const AisaqConfig&>(config).disk_pq_dims.value_or(0) > 0)
+            return false;
+        const auto metric_type = config.metric_type.value_or("");
         return IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE);
     }
 
     bool
     HasRawData(const std::string& metric_type) const override {
+        if (pq_flash_index_ && pq_flash_index_->uses_disk_pq())
+            return false;
         return IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE);
     }
 
@@ -738,6 +742,12 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
     if (dataset == nullptr) {
         return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds dataset is null");
     }
+    if (!is_prepared_.load() || !pq_flash_index_) {
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+    }
+    if (pq_flash_index_->uses_disk_pq()) {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "SSD PQ does not retain original vectors");
+    }
     auto dim = Dim();
     auto rows = dataset->GetRows();
     auto ids = dataset->GetIds();
@@ -753,10 +763,6 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
         // storage-id set. Return an empty vector result without touching
         // backend storage.
         return GenResultDataSet(0, dim, nullptr);
-    }
-    if (!is_prepared_.load() || !pq_flash_index_) {
-        LOG_KNOWHERE_ERROR_ << "Failed to load AiSAQ.";
-        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
     auto* data = new DataType[dim * rows];
     if (data == nullptr) {

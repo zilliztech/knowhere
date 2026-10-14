@@ -473,4 +473,53 @@ TEST_CASE("AiSAQ SSD PQ scores match decoded payloads across search paths", "[di
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("AiSAQ raw-vector declarations and calls agree with SSD encoding", "[diskann][aisaq_review][aisaq_raw]") {
+    const auto metric = GENERATE(std::string("L2"), std::string("COSINE"));
+    const int disk_pq_dims = GENERATE(0, 4);
+    constexpr uint32_t rows = 300, dim = 16;
+    const auto dir = std::filesystem::current_path() / ("aisaq_raw_" + metric + "_" + std::to_string(disk_pq_dims));
+    std::filesystem::create_directories(dir);
+    const auto prefix = (dir / "index").string();
+    auto base = GenDataSet(rows, dim, 51);
+    const auto* xb = static_cast<const float*>(base->GetTensor());
+    const auto raw = (dir / "base.bin").string();
+    WriteRawDataToDisk<float>(raw, xb, rows, dim);
+    auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(std::make_shared<milvus::LocalFileManager>()));
+    const auto version = GenTestVersionList();
+    knowhere::Json config = {{"dim", dim},
+                             {"metric_type", metric},
+                             {"index_prefix", prefix},
+                             {"data_path", raw},
+                             {"max_degree", 24},
+                             {"search_list_size", 64},
+                             {"pq_code_budget_gb", 0.000002},
+                             {"build_dram_budget_gb", 1},
+                             {"disk_pq_dims", disk_pq_dims},
+                             {"search_cache_budget_gb", 0},
+                             {"search_cache_budget_gb_ratio", 0},
+                             {"inline_pq", 0},
+                             {"pq_cache_size", 0},
+                             {"num_entry_points", 0},
+                             {"warm_up", false}};
+    REQUIRE(knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData("AISAQ", version, config) == (disk_pq_dims == 0));
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>("AISAQ", version, pack).value();
+    REQUIRE(index.Build(nullptr, config) == knowhere::Status::success);
+    auto load = config;
+    load.erase("disk_pq_dims");  // Capability is determined by the stored model, not a load default.
+    knowhere::BinarySet empty;
+    REQUIRE(index.Deserialize(empty, load) == knowhere::Status::success);
+    REQUIRE(index.HasRawData(metric) == (disk_pq_dims == 0));
+    int64_t id = 17;
+    auto retrieved = index.GetVectorByIds(knowhere::GenIdsDataSet(1, &id));
+    if (disk_pq_dims) {
+        REQUIRE_FALSE(retrieved.has_value());
+        REQUIRE(retrieved.error() == knowhere::Status::not_implemented);
+    } else {
+        REQUIRE(retrieved.has_value());
+        const auto* vector = static_cast<const float*>(retrieved.value()->GetTensor());
+        for (size_t j = 0; j < dim; ++j) REQUIRE(vector[j] == xb[id * dim + j]);
+    }
+    std::filesystem::remove_all(dir);
+}
+
 #endif
