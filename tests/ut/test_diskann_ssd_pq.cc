@@ -62,6 +62,72 @@ class DiskPQReference : public diskann::SSDGraphIndex<float> {
         return l2;
     }
 };
+// Read the persisted layout independently of either graph searcher's scorer.
+class AisaqPayloadReference {
+ public:
+    explicit AisaqPayloadReference(const std::string& prefix) : file_(prefix + "_disk.index", std::ios::binary) {
+        // AiSAQ starts with two uint32 shape fields, then count/dim/medoid/layout.
+        uint64_t header[12];
+        file_.read(reinterpret_cast<char*>(header), sizeof(header));
+        REQUIRE(file_.good());
+        node_bytes_ = header[4];
+        nodes_per_sector_ = header[5];
+        table_.load_pq_centroid_bin((prefix + "_disk.index_pq_pivots.bin").c_str(), 0);
+        const auto map_file = prefix + "_disk.index_rearrange.bin";
+        if (header[11] && std::filesystem::exists(map_file)) {
+            size_t rows, dim;
+            std::unique_ptr<uint32_t[]> mapping;
+            diskann::load_bin<uint32_t>(map_file, mapping, rows, dim);
+            REQUIRE(dim == 1);
+            physical_ids_.resize(rows);
+            for (size_t i = 0; i < rows; ++i) physical_ids_[mapping[i]] = i;
+        }
+        const auto norm_file = prefix + "_disk.index_max_base_norm.bin";
+        if (std::filesystem::exists(norm_file)) {
+            size_t rows, dim;
+            std::unique_ptr<float[]> norms;
+            diskann::load_bin<float>(norm_file, norms, rows, dim);
+            if (rows == 1)
+                max_norm_ = norms[0];
+        }
+    }
+
+    float
+    Score(unsigned id, const float* query, size_t dim, const std::string& metric) {
+        const uint64_t physical = physical_ids_.empty() ? id : physical_ids_.at(id);
+        const uint64_t offset =
+            nodes_per_sector_
+                ? (1 + physical / nodes_per_sector_) * diskann::defaults::SECTOR_LEN +
+                      (physical % nodes_per_sector_) * node_bytes_
+                : (1 + physical * ((node_bytes_ + diskann::defaults::SECTOR_LEN - 1) / diskann::defaults::SECTOR_LEN)) *
+                      diskann::defaults::SECTOR_LEN;
+        file_.seekg(offset);
+        std::vector<uint8_t> code(table_.get_num_chunks());
+        file_.read(reinterpret_cast<char*>(code.data()), code.size());
+        REQUIRE(file_.good());
+        std::vector<float> decoded(table_.get_total_dims());
+        table_.inflate_vector(code.data(), decoded.data());
+        double dot = 0, query_norm = 0, l2 = 0;
+        for (size_t j = 0; j < dim; ++j) {
+            dot += double(query[j]) * decoded[j];
+            query_norm += double(query[j]) * query[j];
+            l2 += (double(query[j]) - decoded[j]) * (double(query[j]) - decoded[j]);
+        }
+        if (metric == "IP")
+            return dot * max_norm_;
+        if (metric == "COSINE")
+            return dot / std::sqrt(query_norm);
+        return l2;
+    }
+
+ private:
+    std::ifstream file_;
+    diskann::FixedChunkPQTable table_;
+    uint64_t node_bytes_, nodes_per_sector_;
+    float max_norm_ = 1;
+    std::vector<uint32_t> physical_ids_;
+};
+
 }  // namespace
 
 TEST_CASE("DiskANN public static configuration and raw data capabilities", "[diskann][ssd_pq][diskann_review]") {
@@ -327,4 +393,84 @@ TEST_CASE("DiskANN SSD scores are independent of navigation and cache", "[diskan
     }
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("AiSAQ SSD PQ scores match decoded payloads across search paths", "[diskann][aisaq_review][aisaq_score]") {
+    const auto metric = GENERATE(std::string("IP"), std::string("L2"), std::string("COSINE"));
+    const bool rearranged = GENERATE(false, true);
+    const int inline_pq = GENERATE(0, 4);
+    constexpr size_t rows = 300, dim = 16, nq = 3, k = 10;
+    const auto dir = std::filesystem::current_path() /
+                     ("aisaq_scores_" + metric + "_" + std::to_string(rearranged) + "_" + std::to_string(inline_pq));
+    std::filesystem::create_directories(dir);
+    const auto prefix = (dir / "index").string();
+    auto base = GenDataSet(rows, dim, 73);
+    auto queries = GenDataSet(nq, dim, 29);
+    auto* xb = const_cast<float*>(static_cast<const float*>(base->GetTensor()));
+    auto* xq = const_cast<float*>(static_cast<const float*>(queries->GetTensor()));
+    for (size_t i = 0; i < rows * dim; ++i) xb[i] *= 0.2f + float((i / dim) % 7);
+    for (size_t i = 0; i < nq * dim; ++i) xq[i] *= 0.1f + 3 * (i / dim);
+    const auto raw = (dir / "base.bin").string();
+    WriteRawDataToDisk<float>(raw, xb, rows, dim);
+    auto manager = std::make_shared<milvus::LocalFileManager>();
+    auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
+    const auto version = GenTestVersionList();
+    knowhere::Json config = {{"dim", dim},
+                             {"metric_type", metric},
+                             {"index_prefix", prefix},
+                             {"data_path", raw},
+                             {"max_degree", 24},
+                             {"search_list_size", 100},
+                             {"pq_code_budget_gb", 0.000002},
+                             {"build_dram_budget_gb", 1},
+                             {"disk_pq_dims", 4},
+                             {"search_cache_budget_gb", 0},
+                             {"search_cache_budget_gb_ratio", 0},
+                             {"rearrange", rearranged},
+                             {"inline_pq", inline_pq},
+                             {"pq_cache_size", 0},
+                             {"pq_read_page_cache_size", 0},
+                             {"num_entry_points", 0},
+                             {"warm_up", false},
+                             {"use_bfs_cache", true}};
+    auto built = knowhere::IndexFactory::Instance().Create<knowhere::fp32>("AISAQ", version, pack).value();
+    REQUIRE(built.Build(nullptr, config) == knowhere::Status::success);
+    AisaqPayloadReference reference(prefix);
+    for (int cache_mode : {0, 1, 2}) {
+        if (cache_mode) {
+            std::vector<uint32_t> nodes;
+            for (uint32_t i = 0; i < rows; ++i)
+                if (cache_mode == 1 || i % 2 == 0)
+                    nodes.push_back(i);
+            const auto cached = diskann::get_cached_nodes_file(prefix);
+            std::filesystem::remove(cached);
+            diskann::save_bin<uint32_t>(cached, nodes.data(), nodes.size(), 1);
+            REQUIRE(manager->AddFile(cached));
+        }
+        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>("AISAQ", version, pack).value();
+        knowhere::BinarySet empty;
+        REQUIRE(index.Deserialize(empty, config) == knowhere::Status::success);
+        knowhere::Json search = {{"metric_type", metric},   {"k", k},
+                                 {"search_list_size", 128}, {"beamwidth", 4},
+                                 {"vectors_beamwidth", 1},  {"filter_threshold", 0.5}};
+        for (size_t filtered : {size_t(0), rows - 15}) {
+            std::vector<uint8_t> mask((rows + 7) / 8, 0);
+            for (size_t i = 0; i < filtered; ++i) mask[i / 8] |= 1u << (i % 8);
+            auto result = index.Search(queries, search, knowhere::BitsetView(mask.data(), rows));
+            REQUIRE(result.has_value());
+            for (size_t q = 0; q < nq; ++q)
+                for (size_t j = 0; j < k; ++j) {
+                    const auto at = q * k + j;
+                    const auto id = result.value()->GetIds()[at];
+                    REQUIRE(id >= int64_t(filtered));
+                    REQUIRE(id < int64_t(rows));
+                    CAPTURE(metric, rearranged, inline_pq, cache_mode, filtered, q, id);
+                    REQUIRE(
+                        result.value()->GetDistance()[at] ==
+                        Catch::Approx(reference.Score(id, xq + q * dim, dim, metric)).epsilon(0.0002).margin(0.0002));
+                }
+        }
+    }
+    std::filesystem::remove_all(dir);
+}
+
 #endif
