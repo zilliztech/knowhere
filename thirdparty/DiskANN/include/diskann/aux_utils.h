@@ -39,7 +39,7 @@ namespace diskann {
   const uint32_t   NUM_KMEANS_REPS = 12;
 
   template<typename T>
-  class PQFlashIndex;
+  class SSDGraphIndex;
 
   double get_memory_budget(const std::string &mem_budget_str);
   double get_memory_budget(double search_ram_budget_in_gb);
@@ -98,7 +98,7 @@ namespace diskann {
 
   template<typename T>
   uint32_t optimize_beamwidth(
-      std::unique_ptr<diskann::PQFlashIndex<T>> &_pFlashIndex, T *tuning_sample,
+      std::unique_ptr<diskann::SSDGraphIndex<T>> &_pFlashIndex, T *tuning_sample,
       _u64 tuning_sample_num, _u64 tuning_sample_aligned_dim, uint32_t L,
       uint32_t nthreads, uint32_t start_bw = 2);
 

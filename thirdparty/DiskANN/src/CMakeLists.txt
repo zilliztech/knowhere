@@ -10,7 +10,7 @@ else()
 	#file(GLOB CPP_SOURCES *.cpp)
 	set(CPP_SOURCES ann_exception.cpp aux_utils.cpp distance.cpp index.cpp
         linux_aligned_file_reader.cpp math_utils.cpp memory_mapper.cpp
-        partition_and_pq.cpp  pq_flash_index.cpp logger.cpp utils.cpp
+        partition_and_pq.cpp  ssd_graph_index.cpp navigation_runtime.cpp pq_navigation.cpp logger.cpp utils.cpp
 		distance_neon.cpp)
 	add_library(${PROJECT_NAME} STATIC ${CPP_SOURCES})
 	set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
