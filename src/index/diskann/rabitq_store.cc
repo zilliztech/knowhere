@@ -330,8 +330,8 @@ RaBitQStore::Validate() {
 }
 
 std::unique_ptr<diskann::NavigationDistanceComputer>
-RaBitQStore::CreateDistanceComputer(const diskann::NavigationQueryOptions& options) const {
-    return CreateDistanceComputer(options.query_bits);
+RaBitQStore::CreateDistanceComputer() const {
+    return CreateDistanceComputer(4);
 }
 
 std::unique_ptr<diskann::NavigationDistanceComputer>

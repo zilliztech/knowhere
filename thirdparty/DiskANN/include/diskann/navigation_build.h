@@ -22,6 +22,9 @@ namespace diskann {
   class NavigationBuilder {
    public:
     virtual ~NavigationBuilder() = default;
+    virtual std::vector<std::string> files(const std::string &) const {
+      return {};
+    }
     virtual bool validate(const BuildConfig &) const {
       return true;
     }
@@ -44,5 +47,6 @@ namespace diskann {
   std::vector<std::string> pq_navigation_files(const std::string &prefix,
                                                bool rearranged = false);
   template<typename T>
-  std::unique_ptr<NavigationBuilder> make_pq_navigation_builder();
+  std::unique_ptr<NavigationBuilder> make_pq_navigation_builder(
+      double code_budget_gb);
 }  // namespace diskann

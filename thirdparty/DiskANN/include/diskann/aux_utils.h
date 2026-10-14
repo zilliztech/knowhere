@@ -111,8 +111,6 @@ namespace diskann {
     unsigned max_degree = 0;
     // L (indexing list size, better if >= R)
     unsigned search_list_size = 0;
-    // B (PQ code size in GB)
-    double pq_code_size_gb = 0.0;
     // M (memory limit while indexing)
     double index_mem_gb = 0.0;
     // B' (PQ dim for disk index: optional parameter for very
@@ -178,7 +176,7 @@ namespace diskann {
                        const NavigationBuilder &navigation);
 
   template<typename T>
-  int build_disk_index(BuildConfig &config);
+  int build_disk_index(BuildConfig &config, const NavigationBuilder& navigation);
 
   template <typename T>
   void create_aisaq_layout(const std::string base_file, const std::string mem_index_file, const std::string output_file,

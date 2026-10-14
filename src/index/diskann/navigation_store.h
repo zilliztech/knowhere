@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -28,8 +29,13 @@ struct NavigationFeatures {
 };
 NavigationFeatures
 GetNavigationFeatures(const DiskANNConfig& config);
-diskann::NavigationQueryOptions
-GetNavigationQueryOptions(const DiskANNConfig& config);
+using NavigationQueryFactory = std::function<std::unique_ptr<diskann::NavigationDistanceComputer>()>;
+expected<NavigationQueryFactory>
+CreateNavigationQueryFactory(const std::string& loaded_codec, std::shared_ptr<NavigationStore> model,
+                             const DiskANNConfig& config);
+// Compatibility metadata for the existing PQ budget field; implementation is PQ-owned.
+double
+GetPQNavigationBudget(const DiskANNConfig& config);
 enum class NavigationInputType { FP32, FP16, BF16 };
 // Additional admission allowance beyond the legacy file-size/4 heuristic.
 // PQ is already covered by that heuristic; its actual model/workspace memory

@@ -400,7 +400,6 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                                                      diskann_metric,
                                                      static_cast<unsigned>(build_conf.max_degree.value()),
                                                      static_cast<unsigned>(build_conf.search_list_size.value()),
-                                                     static_cast<double>(build_conf.pq_code_budget_gb.value()),
                                                      static_cast<double>(build_conf.build_dram_budget_gb.value()),
                                                      static_cast<uint32_t>(build_conf.disk_pq_dims.value()),
                                                      false,
@@ -412,7 +411,9 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                                                      build_conf.rearrange.value(),
                                                      build_conf.num_entry_points.value()};
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
-        int res = diskann::build_disk_index<DataType>(aisaq_internal_build_config);
+        int res = diskann::build_disk_index<DataType>(
+            aisaq_internal_build_config,
+            *diskann::make_pq_navigation_builder<DataType>(build_conf.pq_code_budget_gb.value()));
         if (res != 0)
             throw diskann::ANNException("AiSAQ::build_disk_index returned non-zero value: " + std::to_string(res), -1);
     }));
@@ -788,7 +789,7 @@ AisaqIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     for (size_t i = 0; i < num_medoids; i++) {
         entry_points.push_back(pq_flash_index_->get_medoids()[i]);
     }
-    auto aisaq_conf = static_cast<const DiskANNConfig&>(*cfg);
+    auto aisaq_conf = static_cast<const AisaqConfig&>(*cfg);
     LOG_KNOWHERE_INFO_ << "Count " << Count();
     LOG_KNOWHERE_INFO_ << "max_degree " << aisaq_conf.max_degree.value();
     LOG_KNOWHERE_INFO_ << "search_list_size " << aisaq_conf.search_list_size.value();

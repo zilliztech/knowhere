@@ -882,7 +882,7 @@ namespace diskann {
       auto s = std::chrono::high_resolution_clock::now();
       for (_s64 i = 0; i < (int64_t) tuning_sample_num; i++) {
         futures.emplace_back(thread_pool->push([&, index = i]() {
-          auto scorer = navigation.CreateDistanceComputer({});
+          auto scorer = navigation.CreateDistanceComputer();
           pFlashIndex->cached_beam_search(
               tuning_sample + (index * tuning_sample_aligned_dim), 1, L,
               tuning_sample_result_ids_64.data() + (index * 1),
@@ -1736,12 +1736,11 @@ std::unique_ptr<PreparedBuildContext> prepare_build_context(
 }
 
 template<typename T>
-int build_disk_index(BuildConfig &config) {
+int build_disk_index(BuildConfig &config, const NavigationBuilder& navigation) {
     auto       context = prepare_build_context<T>(config);
-    auto       navigation = make_pq_navigation_builder<T>();
-    for (const auto &path : pq_navigation_files(context->prefix))
+    for (const auto &path : navigation.files(context->prefix))
       context->own_output(path);
-    const auto result = build_disk_index<T>(config, *context, *navigation);
+    const auto result = build_disk_index<T>(config, *context, navigation);
     if (result == 0)
       context->commit_outputs();
     return result;
@@ -1841,8 +1840,6 @@ int build_disk_index(BuildConfig &config, PreparedBuildContext &context,
     LOG_KNOWHERE_INFO_ << "Starting index build for : " << points_num
                        << " vectors with dim: " << dim << " R=" << R
                        << " L=" << L
-                       << " Query RAM budget: " << config.pq_code_size_gb
-                       << "(GiB)"
                        << " Indexing ram budget: " << indexing_ram_budget
                        << "(GiB)";
 
@@ -2028,9 +2025,9 @@ int build_disk_index(BuildConfig &config, PreparedBuildContext &context,
   // not support build uint8/int8 diskindex in knowhere
   // template int build_disk_index<int8_t>(BuildConfig &config);
   // template int build_disk_index<uint8_t>(BuildConfig &config);
-  template int build_disk_index<float>(BuildConfig &config);
-  template int build_disk_index<knowhere::fp16>(BuildConfig &config);
-  template int build_disk_index<knowhere::bf16>(BuildConfig &config);
+  template int build_disk_index<float>(BuildConfig &config, const NavigationBuilder&);
+  template int build_disk_index<knowhere::fp16>(BuildConfig &config, const NavigationBuilder&);
+  template int build_disk_index<knowhere::bf16>(BuildConfig &config, const NavigationBuilder&);
   template int build_disk_index<float>(BuildConfig &, PreparedBuildContext &,
                                        const NavigationBuilder &);
   template int build_disk_index<knowhere::fp16>(BuildConfig &,

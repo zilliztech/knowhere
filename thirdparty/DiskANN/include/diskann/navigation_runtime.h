@@ -16,10 +16,6 @@ namespace diskann {
     uint64_t input_dimension;
   };
 
-  struct NavigationQueryOptions {
-    uint8_t query_bits = 4;
-  };
-
   // Query-local state. Inputs and batch threshold snapshots belong to the
   // navigation score domain (smaller is better), never the SSD score domain.
   // A scorer may explicitly reject a candidate with +infinity under its
@@ -41,8 +37,8 @@ namespace diskann {
     virtual int64_t                                     Count() const = 0;
     virtual int64_t                                     Dimension() const = 0;
     virtual size_t                                      MemorySize() const = 0;
-    virtual std::unique_ptr<NavigationDistanceComputer> CreateDistanceComputer(
-        const NavigationQueryOptions& options) const = 0;
+    virtual std::unique_ptr<NavigationDistanceComputer> CreateDistanceComputer()
+        const = 0;
   };
 
   // User ID mapping belongs to the index layout, not the navigation encoding.

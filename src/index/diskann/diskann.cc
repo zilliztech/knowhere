@@ -527,7 +527,6 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
                                                        diskann_metric,
                                                        static_cast<unsigned>(build_conf.max_degree.value()),
                                                        static_cast<unsigned>(build_conf.search_list_size.value()),
-                                                       static_cast<double>(build_conf.pq_code_budget_gb.value()),
                                                        static_cast<double>(build_conf.build_dram_budget_gb.value()),
                                                        static_cast<uint32_t>(build_conf.disk_pq_dims.value()),
                                                        false,
@@ -853,7 +852,7 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         futures.reserve(warmup_num);
         for (uint64_t i = 0; i < warmup_num; ++i) {
             futures.emplace_back(search_pool_->push([&, index = i]() {
-                auto navigation = navigation_store_->CreateDistanceComputer(GetNavigationQueryOptions(prep_conf));
+                auto navigation = navigation_store_->CreateDistanceComputer();
                 graph_index_->cached_beam_search(
                     warmup + (index * warmup_aligned_dim), 1, warmup_L, warmup_result_ids_64.data() + (index * 1),
                     warmup_result_dists.data() + (index * 1), 4, *navigation, false, nullptr, nullptr, {}, -1.0f);
@@ -977,6 +976,11 @@ DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_pt
     auto dim = dataset->GetDim();
     auto xq = dataset->GetTensor();
 
+    auto navigation_factory = CreateNavigationQueryFactory(loaded_navigation_codec_, navigation_store_, search_conf);
+    if (!navigation_factory.has_value())
+        return expected<std::vector<IndexNode::IteratorPtr>>::Err(navigation_factory.error(),
+                                                                  navigation_factory.what());
+
     auto vec = std::vector<IndexNode::IteratorPtr>(nq, nullptr);
     auto metric = search_conf.metric_type.value();
     bool transform = metric != knowhere::metric::L2;
@@ -986,10 +990,9 @@ DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_pt
     try {
         for (int i = 0; i < nq; i++) {
             auto single_query = static_cast<const DataType*>(xq) + i * dim;
-            auto it = std::make_shared<iterator>(
-                transform, single_query, lsearch, beamwidth, filter_ratio, bitset, graph_index_.get(),
-                navigation_store_->CreateDistanceComputer(GetNavigationQueryOptions(search_conf)),
-                use_knowhere_search_pool);
+            auto it =
+                std::make_shared<iterator>(transform, single_query, lsearch, beamwidth, filter_ratio, bitset,
+                                           graph_index_.get(), navigation_factory.value()(), use_knowhere_search_pool);
             it->SetResultIdMap(result_id_map);
             vec[i] = it;
         }
@@ -1031,6 +1034,10 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
                                                  search_conf.search_list_size.value(), search_conf.beamwidth.value());
     }
 
+    auto navigation_factory = CreateNavigationQueryFactory(loaded_navigation_codec_, navigation_store_, search_conf);
+    if (!navigation_factory.has_value())
+        return expected<DataSetPtr>::Err(navigation_factory.error(), navigation_factory.what());
+
     auto p_id = std::make_unique<int64_t[]>(k * nq);
     auto p_dist = std::make_unique<DistType[]>(k * nq);
     std::vector<diskann::QueryStats> query_stats(nq);
@@ -1041,7 +1048,7 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
         futures.emplace_back(search_pool_->push([&, index = row, p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
             knowhere::checkCancellation(op_context);
             auto& stats = query_stats[index];
-            auto navigation = navigation_store_->CreateDistanceComputer(GetNavigationQueryOptions(search_conf));
+            auto navigation = navigation_factory.value()();
             graph_index_->cached_beam_search(xq + (index * dim), k, lsearch, p_id_ptr + (index * k),
                                              p_dist_ptr + (index * k), beamwidth, *navigation, false, &stats,
                                              feder_result, bitset_, filter_ratio);
@@ -1220,7 +1227,7 @@ DiskANNIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     }
     auto diskann_conf = static_cast<const DiskANNConfig&>(*cfg);
     feder::diskann::DiskANNMeta meta(diskann_conf.data_path.value(), diskann_conf.max_degree.value(),
-                                     diskann_conf.search_list_size.value(), diskann_conf.pq_code_budget_gb.value(),
+                                     diskann_conf.search_list_size.value(), GetPQNavigationBudget(diskann_conf),
                                      diskann_conf.build_dram_budget_gb.value(), diskann_conf.disk_pq_dims.value(),
                                      diskann_conf.accelerate_build.value(), Count(), entry_points);
     std::unordered_set<int64_t> id_set(entry_points.begin(), entry_points.end());

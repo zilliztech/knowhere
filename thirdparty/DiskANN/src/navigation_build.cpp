@@ -25,8 +25,13 @@ namespace diskann {
   template<typename T>
   class PQNavigationBuilder final : public NavigationBuilder {
    public:
-    bool validate(const BuildConfig &config) const override {
-      if (get_memory_budget(config.pq_code_size_gb) <= 0) {
+    explicit PQNavigationBuilder(double budget) : code_budget_gb_(budget) {
+    }
+    std::vector<std::string> files(const std::string &prefix) const override {
+      return pq_navigation_files(prefix);
+    }
+    bool validate(const BuildConfig &) const override {
+      if (get_memory_budget(code_budget_gb_) <= 0) {
         LOG_KNOWHERE_ERROR_ << "PQ navigation requires a positive code budget";
         return false;
       }
@@ -41,7 +46,7 @@ namespace diskann {
     void build(const BuildConfig &config, const PreparedBuildContext &context,
                const NavigationTrainingData &sample) const override {
       const auto start = std::chrono::high_resolution_clock::now();
-      const auto budget = get_memory_budget(config.pq_code_size_gb);
+      const auto budget = get_memory_budget(code_budget_gb_);
       size_t     chunks =
           static_cast<size_t>(std::floor(_u64(budget / context.rows)));
       chunks = std::max<size_t>(1, chunks);
@@ -85,16 +90,20 @@ namespace diskann {
             get_cached_nodes_file(context.prefix));
       }
     }
+
+   private:
+    double code_budget_gb_;
   };
 
   template<typename T>
-  std::unique_ptr<NavigationBuilder> make_pq_navigation_builder() {
-    return std::make_unique<PQNavigationBuilder<T>>();
+  std::unique_ptr<NavigationBuilder> make_pq_navigation_builder(
+      double code_budget_gb) {
+    return std::make_unique<PQNavigationBuilder<T>>(code_budget_gb);
   }
+  template std::unique_ptr<NavigationBuilder> make_pq_navigation_builder<float>(
+      double);
   template std::unique_ptr<NavigationBuilder>
-  make_pq_navigation_builder<float>();
+  make_pq_navigation_builder<knowhere::fp16>(double);
   template std::unique_ptr<NavigationBuilder>
-  make_pq_navigation_builder<knowhere::fp16>();
-  template std::unique_ptr<NavigationBuilder>
-  make_pq_navigation_builder<knowhere::bf16>();
+  make_pq_navigation_builder<knowhere::bf16>(double);
 }  // namespace diskann

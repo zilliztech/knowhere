@@ -116,7 +116,6 @@ TEST_CASE("DiskANN prepared build files have scoped ownership", "[diskann][build
         config.data_file_path = kRawDataPath;
         config.index_file_path = kDir + "/prepared";
         config.compare_metric = metric;
-        config.pq_code_size_gb = 0.001;
         const auto temporary = config.index_file_path + "_prepped_base.bin";
         const auto norm =
             diskann::get_disk_index_max_base_norm_file(diskann::get_disk_index_filename(config.index_file_path));
@@ -129,7 +128,7 @@ TEST_CASE("DiskANN prepared build files have scoped ownership", "[diskann][build
             REQUIRE(context->prepared_source == (metric == diskann::Metric::L2 ? kRawDataPath : temporary));
             REQUIRE_THROWS(context->own_temporary(kRawDataPath));
             // Failure after successful preprocessing must release the prepared input.
-            const auto navigation = diskann::make_pq_navigation_builder<float>();
+            const auto navigation = diskann::make_pq_navigation_builder<float>(0.001);
             REQUIRE(diskann::build_disk_index<float>(config, *context, *navigation) != 0);
         }
         REQUIRE(fs::exists(kRawDataPath));
@@ -236,12 +235,37 @@ TEST_CASE("DiskANN discovers persisted navigation without build parameters", "[d
         REQUIRE(model != nullptr);
         REQUIRE(model->Count() == rows);
         REQUIRE(model->Dimension() == dim);
-        auto scorer = model->CreateDistanceComputer({4});
+        std::shared_ptr<knowhere::NavigationStore> shared = std::move(model);
+        knowhere::DiskANNNavigationConfig query_config;
+        knowhere::Json query_json = {{"rbq_bits_query", "0"}, {"k", 10}};
+        REQUIRE(knowhere::Config::Load(query_config, query_json, knowhere::PARAM_TYPE::SEARCH) ==
+                knowhere::Status::success);
+        auto factory = knowhere::CreateNavigationQueryFactory("RABITQ", shared, query_config);
+        REQUIRE(factory.has_value());
+        auto chosen = factory.value()();
+        auto native = dynamic_cast<const knowhere::RaBitQStore*>(shared.get())->CreateDistanceComputer(0);
+        const auto* q = static_cast<const float*>(query->GetTensor());
+        chosen->set_query(q);
+        native->set_query(q);
+        const unsigned zero = 0;
+        float actual, expected;
+        chosen->compute_distances(&zero, 1, &actual, 0, false, nullptr);
+        native->compute_distances(&zero, 1, &expected, 0, false, nullptr);
+        REQUIRE(actual == expected);
+        query_json["rbq_bits_query"] = 9;
+        REQUIRE(knowhere::Config::Load(query_config, query_json, knowhere::PARAM_TYPE::SEARCH) ==
+                knowhere::Status::success);
+        REQUIRE_FALSE(knowhere::CreateNavigationQueryFactory("RABITQ", shared, query_config).has_value());
+        auto scorer = shared->CreateDistanceComputer();
         scorer->set_query(static_cast<const float*>(query->GetTensor()));
         const unsigned id = 0;
         float before, after;
         scorer->compute_distances(&id, 1, &before, 0, false, nullptr);
-        model.reset();
+        chosen.reset();
+        native.reset();
+        factory = knowhere::expected<knowhere::NavigationQueryFactory>::Err(knowhere::Status::invalid_args,
+                                                                            "released factory");
+        shared.reset();
         scorer->compute_distances(&id, 1, &after, 0, false, nullptr);
         REQUIRE(before == after);
     }
@@ -272,8 +296,8 @@ TEST_CASE("DiskANN discovers persisted navigation without build parameters", "[d
         REQUIRE(model->Count() == rows);
         REQUIRE(model->Dimension() == dim);
         const auto reserved_size = model->MemorySize();
-        auto first = model->CreateDistanceComputer({0});
-        auto second = model->CreateDistanceComputer({8});
+        auto first = model->CreateDistanceComputer();
+        auto second = model->CreateDistanceComputer();
         REQUIRE(model->MemorySize() == reserved_size);
 
         size_t code_rows, chunks;
@@ -298,7 +322,7 @@ TEST_CASE("DiskANN discovers persisted navigation without build parameters", "[d
         first.reset();
         second.reset();
         REQUIRE(model->MemorySize() == reserved_size);
-        auto surviving = model->CreateDistanceComputer({});
+        auto surviving = model->CreateDistanceComputer();
         surviving->set_query(queries);
         model.reset();
         surviving->compute_distances(ids.data(), ids.size(), actual.data(), 0, false, nullptr);
@@ -551,9 +575,27 @@ TEST_CASE("Valid diskann build params test", "[diskann]") {
         REQUIRE(res == knowhere::Status::success);
 
         knowhere::DiskANNConfig diskCfg = static_cast<const knowhere::DiskANNConfig&>(*cfg);
-        REQUIRE(diskCfg.pq_code_budget_gb == std::max(pq_code_budget_gb, 1.0f * ratio));
+        REQUIRE(knowhere::GetPQNavigationBudget(diskCfg) == std::max(pq_code_budget_gb, 1.0f * ratio));
         REQUIRE(diskCfg.search_cache_budget_gb == std::max(search_cache_budget_gb, 1.0f * ratio));
     }
+}
+
+TEST_CASE("DiskANN codecs own private parameters without restricting generic loading", "[diskann][navigation_config]") {
+    knowhere::DiskANNNavigationConfig config;
+    REQUIRE(config.__DICT__.count("rbq_bits") == 0);
+    REQUIRE(config.__DICT__.count("rbq_bits_query") == 0);
+    REQUIRE(config.__DICT__.count("pq_code_budget_gb") == 0);
+    REQUIRE(config.__DICT__.count("pq_code_budget_gb_ratio") == 0);
+    knowhere::Json pq = {{"pq_code_budget_gb", "0.25"}, {"pq_code_budget_gb_ratio", "0.5"}, {"vec_field_size_gb", 1}};
+    REQUIRE(knowhere::Config::Load(config, pq, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::success);
+    REQUIRE(knowhere::GetPQNavigationBudget(config) == 0.5);
+    knowhere::DiskANNNavigationConfig rbq;
+    knowhere::Json bad = {{"navigation_codec", "RABITQ"}, {"rbq_bits", 10}};
+    REQUIRE(knowhere::Config::Load(rbq, bad, knowhere::PARAM_TYPE::TRAIN) != knowhere::Status::success);
+    bad["rbq_bits"] = "8";
+    REQUIRE(knowhere::Config::Load(rbq, bad, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::success);
+    REQUIRE(knowhere::EstimateAdditionalNavigationMemory(rbq, 100, 16).value() ==
+            knowhere::RaBitQStore::EstimateMemorySize(100, 16, 8));
 }
 
 TEST_CASE("Invalid diskann params test", "[diskann]") {

@@ -217,8 +217,7 @@ namespace diskann {
     state_->prepare(count);
   }
   std::unique_ptr<NavigationDistanceComputer>
-  PQNavigationStore::CreateDistanceComputer(
-      const NavigationQueryOptions&) const {
+  PQNavigationStore::CreateDistanceComputer() const {
     return CreatePQDistanceComputer();
   }
   std::unique_ptr<PQNavigationDistanceComputer>

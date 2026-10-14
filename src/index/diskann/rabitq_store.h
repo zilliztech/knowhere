@@ -41,10 +41,10 @@ class RaBitQStore final : public NavigationStore {
     operator=(const RaBitQStore&) = delete;
 
     std::unique_ptr<diskann::NavigationDistanceComputer>
-    CreateDistanceComputer(uint8_t query_bits = 4) const;
+    CreateDistanceComputer(uint8_t query_bits) const;
 
     std::unique_ptr<diskann::NavigationDistanceComputer>
-    CreateDistanceComputer(const diskann::NavigationQueryOptions& options) const override;
+    CreateDistanceComputer() const override;
 
     int64_t
     Count() const override;

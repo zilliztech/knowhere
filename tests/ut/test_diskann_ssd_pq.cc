@@ -359,7 +359,7 @@ TEST_CASE("DiskANN SSD scores are independent of navigation and cache", "[diskan
             // Explicitly observe the low-level exhausted-candidate path,
             // rather than relying only on the public iterator's buffering.
             auto workspace = reference.getIteratorWorkspace(xq, rows + 1, 4, 0, knowhere::BitsetView(),
-                                                            navigation->CreateDistanceComputer({}));
+                                                            navigation->CreateDistanceComputer());
             reference.getIteratorNextBatch(workspace.get());
             REQUIRE_FALSE(workspace->has_candidates());
             REQUIRE(workspace->full_retset.empty());
@@ -390,7 +390,7 @@ TEST_CASE("DiskANN SSD scores are independent of navigation and cache", "[diskan
             };
             auto retry = reference.getIteratorWorkspace(
                 xq, rows + 1, 4, 0, knowhere::BitsetView(),
-                std::make_unique<ThrowOnceNavigation>(navigation->CreateDistanceComputer({})));
+                std::make_unique<ThrowOnceNavigation>(navigation->CreateDistanceComputer()));
             REQUIRE_THROWS(reference.getIteratorNextBatch(retry.get()));
             // There is only one IO scratch slot. Retrying also verifies that
             // the failed batch returned both the slot and the read context.

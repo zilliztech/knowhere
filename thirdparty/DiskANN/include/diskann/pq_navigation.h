@@ -52,8 +52,8 @@ namespace diskann {
     size_t   MemorySize() const override;
     uint64_t ChunkCount() const;
     void     PrepareWorkspaces(size_t count) const;
-    std::unique_ptr<NavigationDistanceComputer> CreateDistanceComputer(
-        const NavigationQueryOptions& options) const override;
+    std::unique_ptr<NavigationDistanceComputer> CreateDistanceComputer()
+        const override;
     std::unique_ptr<PQNavigationDistanceComputer> CreatePQDistanceComputer(
         PQCodeSource* source = nullptr) const;
 

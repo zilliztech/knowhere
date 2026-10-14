@@ -11,18 +11,53 @@
 #include "diskann/aux_utils.h"
 #include "diskann/pq_navigation.h"
 #include "index/diskann/diskann_config.h"
+#include "index/diskann/pq_navigation_config.h"
+#include "index/diskann/rabitq_navigation_config.h"
 #include "index/diskann/rabitq_store.h"
 
 namespace knowhere {
 namespace {
-const DiskANNNavigationConfig&
-NavigationConfig(const DiskANNConfig& config) {
-    return static_cast<const DiskANNNavigationConfig&>(config);
+template <typename Parameters>
+Status
+ParseParameters(Parameters& parameters, const DiskANNConfig& config, PARAM_TYPE phase, std::string* error) {
+    const auto* navigation = dynamic_cast<const DiskANNNavigationConfig*>(&config);
+    Json json = navigation ? navigation->CodecParameters() : Json::object();
+    const auto status = Config::FormatAndCheck(parameters, json, error);
+    if (status != Status::success)
+        return status;
+    return Config::Load(parameters, json, phase, error);
+}
+
+expected<NavigationQueryFactory>
+PQQueryFactory(std::shared_ptr<NavigationStore> model, const DiskANNConfig&) {
+    auto pq = std::dynamic_pointer_cast<diskann::PQNavigationStore>(model);
+    if (!pq)
+        return expected<NavigationQueryFactory>::Err(Status::invalid_index_error, "PQ model type mismatch");
+    return NavigationQueryFactory([pq = std::move(pq)]() { return pq->CreateDistanceComputer(); });
+}
+
+expected<NavigationQueryFactory>
+RaBitQQueryFactory(std::shared_ptr<NavigationStore> model, const DiskANNConfig& config) {
+    RaBitQQueryConfig parameters;
+    std::string error;
+    const auto status = ParseParameters(parameters, config, PARAM_TYPE::SEARCH, &error);
+    if (status != Status::success)
+        return expected<NavigationQueryFactory>::Err(status, error);
+    auto rabitq = std::dynamic_pointer_cast<RaBitQStore>(model);
+    if (!rabitq)
+        return expected<NavigationQueryFactory>::Err(Status::invalid_index_error, "RaBitQ model type mismatch");
+    const auto bits = static_cast<uint8_t>(parameters.rbq_bits_query.value());
+    return NavigationQueryFactory(
+        [rabitq = std::move(rabitq), bits]() { return rabitq->CreateDistanceComputer(bits); });
 }
 
 class RaBitQNavigationBuilder final : public diskann::NavigationBuilder {
  public:
     explicit RaBitQNavigationBuilder(uint8_t bits) : bits_(bits) {
+    }
+    std::vector<std::string>
+    files(const std::string& prefix) const override {
+        return {RaBitQStore::SidecarFilename(prefix)};
     }
     void
     build(const diskann::BuildConfig&, const diskann::PreparedBuildContext& context,
@@ -36,11 +71,12 @@ class RaBitQNavigationBuilder final : public diskann::NavigationBuilder {
 
 struct NavigationCodec {
     NavigationFeatures features;
-    Status (*validate)(const DiskANNNavigationConfig&, std::string*);
+    Status (*validate)(const DiskANNNavigationConfig&, PARAM_TYPE, std::string*);
     std::optional<uint64_t> (*estimate)(const DiskANNConfig&, int64_t, int64_t);
     NavigationFileSet (*files)(const std::string&);
     std::unique_ptr<diskann::NavigationBuilder> (*builder)(const DiskANNConfig&, NavigationInputType);
     std::unique_ptr<NavigationStore> (*load)(const std::string&, size_t);
+    expected<NavigationQueryFactory> (*query)(std::shared_ptr<NavigationStore>, const DiskANNConfig&);
 };
 
 const std::unordered_map<std::string, NavigationCodec>&
@@ -48,19 +84,24 @@ Codecs() {
     static const std::unordered_map<std::string, NavigationCodec> codecs = {
         {"PQ",
          {{false, true, true, true},
-          [](const DiskANNNavigationConfig&, std::string*) { return Status::success; },
+          [](const DiskANNNavigationConfig& config, PARAM_TYPE phase, std::string* error) {
+              if (phase != PARAM_TYPE::TRAIN && phase != STATIC)
+                  return Status::success;
+              PQDiskANNConfig parameters;
+              return ParseParameters(parameters, config, phase, error);
+          },
           [](const DiskANNConfig&, int64_t, int64_t) -> std::optional<uint64_t> { return 0; },
           [](const std::string& prefix) {
               return NavigationFileSet{diskann::pq_navigation_files(prefix), {}};
           },
-          [](const DiskANNConfig&, NavigationInputType input) -> std::unique_ptr<diskann::NavigationBuilder> {
+          [](const DiskANNConfig& config, NavigationInputType input) -> std::unique_ptr<diskann::NavigationBuilder> {
               switch (input) {
                   case NavigationInputType::FP32:
-                      return diskann::make_pq_navigation_builder<float>();
+                      return diskann::make_pq_navigation_builder<float>(GetPQNavigationBudget(config));
                   case NavigationInputType::FP16:
-                      return diskann::make_pq_navigation_builder<knowhere::fp16>();
+                      return diskann::make_pq_navigation_builder<knowhere::fp16>(GetPQNavigationBudget(config));
                   case NavigationInputType::BF16:
-                      return diskann::make_pq_navigation_builder<knowhere::bf16>();
+                      return diskann::make_pq_navigation_builder<knowhere::bf16>(GetPQNavigationBudget(config));
               }
               throw std::invalid_argument("unsupported navigation input type");
           },
@@ -68,26 +109,30 @@ Codecs() {
               auto model = std::make_unique<diskann::PQNavigationStore>(prefix);
               model->PrepareWorkspaces(workspaces);
               return model;
-          }}},
+          },
+          PQQueryFactory}},
         {"RABITQ",
          {{true, false, false, false},
-          [](const DiskANNNavigationConfig& config, std::string* error) {
+          [](const DiskANNNavigationConfig& config, PARAM_TYPE phase, std::string* error) {
               const auto metric = config.metric_type.value_or(metric::L2);
               if (metric != metric::L2 && metric != metric::IP && metric != metric::COSINE) {
                   if (error)
                       *error = "DISKANN_RABITQ supports L2, IP and COSINE";
                   return Status::invalid_metric_type;
               }
-              const auto bits = config.rbq_bits.value_or(1);
-              if (bits < 1 || bits > 9) {
-                  if (error)
-                      *error = "DISKANN_RABITQ supports rbq_bits in [1, 9]";
-                  return Status::invalid_args;
+              if (phase == PARAM_TYPE::SEARCH || phase == PARAM_TYPE::ITERATOR) {
+                  RaBitQQueryConfig parameters;
+                  return ParseParameters(parameters, config, phase, error);
               }
-              return Status::success;
+              RaBitQBuildConfig parameters;
+              return ParseParameters(parameters, config, phase, error);
           },
           [](const DiskANNConfig& config, int64_t rows, int64_t dim) -> std::optional<uint64_t> {
-              const auto bits = NavigationConfig(config).rbq_bits;
+              RaBitQBuildConfig parameters;
+              std::string error;
+              if (ParseParameters(parameters, config, STATIC, &error) != Status::success)
+                  throw std::invalid_argument(error);
+              const auto bits = parameters.rbq_bits;
               if (!bits.has_value())
                   return std::nullopt;
               if (dim <= 0 || dim >= std::numeric_limits<int>::max()) {
@@ -100,12 +145,16 @@ Codecs() {
               return NavigationFileSet{{RaBitQStore::SidecarFilename(prefix)}, {}};
           },
           [](const DiskANNConfig& config, NavigationInputType) -> std::unique_ptr<diskann::NavigationBuilder> {
-              return std::make_unique<RaBitQNavigationBuilder>(
-                  static_cast<uint8_t>(NavigationConfig(config).rbq_bits.value_or(1)));
+              RaBitQBuildConfig parameters;
+              std::string error;
+              if (ParseParameters(parameters, config, PARAM_TYPE::TRAIN, &error) != Status::success)
+                  throw std::invalid_argument(error);
+              return std::make_unique<RaBitQNavigationBuilder>(static_cast<uint8_t>(parameters.rbq_bits.value_or(1)));
           },
           [](const std::string& prefix, size_t) -> std::unique_ptr<NavigationStore> {
               return std::make_unique<RaBitQStore>(RaBitQStore::SidecarFilename(prefix));
-          }}}};
+          },
+          RaBitQQueryFactory}}};
     return codecs;
 }
 
@@ -164,14 +213,14 @@ DetectNavigationCodec(const DiskANNNavigationConfig& config, const std::string& 
 }
 
 Status
-ValidateNavigationConfig(const DiskANNNavigationConfig& config, std::string* error) {
+ValidateNavigationConfig(const DiskANNNavigationConfig& config, PARAM_TYPE phase, std::string* error) {
     const auto found = Codecs().find(config.navigation_codec.value_or("PQ"));
     if (found == Codecs().end()) {
         if (error)
             *error = "unsupported DiskANN navigation codec";
         return Status::invalid_args;
     }
-    return found->second.validate(config, error);
+    return found->second.validate(config, phase, error);
 }
 
 NavigationFeatures
@@ -179,13 +228,24 @@ GetNavigationFeatures(const DiskANNConfig& config) {
     return Codec(config).features;
 }
 
-diskann::NavigationQueryOptions
-GetNavigationQueryOptions(const DiskANNConfig& config) {
-    const auto* navigation = dynamic_cast<const DiskANNNavigationConfig*>(&config);
-    const auto bits = navigation ? navigation->rbq_bits_query.value_or(4) : 4;
-    if (bits < 0 || bits > 8)
-        throw std::invalid_argument("Navigation query bits must be in [0, 8]");
-    return {static_cast<uint8_t>(bits)};
+expected<NavigationQueryFactory>
+CreateNavigationQueryFactory(const std::string& loaded_codec, std::shared_ptr<NavigationStore> model,
+                             const DiskANNConfig& config) {
+    const auto found = Codecs().find(loaded_codec);
+    if (!model || found == Codecs().end())
+        return expected<NavigationQueryFactory>::Err(Status::invalid_index_error, "Missing loaded navigation model");
+    return found->second.query(std::move(model), config);
+}
+
+double
+GetPQNavigationBudget(const DiskANNConfig& config) {
+    if (const auto* pq = dynamic_cast<const PQDiskANNConfig*>(&config))
+        return pq->pq_code_budget_gb.value_or(0);
+    PQDiskANNConfig parameters;
+    std::string error;
+    if (ParseParameters(parameters, config, PARAM_TYPE::TRAIN, &error) != Status::success)
+        throw std::invalid_argument(error);
+    return parameters.pq_code_budget_gb.value_or(0);
 }
 
 std::optional<uint64_t>

@@ -439,7 +439,7 @@ namespace diskann {
         int64_t tmp_result_id_64 = 0;
         float   tmp_result_dist = 0.0;
 
-        auto scorer = navigation->CreateDistanceComputer({});
+        auto scorer = navigation->CreateDistanceComputer();
         _u64 id = 0;
         while (this->search_counter.load() < sample_num && id < sample_num &&
                state_controller->status.load() !=
