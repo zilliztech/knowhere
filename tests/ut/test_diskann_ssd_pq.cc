@@ -7,9 +7,14 @@
 #include <fstream>
 #include <numeric>
 #include <set>
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define KNOWHERE_TEST_ASAN_ALLOCATOR
+#endif
+#endif
 #if defined(__GLIBC__)
 #include <malloc.h>
-#if __GLIBC_PREREQ(2, 33)
+#if __GLIBC_PREREQ(2, 33) && !defined(__SANITIZE_ADDRESS__) && !defined(KNOWHERE_TEST_ASAN_ALLOCATOR)
 #define KNOWHERE_TEST_HAS_MALLINFO2
 #endif
 #endif
