@@ -42,6 +42,7 @@
 #include "filemanager/impl/LocalFileManager.h"
 #include "index/diskann/build_files.h"
 #include "index/diskann/diskann_config.h"
+#include "index/diskann/pq_navigation_config.h"
 #include "index/diskann/rabitq_store.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/knowhere_check.h"
@@ -575,7 +576,9 @@ TEST_CASE("Valid diskann build params test", "[diskann]") {
         REQUIRE(res == knowhere::Status::success);
 
         const auto& diskCfg = static_cast<const knowhere::DiskANNConfig&>(*cfg);
-        REQUIRE(knowhere::GetPQNavigationBudget(diskCfg) == std::max(pq_code_budget_gb, 1.0f * ratio));
+        knowhere::PQDiskANNConfig pqCfg;
+        REQUIRE(knowhere::Config::Load(pqCfg, test_json, knowhere::TRAIN) == knowhere::Status::success);
+        REQUIRE(pqCfg.pq_code_budget_gb.value() == std::max(pq_code_budget_gb, 1.0f * ratio));
         REQUIRE(diskCfg.search_cache_budget_gb == std::max(search_cache_budget_gb, 1.0f * ratio));
     }
 }
@@ -588,7 +591,10 @@ TEST_CASE("DiskANN codecs own private parameters without restricting generic loa
     REQUIRE(config.__DICT__.count("pq_code_budget_gb_ratio") == 0);
     knowhere::Json pq = {{"pq_code_budget_gb", "0.25"}, {"pq_code_budget_gb_ratio", "0.5"}, {"vec_field_size_gb", 1}};
     REQUIRE(knowhere::Config::Load(config, pq, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::success);
-    REQUIRE(knowhere::GetPQNavigationBudget(config) == 0.5);
+    knowhere::PQDiskANNConfig pqCfg;
+    REQUIRE(knowhere::Config::FormatAndCheck(pqCfg, pq) == knowhere::Status::success);
+    REQUIRE(knowhere::Config::Load(pqCfg, pq, knowhere::TRAIN) == knowhere::Status::success);
+    REQUIRE(pqCfg.pq_code_budget_gb.value() == 0.5);
     knowhere::DiskANNNavigationConfig rbq;
     knowhere::Json bad = {{"navigation_codec", "RABITQ"}, {"rbq_bits", 10}};
     REQUIRE(knowhere::Config::Load(rbq, bad, knowhere::PARAM_TYPE::TRAIN) != knowhere::Status::success);

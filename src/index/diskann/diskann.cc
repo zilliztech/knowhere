@@ -1221,21 +1221,30 @@ DiskANNIndexNode<DataType>::GetVectorByStorageIds(const DataSetPtr dataset, milv
 template <typename DataType>
 expected<DataSetPtr>
 DiskANNIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
+    if (!is_prepared_.load() || !graph_index_ || !navigation_store_)
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+    const auto& diskann_conf = static_cast<const DiskANNConfig&>(*cfg);
+    auto navigation = GetNavigationIndexMetadata(loaded_navigation_codec_, *navigation_store_, diskann_conf);
+    if (!navigation.has_value())
+        return expected<DataSetPtr>::Err(navigation.error(), navigation.what());
     std::vector<int64_t> entry_points;
     entry_points.reserve(graph_index_->get_num_medoids());
-    for (size_t i = 0; i < graph_index_->get_num_medoids(); i++) {
-        entry_points.push_back(graph_index_->get_medoids()[i]);
-    }
-    auto diskann_conf = static_cast<const DiskANNConfig&>(*cfg);
-    feder::diskann::DiskANNMeta meta(diskann_conf.data_path.value(), diskann_conf.max_degree.value(),
-                                     diskann_conf.search_list_size.value(), GetPQNavigationBudget(diskann_conf),
-                                     diskann_conf.build_dram_budget_gb.value(), diskann_conf.disk_pq_dims.value(),
-                                     diskann_conf.accelerate_build.value(), Count(), entry_points);
+    for (size_t i = 0; i < graph_index_->get_num_medoids(); ++i) entry_points.push_back(graph_index_->get_medoids()[i]);
+    // These are request build settings, not reconstructed persisted settings.
+    Json build_params = {{"data_path", diskann_conf.data_path.value_or("")},
+                         {"max_degree", diskann_conf.max_degree.value()},
+                         {"search_list_size", diskann_conf.search_list_size.value_or(kDefaultSearchListSizeForBuild)},
+                         {"build_dram_budget_gb", diskann_conf.build_dram_budget_gb.value()},
+                         {"disk_pq_dims", diskann_conf.disk_pq_dims.value()},
+                         {"accelerate_build", diskann_conf.accelerate_build.value()},
+                         {"num_threads", 0}};
+    build_params.update(navigation.value().legacy_build_params);
+    Json json_meta = {{"build_params_", std::move(build_params)},
+                      {"num_elem_", Count()},
+                      {"entry_points_", entry_points},
+                      {"navigation_", std::move(navigation.value().navigation)}};
     std::unordered_set<int64_t> id_set(entry_points.begin(), entry_points.end());
-
-    Json json_meta, json_id_set;
-    nlohmann::to_json(json_meta, meta);
-    nlohmann::to_json(json_id_set, id_set);
+    Json json_id_set = id_set;
     return GenResultDataSet(json_meta.dump(), json_id_set.dump());
 }
 

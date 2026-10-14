@@ -27,7 +27,10 @@
 #include "diskann/pq_navigation.h"
 #include "diskann/pq_table.h"
 #include "filemanager/impl/LocalFileManager.h"
+#include "index/diskann/diskann_config.h"
+#include "index/diskann/navigation_store.h"
 #include "index/diskann/rabitq_store.h"
+#include "knowhere/feder/DiskANN.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/index_static.h"
 #include "utils.h"
@@ -634,6 +637,139 @@ TEST_CASE("PQ iterators retain chunk-sized LUTs and share bounded gather buffers
     REQUIRE_NOTHROW(scorer->compute_distances(&id, 1, &distance, 0, false, nullptr));
     REQUIRE(model.MemorySize() == reserved);
     std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("DiskANN public metadata follows the loaded navigation codec", "[diskann][navigation_metadata]") {
+    constexpr uint32_t rows = 300, dim = 32;
+    const auto codec = GENERATE(std::string("PQ"), std::string("RABITQ"));
+    const auto dir = std::filesystem::current_path() / ("navigation_metadata_" + codec);
+    std::filesystem::create_directories(dir);
+    const auto prefix = (dir / "index").string();
+    const auto raw = (dir / "base.bin").string();
+    auto base = GenDataSet(rows, dim, 39);
+    WriteRawDataToDisk<float>(raw, static_cast<const float*>(base->GetTensor()), rows, dim);
+    auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(std::make_shared<milvus::LocalFileManager>()));
+    auto built =
+        knowhere::IndexFactory::Instance().Create<knowhere::fp32>(kDiskIndexType, GenTestVersionList(), pack).value();
+    knowhere::Json config = {{"dim", dim},
+                             {"metric_type", "L2"},
+                             {"index_prefix", prefix},
+                             {"data_path", raw},
+                             {"max_degree", 16},
+                             {"search_list_size", 48},
+                             {"build_dram_budget_gb", 1.5},
+                             {"search_cache_budget_gb", 0},
+                             {"search_cache_budget_gb_ratio", 0},
+                             {"navigation_codec", codec},
+                             {"rbq_bits", 4},
+                             {"pq_code_budget_gb", 0.000002}};
+    REQUIRE(built.Build(nullptr, config) == knowhere::Status::success);
+    auto loaded =
+        knowhere::IndexFactory::Instance().Create<knowhere::fp32>(kDiskIndexType, GenTestVersionList(), pack).value();
+    knowhere::BinarySet binary;
+    // Generic DISKANN, no codec or build settings: use the actual stored model.
+    REQUIRE(
+        loaded.Deserialize(
+            binary, {{"dim", dim}, {"metric_type", "L2"}, {"index_prefix", prefix}, {"search_cache_budget_gb", 0}}) ==
+        knowhere::Status::success);
+    auto result = loaded.GetIndexMeta(config);
+    REQUIRE(result.has_value());
+    auto meta = knowhere::Json::parse(result.value()->GetJsonInfo());
+    REQUIRE(meta["num_elem_"] == rows);
+    REQUIRE_FALSE(meta["entry_points_"].empty());
+    REQUIRE(meta["entry_points_"] == knowhere::Json::parse(result.value()->GetJsonIdSet()));
+    REQUIRE(meta["build_params_"]["data_path"] == raw);
+    REQUIRE(meta["build_params_"]["max_degree"] == 16);
+    REQUIRE(meta["build_params_"]["search_list_size"] == 48);
+    REQUIRE(meta["build_params_"]["build_dram_budget_gb"] == 1.5);
+    REQUIRE(meta["navigation_"]["codec"] == codec);
+    if (codec == "PQ") {
+        REQUIRE(meta["build_params_"]["pq_code_budget_gb"].get<double>() == Catch::Approx(0.000002));
+        REQUIRE(meta["navigation_"]["pq_code_budget_gb"].get<double>() == Catch::Approx(0.000002));
+        diskann::PQNavigationStore model(prefix);
+        REQUIRE(meta["navigation_"]["chunks"] == model.ChunkCount());
+        // Full legacy PQ consumers can still deserialize the old build keys.
+        REQUIRE_NOTHROW(meta.get<knowhere::feder::diskann::DiskANNMeta>());
+        auto ratio = config;
+        ratio["pq_code_budget_gb"] = "0.25";
+        ratio["pq_code_budget_gb_ratio"] = "0.5";
+        ratio["vec_field_size_gb"] = 1;
+        auto ratio_result = loaded.GetIndexMeta(ratio);
+        REQUIRE(ratio_result.has_value());
+        auto ratio_meta = knowhere::Json::parse(ratio_result.value()->GetJsonInfo());
+        REQUIRE(ratio_meta["build_params_"]["pq_code_budget_gb"] == 0.5);
+        // Missing field size leaves an adjusted ratio budget unknown.
+        ratio.erase("vec_field_size_gb");
+        auto incomplete = loaded.GetIndexMeta(ratio);
+        REQUIRE(incomplete.has_value());
+        REQUIRE(knowhere::Json::parse(incomplete.value()->GetJsonInfo())["navigation_"]["pq_code_budget_gb"].is_null());
+        auto invalid = config;
+        invalid["pq_code_budget_gb"] = -1;
+        REQUIRE_FALSE(loaded.GetIndexMeta(invalid).has_value());
+        config["pq_code_budget_gb"] = 0;
+        auto zero = loaded.GetIndexMeta(config);
+        REQUIRE(zero.has_value());
+        REQUIRE(knowhere::Json::parse(zero.value()->GetJsonInfo())["navigation_"]["pq_code_budget_gb"] == 0);
+    } else {
+        REQUIRE(meta["navigation_"]["rbq_bits"] == 4);
+        REQUIRE_FALSE(meta["build_params_"].contains("pq_code_budget_gb"));
+        REQUIRE_FALSE(meta["navigation_"].contains("pq_code_budget_gb"));
+        // A request's old/default selector and unrelated PQ knobs cannot relabel
+        // a loaded RBQ model or make it parse PQ parameters.
+        auto stale = config;
+        stale["navigation_codec"] = "PQ";
+        stale["rbq_bits"] = 1;
+        stale["pq_code_budget_gb"] = "not-a-PQ-budget";
+        auto stale_result = loaded.GetIndexMeta(stale);
+        REQUIRE(stale_result.has_value());
+        auto stale_meta = knowhere::Json::parse(stale_result.value()->GetJsonInfo());
+        REQUIRE(stale_meta["navigation_"]["codec"] == "RABITQ");
+        REQUIRE(stale_meta["navigation_"]["rbq_bits"] == 4);
+        REQUIRE_FALSE(stale_meta["build_params_"].contains("pq_code_budget_gb"));
+    }
+    auto absent = loaded.GetIndexMeta({});
+    REQUIRE(absent.has_value());
+    auto absent_meta = knowhere::Json::parse(absent.value()->GetJsonInfo());
+    REQUIRE(absent_meta["navigation_"]["codec"] == codec);
+    REQUIRE_FALSE(absent_meta["build_params_"].contains("pq_code_budget_gb"));
+    if (codec == "PQ")
+        REQUIRE(absent_meta["navigation_"]["pq_code_budget_gb"].is_null());
+    else
+        REQUIRE(absent_meta["navigation_"]["rbq_bits"] == 4);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("DiskANN metadata rejects unloaded and mismatched models", "[diskann][navigation_metadata]") {
+    auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(std::make_shared<milvus::LocalFileManager>()));
+    auto index =
+        knowhere::IndexFactory::Instance().Create<knowhere::fp32>(kDiskIndexType, GenTestVersionList(), pack).value();
+    auto result = index.GetIndexMeta({});
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.error() == knowhere::Status::empty_index);
+    struct Model : knowhere::NavigationStore {
+        int64_t
+        Count() const override {
+            return 1;
+        }
+        int64_t
+        Dimension() const override {
+            return 1;
+        }
+        size_t
+        MemorySize() const override {
+            return 0;
+        }
+        std::unique_ptr<diskann::NavigationDistanceComputer>
+        CreateDistanceComputer() const override {
+            return {};
+        }
+    } model;
+    knowhere::DiskANNConfig config;
+    for (const auto* codec : {"PQ", "RABITQ", "unknown"}) {
+        auto metadata = knowhere::GetNavigationIndexMetadata(codec, model, config);
+        REQUIRE_FALSE(metadata.has_value());
+        REQUIRE(metadata.error() == knowhere::Status::invalid_index_error);
+    }
 }
 
 #endif

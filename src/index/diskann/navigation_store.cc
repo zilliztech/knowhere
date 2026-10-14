@@ -28,6 +28,17 @@ ParseParameters(Parameters& parameters, const DiskANNConfig& config, PARAM_TYPE 
     return Config::Load(parameters, json, phase, error);
 }
 
+double
+GetPQNavigationBudget(const DiskANNConfig& config) {
+    if (const auto* pq = dynamic_cast<const PQDiskANNConfig*>(&config))
+        return pq->pq_code_budget_gb.value_or(0);
+    PQDiskANNConfig parameters;
+    std::string error;
+    if (ParseParameters(parameters, config, PARAM_TYPE::TRAIN, &error) != Status::success)
+        throw std::invalid_argument(error);
+    return parameters.pq_code_budget_gb.value_or(0);
+}
+
 expected<NavigationQueryFactory>
 PQQueryFactory(std::shared_ptr<NavigationStore> model, const DiskANNConfig&) {
     auto pq = std::dynamic_pointer_cast<diskann::PQNavigationStore>(model);
@@ -77,6 +88,7 @@ struct NavigationCodec {
     std::unique_ptr<diskann::NavigationBuilder> (*builder)(const DiskANNConfig&, NavigationInputType);
     std::unique_ptr<NavigationStore> (*load)(const std::string&, size_t);
     expected<NavigationQueryFactory> (*query)(std::shared_ptr<NavigationStore>, const DiskANNConfig&);
+    expected<NavigationIndexMetadata> (*metadata)(const NavigationStore&, const DiskANNConfig&);
 };
 
 const std::unordered_map<std::string, NavigationCodec>&
@@ -110,7 +122,25 @@ Codecs() {
               model->PrepareWorkspaces(workspaces);
               return model;
           },
-          PQQueryFactory}},
+          PQQueryFactory,
+          [](const NavigationStore& model, const DiskANNConfig& config) -> expected<NavigationIndexMetadata> {
+              const auto* pq = dynamic_cast<const diskann::PQNavigationStore*>(&model);
+              if (!pq)
+                  return expected<NavigationIndexMetadata>::Err(Status::invalid_index_error, "PQ model type mismatch");
+              PQNavigationMetadataConfig parameters;
+              std::string error;
+              const auto status = ParseParameters(parameters, config, FEDER, &error);
+              if (status != Status::success)
+                  return expected<NavigationIndexMetadata>::Err(status, error);
+              Json navigation = {{"codec", "PQ"}, {"chunks", pq->ChunkCount()}, {"pq_code_budget_gb", nullptr}};
+              Json legacy = Json::object();
+              const auto budget = parameters.Budget();
+              if (budget.has_value()) {
+                  navigation["pq_code_budget_gb"] = *budget;
+                  legacy["pq_code_budget_gb"] = *budget;
+              }
+              return NavigationIndexMetadata{std::move(navigation), std::move(legacy)};
+          }}},
         {"RABITQ",
          {{true, false, false, false},
           [](const DiskANNNavigationConfig& config, PARAM_TYPE phase, std::string* error) {
@@ -154,7 +184,16 @@ Codecs() {
           [](const std::string& prefix, size_t) -> std::unique_ptr<NavigationStore> {
               return std::make_unique<RaBitQStore>(RaBitQStore::SidecarFilename(prefix));
           },
-          RaBitQQueryFactory}}};
+          RaBitQQueryFactory,
+          [](const NavigationStore& model, const DiskANNConfig&) -> expected<NavigationIndexMetadata> {
+              const auto* rabitq = dynamic_cast<const RaBitQStore*>(&model);
+              if (!rabitq)
+                  return expected<NavigationIndexMetadata>::Err(Status::invalid_index_error,
+                                                                "RaBitQ model type mismatch");
+              return NavigationIndexMetadata{
+                  {{"codec", "RABITQ"}, {"rbq_bits", rabitq->Bits()}, {"code_size", rabitq->CodeSize()}},
+                  Json::object()};
+          }}}};
     return codecs;
 }
 
@@ -237,15 +276,12 @@ CreateNavigationQueryFactory(const std::string& loaded_codec, std::shared_ptr<Na
     return found->second.query(std::move(model), config);
 }
 
-double
-GetPQNavigationBudget(const DiskANNConfig& config) {
-    if (const auto* pq = dynamic_cast<const PQDiskANNConfig*>(&config))
-        return pq->pq_code_budget_gb.value_or(0);
-    PQDiskANNConfig parameters;
-    std::string error;
-    if (ParseParameters(parameters, config, PARAM_TYPE::TRAIN, &error) != Status::success)
-        throw std::invalid_argument(error);
-    return parameters.pq_code_budget_gb.value_or(0);
+expected<NavigationIndexMetadata>
+GetNavigationIndexMetadata(const std::string& loaded_codec, const NavigationStore& model, const DiskANNConfig& config) {
+    const auto found = Codecs().find(loaded_codec);
+    if (found == Codecs().end())
+        return expected<NavigationIndexMetadata>::Err(Status::invalid_index_error, "Unknown loaded navigation codec");
+    return found->second.metadata(model, config);
 }
 
 std::optional<uint64_t>

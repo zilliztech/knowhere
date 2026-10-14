@@ -54,7 +54,7 @@ class DiskANNConfig : public BaseConfig {
     CFG_BOOL accelerate_build;
 
     // The ratio of the size reserved for the search cache to the size of the raw data (defined with vec_field_size_gb)
-    // This parameter will replace pq_code_budget_gb to avoid calculating the actual size on the Milvus side.
+    // This parameter replaces search_cache_budget_gb on the Milvus side.
     // The index can indirectly obtain search_cache_budget_gb by vec_field_size_gb * search_cache_budget_gb_ratio
     CFG_FLOAT search_cache_budget_gb_ratio;
 
@@ -81,11 +81,13 @@ class DiskANNConfig : public BaseConfig {
     // use PQ + Refine. Default to -1.0f, negative vlaues will use dynamic threshold calculator given topk.
     CFG_FLOAT filter_threshold;
     KNOWHERE_DECLARE_CONFIG(DiskANNConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(data_path).allow_empty_without_default().for_train().for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_degree)
             .description("the degree of the graph index.")
             .set_default(48)
             .set_range(1, 2048)
-            .for_train();
+            .for_train()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_list_size)
             .description("the size of search list during the index build or search.")
             .allow_empty_without_default()
@@ -93,21 +95,25 @@ class DiskANNConfig : public BaseConfig {
             .for_train()
             .for_search()
             .for_range_search()
-            .for_iterator();
+            .for_iterator()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(build_dram_budget_gb)
             .description("limit on the memory allowed for building the index in GB.")
             .set_default(0)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
-            .for_train();
+            .for_train()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(disk_pq_dims)
             .description("the dimension of compressed vectors stored on the ssd, use 0 to store uncompressed data.")
             .set_default(0)
             .for_train()
-            .for_static();
+            .for_static()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(accelerate_build)
             .description("a flag to enbale fast build.")
             .set_default(false)
-            .for_train();
+            .for_train()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_cache_budget_gb_ratio)
             .description("the ratio of the size reserved for the search cache to the size of the raw data.")
             .set_default(0)

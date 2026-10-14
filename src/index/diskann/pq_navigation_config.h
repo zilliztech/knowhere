@@ -37,4 +37,36 @@ class PQDiskANNConfig : public DiskANNConfig {
         return Status::success;
     }
 };
+// Metadata only describes supplied build settings; budgets are not persisted.
+// Do not invoke TRAIN defaults/validation for a loaded-model metadata request.
+class PQNavigationMetadataConfig : public Config {
+ public:
+    CFG_FLOAT pq_code_budget_gb;
+    CFG_FLOAT pq_code_budget_gb_ratio;
+    CFG_FLOAT vec_field_size_gb;
+    KNOWHERE_DECLARE_CONFIG(PQNavigationMetadataConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb)
+            .allow_empty_without_default()
+            .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
+            .for_feder();
+        KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb_ratio)
+            .allow_empty_without_default()
+            .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
+            .for_feder();
+        KNOWHERE_CONFIG_DECLARE_FIELD(vec_field_size_gb)
+            .allow_empty_without_default()
+            .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
+            .for_feder();
+    }
+    std::optional<double>
+    Budget() const {
+        if (pq_code_budget_gb_ratio.value_or(0) != 0 && !vec_field_size_gb.has_value())
+            return std::nullopt;
+        if (!pq_code_budget_gb.has_value() && !(pq_code_budget_gb_ratio.has_value() && vec_field_size_gb.has_value()))
+            return std::nullopt;
+        return std::max(pq_code_budget_gb.value_or(0),
+                        pq_code_budget_gb_ratio.value_or(0) * vec_field_size_gb.value_or(0));
+    }
+};
+
 }  // namespace knowhere
