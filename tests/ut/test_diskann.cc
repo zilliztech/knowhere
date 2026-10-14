@@ -13,6 +13,7 @@
 
 #include <array>
 #include <atomic>
+#include <iterator>
 #include <numeric>
 #include <string>
 #include <thread>
@@ -2346,15 +2347,32 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
     }
     // Retain the real build-produced candidate file. A larger load budget must grow beyond it.
     const auto cache_file = diskann::get_cached_nodes_file(prefix);
+    const bool had_cache_file = fs::exists(cache_file);
+    auto read_cache_artifact = [&]() {
+        std::ifstream input(cache_file, std::ios::binary);
+        REQUIRE(input.is_open());
+        std::vector<char> bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+        REQUIRE_FALSE(input.bad());
+        return bytes;
+    };
+    std::vector<char> saved_cache_artifact;
     size_t saved_nodes = 0, saved_columns = 0;
-    if (fs::exists(cache_file)) {
+    if (had_cache_file) {
         ReadDiskTestBinMetadata(cache_file, saved_nodes, saved_columns);
+        saved_cache_artifact = read_cache_artifact();
     }
+    // The existing build-cache generator needs ordinary PQ codes. Rearrangement
+    // removes that file before cache generation, so these layouts regenerate on load.
+    if (uses_rearrangement) {
+        REQUIRE_FALSE(had_cache_file);
+        REQUIRE(saved_nodes == 0);
+    }
+    const bool check_saved_candidate_growth = explicit_settings && !uses_rearrangement;
     // Load accounts for raw aligned coordinates even when the disk graph uses PQ.
     const size_t load_node_bytes = type == "AISAQ" ? metadata[3] + dimension * sizeof(DataType)
                                                    : (degree + 1) * sizeof(uint32_t) + dimension * sizeof(DataType);
     constexpr float small_load_budget = .00001f;
-    if (explicit_settings) {
+    if (check_saved_candidate_growth) {
         REQUIRE(saved_nodes > 0);
         const auto requested_nodes = std::min<size_t>(
             static_cast<double>(small_load_budget) * 1024 * 1024 * 1024 / (load_node_bytes * 1.2f), rows / 3);
@@ -2464,7 +2482,7 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
     // Establish actual memory with exactly the build-produced number of candidates,
     // then require the larger load request to populate more than that saved list.
     int64_t saved_population = zero;
-    if (explicit_settings) {
+    if (check_saved_candidate_growth) {
         const float saved_budget = (saved_nodes + .5) * load_node_bytes * 1.2f / (1024.0 * 1024 * 1024);
         saved_population = load_and_search({{"search_cache_budget_gb", saved_budget}});
         REQUIRE(saved_population > zero);
@@ -2485,11 +2503,6 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
     } else {
         REQUIRE(default_cache == zero);
     }
-    if (saved_nodes > 0) {
-        size_t unchanged_nodes, columns;
-        ReadDiskTestBinMetadata(cache_file, unchanged_nodes, columns);
-        REQUIRE(unchanged_nodes == saved_nodes);
-    }
     if (type == "AISAQ" && explicit_settings) {
         const auto pq_cache = load_and_search({{"search_cache_budget_gb", 0}, {"pq_cache_size", 512}});
         if (inline_pq == 24) {
@@ -2498,11 +2511,17 @@ CheckDiskParameterConsumers(const std::string& type, bool explicit_settings, boo
             REQUIRE(pq_cache > zero);
         }
     }
+    // Load-time regeneration must not create or rewrite the persisted build hint.
+    REQUIRE(fs::exists(cache_file) == had_cache_file);
+    if (had_cache_file) {
+        REQUIRE(read_cache_artifact() == saved_cache_artifact);
+    }
     fs::remove(cache_file);
     const auto generated_zero = load_and_search({{"search_cache_budget_gb", 0}, {"use_bfs_cache", true}});
     const auto generated_cache = load_and_search({{"search_cache_budget_gb", .00001}, {"use_bfs_cache", true}});
     REQUIRE(generated_zero == zero);
     REQUIRE(generated_cache > generated_zero);
+    REQUIRE_FALSE(fs::exists(cache_file));
     fs::remove_all(directory);
 }
 
