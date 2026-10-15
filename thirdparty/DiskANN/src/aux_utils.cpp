@@ -580,15 +580,27 @@ namespace diskann {
     std::string cur_centroid_filepath = merged_index_prefix + "_centroids.bin";
     std::rename(cur_centroid_filepath.c_str(), centroids_file.c_str());
 
+    // Extract on the build thread pool the shard p + 1 while shard p is built.
+    auto thread_pool = knowhere::ThreadPool::GetGlobalBuildThreadPool();
+    auto extract_shard = [&](int p) {
+      std::string shard_prefix = merged_index_prefix + "_subshard-" + std::to_string(p);
+      return thread_pool->push([base_file, shard_prefix] {
+        retrieve_shard_data_from_ids<T>(base_file, shard_prefix + "_ids_uint32.bin", shard_prefix + ".bin");
+      });
+    };
+    std::vector<folly::Future<folly::Unit>> next_shard;
+    if (num_parts > 0) {
+      next_shard.emplace_back(extract_shard(0));
+    }
     for (int p = 0; p < num_parts; p++) {
       std::string shard_base_file =
           merged_index_prefix + "_subshard-" + std::to_string(p) + ".bin";
 
-      std::string shard_ids_file = merged_index_prefix + "_subshard-" +
-                                   std::to_string(p) + "_ids_uint32.bin";
-
-      retrieve_shard_data_from_ids<T>(base_file, shard_ids_file,
-                                      shard_base_file);
+      knowhere::WaitAllSuccess(next_shard);
+      next_shard.clear();
+      if (p + 1 < num_parts) {
+        next_shard.emplace_back(extract_shard(p + 1));
+      }
 
       std::string shard_index_file =
           merged_index_prefix + "_subshard-" + std::to_string(p) + "_mem.index";
