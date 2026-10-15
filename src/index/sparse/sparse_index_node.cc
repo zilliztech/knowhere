@@ -1087,6 +1087,7 @@ class SparseInvertedIndexNode : public IndexNode {
                     Status::invalid_metric_type, "search metric type must be same as built index");
             }
             search_params.scorer_config.scorer_type = sparse::inverted::IndexScorerType::BM25;
+            search_params.sindi_filter_threshold = config.sindi_bm25_filter_threshold.value();
             search_params.scorer_config.scorer_params.bm25.avgdl = std::max(config.bm25_avgdl.value(), 1.0f);
             search_params.scorer_config.scorer_params.bm25.k1 =
                 config.bm25_k1.value_or(index_->get_scorer_config().scorer_params.bm25.k1);
@@ -1122,6 +1123,7 @@ class SparseInvertedIndexNode : public IndexNode {
                     Status::invalid_metric_type, "search metric type must be same as built index");
             }
             search_params.scorer_config.scorer_type = sparse::inverted::IndexScorerType::IP;
+            search_params.sindi_filter_threshold = config.sindi_ip_filter_threshold.value();
         } else {
             return expected<sparse::inverted::InvertedIndexSearchParams>::Err(Status::invalid_metric_type,
                                                                               "Unsupported metric type");
