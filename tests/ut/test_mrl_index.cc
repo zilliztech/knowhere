@@ -92,6 +92,38 @@ TEST_CASE("MRL cosine refinement preserves full-dimensional norms", "[mrl]") {
     REQUIRE(loaded_result.value()->GetIds()[0] == 1);
 }
 
+TEST_CASE("MRL search maps compact nullable ids after optional refinement", "[mrl]") {
+    float base_data[] = {0.0f, 0.0f, 100.0f, 100.0f, 1.0f, 1.0f, 0.0f, 0.0f};
+    float query_data[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    int32_t valid_ids[] = {1, 2};
+    auto base = knowhere::GenDataSet(2, kSourceDim, base_data);
+    base->SetIdMapData(knowhere::IdMapData::FromIds(valid_ids, 2, 3));
+    auto query = knowhere::GenDataSet(1, kSourceDim, query_data);
+    knowhere::Json config = {
+        {knowhere::meta::DIM, kMRLDim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
+        {knowhere::meta::TOPK, 2},
+    };
+
+    SECTION("prefix search") {
+        auto index = CreateMRLIndex(base_data, false);
+        index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+        REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
+        auto result = index.Search(query, config, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] == 1);
+    }
+
+    SECTION("full-dimensional rerank") {
+        auto index = CreateMRLIndex(base_data, true);
+        index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+        REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
+        auto result = index.Search(query, config, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] == 2);
+    }
+}
+
 TEST_CASE("MRL refinement preserves sentinel ids for fully filtered results", "[mrl]") {
     constexpr int64_t row_count = 10;
     float base_data[row_count * kSourceDim] = {};

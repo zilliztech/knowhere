@@ -304,7 +304,11 @@ MRLIndexNode::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, cons
     const auto nq = dataset->GetRows();
     const auto topk = base_cfg.k.value();
     auto result = base_index_.Node()->Search(PreparePrefixDataSet(dataset), std::move(cfg), bitset, op_context);
-    if (!result.has_value() || !with_mrl_refine_) {
+    if (!result.has_value()) {
+        return result;
+    }
+    if (!with_mrl_refine_) {
+        MapSearchResultIdsToOutIds(result.value());
         return result;
     }
 
@@ -317,7 +321,9 @@ MRLIndexNode::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, cons
     auto distances = std::make_unique<float[]>(nq * topk);
     refine_index_->SearchWithIds(nq, dataset->GetTensor(), query_limits.data(), result.value()->GetIds(), topk,
                                  distances.get(), labels.get(), false);
-    return GenResultDataSet(nq, topk, std::move(labels), std::move(distances));
+    auto refined_result = GenResultDataSet(nq, topk, std::move(labels), std::move(distances));
+    MapSearchResultIdsToOutIds(refined_result);
+    return refined_result;
 }
 
 expected<std::vector<IndexNode::IteratorPtr>>
