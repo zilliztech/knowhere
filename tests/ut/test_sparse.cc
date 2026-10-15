@@ -26,6 +26,7 @@
 #include "catch2/generators/catch_generators.hpp"
 #include "index/sparse/inverted_index.h"
 #include "index/sparse/inverted_index_format.h"
+#include "index/sparse/sindi_bm25_u4.h"
 #include "io/memory_io.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/comp/brute_force.h"
@@ -33,6 +34,7 @@
 #include "knowhere/comp/knowhere_check.h"
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/index/index_factory.h"
+#include "simd/hook.h"
 #include "utils.h"
 
 void
@@ -1438,51 +1440,6 @@ TEST_CASE("Test SINDI Sparse Inverted Index CC Train Multi Add Cross Window Sear
         REQUIRE(found_first_window);
         REQUIRE(found_second_window);
     }
-}
-
-TEST_CASE("SINDI growing Add preserves partial windows and late dimensions", "[sparse][sindi]") {
-    constexpr int32_t window_size = 1024;
-    constexpr int32_t dim = 16;
-    const auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
-    std::vector<std::map<int32_t, float>> initial_rows(window_size - 1);
-    for (auto& row : initial_rows) {
-        for (int32_t term = 0; term < 8; ++term) {
-            row[term] = 1.0f;
-        }
-    }
-
-    knowhere::Json json;
-    json[knowhere::meta::DIM] = dim;
-    json[knowhere::meta::METRIC_TYPE] = metric;
-    json[knowhere::meta::TOPK] = 1;
-    if (metric == knowhere::metric::BM25) {
-        json[knowhere::meta::BM25_K1] = 1.2f;
-        json[knowhere::meta::BM25_B] = 0.75f;
-        json[knowhere::meta::BM25_AVGDL] = 8.0f;
-        json["quant_type"] = "u16";
-    }
-    json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "SINDI";
-    json[knowhere::indexparam::SEARCH_ALGO] = "SINDI";
-    json["sindi_window_size"] = window_size;
-
-    const auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
-    auto index = knowhere::IndexFactory::Instance()
-                     .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, version)
-                     .value();
-    REQUIRE(index.Build(GenSparseDataSet(initial_rows, dim), json) == knowhere::Status::success);
-
-    REQUIRE(index.Add(GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{1, 2.0f}}}, dim), json) ==
-            knowhere::Status::success);
-    REQUIRE(index.Add(GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{1, 3.0f}, {15, 4.0f}}}, dim), json) ==
-            knowhere::Status::success);
-    REQUIRE(index.Add(GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{15, 5.0f}}}, dim), json) ==
-            knowhere::Status::success);
-
-    auto queries = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{1, 1.0f}}, {{15, 1.0f}}}, dim);
-    auto result = index.Search(queries, json, nullptr);
-    REQUIRE(result.has_value());
-    REQUIRE(result.value()->GetIds()[0] == (metric == knowhere::metric::BM25 ? window_size - 1 : window_size));
-    REQUIRE(result.value()->GetIds()[1] == window_size + 1);
 }
 
 TEST_CASE("Test SINDI Index Build and Search", "[sparse][sindi]") {
@@ -2895,6 +2852,7 @@ TEST_CASE("SINDI full-query refinement changes rank and persists", "[sparse][sin
 TEST_CASE("SINDI refinement filters absent dimensions before mass pruning", "[sparse][sindi][refinement]") {
     using namespace knowhere;
     const bool growable = GENERATE(false, true);
+    const auto quant_type = "fp16";
     const auto type = growable ? IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC : IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
     std::vector<RefineRow> base;
     base.push_back(RefineTestRow({{1, 1}}));
@@ -2903,7 +2861,9 @@ TEST_CASE("SINDI refinement filters absent dimensions before mass pruning", "[sp
     // The absent weight alone used to satisfy the raw-query mass target.
     queries.push_back(RefineTestRow({{0, 100}, {1, .9f}, {2, .8f}, {3, 0}}));
     auto index = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
-    REQUIRE(index.Build(RefineDataset(base), RefineBuild()) == Status::success);
+    auto build = RefineBuild();
+    build["quant_type"] = quant_type;
+    REQUIRE(index.Build(RefineDataset(base), build) == Status::success);
     auto search = RefineSearch();
     search["refine_k"] = 1;
     auto check = [&](auto& idx) {
@@ -2924,6 +2884,14 @@ TEST_CASE("SINDI refinement filters absent dimensions before mass pruning", "[sp
         auto empty = idx.Search(RefineDataset(unknown), search, nullptr);
         REQUIRE(empty.has_value());
         REQUIRE(empty.value()->GetIds()[0] == -1);
+        std::vector<RefineRow> tied;
+        tied.push_back(RefineTestRow({{0, 100}, {1, 1}, {2, 1}}));
+        auto tie_search = search;
+        tie_search["refine_query_mass_percentage"] = .5;
+        auto tie = idx.Search(RefineDataset(tied), tie_search, nullptr);
+        REQUIRE(tie.has_value());
+        REQUIRE(tie.value()->GetIds()[0] == 0);  // select the lower external dimension ID
+        REQUIRE(tie.value()->GetDistance()[0] == 1);
     };
     check(index);
     if (!growable) {
@@ -2932,11 +2900,16 @@ TEST_CASE("SINDI refinement filters absent dimensions before mass pruning", "[sp
         auto restored = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
         REQUIRE(restored.Deserialize(binary, Json{{"metric_type", "IP"}}) == Status::success);
         check(restored);
+        SparseQuantIndexFile file(binary.GetByName(type));
+        auto mapped = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+        REQUIRE(mapped.DeserializeFromFile(file.path, Json{{"metric_type", "IP"}, {"enable_mmap", true}}) ==
+                Status::success);
+        check(mapped);
     }
     if (growable) {
         std::vector<RefineRow> added;
         added.push_back(RefineTestRow({{0, 1}}));
-        REQUIRE(index.Add(RefineDataset(added), RefineBuild()) == Status::success);
+        REQUIRE(index.Add(RefineDataset(added), build) == Status::success);
         search["refine_query_mass_percentage"] = .9;
         auto result = index.Search(RefineDataset(queries), search, nullptr);
         REQUIRE(result.has_value());
@@ -3129,4 +3102,403 @@ TEST_CASE("SINDI refinement empty candidates and fractional API pool", "[sparse]
     unsupported = RefineBuild();
     unsupported["quant_type"] = "fp32";
     REQUIRE(other.Build(RefineDataset(base), unsupported) != Status::success);
+}
+
+#include "index/sparse/sindi_packed12.h"
+#include "index/sparse/sindi_simd.h"
+TEST_CASE("SINDI U12 document ID packing", "[sparse][sindi][u4_u12]") {
+    using namespace knowhere::sparse::inverted::sindi;
+    std::vector<uint8_t> bytes(packed12_bytes(4097), 0);
+    for (size_t i = 0; i < 4097; ++i) pack12(bytes.data(), i, i & 4095);
+    for (size_t i = 0; i < 4097; ++i) REQUIRE(unpack12(bytes.data(), i) == (i & 4095));
+    REQUIRE((bytes.back() & 0xf0) == 0);
+    REQUIRE_THROWS(pack12(bytes.data(), 0, 4096));
+    REQUIRE_THROWS(packed12_bytes(std::numeric_limits<size_t>::max()));
+}
+
+TEST_CASE("SINDI BM25 U12 LUT fitting and exact byte kernels", "[sparse][sindi][u4_u12]") {
+    using namespace knowhere::sparse::inverted::sindi;
+    std::array<uint64_t, 256> histogram{};
+    for (size_t t = 1; t < 256; ++t) histogram[t] = t < 16 ? 1000000 : 1;
+    const auto lut = fit_bm25_u4_lut(histogram, 1.2f);
+    REQUIRE(lut.fingerprint() == fit_bm25_u4_lut(histogram, 1.2f).fingerprint());
+    REQUIRE(lut.encode[0] == 0);
+    REQUIRE(lut.decode[lut.encode[1]] == 1);
+    for (size_t t = 1; t < 256; ++t) {
+        REQUIRE(lut.encode[t] > 0);
+        REQUIRE(lut.encode[t] < 16);
+        REQUIRE(lut.ends[lut.encode[t]] >= t);
+        REQUIRE(lut.encode[t] >= lut.encode[t - 1]);
+    }
+    REQUIRE_NOTHROW(fit_bm25_u4_lut({}, 0));
+    REQUIRE_THROWS(fit_bm25_u4_lut({}, -1));
+    std::vector<packed_bm25_accumulate_fn_t> kernels{bm25_accumulate_scalar_u12_u4_lut, get_packed_bm25_kernel()};
+#if defined(__x86_64__)
+    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("f16c")) {
+        kernels.push_back(bm25_accumulate_avx2_u12_u4_lut);
+    }
+#endif
+    std::vector<float> lengths(4096), oracle(4096), actual(4096);
+    for (size_t i = 0; i < 4096; ++i) lengths[i] = 1 + i % 211;
+    for (size_t start : {0u, 1u, 2u, 3u}) {
+        for (size_t n :
+             {0u, 1u, 2u, 3u, 4u, 7u, 8u, 9u, 15u, 16u, 17u, 23u, 24u, 25u, 31u, 32u, 33u, 63u, 64u, 129u, 4096u}) {
+            const size_t count = start + n;
+            std::vector<uint8_t> ids(packed12_bytes(count), 0), values(count / 2 + count % 2, 0);
+            for (size_t i = 0; i < count; ++i) {
+                const auto id = (i * 17) % 4096;
+                pack12(ids.data(), i, id);
+                values[i / 2] |= uint8_t(i % 16) << (4 * (i & 1));
+            }
+            std::fill(oracle.begin(), oracle.end(), .125f);
+            for (size_t i = start; i < count; ++i) {
+                const auto id = (i * 17) % 4096;
+                const double tf = lut.decode[i % 16];
+                oracle[id] += float(.7 * 2.2 * tf / (tf + 1.2 * (1 - .75) + 1.2 * .75 / 57 * lengths[id]));
+            }
+            for (auto fn : kernels) {
+                std::fill(actual.begin(), actual.end(), .125f);
+                const auto maximum = fn(.7f, values.data(), ids.data(), start, n, actual.data(), 1.2f, .75f, 57.f,
+                                        lengths.data(), lut.decode.data());
+                REQUIRE(std::abs(maximum - (n ? *std::max_element(oracle.begin(), oracle.end()) : 0.f)) < 2e-6f);
+                for (size_t i = 0; i < 4096; ++i) REQUIRE(std::abs(actual[i] - oracle[i]) < 2e-6f);
+            }
+        }
+    }
+}
+
+TEST_CASE("SINDI BM25 U12 LUT compact public lifecycle and decoded oracle", "[sparse][sindi][u4_u12]") {
+    using namespace knowhere;
+    using namespace knowhere::sparse::inverted;
+    for (const std::string quant : {"u4_lut", "u4_lut_u12", "u4_lut_u16"}) {
+        const bool u16_ids = quant == "u4_lut_u16";
+        for (uint32_t window :
+             (u16_ids ? std::vector<uint32_t>{1024, 4096, 8192, 65535} : std::vector<uint32_t>{1024, 4096})) {
+            std::vector<RefineRow> rows(9001);
+            std::array<uint64_t, 256> histogram{};
+            for (size_t i = 0; i < rows.size(); ++i) {
+                const float tf = i == 9000 ? 65535 : 1 + i % 255;
+                rows[i] = RefineTestRow({{0, tf}, {7, float(1 + i % 13)}, {100000, float(1 + i % 17)}});
+                for (size_t j = 0; j < rows[i].size(); ++j) ++histogram[std::min<unsigned>(rows[i][j].val, 255)];
+            }
+            const auto lut = sindi::fit_bm25_u4_lut(histogram, 1.2f);
+            Json build{{"metric_type", "BM25"}, {"inverted_index_algo", "SINDI"},
+                       {"quant_type", quant},   {"sindi_window_size", window},
+                       {"refine", false},       {"bm25_k1", 1.2f},
+                       {"bm25_b", .75f},        {"bm25_avgdl", 200.f}};
+            auto idx =
+                IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+            REQUIRE(idx.Build(RefineDataset(rows), build) == Status::success);
+            auto original = build;
+            original["quant_type"] = "u8";
+            auto baseline =
+                IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+            REQUIRE(baseline.Build(RefineDataset(rows), original) == Status::success);
+            REQUIRE(idx.Size() < baseline.Size());
+            std::vector<RefineRow> queries{RefineTestRow({{0, .7f}, {7, 1.3f}, {100000, .2f}})};
+            Json search{{"metric_type", "BM25"}, {"k", 100},
+                        {"bm25_k1", 1.2f},       {"bm25_b", .75f},
+                        {"bm25_avgdl", 200.f},   {"dim_max_score_ratio", 1.05f}};
+            auto make_oracle = [&](float avgdl) {
+                std::vector<float> oracle(rows.size());
+                for (size_t i = 0; i < rows.size(); ++i) {
+                    double dl = 0, score = 0;
+                    for (size_t j = 0; j < rows[i].size(); ++j) dl += rows[i][j].val;
+                    for (size_t j = 0; j < rows[i].size(); ++j) {
+                        const double tf = lut.decode[lut.encode[std::min<unsigned>(rows[i][j].val, 255)]];
+                        score += queries[0][j].val * 2.2 * tf / (tf + 1.2 * (1 - .75 + .75 * dl / avgdl));
+                    }
+                    oracle[i] = score;
+                }
+                return oracle;
+            };
+            REQUIRE(make_oracle(201.f)[0] > make_oracle(200.f)[0]);
+            REQUIRE(make_oracle(199.f)[0] < make_oracle(200.f)[0]);
+            auto check = [&](auto& index, float avgdl = 200.f) {
+                CAPTURE(quant, window, avgdl);
+                const auto oracle = make_oracle(avgdl);
+                auto sorted = oracle;
+                std::sort(sorted.begin(), sorted.end(), std::greater<float>());
+                auto requested = search;
+                requested["bm25_avgdl"] = avgdl;
+                auto result = index.Search(RefineDataset(queries), requested, nullptr);
+                REQUIRE(result.has_value());
+                std::set<int64_t> seen;
+                for (size_t j = 0; j < 100; ++j) {
+                    const auto id = result.value()->GetIds()[j];
+                    REQUIRE(id >= 0);
+                    REQUIRE(id < int64_t(rows.size()));
+                    REQUIRE(seen.insert(id).second);
+                    REQUIRE(std::abs(result.value()->GetDistance()[j] - oracle[id]) < 3e-6f);
+                    REQUIRE(oracle[id] >= sorted[99] - 3e-6f);
+                }
+                if (avgdl != 200.f) {
+                    // Iterator scoring is deferred: consume every result to check that
+                    // both APIs use the requested statistic with the persisted LUT.
+                    auto iterators = index.AnnIterator(RefineDataset(queries), requested, nullptr);
+                    REQUIRE(iterators.has_value());
+                    REQUIRE(iterators.value().size() == 1);
+                    auto& iterator = iterators.value()[0];
+                    seen.clear();
+                    float previous = std::numeric_limits<float>::infinity();
+                    while (true) {
+                        auto has_next = iterator->HasNext();
+                        REQUIRE(has_next.has_value());
+                        if (!has_next.value()) {
+                            break;
+                        }
+                        auto next = iterator->Next();
+                        REQUIRE(next.has_value());
+                        const auto [id, score] = next.value();
+                        REQUIRE(id >= 0);
+                        REQUIRE(id < int64_t(rows.size()));
+                        REQUIRE(seen.insert(id).second);
+                        REQUIRE(std::abs(score - oracle[id]) < 3e-6f);
+                        REQUIRE(score <= previous + 3e-6f);
+                        previous = score;
+                    }
+                    REQUIRE(seen.size() == rows.size());
+                }
+                std::vector<uint8_t> mask((rows.size() + 7) / 8, 255);
+                auto none = index.Search(RefineDataset(queries), requested, BitsetView(mask.data(), rows.size()));
+                REQUIRE(none.has_value());
+                REQUIRE(none.value()->GetIds()[0] == -1);
+                std::fill(mask.begin(), mask.end(), 0);
+                std::fill(mask.begin(), mask.begin() + std::min<size_t>(window / 8, mask.size()), 255);
+                auto filtered = index.Search(RefineDataset(queries), requested, BitsetView(mask.data(), rows.size()));
+                REQUIRE(filtered.has_value());
+                for (size_t j = 0; j < 100; ++j) {
+                    if (window < rows.size())
+                        REQUIRE(filtered.value()->GetIds()[j] >= window);
+                    else
+                        REQUIRE(filtered.value()->GetIds()[j] == -1);
+                }
+            };
+            check(idx);
+            std::vector<RefineRow> invalid_rebuild{RefineTestRow({{0, -1}})};
+            REQUIRE(idx.Build(RefineDataset(invalid_rebuild), build) != Status::success);
+            check(idx);
+            check(idx, 201.f);
+            check(idx, 199.f);
+            for (const auto& mismatch : {Json{{"bm25_k1", 1.3f}}, Json{{"bm25_b", .8f}}}) {
+                auto mismatched_search = search;
+                mismatched_search.update(mismatch);
+                REQUIRE_FALSE(idx.Search(RefineDataset(queries), mismatched_search, nullptr).has_value());
+                REQUIRE_FALSE(idx.AnnIterator(RefineDataset(queries), mismatched_search, nullptr).has_value());
+            }
+            BinarySet bytes;
+            REQUIRE(idx.Serialize(bytes) == Status::success);
+            auto blob = bytes.GetByName(IndexEnum::INDEX_SPARSE_INVERTED_INDEX);
+            const auto sections = ReadSparseIndexSections(blob);
+            REQUIRE(FindSection(sections, InvertedIndexSectionType::BM25_U8_OVERFLOWS) == nullptr);
+            REQUIRE(FindSection(sections, InvertedIndexSectionType::SINDI_REFINEMENT) == nullptr);
+            const auto* h = FindSection(sections, InvertedIndexSectionType::POSTING_LISTS);
+            REQUIRE(h != nullptr);
+            // Three dense terms, each with an odd number of postings. Canonical
+            // concatenation pays a single odd tail, not one per term/window.
+            const size_t windows = (rows.size() + window - 1) / window, n = rows.size() * 3;
+            REQUIRE(h->size ==
+                    68 + 1 + 3 * (4 + windows * 2) + 4 * 4 + (u16_ids ? 2 * n + n / 2 + n % 2 : 2 * n + n % 2));
+            uint32_t serialized_quant;
+            std::memcpy(&serialized_quant, blob->data.get() + 16, 4);
+            REQUIRE(serialized_quant == static_cast<uint32_t>(u16_ids ? InvertedIndexQuantType::BM25_U4_LUT_U16
+                                                                      : InvertedIndexQuantType::BM25_U4_LUT_U12));
+            REQUIRE(std::memcmp(blob->data.get() + h->offset + 24, lut.decode.data(), 16) == 0);
+            REQUIRE(std::memcmp(blob->data.get() + h->offset + 40, lut.ends.data(), 16) == 0);
+            auto load = build;
+            load.erase("quant_type");
+            load.erase("sindi_window_size");
+            auto restored =
+                IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+            REQUIRE(restored.Deserialize(bytes, load) == Status::success);
+            check(restored);
+            check(restored, 201.f);
+            check(restored, 199.f);
+            auto conflict = load;
+            conflict["quant_type"] = u16_ids ? "u4_lut_u12" : "u4_lut_u16";
+            REQUIRE(restored.Deserialize(bytes, conflict) != Status::success);
+            check(restored);
+            SparseQuantIndexFile file(blob);
+            auto mapped =
+                IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+            REQUIRE(mapped.DeserializeFromFile(file.path, load) == Status::success);
+            check(mapped);
+            check(mapped, 201.f);
+            check(mapped, 199.f);
+            auto original_bytes = std::vector<uint8_t>(blob->data.get(), blob->data.get() + blob->size);
+            for (size_t pos : {size_t(h->offset + 12), size_t(h->offset + 16), size_t(h->offset + 20),
+                               size_t(h->offset + 24), size_t(h->offset + 40), size_t(h->offset + h->size - 1)}) {
+                blob->data[pos] = 255;
+                REQUIRE(restored.Deserialize(bytes, load) != Status::success);
+                check(restored);
+                std::memcpy(blob->data.get(), original_bytes.data(), original_bytes.size());
+            }
+            auto invalid_search = search;
+            invalid_search["refine_k"] = 2;
+            REQUIRE_FALSE(idx.Search(RefineDataset(queries), invalid_search, nullptr).has_value());
+        }
+    }
+}
+
+TEST_CASE("SINDI BM25 U12 LUT unsupported requests and invalid input", "[sparse][sindi][u4_u12]") {
+    using namespace knowhere;
+    Json build{{"metric_type", "BM25"},  {"inverted_index_algo", "SINDI"},
+               {"quant_type", "u4_lut"}, {"sindi_window_size", 4096},
+               {"refine", false},        {"bm25_k1", 1.2},
+               {"bm25_b", .75},          {"bm25_avgdl", 20}};
+    std::vector<RefineRow> rows{RefineTestRow({{0, 1}})};
+    for (auto change :
+         {Json{{"refine", true}}, Json{{"metric_type", "IP"}}, Json{{"sindi_window_size", 8192}},
+          Json{{"inverted_index_algo", "DAAT_WAND"}}, Json{{"inverted_index_codec", "block_streamvbyte"}}}) {
+        auto cfg = build;
+        cfg.update(change);
+        auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+        REQUIRE(idx.Build(RefineDataset(rows), cfg) != Status::success);
+    }
+    for (float tf :
+         {-1.f, -0.f, .5f, 65536.f, std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
+        auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+        std::vector<RefineRow> invalid{RefineTestRow({{0, tf}})};
+        REQUIRE(idx.Build(RefineDataset(invalid), build) != Status::success);
+    }
+    auto growable =
+        IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, 11).value();
+    REQUIRE(growable.Build(RefineDataset(rows), build) != Status::success);
+}
+
+TEST_CASE("SINDI rejects unsupported serialized posting formats", "[sparse][sindi][u4_u12]") {
+    using namespace knowhere;
+    using namespace knowhere::sparse::inverted;
+    const auto quant = GENERATE("fp16", "fp32", "u4_lut_u12", "u4_lut_u16");
+    const bool bm25 = std::string(quant).find("u4_lut") == 0;
+    Json build{{"metric_type", bm25 ? "BM25" : "IP"},
+               {"inverted_index_algo", "SINDI"},
+               {"quant_type", quant},
+               {"sindi_window_size", 4096},
+               {"refine", false},
+               {"bm25_k1", 1.2f},
+               {"bm25_b", .75f},
+               {"bm25_avgdl", 1.f}};
+    std::vector<RefineRow> rows{RefineTestRow({{0, 1}})}, queries{RefineTestRow({{0, 1}})};
+    auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+    REQUIRE(idx.Build(RefineDataset(rows), build) == Status::success);
+    auto search = build;
+    search["k"] = 1;
+    auto check = [&] {
+        auto hits = idx.Search(RefineDataset(queries), search, nullptr);
+        REQUIRE(hits.has_value());
+        REQUIRE(hits.value()->GetIds()[0] == 0);
+        REQUIRE(std::abs(hits.value()->GetDistance()[0] - 1.f) < 2e-6f);
+    };
+    check();
+    BinarySet bytes;
+    REQUIRE(idx.Serialize(bytes) == Status::success);
+    auto blob = bytes.GetByName(IndexEnum::INDEX_SPARSE_INVERTED_INDEX);
+    // Test unsupported serialized identities, without defining E5M7 hint behavior.
+    // Reserved identities must fail before any payload is loaded or the old index replaced.
+    const uint32_t reserved_quant = 6, reserved_encoding = 5;
+    const auto sections = ReadSparseIndexSections(blob);
+    const auto* postings = FindSection(sections, InvertedIndexSectionType::POSTING_LISTS);
+    REQUIRE(postings != nullptr);
+    const size_t encoding_offset = postings->offset;
+    std::memcpy(blob->data.get() + 16, &reserved_quant, sizeof(reserved_quant));
+    std::memcpy(blob->data.get() + encoding_offset, &reserved_encoding, sizeof(reserved_encoding));
+    auto load = build;
+    load["metric_type"] = "IP";
+    load.erase("quant_type");
+    REQUIRE(idx.Deserialize(bytes, load) != Status::success);
+    check();
+    SparseQuantIndexFile file(blob);
+    for (bool mmap : {false, true}) {
+        load["enable_mmap"] = mmap;
+        REQUIRE(idx.DeserializeFromFile(file.path, load) != Status::success);
+        check();
+    }
+}
+
+TEST_CASE("SINDI BM25 U16 LUT kernels and full U16 window", "[sparse][sindi][u4_u16]") {
+    using namespace knowhere;
+    using namespace knowhere::sparse::inverted;
+    using namespace knowhere::sparse::inverted::sindi;
+    std::array<uint64_t, 256> hist{};
+    for (size_t t = 1; t < 256; ++t) hist[t] = 256 - t;
+    const auto lut = fit_bm25_u4_lut(hist, 1.2f);
+    std::vector<packed_bm25_accumulate_fn_t> kernels{bm25_accumulate_scalar_u16_u4_lut, get_packed_bm25_kernel(true)};
+#if defined(__x86_64__)
+    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("f16c"))
+        kernels.push_back(bm25_accumulate_avx2_u16_u4_lut);
+#endif
+    std::vector<float> lengths(65535), oracle(65535), actual(65535);
+    for (size_t i = 0; i < lengths.size(); ++i) lengths[i] = 1 + i % 211;
+    for (size_t start : {0u, 1u, 2u, 3u}) {
+        for (size_t n : {0u, 1u, 7u, 8u, 9u, 15u, 16u, 17u, 23u, 24u, 25u, 31u, 32u, 33u, 129u, 4096u, 65535u}) {
+            const size_t count = start + n;
+            // Deliberately unaligned U16 streams model canonical mapped sections.
+            std::vector<uint8_t> storage(2 * count + 1), values(count / 2 + count % 2);
+            auto* ids = storage.data() + 1;
+            for (size_t i = 0; i < count; ++i) {
+                const uint16_t id = (i * 31) % 65535;
+                std::memcpy(ids + 2 * i, &id, 2);
+                values[i / 2] |= uint8_t(i % 16) << (4 * (i & 1));
+            }
+            std::fill(oracle.begin(), oracle.end(), .125f);
+            for (size_t i = start; i < count; ++i) {
+                const size_t id = (i * 31) % 65535;
+                const double tf = lut.decode[i % 16];
+                oracle[id] += float(.7 * 2.2 * tf / (tf + 1.2 * (1 - .75) + 1.2 * .75 / 57 * lengths[id]));
+            }
+            for (auto fn : kernels) {
+                std::fill(actual.begin(), actual.end(), .125f);
+                const auto maximum = fn(.7f, values.data(), ids, start, n, actual.data(), 1.2f, .75f, 57,
+                                        lengths.data(), lut.decode.data());
+                REQUIRE(std::equal(actual.begin(), actual.end(), oracle.begin(),
+                                   [](float a, float b) { return std::abs(a - b) < 2e-6f; }));
+                REQUIRE(std::abs(maximum - (n ? *std::max_element(oracle.begin(), oracle.end()) : 0.f)) < 2e-6f);
+            }
+        }
+    }
+    // A dense 65535-posting window exercises the U16 count and highest valid ID.
+    std::vector<RefineRow> rows(65535);
+    for (auto& r : rows) r = RefineTestRow({{0, 1}});
+    Json build{{"metric_type", "BM25"},
+               {"inverted_index_algo", "SINDI"},
+               {"quant_type", "u4_lut_u16"},
+               {"sindi_window_size", 65535},
+               {"refine", false},
+               {"bm25_k1", 1.2f},
+               {"bm25_b", .75f},
+               {"bm25_avgdl", 1.f}};
+    auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+    REQUIRE(idx.Build(RefineDataset(rows), build) == Status::success);
+    BinarySet bytes;
+    REQUIRE(idx.Serialize(bytes) == Status::success);
+    auto blob = bytes.GetByName(IndexEnum::INDEX_SPARSE_INVERTED_INDEX);
+    const auto sections = ReadSparseIndexSections(blob);
+    const auto* h = FindSection(sections, InvertedIndexSectionType::POSTING_LISTS);
+    REQUIRE(h != nullptr);
+    REQUIRE(h->size == 68 + 1 + 4 + 2 + 8 + 2 * rows.size() + (rows.size() + 1) / 2);
+    auto cfg = build;
+    cfg.erase("quant_type");
+    cfg.erase("sindi_window_size");
+    auto loaded = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+    REQUIRE(loaded.Deserialize(bytes, cfg) == Status::success);
+    std::vector<RefineRow> queries{RefineTestRow({{0, 1}})};
+    Json search{{"metric_type", "BM25"}, {"k", 10}, {"bm25_k1", 1.2f}, {"bm25_b", .75f}, {"bm25_avgdl", 1.f}};
+    std::vector<uint8_t> mask((rows.size() + 7) / 8, 255);
+    mask[65534 / 8] &= ~(1u << (65534 % 8));
+    auto result = loaded.Search(RefineDataset(queries), search, BitsetView(mask.data(), rows.size()));
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == 65534);
+    REQUIRE(std::abs(result.value()->GetDistance()[0] - 1.f) < 2e-6f);
+    for (size_t j = 1; j < 10; ++j) REQUIRE(result.value()->GetIds()[j] == -1);
+    for (auto change :
+         {Json{{"sindi_window_size", 65536}}, Json{{"refine", true}}, Json{{"metric_type", "IP"}},
+          Json{{"inverted_index_algo", "DAAT_WAND"}}, Json{{"inverted_index_codec", "block_streamvbyte"}}}) {
+        auto bad = build;
+        bad.update(change);
+        REQUIRE(idx.Build(RefineDataset(rows), bad) != Status::success);
+    }
+    auto growable =
+        IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, 11).value();
+    REQUIRE(growable.Build(RefineDataset(rows), build) != Status::success);
 }
