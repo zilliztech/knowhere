@@ -103,13 +103,13 @@ SetConfigDim(Config* cfg, int64_t dim) {
 }  // namespace
 
 MRLIndexNode::MRLIndexNode(Index<IndexNode>&& base_index, int64_t source_dim, int64_t mrl_dim, DataFormatEnum data_type,
-                           bool with_mrl_refine, ViewDataOp view_data)
+                           bool with_mrl_refine, ViewDataScopeOp view_data_scope)
     : base_index_(std::move(base_index)),
       source_dim_(source_dim),
       mrl_dim_(mrl_dim),
       data_type_(data_type),
       with_mrl_refine_(with_mrl_refine),
-      view_data_(std::move(view_data)) {
+      view_data_scope_(std::move(view_data_scope)) {
     if (base_index_.Node() == nullptr || source_dim_ <= 0 || mrl_dim_ <= 0 || mrl_dim_ >= source_dim_) {
         throw std::invalid_argument("invalid MRL index dimensions or base index");
     }
@@ -123,9 +123,9 @@ MRLIndexNode::~MRLIndexNode() = default;
 
 Index<IndexNode>
 CreateMRLIndex(Index<IndexNode>&& base_index, int64_t source_dim, int64_t mrl_dim, DataFormatEnum data_type,
-               bool with_mrl_refine, ViewDataOp view_data) {
+               bool with_mrl_refine, ViewDataScopeOp view_data_scope) {
     return Index<MRLIndexNode>::Create(std::move(base_index), source_dim, mrl_dim, data_type, with_mrl_refine,
-                                       std::move(view_data));
+                                       std::move(view_data_scope));
 }
 
 size_t
@@ -176,7 +176,7 @@ MRLIndexNode::CreateRefineIndex(const BaseConfig& cfg) {
         return Status::invalid_metric_type;
     }
     const auto refine_metric = is_cosine ? metric::IP : source_metric;
-    refine_index_ = std::make_shared<DataViewIndexFlat>(source_dim_, data_type_, refine_metric, view_data_, is_cosine,
+    refine_index_ = std::make_shared<DataViewIndexFlat>(source_dim_, data_type_, refine_metric, ViewDataOp{}, is_cosine,
                                                         RefineType::DATA_VIEW, cfg.num_build_thread);
     return Status::success;
 }
@@ -290,7 +290,7 @@ MRLIndexNode::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, cons
     if (ValidateDataSet(dataset) != Status::success) {
         return expected<DataSetPtr>::Err(Status::invalid_args, "MRL query must use the source dimension");
     }
-    if (with_mrl_refine_ && (refine_index_ == nullptr || !view_data_)) {
+    if (with_mrl_refine_ && (refine_index_ == nullptr || !view_data_scope_)) {
         return expected<DataSetPtr>::Err(Status::empty_index, "MRL raw-data refiner is not bound");
     }
     if (SetConfigDim(cfg.get(), mrl_dim_) != Status::success) {
@@ -319,8 +319,19 @@ MRLIndexNode::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, cons
     }
     auto labels = std::make_unique<int64_t[]>(nq * topk);
     auto distances = std::make_unique<float[]>(nq * topk);
+    auto logical_view = view_data_scope_(op_context);
+    if (!logical_view) {
+        return expected<DataSetPtr>::Err(Status::empty_index, "MRL raw-data refiner is not bound");
+    }
+    ViewDataOp compact_view = [this, logical_view = std::move(logical_view)](size_t compact_id) {
+        const auto logical_id = GetIdMap().MapInToOut(static_cast<int64_t>(compact_id));
+        if (logical_id < 0) {
+            throw std::out_of_range("MRL raw-data id is out of range");
+        }
+        return logical_view(static_cast<size_t>(logical_id));
+    };
     refine_index_->SearchWithIds(nq, dataset->GetTensor(), query_limits.data(), result.value()->GetIds(), topk,
-                                 distances.get(), labels.get(), false);
+                                 distances.get(), labels.get(), false, std::move(compact_view));
     auto refined_result = GenResultDataSet(nq, topk, std::move(labels), std::move(distances));
     MapSearchResultIdsToOutIds(refined_result);
     return refined_result;
@@ -410,7 +421,7 @@ MRLIndexNode::Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) 
         meta.with_mrl_refine != static_cast<uint8_t>(with_mrl_refine_)) {
         return Status::invalid_binary_set;
     }
-    if (with_mrl_refine_ && !view_data_) {
+    if (with_mrl_refine_ && !view_data_scope_) {
         return Status::invalid_args;
     }
 

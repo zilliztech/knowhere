@@ -20,6 +20,10 @@
 
 #include "filemanager/FileManager.h"
 
+namespace milvus {
+struct OpContext;
+}  // namespace milvus
+
 namespace knowhere {
 
 template <typename I, typename T>
@@ -75,6 +79,7 @@ class Object {
 };
 
 using ViewDataOp = std::function<const void*(size_t)>;
+using ViewDataScopeOp = std::function<ViewDataOp(milvus::OpContext*)>;
 
 template <typename T>
 class Pack : public Object {
