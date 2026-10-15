@@ -11,6 +11,12 @@ namespace knowhere {
 
 class AisaqConfig : public DiskANNConfig {
  public:
+    Status
+    CheckAndAdjust(PARAM_TYPE type, std::string* error) override {
+        if (type == PARAM_TYPE::TRAIN && navigation.navigation_codec && *navigation.navigation_codec != "PQ")
+            return HandleError(error, "AiSAQ requires PQ navigation", Status::invalid_args);
+        return DiskANNConfig::CheckAndAdjust(type, error);
+    }
     // Block AiSAQ parameters
     // PQ vector beam width
     CFG_INT vectors_beamwidth;

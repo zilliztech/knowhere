@@ -8,8 +8,9 @@
 #include "diskann/aux_utils.h"
 #include "diskann/linux_aligned_file_reader.h"
 #include "diskann/pq_flash_aisaq_index.h"
-#include "diskann/pq_flash_index.h"
+#include "diskann/ssd_graph_index.h"
 #include "filemanager/FileManager.h"
+#include "filemanager/impl/LocalFileManager.h"
 #include "fmt/core.h"
 #include "index/diskann/aisaq_config.h"
 #include "knowhere/comp/index_param.h"
@@ -134,11 +135,11 @@ class AisaqIndexNode : public IndexNode {
 
     int64_t
     Size() const override {
-        if (!is_prepared_.load() || !pq_flash_index_) {
+        if (!is_prepared_.load() || !ssd_graph_index_) {
             LOG_KNOWHERE_ERROR_ << "AiSAQ not loaded.";
             return 0;
         }
-        return pq_flash_index_->aisaq_cal_size();
+        return ssd_graph_index_->aisaq_cal_size();
     }
 
     int64_t
@@ -181,7 +182,7 @@ class AisaqIndexNode : public IndexNode {
     mutable std::mutex preparation_lock_;
     std::atomic_bool is_prepared_;
     std::shared_ptr<milvus::FileManager> file_manager_;
-    std::unique_ptr<diskann::PQFlashAisaqIndex<DataType>> pq_flash_index_;
+    std::unique_ptr<diskann::PQFlashAisaqIndex<DataType>> ssd_graph_index_;
     std::atomic_int64_t dim_;
     std::atomic_int64_t count_;
     std::shared_ptr<ThreadPool> search_pool_;
@@ -201,6 +202,9 @@ TryDiskANNCall(std::function<void()>&& diskann_call) {
     } catch (const folly::FutureCancellation& e) {
         LOG_KNOWHERE_INFO_ << "DiskANN call cancelled by the caller: " << e.what();
         return Status::cancelled;
+    } catch (const diskann::NavigationTypeError& e) {
+        LOG_KNOWHERE_ERROR_ << "Navigation type error: " << e.what();
+        return Status::invalid_serialized_index_type;
     } catch (const diskann::FileException& e) {
         LOG_KNOWHERE_ERROR_ << "AiSAQ File Exception: " << e.what();
         return Status::disk_file_error;
@@ -215,15 +219,16 @@ TryDiskANNCall(std::function<void()>&& diskann_call) {
 
 std::vector<std::string>
 GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const bool use_sample_cache,
-                      const bool use_sample_warmup, const bool rearrange, const bool entry_points) {
+                      const bool use_sample_warmup, const bool rearrange, const bool entry_points,
+                      const diskann::NavigationStore& navigation,
+                      diskann::NavigationFilePurpose purpose = diskann::NavigationFilePurpose::Build) {
     std::vector<std::string> filenames;
-    auto pq_pivots_filename = diskann::get_pq_pivots_filename(prefix);
+    navigation.GetNecessaryFilenames(prefix, filenames, purpose);
+    if (purpose == diskann::NavigationFilePurpose::Build) {
+        filenames.push_back(diskann::GetNavigationMetadataFilename(prefix));
+    }
     auto disk_index_filename = diskann::get_disk_index_filename(prefix);
 
-    filenames.push_back(pq_pivots_filename);
-    filenames.push_back(diskann::get_pq_rearrangement_perm_filename(pq_pivots_filename));
-    filenames.push_back(diskann::get_pq_chunk_offsets_filename(pq_pivots_filename));
-    filenames.push_back(diskann::get_pq_centroid_filename(pq_pivots_filename));
     filenames.push_back(disk_index_filename);
     if (need_norm) {
         filenames.push_back(diskann::get_disk_index_max_base_norm_file(disk_index_filename));
@@ -233,9 +238,6 @@ GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const boo
     }
     if (rearrange) {
         filenames.push_back(diskann::get_index_rearranged_filename(prefix));
-        filenames.push_back(diskann::get_pq_compressed_rearranged_filename(prefix));
-    } else {
-        filenames.push_back(diskann::get_pq_compressed_filename(prefix));
     }
     if (entry_points) {
         filenames.push_back(diskann::get_index_entry_points_filename(prefix));
@@ -259,7 +261,7 @@ GetOptionalFilenames(const std::string& prefix) {
 }
 
 inline bool
-AnyIndexFileExist(const std::string& index_prefix) {
+AnyIndexFileExist(const std::string& index_prefix, const diskann::NavigationStore& navigation) {
     auto file_exist = [](std::vector<std::string> filenames) -> bool {
         for (auto& filename : filenames) {
             if (file_exists(filename)) {
@@ -268,7 +270,8 @@ AnyIndexFileExist(const std::string& index_prefix) {
         }
         return false;
     };
-    return file_exist(GetNecessaryFilenames(index_prefix, diskann::INNER_PRODUCT, true, true, false, false)) ||
+    return file_exist(GetNecessaryFilenames(index_prefix, diskann::INNER_PRODUCT, true, true, false, false,
+                                           navigation)) ||
            file_exist(GetOptionalFilenames(index_prefix));
 }
 
@@ -286,16 +289,6 @@ CheckMetric(const std::string& diskann_metric) {
     }
 }
 }  // namespace
-
-static size_t
-get_pq_size(size_t points_num, size_t dim, double pq_code_size_gb) {
-    double pq_code_size_limit = diskann::get_memory_budget(pq_code_size_gb);
-    size_t num_pq_chunks = static_cast<size_t>((std::floor)(static_cast<_u64>(pq_code_size_limit / points_num)));
-    num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
-    num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
-    num_pq_chunks = num_pq_chunks > diskann::defaults::MAX_PQ_CHUNKS ? diskann::defaults::MAX_PQ_CHUNKS : num_pq_chunks;
-    return num_pq_chunks * sizeof(_u8);
-}
 
 template <typename DataType>
 Status
@@ -335,7 +328,6 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                        << " number of entry points: " << build_conf.num_entry_points.value()
                        << " max degree: " << build_conf.max_degree.value()
                        << " search list size: " << build_conf.search_list_size.value()
-                       << " pq_code_budget_gb: " << build_conf.pq_code_budget_gb.value()
                        << " build_dram_budget_gb: " << build_conf.build_dram_budget_gb.value()
                        << " search_cache_budget_gb: " << build_conf.search_cache_budget_gb.value()
                        << " disk PQ budget: " << build_conf.disk_pq_dims.value();
@@ -349,7 +341,8 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
         LOG_KNOWHERE_ERROR_ << "AiSAQ file path for build is empty.";
         return Status::invalid_param_in_json;
     }
-    if (AnyIndexFileExist(build_conf.index_prefix.value())) {
+    auto navigation = build_conf.navigation.CreateForBuild();
+    if (AnyIndexFileExist(build_conf.index_prefix.value(), *navigation)) {
         LOG_KNOWHERE_ERROR_ << "This index prefix already has index files.";
         return Status::disk_file_error;
     }
@@ -379,7 +372,8 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
     }();
 
     uint32_t inline_pq_vectors;
-    uint32_t pq_compressed_nbytes = get_pq_size(count, dim, build_conf.pq_code_budget_gb.value());
+    uint32_t pq_compressed_nbytes =
+        diskann::PQNavigationStore::CodeSize(count, dim, build_conf.navigation.pq.BuildOptions());
     uint64_t max_node_len;
     // calc max_node_len in order to estimate number of nodes to cache
     if (build_conf.disk_pq_dims.value() > 0) {
@@ -406,7 +400,6 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                                                      diskann_metric,
                                                      static_cast<unsigned>(build_conf.max_degree.value()),
                                                      static_cast<unsigned>(build_conf.search_list_size.value()),
-                                                     static_cast<double>(build_conf.pq_code_budget_gb.value()),
                                                      static_cast<double>(build_conf.build_dram_budget_gb.value()),
                                                      static_cast<uint32_t>(build_conf.disk_pq_dims.value()),
                                                      false,
@@ -418,15 +411,19 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                                                      build_conf.rearrange.value(),
                                                      build_conf.num_entry_points.value()};
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
-        int res = diskann::build_disk_index<DataType>(aisaq_internal_build_config);
+        int res = diskann::build_disk_index<DataType>(aisaq_internal_build_config, *navigation);
         if (res != 0)
             throw diskann::ANNException("AiSAQ::build_disk_index returned non-zero value: " + std::to_string(res), -1);
     }));
 
-    // Add file to the file manager
+    navigation = std::make_unique<diskann::PQNavigationStore>(false, aisaq_internal_build_config.rearrange);
+    RETURN_IF_ERROR(TryDiskANNCall([&]() {
+        diskann::WriteNavigationMetadata(index_prefix_, navigation->CodecName());
+    }));
+    // Register navigation, graph and SSD files through one collected list.
     for (auto& filename :
          GetNecessaryFilenames(index_prefix_, need_norm, true, true, aisaq_internal_build_config.rearrange,
-                               build_conf.num_entry_points.value() > 0)) {
+                               build_conf.num_entry_points.value() > 0, *navigation)) {
         if (!AddFile(filename)) {
             LOG_KNOWHERE_ERROR_ << "Failed to add file " << filename << ".";
             return Status::disk_file_error;
@@ -460,6 +457,10 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         return Status::invalid_metric_type;
     }
     if (is_prepared_.load()) {
+        if (prep_conf.navigation.navigation_codec &&
+            *prep_conf.navigation.navigation_codec != ssd_graph_index_->get_navigation_codec()) {
+            return Status::invalid_serialized_index_type;
+        }
         return Status::success;
     }
     if (!(prep_conf.index_prefix.has_value())) {
@@ -480,15 +481,31 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         }
     }();
 
-    // Load file from file manager.
+    std::unique_ptr<diskann::PQNavigationStore> navigation;
+    RETURN_IF_ERROR(TryDiskANNCall([&]() {
+        diskann::NavigationMetadataContext context{index_prefix_, {},
+            [&](const std::string& file) { return LoadFile(file); }};
+        // The exact LocalFileManager placeholder tracks registrations only.
+        // Other managers, including remote adapters, own the existence result.
+        if (typeid(*file_manager_) != typeid(milvus::LocalFileManager)) {
+            context.exists = [&](const std::string& file) { return file_manager_->IsExisted(file); };
+        }
+        const auto codec = diskann::ReadNavigationCodec(context);
+        if (prep_conf.navigation.navigation_codec && *prep_conf.navigation.navigation_codec != codec) {
+            throw diskann::NavigationTypeError("Requested navigation codec does not match stored model");
+        }
+        if (codec != "PQ") {
+            throw diskann::NavigationTypeError("AiSAQ requires PQ navigation");
+        }
+        navigation = std::make_unique<diskann::PQNavigationStore>(false, rearrange);
+    }));
+
+    // Metadata selected the implementation; prepare all model and graph files together.
     bool use_bfs_cache = prep_conf.use_bfs_cache.value();
     for (auto& filename :
          GetNecessaryFilenames(index_prefix_, need_norm, prep_conf.search_cache_budget_gb.value() > 0 && !use_bfs_cache,
-                               prep_conf.warm_up.value(), rearrange, entry_points)) {
-        if (filename == diskann::get_pq_compressed_filename(index_prefix_)) {
-            LOG_KNOWHERE_DEBUG_ << "File load " << filename << " skipped";
-            continue;
-        }
+                               prep_conf.warm_up.value(), rearrange, entry_points, *navigation,
+                               diskann::NavigationFilePurpose::Load)) {
         if (!LoadFile(filename)) {
             return Status::disk_file_error;
         }
@@ -504,6 +521,13 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         }
     }
 
+    RETURN_IF_ERROR(TryDiskANNCall([&]() {
+        const int result = navigation->Load(index_prefix_);
+        if (result != 0) {
+            throw diskann::ANNException("Navigation model load returned non-zero value: " + std::to_string(result), -1);
+        }
+    }));
+
     // set thread pool
     search_pool_ = ThreadPool::GetGlobalSearchThreadPool();
 
@@ -512,10 +536,10 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
 
     reader = std::make_shared<LinuxAlignedFileReader>();
 
-    pq_flash_index_ = std::make_unique<diskann::PQFlashAisaqIndex<DataType>>(reader, diskann_metric);
+    ssd_graph_index_ = std::make_unique<diskann::PQFlashAisaqIndex<DataType>>(reader, diskann_metric);
 
     auto disk_ann_call = [&]() {
-        int res = pq_flash_index_->aisaq_load(search_pool_->size(), index_prefix_.c_str());
+        int res = ssd_graph_index_->aisaq_load(search_pool_->size(), index_prefix_.c_str(), std::move(navigation));
         if (res != 0) {
             throw diskann::ANNException("AiSAQ load returned non-zero value: " + std::to_string(res), -1);
         }
@@ -524,32 +548,32 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         LOG_KNOWHERE_ERROR_ << "Failed to load AiSAQ.";
         return Status::aisaq_error;
     }
-    if (!pq_flash_index_->get_rearranged_index() && !pq_flash_index_->get_rearrange_during_search() &&
+    if (!ssd_graph_index_->get_rearranged_index() && !ssd_graph_index_->get_rearrange_during_search() &&
         prep_conf.pq_read_page_cache_size.value() > 0) {
         LOG_KNOWHERE_WARNING_
             << "Dynamic cache can only be used when vectors rearrangement is enabled. dynamic cache will be disabled";
         prep_conf.pq_read_page_cache_size.value() = 0;
     }
 
-    if (pq_flash_index_->aisaq_init(pq_read_io_engine, index_prefix_.c_str()) != 0) {
+    if (ssd_graph_index_->aisaq_init(pq_read_io_engine, index_prefix_.c_str()) != 0) {
         return Status::aisaq_error;
     }
 
     if (prep_conf.pq_cache_size.value() > 0) {
-        if (pq_flash_index_->aisaq_load_pq_cache(index_prefix_, prep_conf.pq_cache_size.value(),
+        if (ssd_graph_index_->aisaq_load_pq_cache(index_prefix_, prep_conf.pq_cache_size.value(),
                                                  diskann::aisaq_pq_cache_policy_auto,
-                                                 pq_flash_index_->get_rearrange_during_search()) != true) {
+                                                 ssd_graph_index_->get_rearrange_during_search()) != true) {
             LOG_KNOWHERE_ERROR_ << "Failed to load aisaq cache";
             return Status::aisaq_error;
         }
     }
 
-    count_.store(pq_flash_index_->get_num_points());
+    count_.store(ssd_graph_index_->get_num_points());
     // AiSAQ will add one more dim for IP type.
     if (is_ip) {
-        dim_.store(pq_flash_index_->get_data_dim() - 1);
+        dim_.store(ssd_graph_index_->get_data_dim() - 1);
     } else {
-        dim_.store(pq_flash_index_->get_data_dim());
+        dim_.store(ssd_graph_index_->get_data_dim());
     }
 
     std::string warmup_query_file = diskann::get_sample_data_filename(index_prefix_);
@@ -564,8 +588,8 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         node_list.assign(cached_nodes_ids.get(), cached_nodes_ids.get() + num_nodes);
     } else {
         auto num_nodes_to_cache =
-            GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), pq_flash_index_->get_max_node_len());
-        if (num_nodes_to_cache > pq_flash_index_->get_num_points() / 3) {
+            GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), ssd_graph_index_->get_max_node_len());
+        if (num_nodes_to_cache > ssd_graph_index_->get_num_points() / 3) {
             LOG_KNOWHERE_ERROR_ << "Failed to generate cache, num_nodes_to_cache(" << num_nodes_to_cache
                                 << ") is larger than 1/3 of the total data number.";
             return Status::invalid_args;
@@ -573,7 +597,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         if (num_nodes_to_cache > 0) {
             if (use_bfs_cache) {
                 LOG_KNOWHERE_INFO_ << "Use bfs to generate cache list";
-                if (TryDiskANNCall([&]() { pq_flash_index_->cache_bfs_levels(num_nodes_to_cache, node_list); }) !=
+                if (TryDiskANNCall([&]() { ssd_graph_index_->cache_bfs_levels(num_nodes_to_cache, node_list); }) !=
                     Status::success) {
                     LOG_KNOWHERE_ERROR_ << "Failed to generate bfs cache for AiSAQ.";
                     return Status::aisaq_error;
@@ -581,7 +605,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
             } else {
                 LOG_KNOWHERE_INFO_ << "Use sample_queries to generate cache list";
                 if (TryDiskANNCall([&]() {
-                        pq_flash_index_->aisaq_async_generate_cache_list_from_sample_queries(warmup_query_file, 15, 6,
+                        ssd_graph_index_->aisaq_async_generate_cache_list_from_sample_queries(warmup_query_file, 15, 6,
                                                                                              num_nodes_to_cache);
                     }) != Status::success) {
                     LOG_KNOWHERE_ERROR_ << "Failed to generate cache from sample queries for AiSAQ.";
@@ -593,7 +617,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
     }
 
     if (node_list.size() > 0) {
-        if (TryDiskANNCall([&]() { pq_flash_index_->aisaq_load_cache_list(node_list); }) != Status::success) {
+        if (TryDiskANNCall([&]() { ssd_graph_index_->aisaq_load_cache_list(node_list); }) != Status::success) {
             LOG_KNOWHERE_ERROR_ << "Failed to load cache for AiSAQ.";
             return Status::aisaq_error;
         }
@@ -621,7 +645,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         futures.reserve(warmup_num);
         for (uint64_t i = 0; i < warmup_num; ++i) {
             futures.emplace_back(search_pool_->push([&, index = i]() {
-                pq_flash_index_->aisaq_cached_beam_search(warmup + (index * warmup_aligned_dim), 1, warmup_L,
+                ssd_graph_index_->aisaq_cached_beam_search(warmup + (index * warmup_aligned_dim), 1, warmup_L,
                                                           warmup_result_ids_64.data() + (index * 1),
                                                           warmup_result_dists.data() + (index * 1), 4);
             }));
@@ -648,7 +672,7 @@ template <typename DataType>
 expected<DataSetPtr>
 AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
                                  milvus::OpContext* op_context) const {
-    if (!is_prepared_.load() || !pq_flash_index_) {
+    if (!is_prepared_.load() || !ssd_graph_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load AiSAQ.";
         return expected<DataSetPtr>::Err(Status::empty_index, "AiSAQ not loaded");
     }
@@ -710,7 +734,7 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
         futures.emplace_back(search_pool_->push([&, index = row, p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
             knowhere::checkCancellation(op_context);
             diskann::QueryStats stats;
-            pq_flash_index_->aisaq_cached_beam_search(xq + (index * dim), k, lsearch, p_id_ptr + (index * k),
+            ssd_graph_index_->aisaq_cached_beam_search(xq + (index * dim), k, lsearch, p_id_ptr + (index * k),
                                                       p_dist_ptr + (index * k), beamwidth, false, &stats, feder_result,
                                                       bitset, filter_ratio, &aisaq_search_config);
 #ifdef NOT_COMPILE_FOR_SWIG
@@ -767,7 +791,7 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
         // backend storage.
         return GenResultDataSet(0, dim, nullptr);
     }
-    if (!is_prepared_.load() || !pq_flash_index_) {
+    if (!is_prepared_.load() || !ssd_graph_index_) {
         LOG_KNOWHERE_ERROR_ << "Failed to load AiSAQ.";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
@@ -777,7 +801,7 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
         return expected<DataSetPtr>::Err(Status::malloc_error, "failed to allocate memory for data");
     }
 
-    if (TryDiskANNCall([&]() { pq_flash_index_->aisaq_get_vector_by_ids(ids, rows, data); }) != Status::success) {
+    if (TryDiskANNCall([&]() { ssd_graph_index_->aisaq_get_vector_by_ids(ids, rows, data); }) != Status::success) {
         delete[] data;
         return expected<DataSetPtr>::Err(Status::aisaq_error, "failed to get vector");
     };
@@ -789,29 +813,29 @@ template <typename DataType>
 expected<DataSetPtr>
 AisaqIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     std::vector<int64_t> entry_points;
-    auto num_medoids = pq_flash_index_->get_num_medoids();
+    auto num_medoids = ssd_graph_index_->get_num_medoids();
     entry_points.reserve(num_medoids);
 
     for (size_t i = 0; i < num_medoids; i++) {
-        entry_points.push_back(pq_flash_index_->get_medoids()[i]);
+        entry_points.push_back(ssd_graph_index_->get_medoids()[i]);
     }
     auto aisaq_conf = static_cast<const DiskANNConfig&>(*cfg);
     LOG_KNOWHERE_INFO_ << "Count " << Count();
     LOG_KNOWHERE_INFO_ << "max_degree " << aisaq_conf.max_degree.value();
     LOG_KNOWHERE_INFO_ << "search_list_size " << aisaq_conf.search_list_size.value();
-    LOG_KNOWHERE_INFO_ << "pq_code_budget_gb " << aisaq_conf.pq_code_budget_gb.value();
     LOG_KNOWHERE_INFO_ << "build_dram_budget_gb " << aisaq_conf.build_dram_budget_gb.value();
     LOG_KNOWHERE_INFO_ << "disk_pq_dims " << aisaq_conf.disk_pq_dims.value();
     LOG_KNOWHERE_INFO_ << "accelerate_build " << aisaq_conf.accelerate_build.value();
     LOG_KNOWHERE_INFO_ << "data_path " << aisaq_conf.data_path.value();
-    feder::diskann::DiskANNMeta meta(aisaq_conf.data_path.value(), aisaq_conf.max_degree.value(),
-                                     aisaq_conf.search_list_size.value(), aisaq_conf.pq_code_budget_gb.value(),
-                                     aisaq_conf.build_dram_budget_gb.value(), aisaq_conf.disk_pq_dims.value(),
-                                     aisaq_conf.accelerate_build.value(), Count(), entry_points);
+    feder::diskann::DiskANNMeta meta(
+        aisaq_conf.data_path.value(), aisaq_conf.max_degree.value(), aisaq_conf.search_list_size.value(),
+        aisaq_conf.build_dram_budget_gb.value(), aisaq_conf.disk_pq_dims.value(),
+        aisaq_conf.accelerate_build.value(), Count(), entry_points);
     std::unordered_set<int64_t> id_set(entry_points.begin(), entry_points.end());
 
     Json json_meta, json_id_set;
     nlohmann::to_json(json_meta, meta);
+    aisaq_conf.navigation.AppendBuildMetadata(ssd_graph_index_->get_navigation_codec(), json_meta["build_params_"]);
     nlohmann::to_json(json_id_set, id_set);
     return GenResultDataSet(json_meta.dump(), json_id_set.dump());
 }

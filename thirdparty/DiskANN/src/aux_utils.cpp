@@ -22,7 +22,7 @@
 #include "diskann/index.h"
 #include "diskann/partition_and_pq.h"
 #include "diskann/percentile_stats.h"
-#include "diskann/pq_flash_index.h"
+#include "diskann/ssd_graph_index.h"
 #include "knowhere/comp/task.h"
 #include "tsl/robin_set.h"
 #ifdef KNOWHERE_WITH_CUVS
@@ -678,10 +678,10 @@ namespace diskann {
   }
 
   template<typename T>
-  void generate_cache_list_from_graph_with_pq(
+  void generate_cache_list_from_graph(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
-      const std::string &sample_file, const std::string &pq_pivots_path,
-      const std::string &pq_compressed_code_path, const unsigned entry_point,
+      const std::string &sample_file, const NavigationStore &navigation,
+      const unsigned                            entry_point,
       const std::vector<std::vector<unsigned>> &graph,
       const std::string                        &cache_file) {
     if (num_nodes_to_cache <= 0) {
@@ -715,18 +715,6 @@ namespace diskann {
       num_nodes_to_cache = points_num;
     }
 
-    std::unique_ptr<uint8_t[]> pq_code;
-    diskann::FixedChunkPQTable pq_table;
-    uint64_t                   pq_chunks, pq_npts = 0;
-    if (file_exists(pq_pivots_path) && file_exists(pq_compressed_code_path)) {
-      diskann::load_bin<_u8>(pq_compressed_code_path, pq_code, pq_npts,
-                             pq_chunks);
-      pq_table.load_pq_centroid_bin(pq_pivots_path.c_str(), pq_chunks);
-    } else {
-      LOG_KNOWHERE_ERROR_
-          << "PQ pivots and compressed code not found. Not generating cache.";
-      return;
-    }
     LOG_KNOWHERE_INFO_ << "Use " << sample_num << " sampled quries to generate "
                        << num_nodes_to_cache << " cached nodes.";
     std::vector<folly::Future<folly::Unit>> futures;
@@ -767,28 +755,15 @@ namespace diskann {
           }
         }
 
-        // prepare pq table and pq code
-        auto pq_table_dists =
-            std::shared_ptr<float[]>(new float[256 * aligned_dim]);
+        auto computer = navigation.CreateDistanceComputer(aligned_dim, R);
+        computer->set_query(query_float.get());
         auto scratch_dists = std::shared_ptr<float[]>(new float[R]);
-        auto scratch_ids = std::shared_ptr<_u8[]>(new _u8[R * aligned_dim]);
-        pq_table.populate_chunk_distances(query_float.get(),
-                                          pq_table_dists.get());
-
-        auto compute_dists = [&, scratch_ids, pq_table_dists](
-                                 const unsigned *ids, const _u64 n_ids,
-                                 float *dists_out) {
-          aggregate_coords(ids, n_ids, pq_code.get(), pq_chunks,
-                           scratch_ids.get());
-          pq_dist_lookup(scratch_ids.get(), n_ids, pq_chunks,
-                         pq_table_dists.get(), dists_out);
-        };
 
         // init search list and search graph
         auto retset = std::vector<Neighbor>(search_l * 2);
         auto visited = boost::dynamic_bitset<>{points_num, 0};
 
-        compute_dists(&entry_point, 1, scratch_dists.get());
+        computer->compute_distances(&entry_point, 1, scratch_dists.get());
         retset[0].id = entry_point;
         retset[0].flag = true;
         retset[0].distance = scratch_dists[0];
@@ -807,8 +782,8 @@ namespace diskann {
                   .fetch_add(1);
             }
             _u64 neighbor_num = graph[target_id].size();
-            compute_dists(graph[target_id].data(), neighbor_num,
-                          scratch_dists.get());
+            computer->compute_distances(graph[target_id].data(), neighbor_num,
+                                        scratch_dists.get());
 
             for (size_t m = 0; m < neighbor_num; m++) {
               auto id = graph[target_id][m];
@@ -861,7 +836,7 @@ namespace diskann {
   // 99.9 latency not blowing up
   template<typename T>
   uint32_t optimize_beamwidth(
-      std::unique_ptr<diskann::PQFlashIndex<T>> &pFlashIndex, T *tuning_sample,
+      std::unique_ptr<diskann::SSDGraphIndex<T>> &pFlashIndex, T *tuning_sample,
       _u64 tuning_sample_num, _u64 tuning_sample_aligned_dim, uint32_t L,
       uint32_t nthreads, uint32_t start_bw) {
     uint32_t cur_bw = start_bw;
@@ -1608,7 +1583,7 @@ void create_aisaq_layout(const std::string base_file, const std::string mem_inde
 }
 
 template<typename T>
-  int build_disk_index(BuildConfig &config) {
+  int build_disk_index(BuildConfig &config, NavigationStore &navigation) {
     if (!knowhere::KnowhereFloatTypeCheck<T>::value &&
         (config.compare_metric == diskann::Metric::INNER_PRODUCT ||
          config.compare_metric == diskann::Metric::COSINE)) {
@@ -1629,9 +1604,6 @@ template<typename T>
     std::string data_file_to_use = base_file;
     std::string data_file_to_save = base_file;
     std::string index_prefix_path = config.index_file_path;
-    std::string pq_pivots_path = get_pq_pivots_filename(index_prefix_path);
-    std::string pq_compressed_vectors_path =
-        get_pq_compressed_filename(index_prefix_path);
     std::string mem_index_path = index_prefix_path + "_mem.index";
     std::string disk_index_path = get_disk_index_filename(index_prefix_path);
     std::string medoids_path = get_disk_index_medoids_filename(disk_index_path);
@@ -1685,12 +1657,9 @@ template<typename T>
     unsigned R = config.max_degree;
     unsigned L = config.search_list_size;
 
-    double pq_code_size_limit = get_memory_budget(config.pq_code_size_gb);
-    if (pq_code_size_limit <= 0) {
-      LOG(ERROR) << "Insufficient memory budget (or string was not in right "
-                    "format). Should be > 0.";
-      return -1;
-    }
+    const int navigation_validation = navigation.ValidateBuild();
+    if (navigation_validation != 0)
+      return navigation_validation;
     double indexing_ram_budget = config.index_mem_gb;
     if (indexing_ram_budget <= 0) {
       LOG(ERROR) << "Not building index. Please provide more RAM budget";
@@ -1728,29 +1697,18 @@ template<typename T>
     diskann::get_bin_metadata(data_file_to_use.c_str(), points_num, dim);
 
     LOG_KNOWHERE_INFO_ << "Starting index build for : " << points_num << " vectors with dim: " << dim << " R=" << R << " L=" << L
-                        << " Query RAM budget: "
-                        << pq_code_size_limit / (1024 * 1024 * 1024) << "(GiB)"
                         << " Indexing ram budget: " << indexing_ram_budget
                         << "(GiB)";
 
-    size_t num_pq_chunks =
-        (size_t) (std::floor)(_u64(pq_code_size_limit / points_num));
-
-    num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
-    num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
-    num_pq_chunks = num_pq_chunks > diskann::defaults::MAX_PQ_CHUNKS ? diskann::defaults::MAX_PQ_CHUNKS : num_pq_chunks;
-
-    LOG_KNOWHERE_INFO_ << "Compressing " << dim << "-dimensional data into "
-                       << num_pq_chunks << " bytes per vector.";
-
-    size_t train_size, train_dim;
+    size_t                   train_size = 0, train_dim = dim;
     std::unique_ptr<float[]> train_data = nullptr;
 
     double p_val = ((double) MAX_PQ_TRAINING_SET_SIZE / (double) points_num);
     // generates random sample and sets it to train_data and updates
     // train_size
-    gen_random_slice<T>(data_file_to_use.c_str(), p_val, train_data, train_size,
-                        train_dim);
+    if (use_disk_pq || navigation.NeedsTrainingSample())
+      gen_random_slice<T>(data_file_to_use.c_str(), p_val, train_data,
+                          train_size, train_dim);
 
     if (use_disk_pq) {
       if (disk_pq_dims > dim)
@@ -1773,26 +1731,13 @@ template<typename T>
     }
     LOG_KNOWHERE_DEBUG_ << "Training data loaded of size " << train_size;
 
-    // don't translate data to make zero mean for PQ compression. We must not
-    // translate for inner product search.
-    bool make_zero_mean = true;
-    if (config.compare_metric != diskann::Metric::L2)
-      make_zero_mean = false;
-
-    auto pq_s = std::chrono::high_resolution_clock::now();
-
-    LOG_KNOWHERE_INFO_ << "Generating PQ pivots";
-    generate_pq_pivots(train_data.get(), train_size, (uint32_t) dim, 256,
-                       (uint32_t) num_pq_chunks, NUM_KMEANS_REPS,
-                       pq_pivots_path, make_zero_mean);
-
-    LOG_KNOWHERE_INFO_ << "Encoding PQ data";
-    generate_pq_data_from_pivots<T>(data_file_to_use.c_str(), 256,
-                                    (uint32_t) num_pq_chunks, pq_pivots_path,
-                                    pq_compressed_vectors_path);
-    auto pq_e = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> pq_diff = pq_e - pq_s;
-    LOG_KNOWHERE_INFO_ << "Training PQ codes cost: " << pq_diff.count() << "s";
+    NavigationBuildContext navigation_context{
+        index_prefix_path,     data_file_to_use, knowhere::datatype_v<T>,
+        config.compare_metric, points_num,       dim,
+        train_data.get(),      train_size};
+    const int navigation_result = navigation.Build(navigation_context);
+    if (navigation_result != 0)
+      return navigation_result;
 // Gopal. Splitting diskann_dll into separate DLLs for search and build.
 // This code should only be available in the "build" DLL.
 #if defined(RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && \
@@ -1870,19 +1815,24 @@ template<typename T>
       auto final_graph = vamana_index->get_graph();
       auto entry_point = vamana_index->get_entry_point();
 
-      auto generate_cache_mem_usage =
-          kCacheMemFactor *
-          (get_file_size(mem_index_path) + get_file_size(sample_data_file) +
-           get_file_size(pq_compressed_vectors_path) +
-           get_file_size(pq_pivots_path)) /
-          (1024 * 1024 * 1024);
-
-      if (config.num_nodes_to_cache > 0 && final_graph->size() != 0 &&
-          generate_cache_mem_usage < config.index_mem_gb) {
-        generate_cache_list_from_graph_with_pq<T>(
-            config.num_nodes_to_cache, config.max_degree, config.compare_metric,
-            sample_data_file, pq_pivots_path, pq_compressed_vectors_path,
-            entry_point, *final_graph, cached_nodes_file);
+      if (config.num_nodes_to_cache > 0 && !final_graph->empty()) {
+        const auto navigation_memory =
+            navigation.BuildCacheMemorySize(index_prefix_path);
+        const auto common_memory =
+            get_file_size(mem_index_path) + get_file_size(sample_data_file);
+        if (navigation_memory && kCacheMemFactor *
+                                         (common_memory + *navigation_memory) /
+                                         (1024 * 1024 * 1024) <
+                                     config.index_mem_gb) {
+          // Build objects use resident codes; AiSAQ runtime reader selection
+          // remains separate. Load only after the original memory gate.
+          if (navigation.Load(index_prefix_path) != 0)
+            throw ANNException("Failed to load navigation for build cache", -1);
+          generate_cache_list_from_graph<T>(
+              config.num_nodes_to_cache, config.max_degree,
+              config.compare_metric, sample_data_file, navigation, entry_point,
+              *final_graph, cached_nodes_file);
+        }
       }
     }
     auto                          e = std::chrono::high_resolution_clock::now();
@@ -1936,27 +1886,27 @@ template<typename T>
 
   // knowhere not support uint8/int8 diskann
   // template uint32_t optimize_beamwidth<int8_t>(
-  //     std::unique_ptr<diskann::PQFlashIndex<int8_t>> &pFlashIndex,
+  //     std::unique_ptr<diskann::SSDGraphIndex<int8_t>> &pFlashIndex,
   //     int8_t *tuning_sample, _u64 tuning_sample_num,
   //     _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
   //     uint32_t start_bw);
   // template uint32_t optimize_beamwidth<uint8_t>(
-  //     std::unique_ptr<diskann::PQFlashIndex<uint8_t>> &pFlashIndex,
+  //     std::unique_ptr<diskann::SSDGraphIndex<uint8_t>> &pFlashIndex,
   //     uint8_t *tuning_sample, _u64 tuning_sample_num,
   //     _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
   //     uint32_t start_bw);
   template uint32_t optimize_beamwidth<float>(
-      std::unique_ptr<diskann::PQFlashIndex<float>> &pFlashIndex,
+      std::unique_ptr<diskann::SSDGraphIndex<float>> &pFlashIndex,
       float *tuning_sample, _u64 tuning_sample_num,
       _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
       uint32_t start_bw);
   template uint32_t optimize_beamwidth<knowhere::fp16>(
-      std::unique_ptr<diskann::PQFlashIndex<knowhere::fp16>> &pFlashIndex,
+      std::unique_ptr<diskann::SSDGraphIndex<knowhere::fp16>> &pFlashIndex,
       knowhere::fp16 *tuning_sample, _u64 tuning_sample_num,
       _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
       uint32_t start_bw);
   template uint32_t optimize_beamwidth<knowhere::bf16>(
-      std::unique_ptr<diskann::PQFlashIndex<knowhere::bf16>> &pFlashIndex,
+      std::unique_ptr<diskann::SSDGraphIndex<knowhere::bf16>> &pFlashIndex,
       knowhere::bf16 *tuning_sample, _u64 tuning_sample_num,
       _u64 tuning_sample_aligned_dim, uint32_t L, uint32_t nthreads,
       uint32_t start_bw);
@@ -1964,9 +1914,11 @@ template<typename T>
   // not support build uint8/int8 diskindex in knowhere
   // template int build_disk_index<int8_t>(BuildConfig &config);
   // template int build_disk_index<uint8_t>(BuildConfig &config);
-  template int build_disk_index<float>(BuildConfig &config);
-  template int build_disk_index<knowhere::fp16>(BuildConfig &config);
-  template int build_disk_index<knowhere::bf16>(BuildConfig &config);
+  template int build_disk_index<float>(BuildConfig &config, NavigationStore &);
+  template int build_disk_index<knowhere::fp16>(BuildConfig &config,
+                                                NavigationStore &);
+  template int build_disk_index<knowhere::bf16>(BuildConfig &config,
+                                                NavigationStore &);
 
   template std::unique_ptr<diskann::Index<int8_t>>
   build_merged_vamana_index<int8_t>(
@@ -1999,34 +1951,34 @@ template<typename T>
       double sampling_rate, double ram_budget, std::string mem_index_path,
       std::string medoids_path, std::string centroids_file);
 
-  template void generate_cache_list_from_graph_with_pq<int8_t>(
+  template void generate_cache_list_from_graph<int8_t>(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
-      const std::string &sample_file, const std::string &pq_pivots_path,
-      const std::string &pq_compressed_code_path, const unsigned entry_point,
+      const std::string &sample_file, const NavigationStore &navigation,
+      const unsigned                            entry_point,
       const std::vector<std::vector<unsigned>> &graph,
       const std::string                        &cache_file);
-  template void generate_cache_list_from_graph_with_pq<float>(
+  template void generate_cache_list_from_graph<float>(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
-      const std::string &sample_file, const std::string &pq_pivots_path,
-      const std::string &pq_compressed_code_path, const unsigned entry_point,
+      const std::string &sample_file, const NavigationStore &navigation,
+      const unsigned                            entry_point,
       const std::vector<std::vector<unsigned>> &graph,
       const std::string                        &cache_file);
-  template void generate_cache_list_from_graph_with_pq<uint8_t>(
+  template void generate_cache_list_from_graph<uint8_t>(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
-      const std::string &sample_file, const std::string &pq_pivots_path,
-      const std::string &pq_compressed_code_path, const unsigned entry_point,
+      const std::string &sample_file, const NavigationStore &navigation,
+      const unsigned                            entry_point,
       const std::vector<std::vector<unsigned>> &graph,
       const std::string                        &cache_file);
-  template void generate_cache_list_from_graph_with_pq<knowhere::fp16>(
+  template void generate_cache_list_from_graph<knowhere::fp16>(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
-      const std::string &sample_file, const std::string &pq_pivots_path,
-      const std::string &pq_compressed_code_path, const unsigned entry_point,
+      const std::string &sample_file, const NavigationStore &navigation,
+      const unsigned                            entry_point,
       const std::vector<std::vector<unsigned>> &graph,
       const std::string                        &cache_file);
-  template void generate_cache_list_from_graph_with_pq<knowhere::bf16>(
+  template void generate_cache_list_from_graph<knowhere::bf16>(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
-      const std::string &sample_file, const std::string &pq_pivots_path,
-      const std::string &pq_compressed_code_path, const unsigned entry_point,
+      const std::string &sample_file, const NavigationStore &navigation,
+      const unsigned                            entry_point,
       const std::vector<std::vector<unsigned>> &graph,
       const std::string                        &cache_file);
   template void create_aisaq_layout<float>(

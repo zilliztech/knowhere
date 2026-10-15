@@ -14,6 +14,7 @@
 
 #include "diskann/defaults.h"
 #include "knowhere/config.h"
+#include "navigation_config.h"
 
 namespace knowhere {
 
@@ -26,6 +27,7 @@ constexpr const CFG_INT::value_type kDefaultSearchListSizeForBuild = 128;
 
 class DiskANNConfig : public BaseConfig {
  public:
+    DiskANNNavigationConfig navigation;
     // This is the degree of the graph index, typically between 60 and 150. Larger R will result in larger indices and
     // longer indexing times, but better search quality.
     CFG_INT max_degree;
@@ -35,14 +37,6 @@ class DiskANNConfig : public BaseConfig {
     // somewhat compromise on quality.
     CFG_INT search_list_size;
 
-    // The ratio of the size reserved for the pq code to the size of the raw data (defined with vec_field_size_gb)
-    // This parameter will replace pq_code_budget_gb to avoid calculating the actual size on the Milvus side.
-    // The index can indirectly obtain pq_code_budget_gb by vec_field_size_gb * pq_code_budget_gb_ratio
-    CFG_FLOAT pq_code_budget_gb_ratio;
-    // Limit the size of the PQ code after the raw vector has been PQ-encoded. PQ code is a (pq_code_budget_gb * 1024 *
-    // 1024 * 1024) / row_num)-dimensional uint8 vector. If pq_code_budget_gb is too large, it will be adjusted to the
-    // size of dim*row_num.
-    CFG_FLOAT pq_code_budget_gb;
     // Limit on the memory allowed for building the index in GB. If you specify a value less than what is required to
     // build the index in one pass, the index is built using a divide and conquer approach so that sub-graphs will fit
     // in the RAM budget. The sub-graphs are overlayed to build the overall index. This approach can be up to 1.5 times
@@ -58,7 +52,7 @@ class DiskANNConfig : public BaseConfig {
     CFG_BOOL accelerate_build;
 
     // The ratio of the size reserved for the search cache to the size of the raw data (defined with vec_field_size_gb)
-    // This parameter will replace pq_code_budget_gb to avoid calculating the actual size on the Milvus side.
+    // This parameter avoids calculating the actual size on the Milvus side.
     // The index can indirectly obtain search_cache_budget_gb by vec_field_size_gb * search_cache_budget_gb_ratio
     CFG_FLOAT search_cache_budget_gb_ratio;
 
@@ -85,6 +79,7 @@ class DiskANNConfig : public BaseConfig {
     // use PQ + Refine. Default to -1.0f, negative vlaues will use dynamic threshold calculator given topk.
     CFG_FLOAT filter_threshold;
     KNOWHERE_DECLARE_CONFIG(DiskANNConfig) {
+        navigation.Register(*this);
         KNOWHERE_CONFIG_DECLARE_FIELD(max_degree)
             .description("the degree of the graph index.")
             .set_default(48)
@@ -98,16 +93,6 @@ class DiskANNConfig : public BaseConfig {
             .for_search()
             .for_range_search()
             .for_iterator();
-        KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb_ratio)
-            .description("the size of PQ compared with vector field data")
-            .set_default(0)
-            .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
-            .for_train();
-        KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb)
-            .description("the ratio of the size reserved for the pq code to the size of the raw data.")
-            .set_default(0)
-            .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
-            .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(build_dram_budget_gb)
             .description("limit on the memory allowed for building the index in GB.")
             .set_default(0)
@@ -168,13 +153,14 @@ class DiskANNConfig : public BaseConfig {
 
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        if (auto error = navigation.CheckAndAdjust(param_type, vec_field_size_gb.value_or(0))) {
+            return HandleError(err_msg, *error, Status::invalid_args);
+        }
         switch (param_type) {
             case PARAM_TYPE::TRAIN: {
                 if (!search_list_size.has_value()) {
                     search_list_size = kDefaultSearchListSizeForBuild;
                 }
-                pq_code_budget_gb =
-                    std::max(pq_code_budget_gb.value(), pq_code_budget_gb_ratio.value() * vec_field_size_gb.value());
                 search_cache_budget_gb = std::max(search_cache_budget_gb.value(),
                                                   search_cache_budget_gb_ratio.value() * vec_field_size_gb.value());
                 break;
@@ -193,6 +179,21 @@ class DiskANNConfig : public BaseConfig {
                 break;
         }
         return Status::success;
+    }
+};
+class DiskANNRaBitQConfig : public DiskANNConfig {
+ public:
+    DiskANNRaBitQConfig() {
+        // Register in the same flat dictionary as ordinary DISKANN.
+        EntryAccess<CFG_STRING>(std::get_if<Entry<CFG_STRING>>(&__DICT__.at("navigation_codec")))
+            .description("DISKANN_RABITQ requires RABITQ navigation")
+            .set_default("RABITQ");
+    }
+    Status
+    CheckAndAdjust(PARAM_TYPE type, std::string* error) override {
+        if (navigation.navigation_codec.value_or("RABITQ") != "RABITQ")
+            return HandleError(error, "DISKANN_RABITQ requires navigation_codec=RABITQ", Status::invalid_args);
+        return DiskANNConfig::CheckAndAdjust(type, error);
     }
 };
 }  // namespace knowhere

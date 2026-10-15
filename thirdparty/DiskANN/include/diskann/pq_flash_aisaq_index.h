@@ -5,7 +5,8 @@
 #define PQ_FLASH_AISAQ_INDEX_H
 
 #include "diskann/aisaq_neighbor_priority_queue.h"
-#include "diskann/pq_flash_index.h"
+#include "diskann/ssd_graph_index.h"
+#include "diskann/pq_navigation.h"
 #include "diskann/timer.h"
 
 #pragma once
@@ -48,7 +49,7 @@ public:
 };
 
 template<typename T>
-class PQFlashAisaqIndex: public PQFlashIndex<T> {
+class PQFlashAisaqIndex: public SSDGraphIndex<T> {
 public:
     PQFlashAisaqIndex(std::shared_ptr<AlignedFileReader> fileReader,
                 diskann::Metric metric = diskann::Metric::L2);
@@ -80,17 +81,20 @@ public:
                              uint64_t pq_cache_size_bytes, uint32_t policy, bool is_rearranged);
     bool get_rearranged_index();
     bool get_rearrange_during_search();
-    int aisaq_load(uint32_t num_threads, const char *index_prefix);
-    int aisaq_load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
-                                       const char *pivots_filepath, const char *compressed_filepath);
+    int  aisaq_load(uint32_t num_threads, const char *index_prefix,
+                    std::unique_ptr<PQNavigationStore> navigation = nullptr);
+    int  aisaq_load_from_separate_paths(
+         uint32_t num_threads, const char *index_filepath,
+         const char *pivots_filepath, const char *compressed_filepath,
+         std::unique_ptr<PQNavigationStore> navigation = nullptr);
     void use_medoids_data_as_centroids();
     
     uint8_t *aisaq_pq_cache_lookup(uint32_t id);
 
     void get_entry_point_medoid(uint32_t &best_medoid, float &best_dist,
-                                float *pq_dists, float *dist_scratch,
-                                float *query_float);
-    
+                                PQNavigationDistanceComputer &navigation,
+                                float *dist_scratch, float *query_float);
+
     void updata_io_stats(QueryStats &stats, size_t count, uint64_t size_in_sectors);
     
     void prepare_search_results(std::vector<Neighbor> &full_retset,
@@ -153,6 +157,11 @@ public:
     
     ConcurrentQueue<AisaqThreadData <T>> aisaq_thread_data;
     std::string index_prefix;
+
+   private:
+    uint64_t pq_chunks() const {
+      return static_cast<const PQNavigationStore &>(*this->navigation_).ChunkCount();
+    }
 };
 } // namespace diskann
 #endif /* PQ_FLASH_AISAQ_INDEX_H */
