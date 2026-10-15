@@ -290,16 +290,6 @@ CheckMetric(const std::string& diskann_metric) {
 }
 }  // namespace
 
-static size_t
-get_pq_size(size_t points_num, size_t dim, double pq_code_size_gb) {
-    double pq_code_size_limit = diskann::get_memory_budget(pq_code_size_gb);
-    size_t num_pq_chunks = static_cast<size_t>((std::floor)(static_cast<_u64>(pq_code_size_limit / points_num)));
-    num_pq_chunks = num_pq_chunks <= 0 ? 1 : num_pq_chunks;
-    num_pq_chunks = num_pq_chunks > dim ? dim : num_pq_chunks;
-    num_pq_chunks = num_pq_chunks > diskann::defaults::MAX_PQ_CHUNKS ? diskann::defaults::MAX_PQ_CHUNKS : num_pq_chunks;
-    return num_pq_chunks * sizeof(_u8);
-}
-
 template <typename DataType>
 Status
 AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) {
@@ -338,7 +328,6 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                        << " number of entry points: " << build_conf.num_entry_points.value()
                        << " max degree: " << build_conf.max_degree.value()
                        << " search list size: " << build_conf.search_list_size.value()
-                       << " pq_code_budget_gb: " << build_conf.pq_code_budget_gb.value()
                        << " build_dram_budget_gb: " << build_conf.build_dram_budget_gb.value()
                        << " search_cache_budget_gb: " << build_conf.search_cache_budget_gb.value()
                        << " disk PQ budget: " << build_conf.disk_pq_dims.value();
@@ -352,7 +341,7 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
         LOG_KNOWHERE_ERROR_ << "AiSAQ file path for build is empty.";
         return Status::invalid_param_in_json;
     }
-    auto navigation = std::make_unique<diskann::PQNavigationStore>(false);
+    auto navigation = build_conf.navigation.CreateForBuild();
     if (AnyIndexFileExist(build_conf.index_prefix.value(), *navigation)) {
         LOG_KNOWHERE_ERROR_ << "This index prefix already has index files.";
         return Status::disk_file_error;
@@ -383,7 +372,8 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
     }();
 
     uint32_t inline_pq_vectors;
-    uint32_t pq_compressed_nbytes = get_pq_size(count, dim, build_conf.pq_code_budget_gb.value());
+    uint32_t pq_compressed_nbytes =
+        diskann::PQNavigationStore::CodeSize(count, dim, build_conf.navigation.pq.BuildOptions());
     uint64_t max_node_len;
     // calc max_node_len in order to estimate number of nodes to cache
     if (build_conf.disk_pq_dims.value() > 0) {
@@ -410,7 +400,6 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                                                      diskann_metric,
                                                      static_cast<unsigned>(build_conf.max_degree.value()),
                                                      static_cast<unsigned>(build_conf.search_list_size.value()),
-                                                     static_cast<double>(build_conf.pq_code_budget_gb.value()),
                                                      static_cast<double>(build_conf.build_dram_budget_gb.value()),
                                                      static_cast<uint32_t>(build_conf.disk_pq_dims.value()),
                                                      false,
@@ -422,7 +411,7 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                                                      build_conf.rearrange.value(),
                                                      build_conf.num_entry_points.value()};
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
-        int res = diskann::build_disk_index<DataType>(aisaq_internal_build_config);
+        int res = diskann::build_disk_index<DataType>(aisaq_internal_build_config, *navigation);
         if (res != 0)
             throw diskann::ANNException("AiSAQ::build_disk_index returned non-zero value: " + std::to_string(res), -1);
     }));
@@ -468,7 +457,8 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         return Status::invalid_metric_type;
     }
     if (is_prepared_.load()) {
-        if (prep_conf.navigation_codec && *prep_conf.navigation_codec != ssd_graph_index_->get_navigation_codec()) {
+        if (prep_conf.navigation.navigation_codec &&
+            *prep_conf.navigation.navigation_codec != ssd_graph_index_->get_navigation_codec()) {
             return Status::invalid_serialized_index_type;
         }
         return Status::success;
@@ -501,7 +491,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
             context.exists = [&](const std::string& file) { return file_manager_->IsExisted(file); };
         }
         const auto codec = diskann::ReadNavigationCodec(context);
-        if (prep_conf.navigation_codec && *prep_conf.navigation_codec != codec) {
+        if (prep_conf.navigation.navigation_codec && *prep_conf.navigation.navigation_codec != codec) {
             throw diskann::NavigationTypeError("Requested navigation codec does not match stored model");
         }
         if (codec != "PQ") {
@@ -833,19 +823,19 @@ AisaqIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     LOG_KNOWHERE_INFO_ << "Count " << Count();
     LOG_KNOWHERE_INFO_ << "max_degree " << aisaq_conf.max_degree.value();
     LOG_KNOWHERE_INFO_ << "search_list_size " << aisaq_conf.search_list_size.value();
-    LOG_KNOWHERE_INFO_ << "pq_code_budget_gb " << aisaq_conf.pq_code_budget_gb.value();
     LOG_KNOWHERE_INFO_ << "build_dram_budget_gb " << aisaq_conf.build_dram_budget_gb.value();
     LOG_KNOWHERE_INFO_ << "disk_pq_dims " << aisaq_conf.disk_pq_dims.value();
     LOG_KNOWHERE_INFO_ << "accelerate_build " << aisaq_conf.accelerate_build.value();
     LOG_KNOWHERE_INFO_ << "data_path " << aisaq_conf.data_path.value();
-    feder::diskann::DiskANNMeta meta(aisaq_conf.data_path.value(), aisaq_conf.max_degree.value(),
-                                     aisaq_conf.search_list_size.value(), aisaq_conf.pq_code_budget_gb.value(),
-                                     aisaq_conf.build_dram_budget_gb.value(), aisaq_conf.disk_pq_dims.value(),
-                                     aisaq_conf.accelerate_build.value(), Count(), entry_points);
+    feder::diskann::DiskANNMeta meta(
+        aisaq_conf.data_path.value(), aisaq_conf.max_degree.value(), aisaq_conf.search_list_size.value(),
+        aisaq_conf.build_dram_budget_gb.value(), aisaq_conf.disk_pq_dims.value(),
+        aisaq_conf.accelerate_build.value(), Count(), entry_points);
     std::unordered_set<int64_t> id_set(entry_points.begin(), entry_points.end());
 
     Json json_meta, json_id_set;
     nlohmann::to_json(json_meta, meta);
+    aisaq_conf.navigation.AppendBuildMetadata(ssd_graph_index_->get_navigation_codec(), json_meta["build_params_"]);
     nlohmann::to_json(json_id_set, id_set);
     return GenResultDataSet(json_meta.dump(), json_id_set.dump());
 }

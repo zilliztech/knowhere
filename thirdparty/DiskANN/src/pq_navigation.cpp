@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "diskann/pq_navigation.h"
+#include "diskann/aux_utils.h"
 #include "diskann/defaults.h"
 #include "diskann/exceptions.h"
 #include "diskann/logger.h"
@@ -43,9 +44,75 @@ namespace diskann {
   }
 
   PQNavigationStore::PQNavigationStore(bool resident_codes, bool rearranged,
-                                       std::string pivots_path)
-      : resident_codes_(resident_codes), rearranged_(rearranged),
-        pivots_path_(std::move(pivots_path)) {
+                                       std::string              pivots_path,
+                                       PQNavigationBuildOptions build_options)
+      : build_options_(build_options), resident_codes_(resident_codes),
+        rearranged_(rearranged), pivots_path_(std::move(pivots_path)) {
+  }
+
+  size_t PQNavigationStore::CodeSize(size_t count, size_t dimension,
+                                     const PQNavigationBuildOptions& options) {
+    const double budget = get_memory_budget(options.code_budget_gb);
+    size_t       chunks = static_cast<size_t>(std::floor(_u64(budget / count)));
+    chunks = chunks <= 0 ? 1 : chunks;
+    chunks = std::min(chunks, dimension);
+    return std::min(chunks, size_t(defaults::MAX_PQ_CHUNKS));
+  }
+
+  int PQNavigationStore::ValidateBuild() const {
+    if (get_memory_budget(build_options_.code_budget_gb) <= 0) {
+      LOG(ERROR) << "Insufficient memory budget (or string was not in right "
+                    "format). Should be > 0.";
+      return -1;
+    }
+    return 0;
+  }
+
+  int PQNavigationStore::Build(const NavigationBuildContext& context) {
+    if (ValidateBuild() != 0)
+      return -1;
+    const auto chunks =
+        CodeSize(context.count, context.dimension, build_options_);
+    const auto pivots = get_pq_pivots_filename(context.prefix);
+    const auto codes = get_pq_compressed_filename(context.prefix);
+    LOG_KNOWHERE_INFO_ << "Compressing " << context.dimension
+                       << "-dimensional data into " << chunks
+                       << " bytes per vector.";
+    const auto start = std::chrono::high_resolution_clock::now();
+    LOG_KNOWHERE_INFO_ << "Generating PQ pivots";
+    generate_pq_pivots(context.training_data, context.training_count,
+                       uint32_t(context.dimension), 256, uint32_t(chunks),
+                       NUM_KMEANS_REPS, pivots, context.metric == Metric::L2);
+    LOG_KNOWHERE_INFO_ << "Encoding PQ data";
+    switch (context.data_type) {
+      case knowhere::DataFormatEnum::fp32:
+        generate_pq_data_from_pivots<float>(context.data_path, 256, chunks,
+                                            pivots, codes);
+        break;
+      case knowhere::DataFormatEnum::fp16:
+        generate_pq_data_from_pivots<knowhere::fp16>(context.data_path, 256,
+                                                     chunks, pivots, codes);
+        break;
+      case knowhere::DataFormatEnum::bf16:
+        generate_pq_data_from_pivots<knowhere::bf16>(context.data_path, 256,
+                                                     chunks, pivots, codes);
+        break;
+      default:
+        throw ANNException("Unsupported PQ navigation input type", -1);
+    }
+    const std::chrono::duration<double> elapsed =
+        std::chrono::high_resolution_clock::now() - start;
+    LOG_KNOWHERE_INFO_ << "Training PQ codes cost: " << elapsed.count() << "s";
+    return 0;
+  }
+
+  std::optional<size_t> PQNavigationStore::BuildCacheMemorySize(
+      const std::string& prefix) const {
+    const auto pivots = get_pq_pivots_filename(prefix);
+    const auto codes = get_pq_compressed_filename(prefix);
+    if (!file_exists(pivots) || !file_exists(codes))
+      return std::nullopt;
+    return get_file_size(pivots) + get_file_size(codes);
   }
 
   void PQNavigationStore::GetNecessaryFilenames(
@@ -117,17 +184,18 @@ namespace diskann {
   }
 
   std::unique_ptr<NavigationDistanceComputer>
-  PQNavigationStore::CreateDistanceComputer(uint64_t aligned_dimension) const {
-    return std::make_unique<PQNavigationDistanceComputer>(*this,
-                                                          aligned_dimension);
+  PQNavigationStore::CreateDistanceComputer(uint64_t aligned_dimension,
+                                            uint64_t batch_capacity) const {
+    return std::make_unique<PQNavigationDistanceComputer>(
+        *this, aligned_dimension, batch_capacity);
   }
 
   PQNavigationDistanceComputer::PQNavigationDistanceComputer(
-      const PQNavigationStore& model, uint64_t aligned_dimension)
+      const PQNavigationStore& model, uint64_t aligned_dimension,
+      uint64_t batch_capacity)
       : model_(model) {
-    alloc_aligned(
-        reinterpret_cast<void**>(&gathered_codes_),
-        defaults::MAX_GRAPH_DEGREE * aligned_dimension * sizeof(uint8_t), 256);
+    alloc_aligned(reinterpret_cast<void**>(&gathered_codes_),
+                  batch_capacity * aligned_dimension * sizeof(uint8_t), 256);
     try {
       alloc_aligned(reinterpret_cast<void**>(&lookup_table_),
                     256 * aligned_dimension * sizeof(float), 256);

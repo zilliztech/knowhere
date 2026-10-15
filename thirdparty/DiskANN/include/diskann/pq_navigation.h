@@ -18,12 +18,17 @@ namespace diskann {
     virtual ~PQDataGetter() = default;
   };
 
+  struct PQNavigationBuildOptions {
+    double code_budget_gb = 0;
+  };
+
   class PQNavigationStore;
 
   class PQNavigationDistanceComputer final : public NavigationDistanceComputer {
    public:
-    PQNavigationDistanceComputer(const PQNavigationStore& model,
-                                 uint64_t                 aligned_dimension);
+    PQNavigationDistanceComputer(
+        const PQNavigationStore& model, uint64_t aligned_dimension,
+        uint64_t batch_capacity = defaults::MAX_GRAPH_DEGREE);
     ~PQNavigationDistanceComputer() override;
     void set_query(const float* query) override;
     void compute_distances(const unsigned* ids, uint64_t count,
@@ -62,12 +67,22 @@ namespace diskann {
 
   class PQNavigationStore final : public NavigationStore {
    public:
-    explicit PQNavigationStore(bool        resident_codes = true,
-                               bool        rearranged = false,
-                               std::string pivots_path = {});
+    explicit PQNavigationStore(bool                     resident_codes = true,
+                               bool                     rearranged = false,
+                               std::string              pivots_path = {},
+                               PQNavigationBuildOptions build_options = {});
     const char* CodecName() const override {
       return "PQ";
     }
+    int  ValidateBuild() const override;
+    bool NeedsTrainingSample() const override {
+      return true;
+    }
+    int                   Build(const NavigationBuildContext& context) override;
+    std::optional<size_t> BuildCacheMemorySize(
+        const std::string& prefix) const override;
+    static size_t CodeSize(size_t count, size_t dimension,
+                           const PQNavigationBuildOptions& options);
     int      Load(const std::string& prefix) override;
     void     GetNecessaryFilenames(const std::string&        prefix,
                                    std::vector<std::string>& filenames,
@@ -82,13 +97,15 @@ namespace diskann {
     size_t MemorySize() const override;
     size_t QueryMemorySize(uint64_t aligned_dimension) const override;
     std::unique_ptr<NavigationDistanceComputer> CreateDistanceComputer(
-        uint64_t aligned_dimension) const override;
+        uint64_t aligned_dimension,
+        uint64_t batch_capacity = defaults::MAX_GRAPH_DEGREE) const override;
     uint64_t ChunkCount() const {
       return chunks_;
     }
 
    private:
     friend class PQNavigationDistanceComputer;
+    PQNavigationBuildOptions   build_options_;
     bool                       resident_codes_;
     bool                       rearranged_;
     std::string                pivots_path_;

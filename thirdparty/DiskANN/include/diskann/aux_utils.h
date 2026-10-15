@@ -23,6 +23,7 @@
 #include "cached_io.h"
 #include "common_includes.h"
 #include "diskann/index.h"
+#include "diskann/navigation_runtime.h"
 #include "tsl/robin_set.h"
 #include "utils.h"
 #include "diskann/defaults.h"
@@ -89,10 +90,10 @@ namespace diskann {
       std::string centroids_file);
 
   template<typename T>
-  void generate_cache_list_from_graph_with_pq(
+  void generate_cache_list_from_graph(
       _u64 num_nodes_to_cache, unsigned R, const diskann::Metric compare_metric,
-      const std::string &sample_file, const std::string &pq_pivots_path,
-      const std::string &pq_compressed_code_path, const unsigned entry_point,
+      const std::string &sample_file, const NavigationStore &navigation,
+      const unsigned                            entry_point,
       const std::vector<std::vector<unsigned>> &graph,
       const std::string                        &cache_file);
 
@@ -110,8 +111,6 @@ namespace diskann {
     unsigned max_degree = 0;
     // L (indexing list size, better if >= R)
     unsigned search_list_size = 0;
-    // B (PQ code size in GB)
-    double pq_code_size_gb = 0.0;
     // M (memory limit while indexing)
     double index_mem_gb = 0.0;
     // B' (PQ dim for disk index: optional parameter for very
@@ -134,7 +133,7 @@ namespace diskann {
   };
 
   template<typename T>
-  int build_disk_index(BuildConfig &config);
+  int build_disk_index(BuildConfig &config, NavigationStore &navigation);
 
   template <typename T>
   void create_aisaq_layout(const std::string base_file, const std::string mem_index_file, const std::string output_file,
