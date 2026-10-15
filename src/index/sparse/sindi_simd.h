@@ -7,6 +7,18 @@
 #include "knowhere/operands.h"
 
 namespace knowhere::sparse::inverted::sindi {
+using packed_ip_accumulate_fn_t = float (*)(float, const uint8_t*, const uint8_t*, size_t, int32_t, float*);
+
+packed_ip_accumulate_fn_t
+get_packed_ip_kernel();
+
+float
+ip_accumulate_scalar_u12_e5m7(float, const uint8_t*, const uint8_t*, size_t, int32_t, float*);
+
+#if defined(__aarch64__) && defined(KNOWHERE_USE_SVE)
+float
+ip_accumulate_sve_u12_e5m7(float, const uint8_t*, const uint8_t*, size_t, int32_t, float*);
+#endif
 
 using packed_bm25_accumulate_fn_t = float (*)(float, const uint8_t*, const uint8_t*, size_t, int32_t, float*, float,
                                               float, float, const float*, const uint8_t*);
@@ -76,6 +88,10 @@ batch_insert_scalar(const float* scores, size_t docid_start, size_t count,
                     knowhere::ResultMinHeap<float, uint32_t>& topk_q, float& threshold, const BitsetView& bitset);
 
 #if defined(__x86_64__)
+float
+ip_accumulate_avx2_u12_e5m7(float, const uint8_t*, const uint8_t*, size_t, int32_t, float*);
+float
+ip_accumulate_avx512_u12_e5m7(float, const uint8_t*, const uint8_t*, size_t, int32_t, float*);
 float
 bm25_accumulate_avx2_u12_u4_lut(float, const uint8_t*, const uint8_t*, size_t, int32_t, float*, float, float, float,
                                 const float*, const uint8_t*);

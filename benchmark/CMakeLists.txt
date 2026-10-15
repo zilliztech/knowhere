@@ -85,11 +85,18 @@ else()
     message(STATUS "Skipping sparse SIMD benchmark on ${CMAKE_SYSTEM_PROCESSOR} (x86_64 only)")
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|x86_64|AMD64|amd64|X86_64)$")
 # Sparse CSR baseline/refinement experiment; all scoring uses the Knowhere API.
 add_executable(benchmark_sparse benchmark_sparse.cpp)
-execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE sparse_benchmark_revision OUTPUT_STRIP_TRAILING_WHITESPACE)
+# Source snapshots can supply the revision explicitly when .git is absent.
+if(NOT DEFINED sparse_benchmark_revision)
+    execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE sparse_benchmark_revision OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE sparse_revision_status ERROR_QUIET)
+    if(NOT sparse_revision_status EQUAL 0)
+        set(sparse_benchmark_revision "unknown")
+    endif()
+endif()
 target_compile_definitions(benchmark_sparse PRIVATE KNOWHERE_SPARSE_BENCHMARK_REVISION="${sparse_benchmark_revision}")
 target_link_libraries(benchmark_sparse knowhere milvus-common::milvus-common ${CMAKE_DL_LIBS})
 add_executable(benchmark_sparse_bm25_compact benchmark_sparse_bm25_compact.cpp)
