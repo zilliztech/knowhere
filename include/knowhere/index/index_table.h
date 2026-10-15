@@ -111,6 +111,7 @@ static std::set<std::pair<std::string, VecType>> legal_knowhere_index = {
 
     // diskann
     {IndexEnum::INDEX_DISKANN, VecType::VECTOR_FLOAT},
+    {IndexEnum::INDEX_DISKANN_RABITQ, VecType::VECTOR_FLOAT},
     {IndexEnum::INDEX_DISKANN, VecType::VECTOR_FLOAT16},
     {IndexEnum::INDEX_DISKANN, VecType::VECTOR_BFLOAT16},
 
@@ -183,6 +184,7 @@ static std::set<std::string> legal_support_emb_list_knowhere_index = {
     IndexEnum::INDEX_FAISS_IVFFLAT,
     IndexEnum::INDEX_FAISS_IVFFLAT_CC,
     IndexEnum::INDEX_DISKANN,
+    IndexEnum::INDEX_DISKANN_RABITQ,
 #ifdef KNOWHERE_WITH_CARDINAL
     IndexEnum::INDEX_CARDINAL_TIERED,
 #endif

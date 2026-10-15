@@ -1954,7 +1954,7 @@ TEST_CASE("DiskANN navigation codec selection", "[diskann][navigation]") {
     auto omitted = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig("DISKANN", version);
     REQUIRE(knowhere::Config::Load(*omitted, request, phase) == knowhere::Status::success);
     REQUIRE_FALSE(static_cast<const knowhere::DiskANNConfig&>(*omitted).navigation.navigation_codec.has_value());
-    for (const auto* codec : {"PQ", "RABITQ", "TQ", "invalid", ""}) {
+    for (const auto* codec : {"PQ", "TQ", "invalid", ""}) {
         request["navigation_codec"] = codec;
         auto selected = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig("DISKANN", version);
         std::string error;

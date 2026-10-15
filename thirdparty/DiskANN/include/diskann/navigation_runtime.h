@@ -40,11 +40,16 @@ namespace diskann {
   class NavigationDistanceComputer {
    public:
     virtual ~NavigationDistanceComputer() = default;
+    // Reset codec-owned request parameters when reusing a thread slot.
+    virtual void ResetQueryParameters() {
+    }
     // The graph supplies the same metric-prepared query as before.
     virtual void set_query(const float* query) = 0;
     virtual void compute_distances(const unsigned* ids, uint64_t count,
                                    float* distances) = 0;
   };
+
+  using NavigationQuerySetup = std::function<void(NavigationDistanceComputer&)>;
 
   struct NavigationBuildContext {
     std::string              prefix;

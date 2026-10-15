@@ -920,12 +920,13 @@ namespace diskann {
       IOContext &ctx, QueryStats *stats,
       const knowhere::feder::diskann::FederResultUniq &feder,
       knowhere::BitsetView bitset_view, NavigationDistanceComputer &navigation,
-      const std::function<_u64(_u64)> &origin_id) {
+      const std::function<_u64(_u64)> &origin_id, bool query_initialized) {
     auto         query_scratch = &(data.scratch);
     const T     *query = data.scratch.aligned_query_T;
     auto         beam_width = beam_width_param * kRefineBeamWidthFactor;
     const float *query_float = data.scratch.aligned_query_float;
-    navigation.set_query(query_float);
+    if (!query_initialized)
+      navigation.set_query(query_float);
     float         *dist_scratch = query_scratch->aligned_dist_scratch;
     constexpr _u32 pq_batch_size = diskann::defaults::MAX_GRAPH_DEGREE;
     std::vector<unsigned> pq_batch_ids;
@@ -1057,7 +1058,8 @@ namespace diskann {
       const T *query1, const _u64 k_search, const _u64 l_search, _s64 *indices,
       float *distances, const _u64 beam_width, const bool use_reorder_data,
       QueryStats *stats, const knowhere::feder::diskann::FederResultUniq &feder,
-      knowhere::BitsetView bitset_view, const float filter_ratio_in) {
+      knowhere::BitsetView bitset_view, const float filter_ratio_in,
+      const NavigationQuerySetup &navigation_setup) {
     if (beam_width > defaults::MAX_N_SECTOR_READS)
       throw ANNException("Beamwidth can not be higher than MAX_N_SECTOR_READS",
                          -1, __FUNCSIG__, __FILE__, __LINE__);
@@ -1075,7 +1077,18 @@ namespace diskann {
       return;
     }
     float query_norm = query_norm_opt.value();
-    auto  ctx = this->reader->get_ctx();
+    try {
+      auto &computer = *data.scratch.navigation;
+      computer.ResetQueryParameters();
+      if (navigation_setup)
+        navigation_setup(computer);
+      computer.set_query(data.scratch.aligned_query_float);
+    } catch (...) {
+      this->thread_data.push(data);
+      this->thread_data.push_notify_all();
+      throw;
+    }
+    auto ctx = this->reader->get_ctx();
 
     size_t bv_cnt = 0;
 
@@ -1108,7 +1121,7 @@ namespace diskann {
       if (bv_cnt >= bitset_view.size() * filter_threshold) {
         brute_force_beam_search(data, query_norm, k_search, indices, distances,
                                 beam_width, ctx, stats, feder, bitset_view,
-                                *data.scratch.navigation);
+                                *data.scratch.navigation, {}, true);
         this->thread_data.push(data);
         this->thread_data.push_notify_all();
         this->reader->put_ctx(ctx);
@@ -1120,7 +1133,7 @@ namespace diskann {
     if (k_search > 0.5 * (num_points - bv_cnt)) {
       brute_force_beam_search(data, query_norm, k_search, indices, distances,
                               beam_width, ctx, stats, feder, bitset_view,
-                              *data.scratch.navigation);
+                              *data.scratch.navigation, {}, true);
       this->thread_data.push(data);
       this->thread_data.push_notify_all();
       this->reader->put_ctx(ctx);
@@ -1150,8 +1163,7 @@ namespace diskann {
         cached_nhoods;
     cached_nhoods.reserve(2 * beam_width);
 
-    auto *navigation = query_scratch->navigation;
-    navigation->set_query(query_float);
+    auto  *navigation = query_scratch->navigation;
     float *dist_scratch = query_scratch->aligned_dist_scratch;
     auto   compute_dists = [navigation](const unsigned *ids, const _u64 n_ids,
                                       float *dists_out) {
@@ -1782,6 +1794,17 @@ namespace diskann {
       data = this->thread_data.pop();
     }
     data.scratch.reset();
+    try {
+      auto &computer = *data.scratch.navigation;
+      computer.ResetQueryParameters();
+      if (workspace->navigation_setup)
+        workspace->navigation_setup(computer);
+      computer.set_query(workspace->aligned_query_float);
+    } catch (...) {
+      this->thread_data.push(data);
+      this->thread_data.push_notify_all();
+      throw;
+    }
     auto ctx = this->reader->get_ctx();
 
     // todo: switch to quant-bf
@@ -1790,8 +1813,7 @@ namespace diskann {
     char *sector_scratch = data.scratch.sector_scratch;
     _u64 &sector_scratch_idx = data.scratch.sector_idx;
 
-    auto *navigation = data.scratch.navigation;
-    navigation->set_query(workspace->aligned_query_float);
+    auto  *navigation = data.scratch.navigation;
     float *dist_scratch = data.scratch.aligned_dist_scratch;
     auto   compute_dists = [navigation](const unsigned *ids, const _u64 n_ids,
                                       float *dists_out) {

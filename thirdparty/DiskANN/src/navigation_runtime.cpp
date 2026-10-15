@@ -9,6 +9,7 @@
 #include <fstream>
 #include "diskann/ann_exception.h"
 #include "diskann/pq_navigation.h"
+#include "diskann/rabitq_navigation.h"
 
 namespace diskann {
   namespace {
@@ -106,6 +107,8 @@ namespace diskann {
       const std::string& codec) {
     if (codec == "PQ")
       return std::make_unique<PQNavigationStore>();
+    if (codec == "RABITQ")
+      return std::make_unique<RaBitQNavigationStore>();
     throw NavigationTypeError("Unsupported DiskANN navigation codec: " + codec);
   }
 }  // namespace diskann

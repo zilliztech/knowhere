@@ -146,7 +146,10 @@ class DiskANNIndexNode : public IndexNode {
     static expected<Resource>
     StaticEstimateLoadResource(const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
                                const knowhere::BaseConfig& config, const IndexVersion& version) {
-        return Resource{.memoryCost = file_size_in_bytes / 4, .diskCost = file_size_in_bytes};
+        const auto memory = static_cast<const DiskANNConfig&>(config).navigation.EstimateLoadMemory(file_size_in_bytes);
+        if (!memory)
+            return expected<Resource>::Err(Status::invalid_args, "DiskANN resource estimate overflows");
+        return Resource{.memoryCost = *memory, .diskCost = file_size_in_bytes};
     }
 
     Status
@@ -232,11 +235,12 @@ class DiskANNIndexNode : public IndexNode {
      public:
         iterator(const bool transform, const DataType* query_data, const uint64_t lsearch, const uint64_t beam_width,
                  const float filter_ratio, const knowhere::BitsetView& bitset, diskann::SSDGraphIndex<DataType>* index,
-                 bool use_knowhere_search_pool = true)
+                 bool use_knowhere_search_pool = true, diskann::NavigationQuerySetup navigation_setup = {})
             : IndexIterator(transform, use_knowhere_search_pool),
               index_(index),
               transform_(transform),
               workspace_(index_->getIteratorWorkspace(query_data, lsearch, beam_width, filter_ratio, bitset)) {
+            workspace_->navigation_setup = std::move(navigation_setup);
         }
 
      protected:
@@ -447,6 +451,9 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
         LOG_KNOWHERE_ERROR_ << "DiskANN file path for build is empty." << std::endl;
         return Status::invalid_param_in_json;
     }
+    if (build_conf.navigation.navigation_codec.value_or("PQ") == "RABITQ" && !std::is_same_v<DataType, fp32>) {
+        return Status::invalid_args;
+    }
     auto navigation = build_conf.navigation.CreateForBuild();
     if (AnyIndexFileExist(build_conf.index_prefix.value(), *navigation)) {
         LOG_KNOWHERE_ERROR_ << "This index prefix already has index files." << std::endl;
@@ -540,6 +547,9 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
         // If not emb_list metric type, use the default build method
         return Build(dataset, std::move(cfg), use_knowhere_build_pool);
     }
+
+    if (static_cast<const DiskANNConfig&>(*cfg).navigation.navigation_codec.value_or("PQ") == "RABITQ")
+        return Status::invalid_args;
 
     // DiskANN only supports TokenANN strategy
     auto strategy_type = config.emb_list_strategy.value_or(meta::EMB_LIST_STRATEGY_TOKENANN);
@@ -638,6 +648,8 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         if (prep_conf.navigation.navigation_codec && *prep_conf.navigation.navigation_codec != codec) {
             throw diskann::NavigationTypeError("Requested navigation codec does not match stored model");
         }
+        if (codec == "RABITQ" && (!std::is_same_v<DataType, fp32> || !el_metric_type_.empty()))
+            throw diskann::NavigationTypeError("RaBitQ navigation requires FP32 and does not support embedding lists");
         navigation = diskann::CreateNavigationStore(codec);
     }));
 
@@ -899,8 +911,9 @@ DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_pt
     try {
         for (int i = 0; i < nq; i++) {
             auto single_query = static_cast<const DataType*>(xq) + i * dim;
-            auto it = std::make_shared<iterator>(transform, single_query, lsearch, beamwidth, filter_ratio, bitset,
-                                                 ssd_graph_index_.get(), use_knowhere_search_pool);
+            auto it = std::make_shared<iterator>(
+                transform, single_query, lsearch, beamwidth, filter_ratio, bitset, ssd_graph_index_.get(),
+                use_knowhere_search_pool, search_conf.navigation.QuerySetup(ssd_graph_index_->get_navigation_codec()));
             it->SetResultIdMap(result_id_map);
             vec[i] = it;
         }
@@ -942,6 +955,7 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
                                                  search_conf.search_list_size.value(), search_conf.beamwidth.value());
     }
 
+    const auto navigation_setup = search_conf.navigation.QuerySetup(ssd_graph_index_->get_navigation_codec());
     auto p_id = std::make_unique<int64_t[]>(k * nq);
     auto p_dist = std::make_unique<DistType[]>(k * nq);
 
@@ -952,8 +966,8 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
             knowhere::checkCancellation(op_context);
             diskann::QueryStats stats;
             ssd_graph_index_->cached_beam_search(xq + (index * dim), k, lsearch, p_id_ptr + (index * k),
-                                                p_dist_ptr + (index * k), beamwidth, false, &stats, feder_result,
-                                                bitset_, filter_ratio);
+                                                 p_dist_ptr + (index * k), beamwidth, false, &stats, feder_result,
+                                                 bitset_, filter_ratio, navigation_setup);
 #ifdef NOT_COMPILE_FOR_SWIG
             knowhere_diskann_search_hops.Observe(stats.n_hops);
 #endif
@@ -1122,6 +1136,27 @@ DiskANNIndexNode<DataType>::GetCachedNodeNum(const float cache_dram_budget, cons
     return num_nodes_to_cache;
 }
 
+template <typename DataType>
+class DiskANNRaBitQIndexNode : public DiskANNIndexNode<DataType> {
+ public:
+    using DiskANNIndexNode<DataType>::DiskANNIndexNode;
+
+    static std::unique_ptr<BaseConfig>
+    StaticCreateConfig() {
+        return std::make_unique<DiskANNRaBitQConfig>();
+    }
+
+    std::unique_ptr<BaseConfig>
+    CreateConfig() const override {
+        return StaticCreateConfig();
+    }
+
+    std::string
+    Type() const override {
+        return knowhere::IndexEnum::INDEX_DISKANN_RABITQ;
+    }
+};
+
 #ifdef KNOWHERE_WITH_CARDINAL
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN_DEPRECATED, DiskANNIndexNode,
                                                 knowhere::feature::DISK | knowhere::feature::EMB_LIST)
@@ -1129,4 +1164,6 @@ KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN_DEPRECATED, DiskANNIndex
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN, DiskANNIndexNode,
                                                 knowhere::feature::DISK | knowhere::feature::EMB_LIST)
 #endif
+KNOWHERE_SIMPLE_REGISTER_GLOBAL(DISKANN_RABITQ, DiskANNRaBitQIndexNode, fp32,
+                                knowhere::feature::DISK | knowhere::feature::FLOAT32)
 }  // namespace knowhere
