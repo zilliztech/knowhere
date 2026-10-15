@@ -72,6 +72,16 @@ class FaissHnswConfig : public BaseHnswConfig {
 
 class FaissHnswFlatConfig : public FaissHnswConfig {
  public:
+    CFG_INT partition_key_isolation_min_rows;
+
+    KNOWHERE_DECLARE_CONFIG(FaissHnswFlatConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(partition_key_isolation_min_rows)
+            .description("preserve scalar groups with at least this many rows; omitted uses legacy grouping")
+            .allow_empty_without_default()
+            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
+            .for_train();
+    }
+
     Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
         // check the base class
