@@ -2428,7 +2428,7 @@ BuildArtifactForScenario(const IndexRow& row, const Scenario& scenario) {
     }
 
     artifact->index = std::move(created.index);
-    artifact->index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+    artifact->index.Node()->SetIdMapType(knowhere::IdMap::Type::SEALED);
     artifact->build_status =
         AttachRuntimeIdMapData(artifact->data.train_ds, artifact->data.valid_ids, artifact->data.total_count);
     if (artifact->build_status == knowhere::Status::success) {
@@ -2521,7 +2521,7 @@ SetRuntimeIdMap(knowhere::Index<knowhere::IndexNode>& index, const MatrixData& d
     if (index.Node() == nullptr) {
         return knowhere::Status::invalid_args;
     }
-    RETURN_IF_ERROR(BuildRuntimeIdMap(data.valid_ids, data.total_count, index.GetIdMap()));
+    RETURN_IF_ERROR(BuildRuntimeIdMap(data.valid_ids, data.total_count, index.Node()->GetIdMap()));
     return knowhere::Status::success;
 }
 
@@ -2530,7 +2530,7 @@ SetRuntimeValidBitmap(knowhere::Index<knowhere::IndexNode>& index, const MatrixD
     if (index.Node() == nullptr) {
         return knowhere::Status::invalid_args;
     }
-    RETURN_IF_ERROR(BuildRuntimeValidBitmap(data.valid_ids, data.total_count, index.GetIdMap()));
+    RETURN_IF_ERROR(BuildRuntimeValidBitmap(data.valid_ids, data.total_count, index.Node()->GetIdMap()));
     return knowhere::Status::success;
 }
 
@@ -3972,7 +3972,7 @@ TEST_CASE("Growing search preserves the prepared public ID boundary", "[growing_
     REQUIRE(created.has_value());
     auto index = std::move(created.value());
     if (nullable) {
-        index.SetIdMapType(knowhere::IdMap::Type::GROWING);
+        index.Node()->SetIdMapType(knowhere::IdMap::Type::GROWING);
     }
     REQUIRE(index.Build(initial, json) == knowhere::Status::success);
 
@@ -4136,7 +4136,7 @@ TEST_CASE("Nullable Flat Add adds out id map", "[nullable][flat][add]") {
     auto index = knowhere::IndexFactory::Instance()
                      .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IDMAP, version)
                      .value();
-    index.SetIdMapType(knowhere::IdMap::Type::GROWING);
+    index.Node()->SetIdMapType(knowhere::IdMap::Type::GROWING);
     REQUIRE(index.Train(first_batch, json) == Status::success);
     REQUIRE(index.Add(first_batch, json) == Status::success);
     REQUIRE(index.Add(second_batch, json) == Status::success);
@@ -4174,12 +4174,12 @@ TEST_CASE("Nullable IVF_FLAT_CC emb-list Add preserves append public list ids", 
     auto index = knowhere::IndexFactory::Instance()
                      .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, version)
                      .value();
-    index.SetIdMapType(knowhere::IdMap::Type::GROWING);
+    index.Node()->SetIdMapType(knowhere::IdMap::Type::GROWING);
     REQUIRE(index.Build(first_batch, json, false) == Status::success);
     REQUIRE(index.Add(append_batch, json, false) == Status::success);
 
-    RequireIdArrayEquals(index.GetIdMap().InToOutIds(), {1, 4, 7, 9, 10});
-    RequireIdArrayEquals(index.GetIdMap().InToOutIds(knowhere::IdMap::Domain::EMB_LIST), {1, 1, 4, 4, 4, 9, 9});
+    RequireIdArrayEquals(index.Node()->GetIdMap().InToOutIds(), {1, 4, 7, 9, 10});
+    RequireIdArrayEquals(index.Node()->GetIdMap().InToOutIds(knowhere::IdMap::Domain::EMB_LIST), {1, 1, 4, 4, 4, 9, 9});
 
     auto query = GenEmbListQueryDataSet({9}, kDenseDim);
     auto search = index.Search(query, json, knowhere::BitsetView{});
@@ -4227,16 +4227,22 @@ TEST_CASE("Nullable Index rejects plain and mapped Add mixing", "[nullable][id_m
             .value();
     };
 
-    SECTION("DISABLED rejects IdMapData") {
+    SECTION("first nullable input selects mapping automatically") {
         auto batch = GenNullableDenseDataSet(4, {0, 2}, kDenseDim);
         batch->SetIdMapData(knowhere::IdMapData::FromIds(batch_ids, 2, 4));
 
         auto created = create_flat_index();
-        REQUIRE(created.Build(batch, json) == Status::invalid_args);
+        REQUIRE(created.Build(batch, json) == Status::success);
+        REQUIRE(created.LogicalCount().value() == 4);
+        REQUIRE(created.ValidCount().value() == 2);
+        REQUIRE_FALSE(created.IsRowValid(1).value());
 
         auto add_index = create_flat_index();
         REQUIRE(add_index.Train(batch, json) == Status::success);
-        REQUIRE(add_index.Add(batch, json) == Status::invalid_args);
+        REQUIRE(add_index.Add(batch, json) == Status::success);
+        REQUIRE(add_index.LogicalCount().value() == 4);
+        REQUIRE(add_index.ValidCount().value() == 2);
+        REQUIRE_FALSE(add_index.IsRowValid(1).value());
     }
 
     SECTION("enabled IdMap requires IdMapData") {
@@ -4244,12 +4250,12 @@ TEST_CASE("Nullable Index rejects plain and mapped Add mixing", "[nullable][id_m
         for (auto type : {knowhere::IdMap::Type::SEALED, knowhere::IdMap::Type::GROWING}) {
             CAPTURE(static_cast<int>(type));
             auto build_index = create_flat_index();
-            build_index.SetIdMapType(type);
+            build_index.Node()->SetIdMapType(type);
             REQUIRE(build_index.Build(plain_batch, json) == Status::invalid_args);
         }
 
         auto add_index = create_flat_index();
-        add_index.SetIdMapType(knowhere::IdMap::Type::GROWING);
+        add_index.Node()->SetIdMapType(knowhere::IdMap::Type::GROWING);
         REQUIRE(add_index.Train(plain_batch, json) == Status::success);
         REQUIRE(add_index.Add(plain_batch, json) == Status::invalid_args);
     }
@@ -4260,7 +4266,7 @@ TEST_CASE("Nullable Index rejects plain and mapped Add mixing", "[nullable][id_m
         auto plain_second_batch = GenNullableDenseDataSet(4, {4, 6}, kDenseDim);
 
         auto index = create_flat_index();
-        index.SetIdMapType(knowhere::IdMap::Type::GROWING);
+        index.Node()->SetIdMapType(knowhere::IdMap::Type::GROWING);
         REQUIRE(index.Train(first_batch, json) == Status::success);
         REQUIRE(index.Add(first_batch, json) == Status::success);
         REQUIRE(index.Add(plain_second_batch, json) == Status::invalid_args);
@@ -4273,11 +4279,11 @@ TEST_CASE("Nullable Index rejects plain and mapped Add mixing", "[nullable][id_m
         auto all_valid_plain_append = GenNullableDenseDataSet(2, {2, 3}, kDenseDim);
 
         auto index = create_flat_index();
-        index.SetIdMapType(knowhere::IdMap::Type::GROWING);
+        index.Node()->SetIdMapType(knowhere::IdMap::Type::GROWING);
         REQUIRE(index.Train(first_batch, json) == Status::success);
         REQUIRE(index.Add(first_batch, json) == Status::success);
         REQUIRE(index.Add(all_valid_plain_append, json) == Status::invalid_args);
-        RequireIdMapVectorStateOnly(index.GetIdMap(), 2, {0, 1});
+        RequireIdMapVectorStateOnly(index.Node()->GetIdMap(), 2, {0, 1});
     }
 
     SECTION("plain index rejects a mapped append batch") {
@@ -4288,7 +4294,7 @@ TEST_CASE("Nullable Index rejects plain and mapped Add mixing", "[nullable][id_m
         auto index = create_flat_index();
         REQUIRE(index.Train(plain_first_batch, json) == Status::success);
         REQUIRE(index.Add(plain_first_batch, json) == Status::success);
-        index.SetIdMapType(knowhere::IdMap::Type::GROWING);
+        index.Node()->SetIdMapType(knowhere::IdMap::Type::GROWING);
         REQUIRE(index.Add(second_batch, json) == Status::invalid_args);
     }
 }
@@ -4311,18 +4317,18 @@ TEST_CASE("Element index normalizes outer EmbList IdMap to vector ids", "[nullab
     IndexRow row{"HNSW current", knowhere::IndexEnum::INDEX_HNSW, DataKind::DenseFp32, Capabilities{}, false, true};
     auto version = VersionForRow(row);
     auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(row.index_type, version).value();
-    index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+    index.Node()->SetIdMapType(knowhere::IdMap::Type::SEALED);
     REQUIRE(index.Build(base, json, false) == Status::success);
 
     auto query = GenDenseQueryDataSet({1}, kDenseDim);
     auto filter_bits = MakeBitmap(kVectorCount, {});
     auto result = index.Search(query, json, knowhere::BitsetView(filter_bits.data(), kVectorCount));
     REQUIRE(result.has_value());
-    REQUIRE(index.GetIdMap().OutCount() == kVectorCount);
-    REQUIRE(index.GetIdMap().InCount() == kVectorCount);
+    REQUIRE(index.Node()->GetIdMap().OutCount() == kVectorCount);
+    REQUIRE(index.Node()->GetIdMap().InCount() == kVectorCount);
 #ifdef KNOWHERE_WITH_CARDINAL
     // Cardinal owns the composed internal -> public vector map after build.
-    REQUIRE(index.GetIdMap().InToOutIds().empty());
+    REQUIRE(index.Node()->GetIdMap().InToOutIds().empty());
 #endif
     REQUIRE(result.value()->GetIds()[0] >= kVectorsPerParent);
     REQUIRE(result.value()->GetIds()[0] < kVectorCount);
@@ -4351,10 +4357,10 @@ TEST_CASE("All-null element index keeps an empty vector IdMap", "[nullable][id_m
     IndexRow row{"HNSW current", knowhere::IndexEnum::INDEX_HNSW, DataKind::DenseFp32, Capabilities{}, false, true};
     auto version = VersionForRow(row);
     auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(row.index_type, version).value();
-    index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+    index.Node()->SetIdMapType(knowhere::IdMap::Type::SEALED);
     REQUIRE(index.Build(base, json, false) == Status::success);
-    REQUIRE(index.GetIdMap().IsEnabled());
-    REQUIRE(index.GetIdMap().OutCount() == 0);
+    REQUIRE(index.Node()->GetIdMap().IsEnabled());
+    REQUIRE(index.Node()->GetIdMap().OutCount() == 0);
 }
 
 TEST_CASE("Element index Add appends vector IdMap ranges", "[nullable][id_map][emblist][element]") {
@@ -4377,7 +4383,7 @@ TEST_CASE("Element index Add appends vector IdMap ranges", "[nullable][id_map][e
 
     auto version = VersionForRow(row);
     auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(row.index_type, version).value();
-    index.SetIdMapType(knowhere::IdMap::Type::GROWING);
+    index.Node()->SetIdMapType(knowhere::IdMap::Type::GROWING);
     REQUIRE(index.Build(first_batch, json, false) == Status::success);
     REQUIRE(index.Add(second_batch, json, false) == Status::success);
 
@@ -4385,8 +4391,8 @@ TEST_CASE("Element index Add appends vector IdMap ranges", "[nullable][id_map][e
     auto filter_bits = MakeBitmap(kVectorCount, {});
     auto result = index.Search(query, json, knowhere::BitsetView(filter_bits.data(), kVectorCount));
     REQUIRE(result.has_value());
-    REQUIRE(index.GetIdMap().OutCount() == kVectorCount);
-    REQUIRE(index.GetIdMap().InCount() == kVectorCount);
+    REQUIRE(index.Node()->GetIdMap().OutCount() == kVectorCount);
+    REQUIRE(index.Node()->GetIdMap().InCount() == kVectorCount);
     REQUIRE(result.value()->GetIds()[0] >= kVectorsPerParent);
     REQUIRE(result.value()->GetIds()[0] < kVectorCount);
 }
@@ -4413,18 +4419,18 @@ TEST_CASE("Nullable vector Build plus Add matches full Build", "[nullable][ivf][
     auto full_index = knowhere::IndexFactory::Instance()
                           .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, version)
                           .value();
-    full_index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+    full_index.Node()->SetIdMapType(knowhere::IdMap::Type::SEALED);
     REQUIRE(full_index.Build(full_ds, json, false) == Status::success);
 
     auto split_index = knowhere::IndexFactory::Instance()
                            .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, version)
                            .value();
-    split_index.SetIdMapType(knowhere::IdMap::Type::GROWING);
+    split_index.Node()->SetIdMapType(knowhere::IdMap::Type::GROWING);
     REQUIRE(split_index.Build(first_ds, json, false) == Status::success);
     REQUIRE(split_index.Add(append_ds, json, false) == Status::success);
 
-    RequireIdMapVectorStateOnly(full_index.GetIdMap(), 11, full_ids);
-    RequireIdMapVectorStateOnly(split_index.GetIdMap(), 11, full_ids);
+    RequireIdMapVectorStateOnly(full_index.Node()->GetIdMap(), 11, full_ids);
+    RequireIdMapVectorStateOnly(split_index.Node()->GetIdMap(), 11, full_ids);
 
     auto query = GenDenseQueryDataSet({1, 9}, kDenseDim);
     auto filter_bits = MakeBitmap(11, {4});
@@ -4484,20 +4490,22 @@ TEST_CASE("Nullable emb-list Build plus Add matches full Build with empty lists"
     auto full_index = knowhere::IndexFactory::Instance()
                           .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, version)
                           .value();
-    full_index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+    full_index.Node()->SetIdMapType(knowhere::IdMap::Type::SEALED);
     REQUIRE(full_index.Build(full_ds, json, false) == Status::success);
 
     auto split_index = knowhere::IndexFactory::Instance()
                            .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IVFFLAT_CC, version)
                            .value();
-    split_index.SetIdMapType(knowhere::IdMap::Type::GROWING);
+    split_index.Node()->SetIdMapType(knowhere::IdMap::Type::GROWING);
     REQUIRE(split_index.Build(first_ds, json, false) == Status::success);
     REQUIRE(split_index.Add(append_ds, json, false) == Status::success);
 
-    RequireIdMapVectorState(full_index.GetIdMap(), 11, {1, 4, 7, 9, 10});
-    RequireIdMapVectorState(split_index.GetIdMap(), 11, {1, 4, 7, 9, 10});
-    RequireIdArrayEquals(full_index.GetIdMap().InToOutIds(knowhere::IdMap::Domain::EMB_LIST), {1, 1, 4, 4, 4, 9, 9});
-    RequireIdArrayEquals(split_index.GetIdMap().InToOutIds(knowhere::IdMap::Domain::EMB_LIST), {1, 1, 4, 4, 4, 9, 9});
+    RequireIdMapVectorState(full_index.Node()->GetIdMap(), 11, {1, 4, 7, 9, 10});
+    RequireIdMapVectorState(split_index.Node()->GetIdMap(), 11, {1, 4, 7, 9, 10});
+    RequireIdArrayEquals(full_index.Node()->GetIdMap().InToOutIds(knowhere::IdMap::Domain::EMB_LIST),
+                         {1, 1, 4, 4, 4, 9, 9});
+    RequireIdArrayEquals(split_index.Node()->GetIdMap().InToOutIds(knowhere::IdMap::Domain::EMB_LIST),
+                         {1, 1, 4, 4, 4, 9, 9});
 
     auto query = GenEmbListQueryDataSet({9, 1}, kDenseDim);
     auto filter_bits = MakeBitmap(11, {9});
@@ -4603,12 +4611,12 @@ TEST_CASE("Nullable Index Add keeps id map append when backend add fails", "[nul
     auto json = BaseDenseConfig(knowhere::metric::L2, kDenseDim, 1);
     REQUIRE(index.Add(append_batch, json) == Status::invalid_args);
 
-    REQUIRE(index.GetIdMap().OutCount() == 8);
-    RequireIdArrayEquals(index.GetIdMap().InToOutIds(), {1, 3, 4, 6});
-    REQUIRE(RequireCompactOutToIn(index.GetIdMap(), 1) == 0);
-    REQUIRE(RequireCompactOutToIn(index.GetIdMap(), 3) == 1);
-    REQUIRE(RequireCompactOutToIn(index.GetIdMap(), 4) == 2);
-    REQUIRE(RequireCompactOutToIn(index.GetIdMap(), 6) == 3);
+    REQUIRE(index.Node()->GetIdMap().OutCount() == 8);
+    RequireIdArrayEquals(index.Node()->GetIdMap().InToOutIds(), {1, 3, 4, 6});
+    REQUIRE(RequireCompactOutToIn(index.Node()->GetIdMap(), 1) == 0);
+    REQUIRE(RequireCompactOutToIn(index.Node()->GetIdMap(), 3) == 1);
+    REQUIRE(RequireCompactOutToIn(index.Node()->GetIdMap(), 4) == 2);
+    REQUIRE(RequireCompactOutToIn(index.Node()->GetIdMap(), 6) == 3);
 }
 
 TEST_CASE("Nullable DataView full-scan uses internal source ids", "[nullable][data_view][api]") {
@@ -4823,7 +4831,7 @@ TEST_CASE("Nullable SCANN_DVR emb-list cosine rerank maps calc-dist ids", "[null
 
     auto created = CreateIndex(row, data);
     REQUIRE(created.ok);
-    created.index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+    created.index.Node()->SetIdMapType(knowhere::IdMap::Type::SEALED);
     REQUIRE(AttachRuntimeIdMapData(data.train_ds, data.valid_ids, data.total_count) == Status::success);
     REQUIRE(created.index.Build(data.train_ds, json) == Status::success);
 
@@ -5174,7 +5182,7 @@ TEST_CASE("Nullable HNSW emb-list multi-index filters use external doc ids", "[n
     auto created = CreateIndex(row, data);
     REQUIRE(created.ok);
 
-    created.index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+    created.index.Node()->SetIdMapType(knowhere::IdMap::Type::SEALED);
     REQUIRE(AttachRuntimeIdMapData(data.train_ds, data.valid_ids, data.total_count) == knowhere::Status::success);
     REQUIRE(created.index.Build(data.train_ds, json) == knowhere::Status::success);
     RequireIdMapContent(created.index, data.valid_ids, data.total_count);
@@ -5386,7 +5394,7 @@ TEST_CASE("Nullable mmap file load preserves large non-identity mapping", "[null
     auto created = CreateIndex(row, artifact.data);
     REQUIRE(created.ok);
     artifact.index = std::move(created.index);
-    artifact.index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+    artifact.index.Node()->SetIdMapType(knowhere::IdMap::Type::SEALED);
     REQUIRE(AttachRuntimeIdMapData(artifact.data.train_ds, artifact.data.valid_ids, artifact.data.total_count) ==
             Status::success);
     artifact.build_status = artifact.index.Build(artifact.data.train_ds, artifact.json);
