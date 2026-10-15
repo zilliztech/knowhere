@@ -37,6 +37,89 @@
 #include "simd/hook.h"
 #include "utils.h"
 
+namespace {
+thread_local bool tl_fail_allocation = false;
+thread_local int64_t tl_alloc_fail_countdown = -1;
+}  // namespace
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
+
+void*
+operator new(std::size_t size) {
+    if (tl_fail_allocation) {
+        if (tl_alloc_fail_countdown <= 0) {
+            tl_fail_allocation = false;
+            throw std::bad_alloc();
+        }
+        tl_alloc_fail_countdown--;
+    }
+    void* p = std::malloc(size);
+    if (!p) {
+        throw std::bad_alloc();
+    }
+    return p;
+}
+
+void*
+operator new[](std::size_t size) {
+    return ::operator new(size);
+}
+
+void
+operator delete(void* p) noexcept {
+    std::free(p);
+}
+
+void
+operator delete(void* p, std::size_t) noexcept {
+    std::free(p);
+}
+
+void
+operator delete[](void* p) noexcept {
+    ::operator delete(p);
+}
+
+void
+operator delete[](void* p, std::size_t) noexcept {
+    ::operator delete(p);
+}
+
+void*
+operator new(std::size_t size, const std::nothrow_t&) noexcept {
+    try {
+        return ::operator new(size);
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void*
+operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+    try {
+        return ::operator new[](size);
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void
+operator delete(void* p, const std::nothrow_t&) noexcept {
+    ::operator delete(p);
+}
+
+void
+operator delete[](void* p, const std::nothrow_t&) noexcept {
+    ::operator delete[](p);
+}
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
 void
 WriteBinaryToFile(const std::string& filename, const knowhere::BinaryPtr binary) {
     auto data = binary->data.get();
@@ -3501,4 +3584,92 @@ TEST_CASE("SINDI BM25 U16 LUT kernels and full U16 window", "[sparse][sindi][u4_
     auto growable =
         IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, 11).value();
     REQUIRE(growable.Build(RefineDataset(rows), build) != Status::success);
+}
+
+TEST_CASE("Test Sparse Inverted Index CC Exception Safety on Enqueue and Add", "[sparse][cc][exception_safety]") {
+    auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
+    const auto cc_name = GENERATE(std::string(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC),
+                                  std::string(knowhere::IndexEnum::INDEX_SPARSE_WAND_CC));
+    CAPTURE(cc_name);
+
+    auto dense_sparse_ds = [](int32_t rows, int32_t dim, float value) {
+        std::vector<std::map<int32_t, float>> data(rows);
+        for (int32_t i = 0; i < rows; ++i) {
+            for (int32_t j = 0; j < dim; ++j) {
+                data[i][j] = value;
+            }
+        }
+        return GenSparseDataSet(data, dim);
+    };
+
+    int32_t dim = 8;
+    int32_t topk = 5;
+    knowhere::Json json;
+    json[knowhere::meta::DIM] = dim;
+    json[knowhere::meta::METRIC_TYPE] = knowhere::metric::IP;
+    json[knowhere::meta::TOPK] = topk;
+    json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "DAAT_MAXSCORE";
+    json[knowhere::indexparam::SEARCH_ALGO] = "DAAT_MAXSCORE";
+
+    auto idx = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(cc_name, version).value();
+    auto train_ds = dense_sparse_ds(10, dim, 1.0f);
+    REQUIRE(idx.Train(train_ds, json) == knowhere::Status::success);
+
+    auto initial_ds = dense_sparse_ds(20, dim, 1.0f);
+    REQUIRE(idx.Add(initial_ds, json) == knowhere::Status::success);
+
+    SECTION("Forced allocation failure during enqueue") {
+        auto fail_ds = dense_sparse_ds(10, dim, 2.0f);
+        tl_alloc_fail_countdown = 0;
+        tl_fail_allocation = true;
+        try {
+            (void)idx.Add(fail_ds, json);
+        } catch (const std::bad_alloc&) {
+            // Expected failure during enqueue
+        }
+        tl_fail_allocation = false;
+
+        // Subsequent Add must not hang and must complete within bounded timeout
+        auto add_future = std::async(std::launch::async, [&]() {
+            auto next_ds = dense_sparse_ds(10, dim, 3.0f);
+            return idx.Add(next_ds, json);
+        });
+        REQUIRE(add_future.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+        REQUIRE(add_future.get() == knowhere::Status::success);
+
+        // Subsequent Search must not hang and must complete within bounded timeout
+        auto query_ds = dense_sparse_ds(2, dim, 1.0f);
+        auto search_future = std::async(std::launch::async, [&]() { return idx.Search(query_ds, json, nullptr); });
+        REQUIRE(search_future.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+        auto search_res = search_future.get();
+        REQUIRE(search_res.has_value());
+    }
+
+    SECTION("Forced allocation failure during raw_data insert") {
+        auto fail_ds = dense_sparse_ds(10, dim, 2.0f);
+        // Skip initial queueing allocations to trip during raw_data_.insert
+        tl_alloc_fail_countdown = 3;
+        tl_fail_allocation = true;
+        try {
+            (void)idx.Add(fail_ds, json);
+        } catch (const std::bad_alloc&) {
+            // Expected failure during insert
+        }
+        tl_fail_allocation = false;
+
+        // Subsequent Add must succeed within bounded timeout
+        auto add_future = std::async(std::launch::async, [&]() {
+            auto next_ds = dense_sparse_ds(10, dim, 3.0f);
+            return idx.Add(next_ds, json);
+        });
+        REQUIRE(add_future.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+        REQUIRE(add_future.get() == knowhere::Status::success);
+
+        // Subsequent Search must succeed within bounded timeout
+        auto query_ds = dense_sparse_ds(2, dim, 1.0f);
+        auto search_future = std::async(std::launch::async, [&]() { return idx.Search(query_ds, json, nullptr); });
+        REQUIRE(search_future.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+        auto search_res = search_future.get();
+        REQUIRE(search_res.has_value());
+    }
 }
