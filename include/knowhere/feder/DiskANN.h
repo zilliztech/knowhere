@@ -27,14 +27,13 @@ struct DiskANNBuildConfig {
     std::string data_path;
     uint32_t max_degree;
     uint32_t search_list_size;
-    float pq_code_budget_gb;
     float build_dram_budget_gb;
     uint32_t num_threads;
     uint32_t disk_pq_dims;
     bool accelerate_build;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DiskANNBuildConfig, data_path, max_degree, search_list_size, pq_code_budget_gb,
-                                   build_dram_budget_gb, num_threads, disk_pq_dims, accelerate_build)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DiskANNBuildConfig, data_path, max_degree, search_list_size, build_dram_budget_gb,
+                                   num_threads, disk_pq_dims, accelerate_build)
 };
 
 class DiskANNMeta {
@@ -42,13 +41,12 @@ class DiskANNMeta {
     DiskANNMeta() = default;
 
     DiskANNMeta(const std::string& data_path, const int32_t max_degree, const int32_t search_list_size,
-                const float pq_code_budget_gb, const float build_dram_budget_gb, const int32_t disk_pq_dims,
+                const float build_dram_budget_gb, const int32_t disk_pq_dims,
                 const bool accelerate_build, const int64_t num_elem, const std::vector<int64_t>& entry_points)
         : num_elem_(num_elem), entry_points_(entry_points) {
         build_params_.data_path = data_path;
         build_params_.max_degree = max_degree;
         build_params_.search_list_size = search_list_size;
-        build_params_.pq_code_budget_gb = pq_code_budget_gb;
         build_params_.build_dram_budget_gb = build_dram_budget_gb;
         build_params_.disk_pq_dims = disk_pq_dims;
         build_params_.accelerate_build = accelerate_build;

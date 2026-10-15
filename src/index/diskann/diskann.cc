@@ -447,7 +447,7 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
         LOG_KNOWHERE_ERROR_ << "DiskANN file path for build is empty." << std::endl;
         return Status::invalid_param_in_json;
     }
-    auto navigation = diskann::CreateNavigationStore(build_conf.navigation_codec.value_or("PQ"));
+    auto navigation = build_conf.navigation.CreateForBuild();
     if (AnyIndexFileExist(build_conf.index_prefix.value(), *navigation)) {
         LOG_KNOWHERE_ERROR_ << "This index prefix already has index files." << std::endl;
         return Status::disk_file_error;
@@ -494,7 +494,6 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
                                                        diskann_metric,
                                                        static_cast<unsigned>(build_conf.max_degree.value()),
                                                        static_cast<unsigned>(build_conf.search_list_size.value()),
-                                                       static_cast<double>(build_conf.pq_code_budget_gb.value()),
                                                        static_cast<double>(build_conf.build_dram_budget_gb.value()),
                                                        static_cast<uint32_t>(build_conf.disk_pq_dims.value()),
                                                        false,
@@ -502,7 +501,7 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
                                                        static_cast<uint32_t>(num_nodes_to_cache),
                                                        build_conf.shuffle_build.value()};
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
-        int res = diskann::build_disk_index<DataType>(diskann_internal_build_config);
+        int res = diskann::build_disk_index<DataType>(diskann_internal_build_config, *navigation);
         if (res != 0)
             throw diskann::ANNException("diskann::build_disk_index returned non-zero value: " + std::to_string(res),
                                         -1);
@@ -602,7 +601,8 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         return Status::invalid_metric_type;
     }
     if (is_prepared_.load()) {
-        if (prep_conf.navigation_codec && *prep_conf.navigation_codec != ssd_graph_index_->get_navigation_codec()) {
+        if (prep_conf.navigation.navigation_codec &&
+            *prep_conf.navigation.navigation_codec != ssd_graph_index_->get_navigation_codec()) {
             return Status::invalid_serialized_index_type;
         }
         return Status::success;
@@ -635,7 +635,7 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
             context.exists = [&](const std::string& file) { return file_manager_->IsExisted(file); };
         }
         const auto codec = diskann::ReadNavigationCodec(context);
-        if (prep_conf.navigation_codec && *prep_conf.navigation_codec != codec) {
+        if (prep_conf.navigation.navigation_codec && *prep_conf.navigation.navigation_codec != codec) {
             throw diskann::NavigationTypeError("Requested navigation codec does not match stored model");
         }
         navigation = diskann::CreateNavigationStore(codec);
@@ -1099,14 +1099,15 @@ DiskANNIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
         entry_points.push_back(ssd_graph_index_->get_medoids()[i]);
     }
     auto diskann_conf = static_cast<const DiskANNConfig&>(*cfg);
-    feder::diskann::DiskANNMeta meta(diskann_conf.data_path.value(), diskann_conf.max_degree.value(),
-                                     diskann_conf.search_list_size.value(), diskann_conf.pq_code_budget_gb.value(),
-                                     diskann_conf.build_dram_budget_gb.value(), diskann_conf.disk_pq_dims.value(),
-                                     diskann_conf.accelerate_build.value(), Count(), entry_points);
+    feder::diskann::DiskANNMeta meta(
+        diskann_conf.data_path.value(), diskann_conf.max_degree.value(), diskann_conf.search_list_size.value(),
+        diskann_conf.build_dram_budget_gb.value(), diskann_conf.disk_pq_dims.value(),
+        diskann_conf.accelerate_build.value(), Count(), entry_points);
     std::unordered_set<int64_t> id_set(entry_points.begin(), entry_points.end());
 
     Json json_meta, json_id_set;
     nlohmann::to_json(json_meta, meta);
+    diskann_conf.navigation.AppendBuildMetadata(ssd_graph_index_->get_navigation_codec(), json_meta["build_params_"]);
     nlohmann::to_json(json_id_set, id_set);
     return GenResultDataSet(json_meta.dump(), json_id_set.dump());
 }
