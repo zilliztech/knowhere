@@ -7,8 +7,10 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <unordered_set>
 #include "diskann/ann_exception.h"
 #include "diskann/pq_navigation.h"
+#include "diskann/rabitq_navigation.h"
 
 namespace diskann {
   namespace {
@@ -102,10 +104,17 @@ namespace diskann {
     return codec;
   }
 
+  bool IsSupportedNavigationCodec(const std::string& codec) {
+    static const std::unordered_set<std::string> codecs = {"PQ", "RABITQ"};
+    return codecs.count(codec) != 0;
+  }
+
   std::unique_ptr<NavigationStore> CreateNavigationStore(
       const std::string& codec) {
     if (codec == "PQ")
       return std::make_unique<PQNavigationStore>();
+    if (codec == "RABITQ")
+      return std::make_unique<RaBitQNavigationStore>();
     throw NavigationTypeError("Unsupported DiskANN navigation codec: " + codec);
   }
 }  // namespace diskann

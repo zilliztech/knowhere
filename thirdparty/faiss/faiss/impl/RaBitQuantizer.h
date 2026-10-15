@@ -170,6 +170,54 @@ struct RaBitQDistanceComputer : FlatCodesDistanceComputer {
         }
     }
 
+    // Avoid another virtual dispatch through FlatCodesDistanceComputer's
+    // code-batch entry on this ID-based hot path.
+    void distances_batch_4(
+            const idx_t i1,
+            const idx_t i2,
+            const idx_t i3,
+            const idx_t i4,
+            float& d1,
+            float& d2,
+            float& d3,
+            float& d4) override {
+        RaBitQDistanceComputer::distance_to_code_batch_4(
+                codes + i1 * code_size,
+                codes + i2 * code_size,
+                codes + i3 * code_size,
+                codes + i4 * code_size,
+                d1,
+                d2,
+                d3,
+                d4);
+    }
+
+    /// Standard full-distance batch entry. A one-bit code is already a full
+    /// code; use its existing batch kernel. Multi-bit codes retain full
+    /// scoring.
+    void distance_to_code_batch_4(
+            const uint8_t* c1,
+            const uint8_t* c2,
+            const uint8_t* c3,
+            const uint8_t* c4,
+            float& d1,
+            float& d2,
+            float& d3,
+            float& d4) override {
+        if (nb_bits == 1) {
+            const uint8_t* codes_in[4] = {c1, c2, c3, c4};
+            float distances[4];
+            distance_to_code_1bit_batch_4(codes_in, distances);
+            d1 = distances[0];
+            d2 = distances[1];
+            d3 = distances[2];
+            d4 = distances[3];
+        } else {
+            FlatCodesDistanceComputer::distance_to_code_batch_4(
+                    c1, c2, c3, c4, d1, d2, d3, d4);
+        }
+    }
+
     // Compute full multi-bit distance (accurate)
     virtual float distance_to_code_full(const uint8_t* code) = 0;
 

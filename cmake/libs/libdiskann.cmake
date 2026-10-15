@@ -23,6 +23,7 @@ set(DISKANN_SOURCES
     thirdparty/DiskANN/src/ssd_graph_index.cpp
     thirdparty/DiskANN/src/navigation_runtime.cpp
     thirdparty/DiskANN/src/pq_navigation.cpp
+    thirdparty/DiskANN/src/rabitq_navigation.cpp
     thirdparty/DiskANN/src/pq_flash_aisaq_index.cpp
     thirdparty/DiskANN/src/aisaq_utils.cpp
     thirdparty/DiskANN/src/aisaq_pq_reader.cpp
@@ -43,7 +44,7 @@ add_library(diskann STATIC ${DISKANN_SOURCES})
 set_target_properties(diskann PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 target_link_libraries(
   diskann
-  PUBLIC ${AIO_LIBRARIES}
+  PUBLIC faiss ${AIO_LIBRARIES}
          ${DISKANN_BOOST_PROGRAM_OPTIONS_LIB}
          nlohmann_json::nlohmann_json
          milvus-common::milvus-common

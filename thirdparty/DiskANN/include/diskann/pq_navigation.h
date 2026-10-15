@@ -74,6 +74,10 @@ namespace diskann {
     const char* CodecName() const override {
       return "PQ";
     }
+    bool IsCompatible(knowhere::DataFormatEnum, bool) const override {
+      // Preserve the existing PQ data-format and embedding-list behavior.
+      return true;
+    }
     int  ValidateBuild() const override;
     bool NeedsTrainingSample() const override {
       return true;

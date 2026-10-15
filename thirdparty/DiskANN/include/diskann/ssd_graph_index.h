@@ -127,6 +127,7 @@ namespace diskann {
 
     void move_last_full_retset_to_backup();
 
+    NavigationQuerySetup navigation_setup;
     uint64_t q_dim = 0;
     uint64_t lsearch = 0;
     uint64_t beam_width = 0;
@@ -201,7 +202,8 @@ namespace diskann {
         const bool use_reorder_data = false, QueryStats *stats = nullptr,
         const knowhere::feder::diskann::FederResultUniq &feder = nullptr,
         knowhere::BitsetView                             bitset_view = nullptr,
-        const float                                      filter_ratio = -1.0f);
+        const float                                      filter_ratio = -1.0f,
+        const NavigationQuerySetup                      &navigation_setup = {});
 
     void calc_dist_by_ids(const T *query, const int64_t *ids, const int64_t n,
                           float *const output_dists);
@@ -223,6 +225,10 @@ namespace diskann {
 
     diskann::Metric get_metric() const noexcept;
     const char* get_navigation_codec() const noexcept { return navigation_->CodecName(); }
+    bool is_navigation_compatible(knowhere::DataFormatEnum data_type,
+                                  bool embedding_list) const {
+      return navigation_->IsCompatible(data_type, embedding_list);
+    }
 
     void getIteratorNextBatch(IteratorWorkspace<T> *workspace);
 
@@ -272,7 +278,8 @@ namespace diskann {
         const knowhere::feder::diskann::FederResultUniq &feder,
         knowhere::BitsetView                             bitset_view,
         NavigationDistanceComputer                      &navigation,
-        const std::function<_u64(_u64)>                 &origin_id = {});
+        const std::function<_u64(_u64)>                 &origin_id = {},
+        bool query_initialized = false);
 
     // Assign the index of ids to its corresponding sector and if it is in
     // cache, write to the output_data
