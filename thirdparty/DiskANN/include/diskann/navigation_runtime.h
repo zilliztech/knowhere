@@ -37,14 +37,21 @@ namespace diskann {
   // propagate; unknown codec names are rejected by the creation factory.
   std::string ReadNavigationCodec(const NavigationMetadataContext& context);
 
+  bool IsSupportedNavigationCodec(const std::string& codec);
+
   class NavigationDistanceComputer {
    public:
     virtual ~NavigationDistanceComputer() = default;
+    // Reset codec-owned request parameters when reusing a thread slot.
+    virtual void ResetQueryParameters() {
+    }
     // The graph supplies the same metric-prepared query as before.
     virtual void set_query(const float* query) = 0;
     virtual void compute_distances(const unsigned* ids, uint64_t count,
                                    float* distances) = 0;
   };
+
+  using NavigationQuerySetup = std::function<void(NavigationDistanceComputer&)>;
 
   struct NavigationBuildContext {
     std::string              prefix;
@@ -61,6 +68,8 @@ namespace diskann {
    public:
     virtual ~NavigationStore() = default;
     virtual const char* CodecName() const = 0;
+    virtual bool        IsCompatible(knowhere::DataFormatEnum data_type,
+                                     bool embedding_list) const = 0;
     virtual int         ValidateBuild() const = 0;
     virtual bool        NeedsTrainingSample() const = 0;
     virtual int         Build(const NavigationBuildContext& context) = 0;

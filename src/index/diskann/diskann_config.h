@@ -181,5 +181,20 @@ class DiskANNConfig : public BaseConfig {
         return Status::success;
     }
 };
+class DiskANNRaBitQConfig : public DiskANNConfig {
+ public:
+    DiskANNRaBitQConfig() {
+        // Register in the same flat dictionary as ordinary DISKANN.
+        EntryAccess<CFG_STRING>(std::get_if<Entry<CFG_STRING>>(&__DICT__.at("navigation_codec")))
+            .description("DISKANN_RABITQ requires RABITQ navigation")
+            .set_default("RABITQ");
+    }
+    Status
+    CheckAndAdjust(PARAM_TYPE type, std::string* error) override {
+        if (navigation.navigation_codec.value_or("RABITQ") != "RABITQ")
+            return HandleError(error, "DISKANN_RABITQ requires navigation_codec=RABITQ", Status::invalid_args);
+        return DiskANNConfig::CheckAndAdjust(type, error);
+    }
+};
 }  // namespace knowhere
 #endif /* DISKANN_CONFIG_H */

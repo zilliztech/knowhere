@@ -17,7 +17,7 @@ else()
 endif()
 
 if(NOT WITH_DISKANN)
-  knowhere_file_glob(GLOB_RECURSE KNOWHERE_DISKANN_TESTS test_diskann.cc)
+  knowhere_file_glob(GLOB_RECURSE KNOWHERE_DISKANN_TESTS test_diskann*.cc)
   list(REMOVE_ITEM KNOWHERE_UT_SRCS ${KNOWHERE_DISKANN_TESTS})
 endif()
 
