@@ -1,5 +1,9 @@
 # Index Types
 
+This is a navigation guide, not a complete compatibility contract. Check current
+registrations and config validation under `src/index/` for the selected data type,
+metric, index version, and build options.
+
 ## Overview
 
 | Index Family | Type | Best For | Metric Support |
@@ -13,7 +17,7 @@
 | SPARSE_INVERTED_INDEX | Inverted index | Sparse vectors, text search | IP, BM25 |
 | SPARSE_WAND | Inverted index (WAND) | Sparse vectors, optimized top-k | IP, BM25 |
 | MinHash | LSH | Jaccard similarity | Jaccard |
-| GPU (CUVS) | CUDA-accelerated | High throughput | L2, IP |
+| GPU (CUVS) | CUDA-accelerated | High throughput | L2, IP, COSINE; HAMMING for binary CAGRA |
 
 ## Index Details
 
@@ -49,7 +53,7 @@
 | BIN_IVF_FLAT | None | Binary | Binary vector search |
 
 ### SCANN
-- Location: `src/index/ivf/ivf.cc` (uses `faiss::IndexScaNN`)
+- Location: `src/index/ivf/ivf.cc`
 - Score-aware quantization with anisotropic vector quantization
 - Based on Google's ScaNN algorithm
 - Key params: `nlist`, `nprobe`, `with_raw_data`, `reorder_k`
@@ -58,13 +62,13 @@
 ### DISKANN
 - Location: `src/index/diskann/`
 - Disk-based graph index for billion-scale
-- Requires: `-o with_diskann=True` build option
-- Key params: `R` (degree), `L` (search list size)
+- Requires: `make WITH_DISKANN=True` on Linux
+- Key config fields: `max_degree`, `search_list_size`
 
 ### AISAQ
 - Location: `src/index/diskann/diskann_aisaq.cc`
 - Enhanced DISKANN with PQ compression and I/O optimization (by KIOXIA)
-- Requires: `-o with_diskann=True` build option
+- Requires: `make WITH_DISKANN=True` on Linux
 - Key params: `vectors_beamwidth`, `inline_pq`, `pq_cache_size`, `num_entry_points`
 
 ### Sparse Series
@@ -87,7 +91,7 @@
 ### GPU (CUVS)
 - Location: `src/index/gpu_cuvs/`
 - CUDA-accelerated implementations via NVIDIA cuVS
-- Requires: `-o with_cuvs=True` build option
+- Requires: `make WITH_GPU=True`
 
 | Variant | Description | Data Types |
 |---------|-------------|------------|
@@ -113,7 +117,7 @@
 |-------|------|------|------|------|--------|----------------|
 | Flat | ✓ | ✓ | ✓ | ✓ | ✓ | - |
 | **HNSW Series** |
-| HNSW | ✓ | ✓ | ✓ | ✓ | - | - |
+| HNSW | ✓ | ✓ | ✓ | ✓ | ✓ | - |
 | HNSW_SQ | ✓ | ✓ | ✓ | ✓ | - | - |
 | HNSW_PQ | ✓ | ✓ | ✓ | ✓ | - | - |
 | HNSW_PRQ | ✓ | ✓ | ✓ | ✓ | - | - |
