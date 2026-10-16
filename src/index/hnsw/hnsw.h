@@ -49,6 +49,14 @@ class HnswIndexNode : public IndexNode {
 
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
+        const auto it = cfg->__DICT__.find(indexparam::PARTITION_KEY_ISOLATION_MIN_ROWS);
+        if (it != cfg->__DICT__.end()) {
+            const auto* entry = std::get_if<Entry<CFG_INT>>(&it->second);
+            if (entry != nullptr && entry->val->has_value()) {
+                LOG_KNOWHERE_ERROR_ << "partition_key_isolation_min_rows is only supported by Faiss HNSW";
+                return Status::invalid_args;
+            }
+        }
         auto rows = dataset->GetRows();
         auto dim = dataset->GetDim();
         auto hnsw_cfg = static_cast<const BaseHnswConfig&>(*cfg);
