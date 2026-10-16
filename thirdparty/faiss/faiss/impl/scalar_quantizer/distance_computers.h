@@ -11,6 +11,11 @@
 #include <faiss/impl/simdlib/simdlib_dispatch.h>
 #include <faiss/utils/simd_levels.h>
 
+#include <cstring>
+#include <vector>
+
+#include "simd/hook.h" // knowhere bf16_vec_* kernels (SVE BFDOT / NEON / ref)
+
 namespace faiss {
 
 namespace scalar_quantizer {
@@ -125,6 +130,110 @@ struct DistanceComputerByte<Similarity, SIMDLevel::NONE> : SQDistanceComputer {
 
     float query_to_code(const uint8_t* code) const final {
         return compute_code_distance(tmp.data(), code);
+    }
+};
+
+/*******************************************************************
+ * DistanceComputerBF16Native: QT_bf16 distances computed by Knowhere's
+ * BF16 kernels (SVE: BFDOT = BF16 multiply, FP32 accumulate) instead of
+ * widening every stored component to FP32 (DCTemplate<QuantizerBF16>).
+ * Used by HNSW build (symmetric_dis) and search (query_to_code[s]).
+ *******************************************************************/
+
+namespace detail {
+// FP32 -> BF16, round-to-nearest-even. Lossless when x was widened
+// from BF16 (Knowhere widens BF16 queries before set_query()).
+inline uint16_t fp32_to_bf16_rne(float x) {
+    uint32_t u;
+    std::memcpy(&u, &x, sizeof(u));
+    u += 0x7FFFu + ((u >> 16) & 1u);
+    return static_cast<uint16_t>(u >> 16);
+}
+} // namespace detail
+
+template <class Similarity>
+struct DistanceComputerBF16Native : SQDistanceComputer {
+    using Sim = Similarity;
+    using bf16_t = ::knowhere::bf16;
+
+    size_t d;
+    std::vector<uint16_t> qbf; // current query in BF16
+
+    explicit DistanceComputerBF16Native(size_t d_in) : d(d_in), qbf(d_in) {}
+
+    static const bf16_t* as_bf16(const void* p) {
+        return reinterpret_cast<const bf16_t*>(p);
+    }
+
+    static float clamp0(float v) {
+        // SVE L2 kernel uses |x|^2 + |y|^2 - 2xy; avoid tiny negatives.
+        return v < 0.f ? 0.f : v;
+    }
+
+    float dist(const void* a, const void* b) const {
+        if constexpr (Sim::metric_type == METRIC_INNER_PRODUCT) {
+            return ::faiss::cppcontrib::knowhere::bf16_vec_inner_product(
+                    as_bf16(a), as_bf16(b), d);
+        } else {
+            return clamp0(::faiss::cppcontrib::knowhere::bf16_vec_L2sqr(
+                    as_bf16(a), as_bf16(b), d));
+        }
+    }
+
+    void set_query(const float* x) final {
+        q = x;
+        for (size_t i = 0; i < d; i++) {
+            qbf[i] = detail::fp32_to_bf16_rne(x[i]);
+        }
+    }
+
+    float query_to_code(const uint8_t* code) const final {
+        return dist(qbf.data(), code);
+    }
+
+    void query_to_codes_batch_4(
+            const uint8_t* c0,
+            const uint8_t* c1,
+            const uint8_t* c2,
+            const uint8_t* c3,
+            float& d0,
+            float& d1,
+            float& d2,
+            float& d3) const override {
+        if constexpr (Sim::metric_type == METRIC_INNER_PRODUCT) {
+            ::faiss::cppcontrib::knowhere::bf16_vec_inner_product_batch_4(
+                    as_bf16(qbf.data()),
+                    as_bf16(c0),
+                    as_bf16(c1),
+                    as_bf16(c2),
+                    as_bf16(c3),
+                    d,
+                    d0,
+                    d1,
+                    d2,
+                    d3);
+        } else {
+            ::faiss::cppcontrib::knowhere::bf16_vec_L2sqr_batch_4(
+                    as_bf16(qbf.data()),
+                    as_bf16(c0),
+                    as_bf16(c1),
+                    as_bf16(c2),
+                    as_bf16(c3),
+                    d,
+                    d0,
+                    d1,
+                    d2,
+                    d3);
+            d0 = clamp0(d0);
+            d1 = clamp0(d1);
+            d2 = clamp0(d2);
+            d3 = clamp0(d3);
+        }
+    }
+
+    // Graph construction: neighbour selection / pruning.
+    float symmetric_dis(idx_t i, idx_t j) override {
+        return dist(codes + i * code_size, codes + j * code_size);
     }
 };
 

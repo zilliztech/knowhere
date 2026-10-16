@@ -170,6 +170,20 @@ supports_sve() {
     return (hwcap & HWCAP_SVE) != 0;
 }
 #endif
+
+// The SVE bf16 kernels use BFDOT (svbfdot_f32), which needs the SVE BF16
+// extension. SVE alone (e.g. A64FX) is not enough.
+[[maybe_unused]] static bool
+supports_sve_bf16() {
+#if defined(__APPLE__)
+    return false;
+#elif defined(HWCAP2_SVEBF16)
+    unsigned long hwcap2 = getauxval(AT_HWCAP2);
+    return (hwcap2 & HWCAP2_SVEBF16) != 0;
+#else
+    return false;
+#endif
+}
 #endif
 
 #if defined(__loongarch__)
@@ -430,15 +444,24 @@ fvec_hook(std::string& simd_type) {
         fp16_vec_L2sqr = fp16_vec_L2sqr_sve;
         fp16_vec_norm_L2sqr = fp16_vec_norm_L2sqr_sve;
 
-        // bf16
-        bf16_vec_inner_product = bf16_vec_inner_product_sve;
-        bf16_vec_L2sqr = bf16_vec_L2sqr_sve;
-        bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_sve;
         fvec_L2sqr_batch_4 = fvec_L2sqr_batch_4_sve;
         fvec_inner_product_batch_4 = fvec_inner_product_batch_4_sve;
 
-        bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_sve;
-        bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_sve;
+        // bf16: SVE kernels use BFDOT -> only with the SVE BF16 extension,
+        // otherwise use the NEON kernels (widen to fp32).
+        if (supports_sve_bf16()) {
+            bf16_vec_inner_product = bf16_vec_inner_product_sve;
+            bf16_vec_L2sqr = bf16_vec_L2sqr_sve;
+            bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_sve;
+            bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_sve;
+            bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_sve;
+        } else {
+            bf16_vec_inner_product = bf16_vec_inner_product_neon;
+            bf16_vec_L2sqr = bf16_vec_L2sqr_neon;
+            bf16_vec_norm_L2sqr = bf16_vec_norm_L2sqr_neon;
+            bf16_vec_L2sqr_batch_4 = bf16_vec_L2sqr_batch_4_neon;
+            bf16_vec_inner_product_batch_4 = bf16_vec_inner_product_batch_4_neon;
+        }
 
         // int8
         int8_vec_L2sqr = int8_vec_L2sqr_sve;
