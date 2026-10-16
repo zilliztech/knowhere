@@ -6,8 +6,8 @@ Knowhere is the C++ vector search library used by Milvus. Public interfaces live
 ## Shared context
 
 Maintain project instructions in this file and task-specific guidance in `.agents/skills/`.
-`CLAUDE.md` imports this file, and the entries in `.claude/skills/` link to the shared skills.
-Edit the shared files so Claude Code and Codex receive the same guidance.
+`CLAUDE.md` imports this file. Read task-specific guidance through the skill links below,
+and edit the shared files so agents receive the same guidance.
 
 Read the relevant skill before working on its topic:
 
@@ -34,8 +34,5 @@ Read the relevant skill before working on its topic:
 
 ## Maintaining the shared layout
 
-Keep `CLAUDE.md` as an `@AGENTS.md` import. Add each new skill under `.agents/skills/`
-and a relative directory link at `.claude/skills/<name>` pointing to
-`../../.agents/skills/<name>`. Keep relative references inside a skill with that skill.
-The compatibility links require a checkout that preserves Git symlinks; the shared
-instructions and skill links above remain readable directly from `AGENTS.md`.
+Keep `CLAUDE.md` as an `@AGENTS.md` import. Add new skills under `.agents/skills/`
+and update the table above. Keep relative references inside a skill with that skill.
