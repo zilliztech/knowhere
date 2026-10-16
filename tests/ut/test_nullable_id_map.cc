@@ -1192,6 +1192,8 @@ DiskAnnConfig(const IndexRow& row, const fs::path& raw_data_file, const fs::path
     json["min_k"] = 3;
     json["max_k"] = 64;
     if (row.data_kind == DataKind::Aisaq) {
+        // This matrix verifies exact raw-vector values as well as their public IDs.
+        json[knowhere::indexparam::DISK_PQ_DIMS] = 0;
         json[knowhere::indexparam::REARRANGE] = false;
         json[knowhere::indexparam::INLINE_PQ] = 0;
         json[knowhere::indexparam::PQ_CACHE_SIZE] = 0;

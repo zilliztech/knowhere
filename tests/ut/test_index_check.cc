@@ -692,3 +692,15 @@ TEST_CASE("Test index feature check", "[IndexFeatureCheck]") {
 #endif
     }
 }
+
+TEST_CASE("Sparse algorithm is validated without worker resources", "[IndexCheckTest][disk-parameters]") {
+    std::string message;
+    const auto version = Version::GetMaximumVersion().VersionNumber();
+    const auto type = IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+    REQUIRE(IndexStaticFaced<sparse_u32_f32>::ConfigCheck(
+                type, version, {{"metric_type", "IP"}, {"inverted_index_algo", "DAAT_MAXSCORE"}}, message) ==
+            Status::success);
+    REQUIRE(IndexStaticFaced<sparse_u32_f32>::ConfigCheck(
+                type, version, {{"metric_type", "IP"}, {"inverted_index_algo", "not-an-algorithm"}}, message) ==
+            Status::invalid_args);
+}
