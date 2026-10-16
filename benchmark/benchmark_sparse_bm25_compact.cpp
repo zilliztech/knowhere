@@ -233,34 +233,32 @@ main(int argc, char** argv) {
         auto queries = LoadCsr(data + "/sparse/queries." + split + ".idf.csr", nullptr, limit);
         const float k1 = manifest.at("bm25_k1"), b = manifest.at("bm25_b"), avgdl = manifest.at("avgdl");
         const std::string truth_path =
-            get("--truth", data + "/ground_truth/" + split + ".k" + std::to_string(k) + ".bm25");
-        auto signature = ReadJson(truth_path + ".json");
-        Check(signature.at("base_rows") == base.rows.size(), "Truth corpus mismatch");
-        Check(signature.at("query_ids").size() == queries.file_rows, "Truth query count mismatch");
-        for (size_t q = 0; q < queries.file_rows; ++q)
-            Check(signature["query_ids"][q] == q, "Truth query order mismatch");
-        for (auto key : {"bm25_k1", "bm25_b", "bm25_avgdl"}) {
-            const float value = signature.at("search").at(key);
-            const float expected = std::string(key) == "bm25_k1" ? k1 : (std::string(key) == "bm25_b" ? b : avgdl);
-            Check(std::abs(value - expected) < 1e-5 * std::max(1.f, std::abs(expected)), "Truth scorer mismatch");
-        }
-        Check(signature.at("search").at("k") == k, "Truth k mismatch");
-        if (signature.contains("query_csr_sha256")) {
-            Check(signature["query_csr_sha256"] == manifest.at("sha256").at("queries." + split + ".idf.csr"),
-                  "Truth query hash mismatch");
-        }
-        Check(signature.at("sha256").at("base_tf.csr") == manifest.at("sha256").at("base_tf.csr"),
-              "Truth base hash mismatch");
+            get("--truth", data + "/ground_truth/" + split + ".k" + std::to_string(k) + ".gt");
         MappedFile truth(truth_path);
-        const auto truth_n = truth.Read<uint64_t>(0);
-        Check(truth_n == queries.file_rows * k && truth.size == 8 + 12 * truth_n, "Truth payload mismatch");
+        const uint64_t truth_queries = truth.Read<uint32_t>(0), truth_k = truth.Read<uint32_t>(4);
+        Check(truth_queries == queries.file_rows && truth_k >= k && truth_queries > 0 &&
+                  truth_k <= (truth.size - 8) / 8 / truth_queries && truth.size == 8 + 8 * truth_queries * truth_k,
+              "Invalid .gt header or payload (expected uint32 query count/k, uint32 IDs, float32 scores)");
+        const auto truth_n = truth_queries * truth_k;
+        auto truth_id = [&](size_t q, size_t rank) -> int64_t {
+            const auto id = truth.Read<uint32_t>(8 + 4 * (q * truth_k + rank));
+            return id == UINT32_MAX ? -1 : int64_t(id);
+        };
         size_t valid_truth = 0;
         for (size_t q = 0; q < queries.rows.size(); ++q) {
             std::set<int64_t> seen;
             bool padding = false;
+            float previous = std::numeric_limits<float>::infinity();
             for (size_t j = 0; j < k; ++j) {
-                const auto id = truth.Read<int64_t>(8 + 8 * (q * k + j));
+                const auto id = truth_id(q, j);
+                const auto score = truth.Read<float>(8 + 4 * truth_n + 4 * (q * truth_k + j));
+                Check(std::isfinite(score) && score >= 0 &&
+                          score <=
+                              previous + 4 * std::numeric_limits<float>::epsilon() * std::max(1.f, std::abs(previous)),
+                      "Invalid ground-truth score order");
+                previous = score;
                 if (id < 0) {
+                    Check(base.rows.size() < k && j >= base.rows.size() && score == 0, "Invalid truth padding");
                     padding = true;
                     continue;
                 }
@@ -360,7 +358,7 @@ main(int argc, char** argv) {
                     Check(std::abs(score - expected) < 3e-5 * std::max(1., std::abs(expected)),
                           "Returned score disagrees with oracle");
                     for (size_t g = 0; g < k; ++g)
-                        if (id == truth.Read<int64_t>(8 + 8 * (q * k + g))) {
+                        if (id == truth_id(q, g)) {
                             ++correct;
                             break;
                         }
@@ -369,16 +367,16 @@ main(int argc, char** argv) {
             return double(correct) / valid_truth;
         };
         meta["valid_truth_positions"] = valid_truth;
-        meta["recall_denominator"] = "nonnegative ground-truth IDs; exclude sentinel padding";
+        meta["recall_denominator"] = "uint32 ground-truth IDs; exclude UINT32_MAX padding";
         size_t outside_truth = 0, near_tie_hits = 0, below_original_threshold = 0;
         for (size_t q = 0; q < queries.rows.size(); ++q) {
             double threshold = 0;
             std::set<int64_t> truth_ids;
             for (size_t j = 0; j < k; ++j) {
-                const auto id = truth.Read<int64_t>(8 + 8 * (q * k + j));
+                const auto id = truth_id(q, j);
                 if (id >= 0) {
                     truth_ids.insert(id);
-                    threshold = truth.Read<float>(8 + 8 * truth_n + 4 * (q * k + j));
+                    threshold = truth.Read<float>(8 + 4 * truth_n + 4 * (q * truth_k + j));
                 }
             }
             for (size_t j = 0; j < k; ++j) {
