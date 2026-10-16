@@ -1246,15 +1246,31 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
     Status
     Add(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
         std::unique_lock<std::mutex> lock(mutex_);
-        uint64_t task_id = next_task_id_++;
+        uint64_t task_id = next_task_id_;
         add_tasks_.push(task_id);
+        next_task_id_++;
+
+        struct AddTaskGuard {
+            const SparseInvertedIndexNodeCC& node;
+            std::unique_lock<std::mutex>& lock;
+
+            ~AddTaskGuard() {
+                if (!lock.owns_lock()) {
+                    lock.lock();
+                }
+                node.add_tasks_.pop();
+                node.current_task_id_++;
+                lock.unlock();
+                node.cv_.notify_all();
+            }
+        } guard{*this, lock};
 
         // add task is allowed to run only after all search tasks that come before it have finished.
         cv_.wait(lock, [this, task_id]() { return current_task_id_ == task_id && active_readers_ == 0; });
 
         auto res = SparseInvertedIndexNode<T, use_wand>::Add(dataset, config, use_knowhere_build_pool);
 
-        auto cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
+        const auto& cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
         if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
             // insert dataset to raw data if metric type is IP
             auto data = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
@@ -1262,10 +1278,6 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
             raw_data_.insert(raw_data_.end(), data, data + rows);
         }
 
-        add_tasks_.pop();
-        current_task_id_++;
-        lock.unlock();
-        cv_.notify_all();
         return res;
     }
 
