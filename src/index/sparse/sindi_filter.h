@@ -16,6 +16,18 @@
 
 namespace knowhere::sparse::inverted::sindi {
 
+template <typename Value>
+struct PostingView {
+    const uint16_t* ids;
+    const Value* values;
+    size_t count;
+
+    bool
+    empty() const noexcept {
+        return count == 0;
+    }
+};
+
 // Query-local scratch shared by all terms/windows. Posting IDs remain window-local;
 // compaction never changes the posting cursors or the U8 overflow sidecar offsets.
 template <typename Value>
@@ -90,6 +102,18 @@ class PostingFilter {
         return true;
     }
 
+    // Disabled selection borrows the original postings without copying. A
+    // filtered view borrows scratch until the next enabled select() call.
+    PostingView<Value>
+    select(const BitsetView& bitset, PostingView<Value> postings, bool enabled) {
+        if (!enabled) {
+            return postings;
+        }
+        const auto count = compact(bitset, postings.ids, postings.values, postings.count);
+        return {ids_.data(), values_.data(), count};
+    }
+
+ private:
     size_t
     compact(const BitsetView& bitset, const uint16_t* ids, const Value* values, size_t count) {
         const size_t capacity = std::min(count, eligible_ids_.size());
@@ -156,17 +180,6 @@ class PostingFilter {
         return selected;
     }
 
-    const uint16_t*
-    ids() const {
-        return ids_.data();
-    }
-
-    const Value*
-    values() const {
-        return values_.data();
-    }
-
- private:
     size_t docid_start_ = 0;
     bool direct_ = false;
     std::vector<uint16_t> eligible_ids_;

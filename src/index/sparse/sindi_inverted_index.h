@@ -1507,9 +1507,6 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
         float threshold = 0.0f;
 
-        const uint32_t wnnz_bits = 32 - __builtin_clz(window_size_);
-        const uint32_t wnnz_mask = (1u << wnnz_bits) - 1;
-
         // Skip a window when every document in it is filtered out by the bitset.
         const auto window_all_filtered = [&bitset](size_t docid_start, size_t window_doc_count) {
             if (bitset.empty()) {
@@ -1532,49 +1529,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                    posting_filter.prepare(bitset, start, count, static_cast<size_t>(count * filter_threshold));
         };
 
-        // Initialize posting list cursors for each query term
-        // Cursors track position in posting lists and handle window-by-window iteration
-        std::vector<PostingCursor> cursors;
-        cursors.reserve(sorted_q_vec.size());
-        std::vector<Bm25U8QueryOverflowCursor> overflow_cursors;
-        if constexpr (is_bm25_u8) {
-            if (!bm25_u8_overflow_offsets_span_.empty()) {
-                overflow_cursors.reserve(sorted_q_vec.size());
-            }
-        }
-        for (auto& [qid, qval] : sorted_q_vec) {
-            const auto wnnz_buf_span = encoded_window_nnzs(qid);
-            const auto ids = packed_ready_ ? std::span<const uint16_t>{} : posting_ids(qid);
-            const auto vals = packed_ready_ ? std::span<const QuantType>{} : posting_vals(qid);
-
-            bool is_sparse = !plists_wnnzs_fmts_msk_span_.empty() &&
-                             ((plists_wnnzs_fmts_msk_span_[qid >> 3] & static_cast<uint8_t>(0x1u << (qid & 0x7))) != 0);
-
-            cursors.emplace_back(static_cast<uint32_t>(qid),  // dim_id
-                                 qval,                        // qval
-                                 ids.data(),                  // ids_base
-                                 vals.data(),                 // vals_base
-                                 wnnz_buf_span.data(),        // wnnz_buf
-                                 wnnz_buf_span.size(),        // wnnz_buf_sz
-                                 is_sparse,                   // is_sparse
-                                 0,                           // cursor
-                                 0,                           // offset
-                                 wnnz_bits,                   // wnnz_bits
-                                 wnnz_mask                    // wnnz_mask
-            );
-            if constexpr (is_bm25_u8) {
-                if (!bm25_u8_overflow_offsets_span_.empty()) {
-                    const uint32_t posting_begin = plists_dim_offsets_span_[qid];
-                    const auto [overflow_begin, overflow_end] =
-                        bm25_u8_overflow_range(posting_begin, plists_dim_offsets_span_[qid + 1]);
-                    if (overflow_begin != overflow_end) {
-                        overflow_cursors.emplace_back(cursors.size() - 1, posting_begin,
-                                                      bm25_u8_overflow_offsets_span_.data(), overflow_begin,
-                                                      overflow_end);
-                    }
-                }
-            }
-        }
+        auto [cursors, overflow_cursors] = make_query_cursors(sorted_q_vec);
 
         // Main search loop: iterate over windows and process each window
         if constexpr (is_ip) {
@@ -1619,19 +1574,13 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                         continue;
                     }
 
-                    const uint16_t* plist_ids = cur.ids_base + soff;
-                    const QuantType* plist_vals = cur.vals_base + soff;
-
-                    size_t scoring_nnz = wnnz;
-                    if (filter_postings) {
-                        scoring_nnz = posting_filter.compact(bitset, plist_ids, plist_vals, wnnz);
-                        if (scoring_nnz == 0) {
-                            continue;
-                        }
-                        plist_ids = posting_filter.ids();
-                        plist_vals = posting_filter.values();
+                    const auto postings = posting_filter.select(
+                        bitset, {cur.ids_base + soff, cur.vals_base + soff, wnnz}, filter_postings);
+                    if (postings.empty()) {
+                        continue;
                     }
-                    float dispatch_max = scatter_fn(cur.qval, plist_vals, plist_ids, scoring_nnz, wscores_final);
+                    float dispatch_max =
+                        scatter_fn(cur.qval, postings.values, postings.ids, postings.count, wscores_final);
                     if (dispatch_max > curr_max_score) {
                         curr_max_score = dispatch_max;
                     }
@@ -1720,28 +1669,24 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
                         const uint16_t* plist_ids = packed_ ? nullptr : cur.ids_base + soff;
                         const QuantType* plist_vals = packed_ ? nullptr : cur.vals_base + soff;
-                        const uint16_t* original_ids = plist_ids;
-                        size_t scoring_nnz = wnnz;
-                        if (filter_postings) {
-                            scoring_nnz = posting_filter.compact(bitset, plist_ids, plist_vals, wnnz);
-                            if (scoring_nnz == 0) {
-                                continue;
-                            }
-                            plist_ids = posting_filter.ids();
-                            plist_vals = posting_filter.values();
+                        const auto postings =
+                            posting_filter.select(bitset, {plist_ids, plist_vals, wnnz}, filter_postings);
+                        if (postings.empty()) {
+                            continue;
                         }
 
                         float dispatch_max =
-                            packed_ ? packed_bm25_fn(cur.qval, packed_vals_span_.data(), packed_ids_span_.data(),
-                                                     size_t(plists_dim_offsets_span_[cur.dim_id]) + soff, wnnz,
-                                                     wscores_final, bm25_k1, bm25_b, bm25_avgdl,
-                                                     row_sums_ptr + docid_start, lut_.decode.data())
-                                    : accumulate_fn(cur.qval, plist_vals, plist_ids, scoring_nnz, wscores_final,
-                                                    bm25_k1, bm25_b, bm25_avgdl, row_sums_ptr + docid_start);
+                            packed_
+                                ? packed_bm25_fn(cur.qval, packed_vals_span_.data(), packed_ids_span_.data(),
+                                                 size_t(plists_dim_offsets_span_[cur.dim_id]) + soff, wnnz,
+                                                 wscores_final, bm25_k1, bm25_b, bm25_avgdl, row_sums_ptr + docid_start,
+                                                 lut_.decode.data())
+                                : accumulate_fn(cur.qval, postings.values, postings.ids, postings.count, wscores_final,
+                                                bm25_k1, bm25_b, bm25_avgdl, row_sums_ptr + docid_start);
                         if constexpr (RestoreOverflow) {
                             if (overflow_cur != nullptr && overflow_cur->window_begin != overflow_cur->window_end) {
                                 dispatch_max = apply_bm25_u8_overflow_corrections(
-                                    overflow_cur->posting_begin, soff, original_ids, wnnz, overflow_cur->window_begin,
+                                    overflow_cur->posting_begin, soff, plist_ids, wnnz, overflow_cur->window_begin,
                                     overflow_cur->window_end, cur.qval, wscores_final, dispatch_max, bm25_k1, bm25_b,
                                     bm25_avgdl, row_sums_ptr + docid_start, filter_postings ? &bitset : nullptr,
                                     docid_start);
@@ -1790,51 +1735,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             return {};
         }
 
-        const uint32_t wnnz_bits = 32 - __builtin_clz(window_size_);
-        const uint32_t wnnz_mask = (1u << wnnz_bits) - 1;
-
-        // Initialize posting list cursors for each query term
-        std::vector<PostingCursor> cursors;
-        cursors.reserve(q_vec.size());
-        std::vector<Bm25U8QueryOverflowCursor> overflow_cursors;
-        if constexpr (is_bm25_u8) {
-            if (!bm25_u8_overflow_offsets_span_.empty()) {
-                overflow_cursors.reserve(q_vec.size());
-            }
-        }
-        for (auto& [qid, qval] : q_vec) {
-            const auto nnz_span = encoded_window_nnzs(qid);
-            const auto ids = packed_ready_ ? std::span<const uint16_t>{} : posting_ids(qid);
-            const auto vals = packed_ready_ ? std::span<const QuantType>{} : posting_vals(qid);
-
-            bool is_sparse = !plists_wnnzs_fmts_msk_span_.empty() &&
-                             ((plists_wnnzs_fmts_msk_span_[qid >> 3] & static_cast<uint8_t>(0x1u << (qid & 0x7))) != 0);
-
-            cursors.emplace_back(static_cast<uint32_t>(qid),  // dim_id
-                                 qval,                        // qval
-                                 ids.data(),                  // ids_base
-                                 vals.data(),                 // vals_base
-                                 nnz_span.data(),             // wnnz_buf
-                                 nnz_span.size(),             // wnnz_buf_sz
-                                 is_sparse,                   // is_sparse
-                                 0,                           // cursor
-                                 0,                           // offset
-                                 wnnz_bits,                   // wnnz_bits
-                                 wnnz_mask                    // wnnz_mask
-            );
-            if constexpr (is_bm25_u8) {
-                if (!bm25_u8_overflow_offsets_span_.empty()) {
-                    const uint32_t posting_begin = plists_dim_offsets_span_[qid];
-                    const auto [overflow_begin, overflow_end] =
-                        bm25_u8_overflow_range(posting_begin, plists_dim_offsets_span_[qid + 1]);
-                    if (overflow_begin != overflow_end) {
-                        overflow_cursors.emplace_back(cursors.size() - 1, posting_begin,
-                                                      bm25_u8_overflow_offsets_span_.data(), overflow_begin,
-                                                      overflow_end);
-                    }
-                }
-            }
-        }
+        auto [cursors, overflow_cursors] = make_query_cursors(q_vec);
 
         std::vector<float> distances(this->nr_rows_, 0.0f);
 
@@ -2680,6 +2581,61 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             : query_cursor(query_cursor), cursor(posting_begin, offsets, cursor_begin, cursor_end) {
         }
     };
+
+    struct QueryCursors {
+        std::vector<PostingCursor> postings;
+        std::vector<Bm25U8QueryOverflowCursor> overflows;
+    };
+
+    QueryCursors
+    make_query_cursors(std::span<const std::pair<uint32_t, float>> query) const {
+        const uint32_t wnnz_bits = 32 - __builtin_clz(window_size_);
+        const uint32_t wnnz_mask = (1u << wnnz_bits) - 1;
+
+        QueryCursors result;
+        auto& [cursors, overflow_cursors] = result;
+        cursors.reserve(query.size());
+        if constexpr (is_bm25_u8) {
+            if (!bm25_u8_overflow_offsets_span_.empty()) {
+                overflow_cursors.reserve(query.size());
+            }
+        }
+        for (const auto& [qid, qval] : query) {
+            const auto wnnz_buf_span = encoded_window_nnzs(qid);
+            const auto ids = packed_ready_ ? std::span<const uint16_t>{} : posting_ids(qid);
+            const auto vals = packed_ready_ ? std::span<const QuantType>{} : posting_vals(qid);
+
+            bool is_sparse = !plists_wnnzs_fmts_msk_span_.empty() &&
+                             ((plists_wnnzs_fmts_msk_span_[qid >> 3] & static_cast<uint8_t>(0x1u << (qid & 0x7))) != 0);
+
+            cursors.emplace_back(static_cast<uint32_t>(qid),  // dim_id
+                                 qval,                        // qval
+                                 ids.data(),                  // ids_base
+                                 vals.data(),                 // vals_base
+                                 wnnz_buf_span.data(),        // wnnz_buf
+                                 wnnz_buf_span.size(),        // wnnz_buf_sz
+                                 is_sparse,                   // is_sparse
+                                 0,                           // cursor
+                                 0,                           // offset
+                                 wnnz_bits,                   // wnnz_bits
+                                 wnnz_mask                    // wnnz_mask
+            );
+            if constexpr (is_bm25_u8) {
+                if (!bm25_u8_overflow_offsets_span_.empty()) {
+                    const uint32_t posting_begin = plists_dim_offsets_span_[qid];
+                    const auto [overflow_begin, overflow_end] =
+                        bm25_u8_overflow_range(posting_begin, plists_dim_offsets_span_[qid + 1]);
+                    if (overflow_begin != overflow_end) {
+                        overflow_cursors.emplace_back(cursors.size() - 1, posting_begin,
+                                                      bm25_u8_overflow_offsets_span_.data(), overflow_begin,
+                                                      overflow_end);
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
 };
 
 using SindiInvertedIndexIP = SindiInvertedIndex<float, knowhere::fp16>;

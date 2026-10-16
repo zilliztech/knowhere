@@ -156,11 +156,15 @@ TEST_CASE("SINDI compaction preserves eligible posting IDs and values", "[sparse
         }
         const auto* id_ptr = unaligned ? reinterpret_cast<const uint16_t*>(id_bytes.data() + 1) : ids.data();
         const auto* value_ptr = unaligned ? reinterpret_cast<const uint16_t*>(value_bytes.data() + 1) : values.data();
-        const auto selected = filter.compact(bitset, id_ptr, value_ptr, count);
-        REQUIRE(selected == expected_ids.size());
-        for (size_t i = 0; i < selected; ++i) {
-            REQUIRE(filter.ids()[i] == expected_ids[i]);
-            REQUIRE(filter.values()[i] == expected_values[i]);
+        const auto original = filter.select(bitset, {id_ptr, value_ptr, count}, false);
+        REQUIRE(original.ids == id_ptr);
+        REQUIRE(original.values == value_ptr);
+        REQUIRE(original.count == count);
+        const auto selected = filter.select(bitset, original, true);
+        REQUIRE(selected.count == expected_ids.size());
+        for (size_t i = 0; i < selected.count; ++i) {
+            REQUIRE(selected.ids[i] == expected_ids[i]);
+            REQUIRE(selected.values[i] == expected_values[i]);
         }
     }
 }
@@ -182,7 +186,13 @@ TEST_CASE("SINDI prefilter selects paths from each window", "[sparse][sindi][pre
     REQUIRE(filter.prepare(bitset, 2 * window, window, max_eligible));
     const uint16_t id = 0;
     const uint8_t value = 255;
-    REQUIRE(filter.compact(bitset, &id, &value, 1) == 0);
+    REQUIRE(filter.select(bitset, {&id, &value, 1}, true).empty());
+    // Disabling selection must still return the original view after filtering
+    // produced an empty view; it must not expose the previous scratch state.
+    const auto original = filter.select({}, {&id, &value, 1}, false);
+    REQUIRE(original.ids == &id);
+    REQUIRE(original.values == &value);
+    REQUIRE(original.count == 1);
 
     // The exact limit takes the filtered path; one more survivor takes SIMD
     // directly. Spread survivors across the window to exercise word counting.
@@ -218,9 +228,9 @@ TEST_CASE("SINDI compacted kernels only accumulate eligible postings", "[sparse]
         }
         sindi::PostingFilter<Value> filter;
         REQUIRE(filter.prepare(bitset, 0, window, window / 8));
-        const auto selected = filter.compact(bitset, ids.data(), values.data(), count);
+        const auto selected = filter.select(bitset, {ids.data(), values.data(), count}, true);
         std::vector<float> actual(window, 0.25f);
-        const float maximum = accumulate(filter.values(), filter.ids(), selected, actual.data());
+        const float maximum = accumulate(selected.values, selected.ids, selected.count, actual.data());
         float expected_max = 0;
         for (size_t i = 0; i < count; ++i) {
             const auto id = ids[i];
@@ -365,6 +375,25 @@ TEST_CASE("SINDI filtered search matches stored-value scores across windows", "[
                 }
             }
             std::sort(expected.begin(), expected.end(), std::greater<float>());
+            // Iterator scoring uses get_all_distances(), which shares query
+            // cursor initialization with top-k search but not its prefilter.
+            if (filter_threshold < 0) {
+                CAPTURE(quant, growable, restored, pattern);
+                auto iterators = index.AnnIterator(query, config, bitset);
+                REQUIRE(iterators.has_value());
+                REQUIRE(iterators.value().size() == 1);
+                auto& iterator = iterators.value().front();
+                std::set<int64_t> seen;
+                while (iterator->HasNext().value()) {
+                    const auto [id, score] = iterator->Next().value();
+                    REQUIRE(id >= 0);
+                    REQUIRE(static_cast<size_t>(id) < rows);
+                    REQUIRE((bitset.empty() || !bitset.test(id)));
+                    REQUIRE(seen.insert(id).second);
+                    REQUIRE(std::abs(score - oracle[id]) <= 1e-5f * std::max(1.0f, oracle[id]));
+                }
+                REQUIRE(seen.size() == expected.size());
+            }
             for (const size_t k : {size_t{10}, size_t{100}, rows + 3}) {
                 CAPTURE(quant, growable, restored, pattern, k, filter_threshold);
                 config["k"] = k;
