@@ -24,9 +24,11 @@ CreateMRLIndex(const float* base_data, bool with_refine,
     auto base_index = knowhere::IndexFactory::Instance()
                           .Create<knowhere::fp32>(index_type, knowhere::Version::GetDefaultVersion().VersionNumber())
                           .value();
-    knowhere::ViewDataOp view_data = [base_data](size_t id) { return base_data + id * kSourceDim; };
+    knowhere::ViewDataScopeOp view_data_scope = [base_data](milvus::OpContext*) {
+        return [base_data](size_t id) { return base_data + id * kSourceDim; };
+    };
     return knowhere::CreateMRLIndex(std::move(base_index), kSourceDim, kMRLDim, knowhere::DataFormatEnum::fp32,
-                                    with_refine, std::move(view_data));
+                                    with_refine, std::move(view_data_scope));
 }
 }  // namespace
 
@@ -90,6 +92,83 @@ TEST_CASE("MRL cosine refinement preserves full-dimensional norms", "[mrl]") {
     auto loaded_result = loaded.Search(query, config, nullptr);
     REQUIRE(loaded_result.has_value());
     REQUIRE(loaded_result.value()->GetIds()[0] == 1);
+}
+
+TEST_CASE("MRL search maps compact nullable ids after optional refinement", "[mrl]") {
+    float base_data[] = {0.0f, 0.0f, 100.0f, 100.0f, 1.0f, 1.0f, 0.0f, 0.0f};
+    float raw_data[] = {-1.0f, -1.0f, -1.0f, -1.0f, 0.0f, 0.0f, 100.0f, 100.0f, 1.0f, 1.0f, 0.0f, 0.0f};
+    float query_data[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    int32_t valid_ids[] = {1, 2};
+    auto base = knowhere::GenDataSet(2, kSourceDim, base_data);
+    base->SetIdMapData(knowhere::IdMapData::FromIds(valid_ids, 2, 3));
+    auto query = knowhere::GenDataSet(1, kSourceDim, query_data);
+    knowhere::Json config = {
+        {knowhere::meta::DIM, kMRLDim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
+        {knowhere::meta::TOPK, 2},
+    };
+
+    SECTION("prefix search") {
+        auto index = CreateMRLIndex(raw_data, false);
+        index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+        REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
+        auto result = index.Search(query, config, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] == 1);
+    }
+
+    SECTION("full-dimensional rerank") {
+        auto index = CreateMRLIndex(raw_data, true);
+        index.SetIdMapType(knowhere::IdMap::Type::SEALED);
+        REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
+        auto result = index.Search(query, config, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] == 2);
+    }
+}
+
+TEST_CASE("MRL refinement creates one raw-data scope per search", "[mrl]") {
+    float base_data[] = {0.0f, 0.0f, 100.0f, 100.0f, 1.0f, 1.0f, 0.0f, 0.0f};
+    float query_data[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    auto base = knowhere::GenDataSet(2, kSourceDim, base_data);
+    auto query = knowhere::GenDataSet(1, kSourceDim, query_data);
+    knowhere::Json config = {
+        {knowhere::meta::DIM, kMRLDim},
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
+        {knowhere::meta::TOPK, 2},
+    };
+
+    auto active_scopes = std::make_shared<int>(0);
+    auto created_scopes = std::make_shared<int>(0);
+    knowhere::ViewDataScopeOp view_data_scope = [base_data, active_scopes, created_scopes](milvus::OpContext*) {
+        struct ScopeGuard {
+            explicit ScopeGuard(int* active) : active(active) {
+                ++*active;
+            }
+            ~ScopeGuard() {
+                --*active;
+            }
+            int* active;
+        };
+        ++*created_scopes;
+        auto guard = std::make_shared<ScopeGuard>(active_scopes.get());
+        return [base_data, guard = std::move(guard)](size_t id) { return base_data + id * kSourceDim; };
+    };
+
+    auto base_index = knowhere::IndexFactory::Instance()
+                          .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_FAISS_IDMAP,
+                                                  knowhere::Version::GetDefaultVersion().VersionNumber())
+                          .value();
+    auto index = knowhere::CreateMRLIndex(std::move(base_index), kSourceDim, kMRLDim, knowhere::DataFormatEnum::fp32,
+                                          true, std::move(view_data_scope));
+    REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
+
+    REQUIRE(index.Search(query, config, nullptr).has_value());
+    REQUIRE(*created_scopes == 1);
+    REQUIRE(*active_scopes == 0);
+    REQUIRE(index.Search(query, config, nullptr).has_value());
+    REQUIRE(*created_scopes == 2);
+    REQUIRE(*active_scopes == 0);
 }
 
 TEST_CASE("MRL refinement preserves sentinel ids for fully filtered results", "[mrl]") {
