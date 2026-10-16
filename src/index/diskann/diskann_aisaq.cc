@@ -7,6 +7,7 @@
 #include "diskann/aisaq.h"
 #include "diskann/aux_utils.h"
 #include "diskann/linux_aligned_file_reader.h"
+#include "diskann/navigation_build.h"
 #include "diskann/pq_flash_aisaq_index.h"
 #include "diskann/pq_flash_index.h"
 #include "filemanager/FileManager.h"
@@ -69,12 +70,17 @@ class AisaqIndexNode : public IndexNode {
 
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
-        knowhere::MetricType metric_type = config.metric_type.has_value() ? config.metric_type.value() : "";
-        return IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE);
+        const auto metric_type = config.metric_type.value_or("");
+        const auto metric = IsMetricType(metric_type, knowhere::metric::L2)       ? diskann::Metric::L2
+                            : IsMetricType(metric_type, knowhere::metric::COSINE) ? diskann::Metric::COSINE
+                                                                                  : diskann::Metric::INNER_PRODUCT;
+        return diskann::StorageHasRawData(static_cast<const AisaqConfig&>(config).disk_pq_dims.value_or(0) > 0, metric);
     }
 
     bool
     HasRawData(const std::string& metric_type) const override {
+        if (pq_flash_index_ && !pq_flash_index_->has_raw_data())
+            return false;
         return IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE);
     }
 
@@ -216,14 +222,9 @@ TryDiskANNCall(std::function<void()>&& diskann_call) {
 std::vector<std::string>
 GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const bool use_sample_cache,
                       const bool use_sample_warmup, const bool rearrange, const bool entry_points) {
-    std::vector<std::string> filenames;
-    auto pq_pivots_filename = diskann::get_pq_pivots_filename(prefix);
+    auto filenames = diskann::pq_navigation_files(prefix, rearrange);
     auto disk_index_filename = diskann::get_disk_index_filename(prefix);
 
-    filenames.push_back(pq_pivots_filename);
-    filenames.push_back(diskann::get_pq_rearrangement_perm_filename(pq_pivots_filename));
-    filenames.push_back(diskann::get_pq_chunk_offsets_filename(pq_pivots_filename));
-    filenames.push_back(diskann::get_pq_centroid_filename(pq_pivots_filename));
     filenames.push_back(disk_index_filename);
     if (need_norm) {
         filenames.push_back(diskann::get_disk_index_max_base_norm_file(disk_index_filename));
@@ -233,9 +234,6 @@ GetNecessaryFilenames(const std::string& prefix, const bool need_norm, const boo
     }
     if (rearrange) {
         filenames.push_back(diskann::get_index_rearranged_filename(prefix));
-        filenames.push_back(diskann::get_pq_compressed_rearranged_filename(prefix));
-    } else {
-        filenames.push_back(diskann::get_pq_compressed_filename(prefix));
     }
     if (entry_points) {
         filenames.push_back(diskann::get_index_entry_points_filename(prefix));
@@ -406,7 +404,6 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                                                      diskann_metric,
                                                      static_cast<unsigned>(build_conf.max_degree.value()),
                                                      static_cast<unsigned>(build_conf.search_list_size.value()),
-                                                     static_cast<double>(build_conf.pq_code_budget_gb.value()),
                                                      static_cast<double>(build_conf.build_dram_budget_gb.value()),
                                                      static_cast<uint32_t>(build_conf.disk_pq_dims.value()),
                                                      false,
@@ -418,7 +415,9 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                                                      build_conf.rearrange.value(),
                                                      build_conf.num_entry_points.value()};
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
-        int res = diskann::build_disk_index<DataType>(aisaq_internal_build_config);
+        int res = diskann::build_disk_index<DataType>(
+            aisaq_internal_build_config,
+            *diskann::make_pq_navigation_builder<DataType>(build_conf.pq_code_budget_gb.value()));
         if (res != 0)
             throw diskann::ANNException("AiSAQ::build_disk_index returned non-zero value: " + std::to_string(res), -1);
     }));
@@ -751,6 +750,13 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
     if (dataset == nullptr) {
         return expected<DataSetPtr>::Err(Status::invalid_args, "GetVectorByIds dataset is null");
     }
+    if (!is_prepared_.load() || !pq_flash_index_) {
+        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
+    }
+    if (!pq_flash_index_->has_raw_data()) {
+        return expected<DataSetPtr>::Err(Status::not_implemented,
+                                         "Stored vectors do not provide original data for this metric");
+    }
     auto dim = Dim();
     auto rows = dataset->GetRows();
     auto ids = dataset->GetIds();
@@ -766,10 +772,6 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
         // storage-id set. Return an empty vector result without touching
         // backend storage.
         return GenResultDataSet(0, dim, nullptr);
-    }
-    if (!is_prepared_.load() || !pq_flash_index_) {
-        LOG_KNOWHERE_ERROR_ << "Failed to load AiSAQ.";
-        return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
     auto* data = new DataType[dim * rows];
     if (data == nullptr) {
@@ -795,7 +797,7 @@ AisaqIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     for (size_t i = 0; i < num_medoids; i++) {
         entry_points.push_back(pq_flash_index_->get_medoids()[i]);
     }
-    auto aisaq_conf = static_cast<const DiskANNConfig&>(*cfg);
+    auto aisaq_conf = static_cast<const AisaqConfig&>(*cfg);
     LOG_KNOWHERE_INFO_ << "Count " << Count();
     LOG_KNOWHERE_INFO_ << "max_degree " << aisaq_conf.max_degree.value();
     LOG_KNOWHERE_INFO_ << "search_list_size " << aisaq_conf.search_list_size.value();
