@@ -78,7 +78,7 @@ graph_info.json
 .eggs
 *.egg-info
 
-# Claude Code plans (local only)
+# Agent plans (local only)
 docs/plans/
 docs/superpowers/
 

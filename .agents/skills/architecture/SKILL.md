@@ -1,6 +1,6 @@
 ---
 name: architecture
-description: Use when exploring codebase structure, understanding index implementations (HNSW, IVF, DISKANN, Sparse, MinHash), working with third-party libraries (faiss, hnswlib, DiskANN, Cardinal), or locating specific functionality
+description: Use when locating Knowhere interfaces, index implementations, configuration, or third-party algorithm dependencies.
 ---
 
 # Knowhere Architecture
@@ -10,7 +10,7 @@ description: Use when exploring codebase structure, understanding index implemen
 | Directory | Purpose |
 |-----------|---------|
 | `include/knowhere/` | Public headers |
-| `src/index/` | Index implementations (flat/, hnsw/, ivf/, gpu/, diskann/, sparse/, minhash/) |
+| `src/index/` | Index implementations (flat/, hnsw/, ivf/, gpu/, gpu_cuvs/, diskann/, sparse/, minhash/) |
 | `src/common/` | Threading, tracing, metrics utilities |
 | `src/cluster/` | Clustering algorithms (KMeans) |
 | `tests/ut/` | Unit tests |
@@ -43,4 +43,7 @@ L2, IP (Inner Product), COSINE, Jaccard, Hamming, BM25
 ## Detailed Reference
 
 - **Index types**: See [index-types.md](index-types.md) for each index's capabilities and use cases
-- **Third-party libraries**: See [dependencies.md](dependencies.md) for faiss, hnswlib, DiskANN, Cardinal details
+- **Third-party libraries**: See [dependencies.md](dependencies.md) for algorithm libraries and build dependencies
+
+Treat the current index registrations, config validation, and build files as the source
+of truth for supported combinations; the reference tables are a navigation aid.

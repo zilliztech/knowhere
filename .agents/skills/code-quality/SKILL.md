@@ -7,7 +7,7 @@ description: Use when checking code style, running pre-commit hooks, or before c
 
 ## Code Style
 
-- **Standard**: Google C++ Style Guide
+- **Base style**: Google C++ Style Guide with repository overrides
 - **Line limit**: 120 characters
 - **Indent**: 4 spaces
 - **Config**: See `.clang-format` in repo root
@@ -36,14 +36,20 @@ pre-commit run --all-files
 
 ## Commit Workflow
 
+When a commit is authorized, stage only the intended files and include the DCO sign-off. Replace
+`<changed-files>` with explicit paths and follow the [git-workflow skill](../git-workflow/SKILL.md) for
+commit and PR titles. If hooks change files or fail, inspect the changes, fix failures, and rerun the
+checks before committing.
+
 ```bash
-# 1. Make changes
-# 2. Run pre-commit on changed files
+# Review and validate the intended changes
+git diff --check
 pre-commit run --files <changed-files>
 
-# 3. Stage and commit
-git add .
-git commit -m "message"
+# Review hook edits, then stage and inspect the commit contents
+git add -- <changed-files>
+git diff --cached
+git commit -s -m "type: description"
 ```
 
 ## Common Issues
@@ -56,4 +62,5 @@ git commit -m "message"
 
 ---
 
-> Pre-commit hooks run automatically on commit. Fix any failures before pushing.
+Installed hooks run automatically at their configured commit/push stages. Fix failures before pushing;
+manual checks remain available when hooks are not installed.
