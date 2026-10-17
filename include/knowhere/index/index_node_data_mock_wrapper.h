@@ -27,7 +27,8 @@ class IndexNodeDataMockWrapper : public IndexNode {
     }
 
     Status
-    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+          milvus::OpContext* op_context) override;
 
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;

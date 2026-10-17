@@ -157,16 +157,24 @@ class Index {
         this->node->SetIdMapType(type);
     }
 
+    // Nonblocking reservation for Build with the same dataset shape and configuration.
+    // See IndexNode::TryReserveBuild for return values and reservation lifetime.
+    expected<bool>
+    TryReserveBuild(const DataSetPtr dataset, const Json& json) noexcept;
+
     Status
-    Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true) noexcept;
+    Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true,
+          milvus::OpContext* op_context = nullptr) noexcept;
 
 #ifdef KNOWHERE_WITH_CARDINAL
     const std::shared_ptr<Interrupt>
     BuildAsync(const DataSetPtr dataset, const Json& json,
-               const std::chrono::seconds timeout = std::chrono::seconds::max()) noexcept;
+               const std::chrono::seconds timeout = std::chrono::seconds::max(),
+               std::shared_ptr<milvus::OpContext> op_context = nullptr) noexcept;
 #else
     const std::shared_ptr<Interrupt>
-    BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true) noexcept;
+    BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true,
+               std::shared_ptr<milvus::OpContext> op_context = nullptr) noexcept;
 #endif
 
     Status

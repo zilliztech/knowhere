@@ -93,10 +93,11 @@ class IvfIndexNode : public IndexNode {
 
     Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                 size_t num_el, bool use_knowhere_build_pool) override {
+                 size_t num_el, bool use_knowhere_build_pool, milvus::OpContext* op_context) override {
         if constexpr (std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlat> ||
                       std::is_same_v<IndexType, faiss::cppcontrib::knowhere::IndexIVFFlatCC>) {
-            return IndexNode::BuildEmbList(dataset, std::move(cfg), lims, num_rows, num_el, use_knowhere_build_pool);
+            return IndexNode::BuildEmbList(dataset, std::move(cfg), lims, num_rows, num_el, use_knowhere_build_pool,
+                                           op_context);
         }
 
         LOG_KNOWHERE_ERROR_ << "BuildEmbList not implemented for current index type";

@@ -3170,6 +3170,7 @@ TEST_CASE("SINDI BM25 U12 LUT fitting and exact byte kernels", "[sparse][sindi][
 TEST_CASE("SINDI BM25 U12 LUT compact public lifecycle and decoded oracle", "[sparse][sindi][u4_u12]") {
     using namespace knowhere;
     using namespace knowhere::sparse::inverted;
+    milvus::OpContext op_context;
     for (const std::string quant : {"u4_lut", "u4_lut_u12", "u4_lut_u16"}) {
         const bool u16_ids = quant == "u4_lut_u16";
         for (uint32_t window :
@@ -3188,12 +3189,12 @@ TEST_CASE("SINDI BM25 U12 LUT compact public lifecycle and decoded oracle", "[sp
                        {"bm25_b", .75f},        {"bm25_avgdl", 200.f}};
             auto idx =
                 IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
-            REQUIRE(idx.Build(RefineDataset(rows), build) == Status::success);
+            REQUIRE(idx.Build(RefineDataset(rows), build, true, &op_context) == Status::success);
             auto original = build;
             original["quant_type"] = "u8";
             auto baseline =
                 IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
-            REQUIRE(baseline.Build(RefineDataset(rows), original) == Status::success);
+            REQUIRE(baseline.Build(RefineDataset(rows), original, true, &op_context) == Status::success);
             REQUIRE(idx.Size() < baseline.Size());
             std::vector<RefineRow> queries{RefineTestRow({{0, .7f}, {7, 1.3f}, {100000, .2f}})};
             Json search{{"metric_type", "BM25"}, {"k", 100},

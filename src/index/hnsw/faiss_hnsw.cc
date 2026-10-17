@@ -2546,11 +2546,13 @@ class HNSWIndexNodeWithFallback : public IndexNode {
     }
 
     Status
-    BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
+    BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+                       milvus::OpContext* op_context) override {
         if (use_base_index) {
-            return base_index->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+            return base_index->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool, op_context);
         } else {
-            return fallback_search_index->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+            return fallback_search_index->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool,
+                                                             op_context);
         }
     }
 
@@ -2564,12 +2566,12 @@ class HNSWIndexNodeWithFallback : public IndexNode {
     }
 
     Status
-    BulidAsyncEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
-                            const Interrupt* interrupt) override {
+    BulidAsyncEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const Interrupt* interrupt,
+                            milvus::OpContext* op_context) override {
         if (use_base_index) {
-            return base_index->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt);
+            return base_index->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt, op_context);
         } else {
-            return fallback_search_index->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt);
+            return fallback_search_index->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt, op_context);
         }
     }
 

@@ -81,6 +81,20 @@ class IndexNode : public Object {
     }
 
     /**
+     * @brief Attempts to reserve resources for a subsequent build without waiting for capacity.
+     *
+     * @return True if admitted or no reservation is needed, false if capacity is temporarily unavailable,
+     * or an error if the request cannot be served.
+     * @note Retry and build on the same node with the same dataset shape and configuration. Repeated successful
+     * calls reuse the reservation. The node holds it until the backend consumes it for construction or the node
+     * is destroyed; the build then owns its release, including on failure. The default implementation reserves nothing.
+     */
+    virtual expected<bool>
+    TryReserveBuild(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
+        return true;
+    }
+
+    /**
      * @brief Builds the index using the provided dataset and configuration.
      *
      * Mostly, this method combines the `Train` and `Add` steps to create the index structure, but it can be overridden
@@ -98,7 +112,8 @@ class IndexNode : public Object {
      * shared, so `shared_ptr` is used instead.
      */
     virtual Status
-    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true,
+          milvus::OpContext* op_context = nullptr) {
         RETURN_IF_ERROR(Train(dataset, cfg, use_knowhere_build_pool));
         return Add(dataset, std::move(cfg), use_knowhere_build_pool);
     }
@@ -110,8 +125,9 @@ class IndexNode : public Object {
      * `IndexNode` vtable layout across library boundaries.
      */
     virtual Status
-    BuildAsync(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const Interrupt* = nullptr) {
-        return Build(dataset, std::move(cfg), true);
+    BuildAsync(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const Interrupt* = nullptr,
+               milvus::OpContext* op_context = nullptr) {
+        return Build(dataset, std::move(cfg), true, op_context);
     }
 
     /**
@@ -824,12 +840,13 @@ class IndexNode : public Object {
 #endif
 
     virtual Status
-    BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
+    BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true,
+                       milvus::OpContext* op_context = nullptr) {
         auto& config = static_cast<BaseConfig&>(*cfg);
         auto el_metric_type_or = get_el_metric_type(config.metric_type.value());
         if (!el_metric_type_or.has_value()) {
             // if not emb_list, use the default build method
-            return Build(dataset, std::move(cfg), use_knowhere_build_pool);
+            return Build(dataset, std::move(cfg), use_knowhere_build_pool, op_context);
         }
         if (dataset == nullptr) {
             LOG_KNOWHERE_WARNING_
@@ -843,7 +860,7 @@ class IndexNode : public Object {
         }
 
         return BuildEmbList(dataset, std::move(cfg), lims, dataset->GetRows(), GetEmbListCount(dataset),
-                            use_knowhere_build_pool);
+                            use_knowhere_build_pool, op_context);
     }
 
     virtual Status
@@ -875,9 +892,9 @@ class IndexNode : public Object {
     }
 
     virtual Status
-    BulidAsyncEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
-                            const Interrupt* interrupt = nullptr) {
-        return BuildEmbListIfNeed(dataset, std::move(cfg), true);
+    BulidAsyncEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const Interrupt* interrupt = nullptr,
+                            milvus::OpContext* op_context = nullptr) {
+        return BuildEmbListIfNeed(dataset, std::move(cfg), true, op_context);
     }
 
     /**
@@ -986,7 +1003,7 @@ class IndexNode : public Object {
 
     virtual Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                 size_t num_el, bool use_knowhere_build_pool);
+                 size_t num_el, bool use_knowhere_build_pool, milvus::OpContext* op_context);
 
     /**
      * @brief Serialize emb_list: strategy meta, raw index, and base index to BinarySet.

@@ -53,10 +53,12 @@ class DiskANNIndexNode : public IndexNode {
     }
 
     Status
-    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+          milvus::OpContext* op_context) override;
 
     Status
-    BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
+    BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+                       milvus::OpContext* op_context) override;
 
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
@@ -432,7 +434,8 @@ CheckMetric(const std::string& diskann_metric) {
 
 template <typename DataType>
 Status
-DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) {
+DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+                                  milvus::OpContext* op_context) {
     assert(file_manager_ != nullptr);
     auto build_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(build_conf.metric_type.value())) {
@@ -524,14 +527,14 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
 template <typename DataType>
 Status
 DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
-                                               bool use_knowhere_build_pool) {
+                                               bool use_knowhere_build_pool, milvus::OpContext* op_context) {
     assert(file_manager_ != nullptr);
     std::scoped_lock lock(preparation_lock_);
     auto& config = static_cast<BaseConfig&>(*cfg);
     auto el_metric_type_or = get_el_metric_type(config.metric_type.value());
     if (!el_metric_type_or.has_value()) {
         // If not emb_list metric type, use the default build method
-        return Build(dataset, std::move(cfg), use_knowhere_build_pool);
+        return Build(dataset, std::move(cfg), use_knowhere_build_pool, op_context);
     }
 
     // DiskANN only supports TokenANN strategy
@@ -565,8 +568,8 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
     LOG_KNOWHERE_INFO_ << "Read emb_list offset from file: " << input_file_path << ", size: " << offset.size()
                        << ", first offset: " << offset.front() << ", last offset: " << offset.back();
 
-    auto build_status =
-        BuildEmbList(dataset, std::move(cfg), offset.data(), offset.back(), offset.size() - 1, use_knowhere_build_pool);
+    auto build_status = BuildEmbList(dataset, std::move(cfg), offset.data(), offset.back(), offset.size() - 1,
+                                     use_knowhere_build_pool, op_context);
     if (build_status != Status::success) {
         LOG_KNOWHERE_ERROR_ << "Failed to build base index.";
         return build_status;

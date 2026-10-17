@@ -22,13 +22,28 @@ include(cmake/utils/utils.cmake)
 include(cmake/utils/compile_flags.cmake)
 include(cmake/utils/platform_check.cmake)
 
+# cardinal is an enterprise vector search engine and can only be enabled for
+# cloud environment
+knowhere_option(WITH_CARDINAL "Build with cardinal" OFF)
+knowhere_option(WITH_GPU "Build Cardinal with GPU support" OFF)
 knowhere_option(WITH_CUVS "Build with CUVS indexes" OFF)
+if(WITH_CUVS OR (WITH_CARDINAL AND WITH_GPU))
+  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
+    if(WITH_CARDINAL AND WITH_GPU)
+      set(CMAKE_CUDA_ARCHITECTURES native)
+    else()
+      set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
+    endif()
+  endif()
+endif()
+
 if(WITH_CUVS)
-  set(CMAKE_CUDA_ARCHITECTURES RAPIDS)
   set(CMAKE_CUDA_STANDARD 20)
   include(cmake/libs/librapids.cmake)
   project(knowhere CXX C CUDA)
   include(cmake/libs/libcuvs.cmake)
+elseif(WITH_CARDINAL AND WITH_GPU)
+  enable_language(CUDA)
 endif()
 
 knowhere_option(WITH_UT "Build with UT test" OFF)
@@ -47,9 +62,6 @@ knowhere_option(WITH_COMPILE_PRUNE "Enable compile prune" ON)
 set(KNOWHERE_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 set(KNOWHERE_THRID_ROOT ${KNOWHERE_ROOT}/thirdparty)
 
-# cardinal is an enterprise vector search engine and can only be enabled for
-# cloud environment
-knowhere_option(WITH_CARDINAL "Build with cardinal" OFF)
 knowhere_option(CARDINAL_VERSION_FORCE_CHECKOUT
                 "Force checkout cardinal version" OFF)
 
