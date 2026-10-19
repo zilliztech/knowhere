@@ -70,13 +70,38 @@ endif()
 benchmark_test(gen_hdf5_file hdf5/gen_hdf5_file.cpp)
 benchmark_test(gen_fbin_file hdf5/gen_fbin_file.cpp)
 
+# Ordinary SINDI IP/BM25 dataset benchmark, including native ARM builds.
+execute_process(COMMAND git rev-parse HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE KNOWHERE_SPARSE_BENCHMARK_REVISION
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+add_executable(benchmark_sparse benchmark_sparse.cpp)
+target_link_libraries(benchmark_sparse knowhere milvus-common::milvus-common ${CMAKE_DL_LIBS})
+if(NOT APPLE)
+    target_link_options(benchmark_sparse PRIVATE "LINKER:--no-as-needed")
+    target_link_libraries(benchmark_sparse atomic)
+endif()
+target_compile_definitions(benchmark_sparse PRIVATE
+    KNOWHERE_SPARSE_BENCHMARK_REVISION="${KNOWHERE_SPARSE_BENCHMARK_REVISION}")
+install(TARGETS benchmark_sparse DESTINATION unittest)
+
+# Full-query, single-measurement ratio sweep and exhaustive diagnostics.
+add_executable(benchmark_sparse_sweep benchmark_sparse_sweep.cpp)
+target_link_libraries(benchmark_sparse_sweep knowhere milvus-common::milvus-common ${CMAKE_DL_LIBS})
+if(NOT APPLE)
+    target_link_options(benchmark_sparse_sweep PRIVATE "LINKER:--no-as-needed")
+    target_link_libraries(benchmark_sparse_sweep atomic)
+endif()
+target_compile_definitions(benchmark_sparse_sweep PRIVATE
+    KNOWHERE_SPARSE_BENCHMARK_REVISION="${KNOWHERE_SPARSE_BENCHMARK_REVISION}")
+
 # Sparse SIMD benchmark (x86_64 only, standalone, no HDF5 required)
 # Only build on x86_64/AMD64, skip on ARM/aarch64/arm64
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|X86_64)$")
     message(STATUS "Building sparse SIMD benchmark for ${CMAKE_SYSTEM_PROCESSOR}")
     add_executable(benchmark_sparse_simd benchmark_sparse_simd.cpp)
     target_link_libraries(benchmark_sparse_simd knowhere knowhere_utils
-        -Wl,--no-as-needed -laio -Wl,--as-needed)
+        -Wl,--no-as-needed -laio -latomic -Wl,--as-needed)
     if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(benchmark_sparse_simd PRIVATE -mavx512f -mavx512dq)
     endif()
@@ -87,17 +112,17 @@ endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
 # Sparse CSR baseline/refinement experiment; all scoring uses the Knowhere API.
-add_executable(benchmark_sparse benchmark_sparse.cpp)
+add_executable(benchmark_sparse_refinement benchmark_sparse_refinement.cpp)
 execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE sparse_benchmark_revision OUTPUT_STRIP_TRAILING_WHITESPACE)
-target_compile_definitions(benchmark_sparse PRIVATE KNOWHERE_SPARSE_BENCHMARK_REVISION="${sparse_benchmark_revision}")
-target_link_libraries(benchmark_sparse knowhere milvus-common::milvus-common ${CMAKE_DL_LIBS})
+target_compile_definitions(benchmark_sparse_refinement PRIVATE KNOWHERE_SPARSE_BENCHMARK_REVISION="${sparse_benchmark_revision}")
+target_link_libraries(benchmark_sparse_refinement knowhere milvus-common::milvus-common ${CMAKE_DL_LIBS})
 add_executable(benchmark_sparse_bm25_compact benchmark_sparse_bm25_compact.cpp)
 target_compile_definitions(benchmark_sparse_bm25_compact PRIVATE KNOWHERE_SPARSE_BENCHMARK_REVISION="${sparse_benchmark_revision}")
 target_link_libraries(benchmark_sparse_bm25_compact knowhere milvus-common::milvus-common ${CMAKE_DL_LIBS})
 if(NOT APPLE)
-    target_link_options(benchmark_sparse PRIVATE "LINKER:--no-as-needed")
-    target_link_libraries(benchmark_sparse atomic)
+    target_link_options(benchmark_sparse_refinement PRIVATE "LINKER:--no-as-needed")
+    target_link_libraries(benchmark_sparse_refinement atomic)
     target_link_options(benchmark_sparse_bm25_compact PRIVATE "LINKER:--no-as-needed")
     target_link_libraries(benchmark_sparse_bm25_compact atomic)
 endif()

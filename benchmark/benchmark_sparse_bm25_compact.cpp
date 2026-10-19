@@ -190,16 +190,17 @@ int
 main(int argc, char** argv) {
     try {
         std::map<std::string, std::string> args;
-        const std::set<std::string> supported{"--data-dir", "--split",   "--quant-type", "--output",
-                                              "--k",        "--queries", "--threads",    "--repeats",
-                                              "--simd",     "--truth",   "--index-save"};
+        const std::set<std::string> supported{"--data-dir",   "--split",     "--quant-type", "--output", "--k",
+                                              "--queries",    "--threads",   "--repeats",    "--simd",   "--truth",
+                                              "--index-save", "--base-file", "--query-file"};
         for (int i = 1; i < argc; i += 2) {
             const std::string key = argv[i];
             if (key == "--help") {
                 std::cout << "benchmark_sparse_bm25_compact --data-dir DIR [--split test|dev]\n"
                              "  [--quant-type u8|u16|u4_lut|u4_lut_u12|u4_lut_u16] [--k 10|100]\n"
                              "  [--queries 0] [--threads 8] [--repeats 3] [--simd auto|scalar|avx2]\n"
-                             "  [--truth FILE] [--index-save FILE] [--output FILE]\n";
+                             "  [--base-file FILE] [--query-file FILE] [--truth FILE.gt]\n"
+                             "  [--index-save FILE] [--output FILE]\n";
                 return 0;
             }
             Check(supported.count(key), "Unknown option: " + key);
@@ -207,8 +208,9 @@ main(int argc, char** argv) {
             Check(args.emplace(key, argv[i + 1]).second, "Duplicate option: " + key);
         }
         auto get = [&](std::string name, std::string fallback) { return args.count(name) ? args.at(name) : fallback; };
-        const std::string data = get("--data-dir", "/volume/data_sparse/nq"), split = get("--split", "test"),
-                          quant = get("--quant-type", "u8"), output = get("--output", "bm25_compact.json");
+        const std::string data = get("--data-dir", "/volume/data_sparse2/bm25/nq_standard"),
+                          split = get("--split", "test"), quant = get("--quant-type", "u8"),
+                          output = get("--output", "bm25_compact.json");
         const bool u4 = quant == "u4_lut" || quant == "u4_lut_u12" || quant == "u4_lut_u16";
         const bool u16_ids = quant == "u4_lut_u16";
         Check(u4 || quant == "u8" || quant == "u16", "Unsupported BM25 quant type");
@@ -228,45 +230,52 @@ main(int argc, char** argv) {
         const auto selected_simd = knowhere::KnowhereConfig::SetSimdType(simd_type);
         knowhere::KnowhereConfig::SetBuildThreadPoolSize(threads);
         knowhere::KnowhereConfig::SetSearchThreadPoolSize(threads);
-        const auto manifest = ReadJson(data + "/manifest.json");
-        auto base = LoadCsr(data + "/sparse/base_tf.csr", nullptr);
-        auto queries = LoadCsr(data + "/sparse/queries." + split + ".idf.csr", nullptr, limit);
-        const float k1 = manifest.at("bm25_k1"), b = manifest.at("bm25_b"), avgdl = manifest.at("avgdl");
+        const auto manifest = ReadJson(data + "/gt/metadata.json");
+        Check(manifest.at("metric") == "bm25", "Dataset metadata metric mismatch");
+        const std::string base_path = get("--base-file", data + "/corpus.csr");
+        const auto split_query = data + "/queries_" + split + ".csr";
+        const std::string query_path =
+            get("--query-file", std::filesystem::exists(split_query) ? split_query : data + "/queries.csr");
+        auto base = LoadCsr(base_path, nullptr);
+        auto queries = LoadCsr(query_path, nullptr, limit);
+        const float k1 = manifest.at("bm25").at("k1"), b = manifest.at("bm25").at("b"),
+                    avgdl = manifest.at("bm25").at("avgdl");
+        Check(std::isfinite(k1) && k1 >= 0 && std::isfinite(b) && b >= 0 && b <= 1 && std::isfinite(avgdl) && avgdl > 0,
+              "Invalid BM25 parameters");
         const std::string truth_path =
-            get("--truth", data + "/ground_truth/" + split + ".k" + std::to_string(k) + ".bm25");
-        auto signature = ReadJson(truth_path + ".json");
-        Check(signature.at("base_rows") == base.rows.size(), "Truth corpus mismatch");
-        Check(signature.at("query_ids").size() == queries.file_rows, "Truth query count mismatch");
-        for (size_t q = 0; q < queries.file_rows; ++q)
-            Check(signature["query_ids"][q] == q, "Truth query order mismatch");
-        for (auto key : {"bm25_k1", "bm25_b", "bm25_avgdl"}) {
-            const float value = signature.at("search").at(key);
-            const float expected = std::string(key) == "bm25_k1" ? k1 : (std::string(key) == "bm25_b" ? b : avgdl);
-            Check(std::abs(value - expected) < 1e-5 * std::max(1.f, std::abs(expected)), "Truth scorer mismatch");
-        }
-        Check(signature.at("search").at("k") == k, "Truth k mismatch");
-        if (signature.contains("query_csr_sha256")) {
-            Check(signature["query_csr_sha256"] == manifest.at("sha256").at("queries." + split + ".idf.csr"),
-                  "Truth query hash mismatch");
-        }
-        Check(signature.at("sha256").at("base_tf.csr") == manifest.at("sha256").at("base_tf.csr"),
-              "Truth base hash mismatch");
+            get("--truth",
+                data + "/gt/" + std::filesystem::path(query_path).stem().string() + ".k" + std::to_string(k) + ".gt");
+        Check(std::filesystem::path(truth_path).extension() == ".gt", "Truth must use the shared .gt format");
         MappedFile truth(truth_path);
-        const auto truth_n = truth.Read<uint64_t>(0);
-        Check(truth_n == queries.file_rows * k && truth.size == 8 + 12 * truth_n, "Truth payload mismatch");
+        const uint64_t truth_rows = truth.Read<uint32_t>(0), truth_k = truth.Read<uint32_t>(4);
+        Check(truth_rows == queries.file_rows && truth_rows > 0 && truth_k >= k &&
+                  truth_k <= (truth.size - 8) / 8 / truth_rows && truth.size == 8 + 8 * truth_rows * truth_k,
+              "Invalid ground-truth header or payload");
+        const auto truth_id = [&](size_t q, size_t rank) -> int64_t {
+            const auto id = truth.Read<uint32_t>(8 + 4 * (q * truth_k + rank));
+            return id == UINT32_MAX ? -1 : int64_t(id);
+        };
+        const auto truth_score = [&](size_t q, size_t rank) {
+            return truth.Read<float>(8 + 4 * truth_rows * truth_k + 4 * (q * truth_k + rank));
+        };
         size_t valid_truth = 0;
         for (size_t q = 0; q < queries.rows.size(); ++q) {
             std::set<int64_t> seen;
             bool padding = false;
-            for (size_t j = 0; j < k; ++j) {
-                const auto id = truth.Read<int64_t>(8 + 8 * (q * k + j));
+            float previous = std::numeric_limits<float>::infinity();
+            for (size_t j = 0; j < truth_k; ++j) {
+                const auto id = truth_id(q, j);
+                const auto score = truth_score(q, j);
                 if (id < 0) {
+                    Check(j >= base.rows.size() && score == 0, "Invalid ground-truth padding");
                     padding = true;
                     continue;
                 }
-                Check(!padding && uint64_t(id) < base.rows.size() && seen.insert(id).second,
-                      "Invalid truth ordering/ID");
-                ++valid_truth;
+                Check(!padding && uint64_t(id) < base.rows.size() && seen.insert(id).second && std::isfinite(score) &&
+                          score >= 0 && score <= previous,
+                      "Invalid ground-truth IDs/scores");
+                previous = score;
+                valid_truth += j < k;
             }
         }
         Check(valid_truth > 0, "No valid ground-truth neighbors");
@@ -286,6 +295,9 @@ main(int argc, char** argv) {
         knowhere::sparse::inverted::sindi::Bm25U4Lut lut;
         Json meta{{"dataset", data},
                   {"split", split},
+                  {"base_path", base_path},
+                  {"query_path", query_path},
+                  {"truth_path", truth_path},
                   {"quant_type", quant},
                   {"threads", threads},
                   {"k", k},
@@ -360,7 +372,7 @@ main(int argc, char** argv) {
                     Check(std::abs(score - expected) < 3e-5 * std::max(1., std::abs(expected)),
                           "Returned score disagrees with oracle");
                     for (size_t g = 0; g < k; ++g)
-                        if (id == truth.Read<int64_t>(8 + 8 * (q * k + g))) {
+                        if (id == truth_id(q, g)) {
                             ++correct;
                             break;
                         }
@@ -375,10 +387,10 @@ main(int argc, char** argv) {
             double threshold = 0;
             std::set<int64_t> truth_ids;
             for (size_t j = 0; j < k; ++j) {
-                const auto id = truth.Read<int64_t>(8 + 8 * (q * k + j));
+                const auto id = truth_id(q, j);
                 if (id >= 0) {
                     truth_ids.insert(id);
-                    threshold = truth.Read<float>(8 + 8 * truth_n + 4 * (q * k + j));
+                    threshold = truth_score(q, j);
                 }
             }
             for (size_t j = 0; j < k; ++j) {
