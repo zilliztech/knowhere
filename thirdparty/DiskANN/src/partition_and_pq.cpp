@@ -1010,16 +1010,14 @@ template<typename T>
 int retrieve_shard_data_from_ids(const std::string data_file,
                                  std::string       idmap_filename,
                                  std::string       data_filename) {
-  _u64 read_blk_size = 64 * 1024 * 1024;
-  //  _u64 write_blk_size = 64 * 1024 * 1024;
-  // create cached reader + writer
-  cached_ifstream base_reader(data_file, read_blk_size);
+  cached_ifstream base_reader(data_file, 2 * sizeof(uint32_t));
   _u32            npts32;
   _u32            basedim32;
   base_reader.read((char *) &npts32, sizeof(uint32_t));
   base_reader.read((char *) &basedim32, sizeof(uint32_t));
   size_t num_points = npts32;
   size_t dim = basedim32;
+  base_reader.set_cache_size(sizeof(T) * dim);
 
   _u32 dummy_size = 0;
 
@@ -1035,32 +1033,16 @@ int retrieve_shard_data_from_ids(const std::string data_file,
   _u32 num_written = 0;
   LOG_KNOWHERE_DEBUG_ << "Shard has " << shard_size << " points";
 
-  size_t block_size = num_points <= BLOCK_SIZE ? num_points : BLOCK_SIZE;
-  std::unique_ptr<T[]> block_data_T = std::make_unique<T[]>(block_size * dim);
-
-  size_t num_blocks = DIV_ROUND_UP(num_points, block_size);
-
-  for (size_t block = 0; block < num_blocks; block++) {
-    size_t start_id = block * block_size;
-    size_t end_id = (std::min)((block + 1) * block_size, num_points);
-    size_t cur_blk_size = end_id - start_id;
-
-    base_reader.read((char *) block_data_T.get(),
-                     sizeof(T) * (cur_blk_size * dim));
-
-    for (size_t p = 0; p < cur_blk_size; p++) {
-      uint32_t original_point_map_id = (uint32_t) (start_id + p);
-      if (cur_pos == shard_size)
-        break;
-      if (original_point_map_id == shard_ids[cur_pos]) {
-        cur_pos++;
-        shard_data_writer.write((char *) (block_data_T.get() + p * dim),
-                                sizeof(T) * dim);
-        num_written++;
-      }
-    }
-    if (cur_pos == shard_size)
+  std::unique_ptr<T[]> row = std::make_unique<T[]>(dim);
+  for (; cur_pos < shard_size; cur_pos++) {
+    const _u32 id = shard_ids[cur_pos];
+    if (id >= num_points || (cur_pos > 0 && id <= shard_ids[cur_pos - 1]))
       break;
+    if (cur_pos == 0 || id != shard_ids[cur_pos - 1] + 1)
+      base_reader.seek(2 * sizeof(uint32_t) + (size_t) id * dim * sizeof(T));
+    base_reader.read((char *) row.get(), sizeof(T) * dim);
+    shard_data_writer.write((char *) row.get(), sizeof(T) * dim);
+    num_written++;
   }
 
   LOG_KNOWHERE_DEBUG_ << "Written file with " << num_written << " points";
