@@ -152,6 +152,20 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         // Growing postings arrive in document order, so the last encoded window
         // is the only count that can change. A new dimension needs no entries
         // for the windows that preceded its first posting.
+        // Refinement uses the same sparse window order. Only its trailing
+        // posting offset changes, so existing postings need no validation scan.
+        if (refine_) {
+            auto& seek = refinement_seek_[dim_id];
+            if (seek.offsets.empty()) {
+                seek.sparse = true;
+                seek.offsets.push_back(0);
+            }
+            if (seek.windows.empty() || seek.windows.back() != window_id) {
+                seek.windows.push_back(window_id);
+                seek.offsets.push_back(seek.offsets.back());
+            }
+            ++seek.offsets.back();
+        }
         auto& encoded = plists_window_nnzs_[dim_id];
         const uint32_t wnnz_bits = 32 - __builtin_clz(window_size_);
         if (!encoded.empty()) {
@@ -368,6 +382,9 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         const size_t old_dim_count = plists_window_nnzs_.size();
         plists_window_nnzs_.resize(dim_count);
         plists_window_nnzs_spans_.resize(dim_count);
+        if (refine_) {
+            refinement_seek_.resize(dim_count);
+        }
         plists_wnnzs_fmts_msk_.resize((dim_count + 7) / 8, 0);
         for (size_t dim_id = old_dim_count; dim_id < dim_count; ++dim_id) {
             plists_wnnzs_fmts_msk_[dim_id >> 3] |= static_cast<uint8_t>(1u << (dim_id & 0x7));
@@ -873,10 +890,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         }
         max_scores_per_dim_span_ = std::span<const float>(max_scores_per_dim_.data(), max_scores_per_dim_.size());
 
-        if (refine_) {
-            rebuild_refinement_seek();
-        }
-
+        // Growing refinement seeks were updated alongside the appended window counts.
         if (old_nr_rows == 0) {
             LOG_KNOWHERE_INFO_ << "SindiInvertedIndex incremental build completed: rows=" << this->nr_rows_
                                << ", inner_dims=" << this->nr_inner_dims_ << ", windows=" << nr_windows_
