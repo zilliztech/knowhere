@@ -224,7 +224,7 @@ namespace math_utils {
 
     bool is_norm_given_for_pts = (pts_norms_squared != NULL);
 
-    auto pivs_norms_squared = std::make_unique<float>(num_centers);
+    auto pivs_norms_squared = std::make_unique<float[]>(num_centers);
     std::unique_ptr<float[]> pts_norms_squared_deleter = nullptr;
     if (!is_norm_given_for_pts) {
       pts_norms_squared_deleter = std::make_unique<float[]>(num_points);
