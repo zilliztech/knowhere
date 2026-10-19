@@ -29,10 +29,10 @@
 #include <utility>
 #include <vector>
 
-#include "async_local_file_manager.h"
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "filemanager/impl/LocalFileManager.h"
 #include "index/data_view_dense_index/data_view_dense_index.h"
 #include "knowhere/binaryset.h"
 #include "knowhere/bitsetview.h"
@@ -2167,7 +2167,7 @@ GenNullableEmbListChunkDataSet(int64_t total_docs, const std::vector<int32_t>& v
 
 std::shared_ptr<milvus::FileManager>
 LocalFileManager() {
-    return std::make_shared<knowhere::test::AsyncLocalFileManager>();
+    return std::make_shared<milvus::LocalFileManager>();
 }
 
 MatrixData
