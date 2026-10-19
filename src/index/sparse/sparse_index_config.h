@@ -84,6 +84,8 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_STRING quant_type;
     CFG_FLOAT bm25_u8_max_overflow_ratio;
     CFG_INT sindi_window_size;
+    CFG_FLOAT sindi_bm25_filter_threshold;
+    CFG_FLOAT sindi_ip_filter_threshold;
 
     KNOWHERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(refine)
@@ -209,6 +211,17 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .set_range(1024, 65535)
             .set_default(4096)
             .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(sindi_bm25_filter_threshold)
+            .description(
+                "maximum window-local pass fraction for unpacked SINDI BM25 posting prefiltering; 0 disables it")
+            .set_default(1.0f / 64)
+            .set_range(0.0f, 1.0f)
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(sindi_ip_filter_threshold)
+            .description("maximum window-local pass fraction for SINDI IP posting prefiltering; 0 disables it")
+            .set_default(1.0f / 512)
+            .set_range(0.0f, 1.0f)
+            .for_search();
     }
 
     Status

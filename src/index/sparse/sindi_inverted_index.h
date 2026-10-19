@@ -24,6 +24,7 @@
 #include "index/sparse/inverted_index_format.h"
 #include "index/sparse/parallel_build.h"
 #include "index/sparse/scorer.h"
+#include "index/sparse/sindi_filter.h"
 #include "index/sparse/sindi_simd.h"
 #include "knowhere/bitsetview.h"
 #include "knowhere/operands.h"
@@ -1506,9 +1507,6 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
         float threshold = 0.0f;
 
-        const uint32_t wnnz_bits = 32 - __builtin_clz(window_size_);
-        const uint32_t wnnz_mask = (1u << wnnz_bits) - 1;
-
         // Skip a window when every document in it is filtered out by the bitset.
         const auto window_all_filtered = [&bitset](size_t docid_start, size_t window_doc_count) {
             if (bitset.empty()) {
@@ -1520,50 +1518,18 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             }
             return bitset.range_all_filtered(docid_start, end);
         };
+        sindi::PostingFilter<QuantType> posting_filter;
+        // The metric-specific search config bounds the actual window-local
+        // survivor fraction. Zero disables posting prefiltering. Packed BM25
+        // retains its dedicated kernel; its byte streams cannot be compacted
+        // as ordinary posting IDs and values.
+        const double filter_threshold = search_params.sindi_filter_threshold;
+        const auto prepare_filter = [&](size_t start, size_t count) {
+            return !packed_ && filter_threshold > 0 &&
+                   posting_filter.prepare(bitset, start, count, static_cast<size_t>(count * filter_threshold));
+        };
 
-        // Initialize posting list cursors for each query term
-        // Cursors track position in posting lists and handle window-by-window iteration
-        std::vector<PostingCursor> cursors;
-        cursors.reserve(sorted_q_vec.size());
-        std::vector<Bm25U8QueryOverflowCursor> overflow_cursors;
-        if constexpr (is_bm25_u8) {
-            if (!bm25_u8_overflow_offsets_span_.empty()) {
-                overflow_cursors.reserve(sorted_q_vec.size());
-            }
-        }
-        for (auto& [qid, qval] : sorted_q_vec) {
-            const auto wnnz_buf_span = encoded_window_nnzs(qid);
-            const auto ids = packed_ready_ ? std::span<const uint16_t>{} : posting_ids(qid);
-            const auto vals = packed_ready_ ? std::span<const QuantType>{} : posting_vals(qid);
-
-            bool is_sparse = !plists_wnnzs_fmts_msk_span_.empty() &&
-                             ((plists_wnnzs_fmts_msk_span_[qid >> 3] & static_cast<uint8_t>(0x1u << (qid & 0x7))) != 0);
-
-            cursors.emplace_back(static_cast<uint32_t>(qid),  // dim_id
-                                 qval,                        // qval
-                                 ids.data(),                  // ids_base
-                                 vals.data(),                 // vals_base
-                                 wnnz_buf_span.data(),        // wnnz_buf
-                                 wnnz_buf_span.size(),        // wnnz_buf_sz
-                                 is_sparse,                   // is_sparse
-                                 0,                           // cursor
-                                 0,                           // offset
-                                 wnnz_bits,                   // wnnz_bits
-                                 wnnz_mask                    // wnnz_mask
-            );
-            if constexpr (is_bm25_u8) {
-                if (!bm25_u8_overflow_offsets_span_.empty()) {
-                    const uint32_t posting_begin = plists_dim_offsets_span_[qid];
-                    const auto [overflow_begin, overflow_end] =
-                        bm25_u8_overflow_range(posting_begin, plists_dim_offsets_span_[qid + 1]);
-                    if (overflow_begin != overflow_end) {
-                        overflow_cursors.emplace_back(cursors.size() - 1, posting_begin,
-                                                      bm25_u8_overflow_offsets_span_.data(), overflow_begin,
-                                                      overflow_end);
-                    }
-                }
-            }
-        }
+        auto [cursors, overflow_cursors] = make_query_cursors(sorted_q_vec);
 
         // Main search loop: iterate over windows and process each window
         if constexpr (is_ip) {
@@ -1586,6 +1552,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                     continue;
                 }
                 std::fill_n(wscores_final, curr_window_size, 0);
+                const bool filter_postings = prepare_filter(docid_start, curr_window_size);
 
                 float curr_max_score = 0.0f;
                 bool skip_window_calc = false;
@@ -1607,8 +1574,13 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                         continue;
                     }
 
+                    const auto postings = posting_filter.select(
+                        bitset, {cur.ids_base + soff, cur.vals_base + soff, wnnz}, filter_postings);
+                    if (postings.empty()) {
+                        continue;
+                    }
                     float dispatch_max =
-                        scatter_fn(cur.qval, cur.vals_base + soff, cur.ids_base + soff, wnnz, wscores_final);
+                        scatter_fn(cur.qval, postings.values, postings.ids, postings.count, wscores_final);
                     if (dispatch_max > curr_max_score) {
                         curr_max_score = dispatch_max;
                     }
@@ -1664,6 +1636,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                         continue;
                     }
                     std::fill_n(wscores_final, curr_window_size, 0);
+                    const bool filter_postings = prepare_filter(docid_start, curr_window_size);
 
                     float curr_max_score = 0.0f;
                     bool skip_window_calc = false;
@@ -1696,20 +1669,27 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
                         const uint16_t* plist_ids = packed_ ? nullptr : cur.ids_base + soff;
                         const QuantType* plist_vals = packed_ ? nullptr : cur.vals_base + soff;
+                        const auto postings =
+                            posting_filter.select(bitset, {plist_ids, plist_vals, wnnz}, filter_postings);
+                        if (postings.empty()) {
+                            continue;
+                        }
 
                         float dispatch_max =
-                            packed_ ? packed_bm25_fn(cur.qval, packed_vals_span_.data(), packed_ids_span_.data(),
-                                                     size_t(plists_dim_offsets_span_[cur.dim_id]) + soff, wnnz,
-                                                     wscores_final, bm25_k1, bm25_b, bm25_avgdl,
-                                                     row_sums_ptr + docid_start, lut_.decode.data())
-                                    : accumulate_fn(cur.qval, plist_vals, plist_ids, wnnz, wscores_final, bm25_k1,
-                                                    bm25_b, bm25_avgdl, row_sums_ptr + docid_start);
+                            packed_
+                                ? packed_bm25_fn(cur.qval, packed_vals_span_.data(), packed_ids_span_.data(),
+                                                 size_t(plists_dim_offsets_span_[cur.dim_id]) + soff, wnnz,
+                                                 wscores_final, bm25_k1, bm25_b, bm25_avgdl, row_sums_ptr + docid_start,
+                                                 lut_.decode.data())
+                                : accumulate_fn(cur.qval, postings.values, postings.ids, postings.count, wscores_final,
+                                                bm25_k1, bm25_b, bm25_avgdl, row_sums_ptr + docid_start);
                         if constexpr (RestoreOverflow) {
                             if (overflow_cur != nullptr && overflow_cur->window_begin != overflow_cur->window_end) {
                                 dispatch_max = apply_bm25_u8_overflow_corrections(
                                     overflow_cur->posting_begin, soff, plist_ids, wnnz, overflow_cur->window_begin,
                                     overflow_cur->window_end, cur.qval, wscores_final, dispatch_max, bm25_k1, bm25_b,
-                                    bm25_avgdl, row_sums_ptr + docid_start);
+                                    bm25_avgdl, row_sums_ptr + docid_start, filter_postings ? &bitset : nullptr,
+                                    docid_start);
                             }
                         }
                         if (dispatch_max > curr_max_score) {
@@ -1755,51 +1735,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             return {};
         }
 
-        const uint32_t wnnz_bits = 32 - __builtin_clz(window_size_);
-        const uint32_t wnnz_mask = (1u << wnnz_bits) - 1;
-
-        // Initialize posting list cursors for each query term
-        std::vector<PostingCursor> cursors;
-        cursors.reserve(q_vec.size());
-        std::vector<Bm25U8QueryOverflowCursor> overflow_cursors;
-        if constexpr (is_bm25_u8) {
-            if (!bm25_u8_overflow_offsets_span_.empty()) {
-                overflow_cursors.reserve(q_vec.size());
-            }
-        }
-        for (auto& [qid, qval] : q_vec) {
-            const auto nnz_span = encoded_window_nnzs(qid);
-            const auto ids = packed_ready_ ? std::span<const uint16_t>{} : posting_ids(qid);
-            const auto vals = packed_ready_ ? std::span<const QuantType>{} : posting_vals(qid);
-
-            bool is_sparse = !plists_wnnzs_fmts_msk_span_.empty() &&
-                             ((plists_wnnzs_fmts_msk_span_[qid >> 3] & static_cast<uint8_t>(0x1u << (qid & 0x7))) != 0);
-
-            cursors.emplace_back(static_cast<uint32_t>(qid),  // dim_id
-                                 qval,                        // qval
-                                 ids.data(),                  // ids_base
-                                 vals.data(),                 // vals_base
-                                 nnz_span.data(),             // wnnz_buf
-                                 nnz_span.size(),             // wnnz_buf_sz
-                                 is_sparse,                   // is_sparse
-                                 0,                           // cursor
-                                 0,                           // offset
-                                 wnnz_bits,                   // wnnz_bits
-                                 wnnz_mask                    // wnnz_mask
-            );
-            if constexpr (is_bm25_u8) {
-                if (!bm25_u8_overflow_offsets_span_.empty()) {
-                    const uint32_t posting_begin = plists_dim_offsets_span_[qid];
-                    const auto [overflow_begin, overflow_end] =
-                        bm25_u8_overflow_range(posting_begin, plists_dim_offsets_span_[qid + 1]);
-                    if (overflow_begin != overflow_end) {
-                        overflow_cursors.emplace_back(cursors.size() - 1, posting_begin,
-                                                      bm25_u8_overflow_offsets_span_.data(), overflow_begin,
-                                                      overflow_end);
-                    }
-                }
-            }
-        }
+        auto [cursors, overflow_cursors] = make_query_cursors(q_vec);
 
         std::vector<float> distances(this->nr_rows_, 0.0f);
 
@@ -1986,7 +1922,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     apply_bm25_u8_overflow_corrections(uint32_t posting_begin, uint32_t window_posting_offset,
                                        const uint16_t* posting_ids, uint16_t window_nnz, uint32_t overflow_begin,
                                        uint32_t overflow_end, float qval, float* scores, float current_max, float k1,
-                                       float b, float avgdl, const float* row_sums) const noexcept {
+                                       float b, float avgdl, const float* row_sums, const BitsetView* bitset = nullptr,
+                                       size_t docid_start = 0) const noexcept {
         if constexpr (is_bm25_u8) {
             const float p1 = k1 + 1.0f;
             const float p2 = k1 * (1.0f - b);
@@ -1998,6 +1935,9 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                     continue;
                 }
                 const uint16_t docid = posting_ids[local_offset];
+                if (bitset != nullptr && bitset->test(static_cast<int64_t>(docid_start + docid))) {
+                    continue;
+                }
                 const float dl_term = p2 + p3 * row_sums[docid];
                 const float true_tf = static_cast<float>(bm25_u8_overflow_values_span_[i]);
                 const float correction = qval * p1 * (true_tf / (true_tf + dl_term) - 255.0f / (255.0f + dl_term));
@@ -2641,6 +2581,61 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             : query_cursor(query_cursor), cursor(posting_begin, offsets, cursor_begin, cursor_end) {
         }
     };
+
+    struct QueryCursors {
+        std::vector<PostingCursor> postings;
+        std::vector<Bm25U8QueryOverflowCursor> overflows;
+    };
+
+    QueryCursors
+    make_query_cursors(std::span<const std::pair<uint32_t, float>> query) const {
+        const uint32_t wnnz_bits = 32 - __builtin_clz(window_size_);
+        const uint32_t wnnz_mask = (1u << wnnz_bits) - 1;
+
+        QueryCursors result;
+        auto& [cursors, overflow_cursors] = result;
+        cursors.reserve(query.size());
+        if constexpr (is_bm25_u8) {
+            if (!bm25_u8_overflow_offsets_span_.empty()) {
+                overflow_cursors.reserve(query.size());
+            }
+        }
+        for (const auto& [qid, qval] : query) {
+            const auto wnnz_buf_span = encoded_window_nnzs(qid);
+            const auto ids = packed_ready_ ? std::span<const uint16_t>{} : posting_ids(qid);
+            const auto vals = packed_ready_ ? std::span<const QuantType>{} : posting_vals(qid);
+
+            bool is_sparse = !plists_wnnzs_fmts_msk_span_.empty() &&
+                             ((plists_wnnzs_fmts_msk_span_[qid >> 3] & static_cast<uint8_t>(0x1u << (qid & 0x7))) != 0);
+
+            cursors.emplace_back(static_cast<uint32_t>(qid),  // dim_id
+                                 qval,                        // qval
+                                 ids.data(),                  // ids_base
+                                 vals.data(),                 // vals_base
+                                 wnnz_buf_span.data(),        // wnnz_buf
+                                 wnnz_buf_span.size(),        // wnnz_buf_sz
+                                 is_sparse,                   // is_sparse
+                                 0,                           // cursor
+                                 0,                           // offset
+                                 wnnz_bits,                   // wnnz_bits
+                                 wnnz_mask                    // wnnz_mask
+            );
+            if constexpr (is_bm25_u8) {
+                if (!bm25_u8_overflow_offsets_span_.empty()) {
+                    const uint32_t posting_begin = plists_dim_offsets_span_[qid];
+                    const auto [overflow_begin, overflow_end] =
+                        bm25_u8_overflow_range(posting_begin, plists_dim_offsets_span_[qid + 1]);
+                    if (overflow_begin != overflow_end) {
+                        overflow_cursors.emplace_back(cursors.size() - 1, posting_begin,
+                                                      bm25_u8_overflow_offsets_span_.data(), overflow_begin,
+                                                      overflow_end);
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
 };
 
 using SindiInvertedIndexIP = SindiInvertedIndex<float, knowhere::fp16>;

@@ -147,6 +147,7 @@ struct InvertedIndexSearchParams {
     size_t bulk_query_nnz_threshold;
     float refine_query_mass_percentage = 1.0f;
     float refine_k = 1.0f;
+    float sindi_filter_threshold = 0.0f;
 
     struct {
         float drop_ratio_search;
