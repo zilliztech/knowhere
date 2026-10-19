@@ -16,13 +16,13 @@
 #include <thread>
 
 #include "../DiskANN/include/diskann/defaults.h"
+#include "async_local_file_manager.h"
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "diskann/diskann_gpu.h"
 #include "diskann/utils.h"
 #include "filemanager/FileManager.h"
-#include "filemanager/impl/LocalFileManager.h"
 #include "index/diskann/diskann_config.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/knowhere_check.h"
@@ -152,7 +152,7 @@ TEST_CASE("Invalid diskann params test", "[diskann]") {
         json["max_k"] = 8000;
         return json;
     };
-    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<knowhere::test::AsyncLocalFileManager>();
     auto diskann_index_pack = knowhere::Pack(file_manager);
     auto base_ds = GenDataSet(rows_num, kDim, 30);
     auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
@@ -309,7 +309,7 @@ base_search() {
     }
 
     SECTION("Test search and range search") {
-        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<knowhere::test::AsyncLocalFileManager>();
         auto diskann_index_pack = knowhere::Pack(file_manager);
         knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
         knowhere::BinarySet binset;
@@ -321,14 +321,14 @@ base_search() {
             knowhere::DataSetPtr ds_ptr = nullptr;
             auto diskann =
                 knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack).value();
-            diskann.Build(ds_ptr, json);
-            diskann.Serialize(binset);
+            REQUIRE(diskann.Build(ds_ptr, json) == knowhere::Status::success);
+            REQUIRE(diskann.Serialize(binset) == knowhere::Status::success);
         }
         {
             // knn search
             auto diskann =
                 knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack).value();
-            diskann.Deserialize(binset, deserialize_json);
+            REQUIRE(diskann.Deserialize(binset, deserialize_json) == knowhere::Status::success);
             REQUIRE(diskann.HasRawData(metric_str) ==
                     knowhere::IndexStaticFaced<DataType>::HasRawData("DISKANN", version, json));
 
@@ -348,7 +348,7 @@ base_search() {
                 }
                 auto diskann_tmp =
                     knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack).value();
-                diskann_tmp.Deserialize(binset, deserialize_json);
+                REQUIRE(diskann_tmp.Deserialize(binset, deserialize_json) == knowhere::Status::success);
                 auto knn_search_json = knn_search_gen().dump();
                 knowhere::Json knn_json = knowhere::Json::parse(knn_search_json);
                 auto res = diskann_tmp.Search(query_ds, knn_json, nullptr);
@@ -438,7 +438,7 @@ TEST_CASE("Test DiskANN CalcDistByIDs with all vectors cached", "[diskann]") {
     build_json["search_cache_budget_gb"] = sizeof(knowhere::fp16) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
     build_json["build_dram_budget_gb"] = 32.0;
 
-    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<knowhere::test::AsyncLocalFileManager>();
     auto diskann_index_pack = knowhere::Pack(file_manager);
     auto diskann =
         knowhere::IndexFactory::Instance().Create<knowhere::fp16>(diskann_type, version, diskann_index_pack).value();
@@ -507,7 +507,8 @@ TEST_CASE("Test DiskANN Build Index", "[diskann]") {
             auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
             WriteRawDataToDisk<float>(kRawDataPath, base_ptr, kNumRows, dim);
 
-            std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+            std::shared_ptr<milvus::FileManager> file_manager =
+                std::make_shared<knowhere::test::AsyncLocalFileManager>();
             auto diskann_index_pack = knowhere::Pack(file_manager);
 
             knowhere::DataSetPtr ds_ptr = nullptr;
@@ -629,7 +630,7 @@ emb_list_search() {
     }
 
     SECTION("Test EmbList knn search") {
-        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<knowhere::test::AsyncLocalFileManager>();
         auto diskann_index_pack = knowhere::Pack(file_manager);
         knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
         knowhere::BinarySet binset;
@@ -732,7 +733,7 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
         auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
         WriteRawDataToDisk<float>(kRawDataPath, base_ptr, kNumRows, dim);
 
-        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<knowhere::test::AsyncLocalFileManager>();
         auto diskann_index_pack = knowhere::Pack(file_manager);
 
         knowhere::DataSetPtr ds_ptr = nullptr;
@@ -863,7 +864,7 @@ TEST_CASE("Test_AiSAQ_dynamic_cache", "[diskann]") {
         return json;
     };
 
-    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<knowhere::test::AsyncLocalFileManager>();
     auto diskann_index_pack = knowhere::Pack(file_manager);
     auto fp32_base_ds = GenDataSet(kNumRowsTest, kLargeDim, 30);
     auto fp32_query_ds = GenDataSet(kNumQueriesTest, kLargeDim, 42);
@@ -962,7 +963,7 @@ TEST_CASE("Test_AiSAQ_GetVectorByIds", "[diskann]") {
         auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
         WriteRawDataToDisk<float>(kRawDataPath, base_ptr, kNumRows, dim);
 
-        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<knowhere::test::AsyncLocalFileManager>();
         auto diskann_index_pack = knowhere::Pack(file_manager);
 
         knowhere::DataSetPtr ds_ptr = nullptr;
@@ -1121,7 +1122,7 @@ base_AiSAQ_param_test() {
     }
 
     SECTION("Test search and range search") {
-        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+        std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<knowhere::test::AsyncLocalFileManager>();
         auto diskann_index_pack = knowhere::Pack(file_manager);
         knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
         knowhere::BinarySet binset;
@@ -1425,7 +1426,7 @@ base_AiSAQ_search() {
                 for (const int pq_cache_size : pq_cache_size_list) {
                     for (const int num_entry_points : num_entry_points_list) {
                         std::shared_ptr<milvus::FileManager> file_manager =
-                            std::make_shared<milvus::LocalFileManager>();
+                            std::make_shared<knowhere::test::AsyncLocalFileManager>();
                         auto diskann_index_pack = knowhere::Pack(file_manager);
                         knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
                         knowhere::BinarySet binset;
@@ -1626,7 +1627,7 @@ cached_node_AiSAQ_search() {
                 for (const int pq_cache_size : pq_cache_size_list) {
                     for (const int num_entry_points : num_entry_points_list) {
                         std::shared_ptr<milvus::FileManager> file_manager =
-                            std::make_shared<milvus::LocalFileManager>();
+                            std::make_shared<knowhere::test::AsyncLocalFileManager>();
                         auto diskann_index_pack = knowhere::Pack(file_manager);
                         knowhere::Json deserialize_json = knowhere::Json::parse(deserialize_gen().dump());
                         knowhere::BinarySet binset;
@@ -1785,7 +1786,7 @@ TEST_CASE("Test DiskANN Search Cancellation", "[diskann][cancellation]") {
     auto base_ptr = static_cast<const float*>(base_ds->GetTensor());
     WriteRawDataToDisk<float>(kRawDataPath, base_ptr, kNumRows, kDim);
 
-    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<knowhere::test::AsyncLocalFileManager>();
     auto diskann_index_pack = knowhere::Pack(file_manager);
     knowhere::BinarySet binset;
 
