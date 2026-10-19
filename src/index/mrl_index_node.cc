@@ -340,7 +340,9 @@ MRLIndexNode::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, cons
 expected<std::vector<IndexNode::IteratorPtr>>
 MRLIndexNode::AnnIterator(const DataSetPtr, std::unique_ptr<Config>, const BitsetView&, bool,
                           milvus::OpContext*) const {
-    return expected<std::vector<IteratorPtr>>::Err(Status::not_implemented, "MRL iterator search is not supported");
+    return expected<std::vector<IteratorPtr>>::Err(
+        Status::not_implemented,
+        "MRL does not support iterator-based searches, including group-by and iterative filtering");
 }
 
 expected<DataSetPtr>

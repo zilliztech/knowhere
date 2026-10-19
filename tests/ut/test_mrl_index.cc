@@ -68,6 +68,19 @@ TEST_CASE("MRL index searches the prefix and optionally reranks with source vect
     }
 }
 
+TEST_CASE("MRL reports unsupported iterator-based search features", "[mrl]") {
+    float base_data[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float query_data[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    auto index = CreateMRLIndex(base_data, false);
+    auto query = knowhere::GenDataSet(1, kSourceDim, query_data);
+    knowhere::Json config = {{knowhere::meta::METRIC_TYPE, knowhere::metric::L2}};
+
+    auto result = index.AnnIterator(query, config, nullptr);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(result.what() ==
+            "MRL does not support iterator-based searches, including group-by and iterative filtering");
+}
+
 TEST_CASE("MRL cosine refinement preserves full-dimensional norms", "[mrl]") {
     float base_data[] = {1.0f, 0.0f, 10.0f, 0.0f, 0.8f, 0.6f, 0.0f, 0.0f};
     float query_data[] = {1.0f, 0.0f, 0.0f, 0.0f};
