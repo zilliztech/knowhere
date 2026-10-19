@@ -50,7 +50,7 @@ enum class InvertedIndexEncoding : uint32_t {
     BLOCK_MASKEDVBYTE = 2,
     FIXED_DOCID_WINDOWS = 3,
     BLOCK_ADAPTIVE = 4,
-    RESERVED_U12_E5M7 = 5,  // Reserved for the independent packed-IP branch.
+    FIXED_DOCID_WINDOWS_U12_E5M7 = 5,
     FIXED_DOCID_WINDOWS_U12_U4_LUT = 6,
     FIXED_DOCID_WINDOWS_U16_U4_LUT = 7,
 };

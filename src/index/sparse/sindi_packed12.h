@@ -1,10 +1,14 @@
 // Copyright (C) 2026 Zilliz. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 #pragma once
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
+
+#include "knowhere/operands.h"
 
 namespace knowhere::sparse::inverted::sindi {
 
@@ -41,4 +45,28 @@ pack12(uint8_t* bytes, size_t position, uint16_t code) {
     }
 }
 
+inline uint16_t
+encode_e5m7(knowhere::fp16 value) {
+    const auto bits = std::bit_cast<uint16_t>(value);
+    if ((bits & 0x8000) || (bits & 0x7c00) == 0x7c00) {
+        throw std::invalid_argument("E5M7 requires finite nonnegative FP16, including positive zero");
+    }
+
+    return bits >> 3;
+}
+
+inline knowhere::fp16
+decode_e5m7_half(uint16_t code) {
+    if (code >= 0xf80) {
+        throw std::invalid_argument("Reserved E5M7 code");
+    }
+
+    uint16_t bits = code << 3;
+    return std::bit_cast<knowhere::fp16>(bits);
+}
+
+inline float
+decode_e5m7(uint16_t code) {
+    return static_cast<float>(decode_e5m7_half(code));
+}
 }  // namespace knowhere::sparse::inverted::sindi

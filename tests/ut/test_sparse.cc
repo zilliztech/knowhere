@@ -3502,3 +3502,397 @@ TEST_CASE("SINDI BM25 U16 LUT kernels and full U16 window", "[sparse][sindi][u4_
         IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, 11).value();
     REQUIRE(growable.Build(RefineDataset(rows), build) != Status::success);
 }
+
+namespace {
+
+float
+E5Oracle(uint16_t code) {
+    const int exponent = code >> 7, fraction = code & 127;
+    return exponent == 0 ? std::ldexp(float(fraction), -21) : std::ldexp(1.0f + float(fraction) / 128, exponent - 15);
+}
+
+float
+E5Represented(float value) {
+    knowhere::fp16 half(value);
+    uint16_t bits;
+    std::memcpy(&bits, &half, 2);
+    return E5Oracle(bits >> 3);
+}
+
+}  // namespace
+
+TEST_CASE("SINDI U12 E5M7 exhaustive codecs", "[sparse][sindi][u12]") {
+    using namespace knowhere::sparse::inverted::sindi;
+    std::vector<uint8_t> bytes(packed12_bytes(4097), 0);
+    for (size_t i = 0; i < 4097; ++i) pack12(bytes.data(), i, i & 4095);
+    for (size_t i = 0; i < 4097; ++i) REQUIRE(unpack12(bytes.data(), i) == (i & 4095));
+    REQUIRE((bytes.back() & 0xf0) == 0);
+    for (uint16_t c = 0; c < 4096; ++c) {
+        if (c < 3968)
+            REQUIRE(decode_e5m7(c) == E5Oracle(c));
+        else
+            REQUIRE_THROWS(decode_e5m7(c));
+    }
+    for (uint32_t b = 0; b < 65536; ++b) {
+        uint16_t bits = b;
+        knowhere::fp16 half;
+        std::memcpy(&half, &bits, 2);
+        if ((b & 0x8000) || (b & 0x7c00) == 0x7c00)
+            REQUIRE_THROWS(encode_e5m7(half));
+        else
+            REQUIRE(encode_e5m7(half) == (b >> 3));
+    }
+    REQUIRE_THROWS(packed12_bytes(std::numeric_limits<size_t>::max()));
+}
+
+TEST_CASE("SINDI U12 E5M7 dispatched kernel tails and unroll", "[sparse][sindi][u12]") {
+    using namespace knowhere::sparse::inverted::sindi;
+    std::vector<packed_ip_accumulate_fn_t> kernels = {ip_accumulate_scalar_u12_e5m7, get_packed_ip_kernel()};
+#if defined(__x86_64__)
+    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("f16c") && __builtin_cpu_supports("fma"))
+        kernels.push_back(ip_accumulate_avx2_u12_e5m7);
+    if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512bw") && __builtin_cpu_supports("avx512vl") &&
+        __builtin_cpu_supports("avx512dq") && __builtin_cpu_supports("avx512cd") && __builtin_cpu_supports("f16c") &&
+        __builtin_cpu_supports("fma"))
+        kernels.push_back(ip_accumulate_avx512_u12_e5m7);
+#endif
+    std::vector<size_t> lengths = {0};
+    for (size_t i = 1; i <= 129; ++i) lengths.push_back(i);
+    for (auto i : {255, 256, 257, 511, 512, 513, 4095, 4096}) lengths.push_back(i);
+    for (size_t start = 0; start < 4; ++start)
+        for (size_t n : lengths) {
+            // Deliberately unaligned byte bases; allocation ends exactly at stream end.
+            std::vector<uint8_t> ids(packed12_bytes(start + n) + 1), vals(ids.size());
+            for (size_t j = 0; j < start + n; ++j) {
+                pack12(ids.data() + 1, j, (j * 17) % 4096);
+                pack12(vals.data() + 1, j, (j * 37) % 3968);
+            }
+            std::vector<float> scores(4096, .25f), expected = scores;
+            float maximum = 0;
+            for (size_t j = start; j < start + n; ++j) {
+                const auto id = (j * 17) % 4096;
+                expected[id] = std::fma(.75f, E5Oracle((j * 37) % 3968), expected[id]);
+                maximum = std::max(maximum, expected[id]);
+            }
+            for (auto kernel : kernels) {
+                std::fill(scores.begin(), scores.end(), .25f);
+                REQUIRE(kernel(.75f, vals.data() + 1, ids.data() + 1, start, n, scores.data()) == maximum);
+                REQUIRE(scores == expected);
+            }
+        }
+}
+
+TEST_CASE("SINDI U12 E5M7 API oracle Add and persistence", "[sparse][sindi][u12]") {
+    using namespace knowhere;
+    const bool refine = GENERATE(false, true);
+    const bool growable = GENERATE(false, true);
+    std::vector<RefineRow> base;
+    for (size_t i = 0; i < 8203; ++i) {
+        if (i % 4095 == 0)
+            base.push_back(RefineTestRow({{0, 1.003f + float(i % 97) / 100}, {7, .1257f}, {100000, 2.019f}}));
+        else
+            base.push_back(RefineTestRow({{0, 1.003f + float(i % 97) / 100}}));
+    }
+    auto build = RefineBuild(refine);
+    build["quant_type"] = "e5m7";
+    const auto type = growable ? IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC : IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+    auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+    if (growable) {
+        std::vector<RefineRow> first(base.begin(), base.begin() + 4095), rest(base.begin() + 4095, base.end());
+        REQUIRE(idx.Build(RefineDataset(first), build) == Status::success);
+        REQUIRE(idx.Add(RefineDataset(rest), build) == Status::success);
+        std::vector<RefineRow> invalid{RefineTestRow({{0, -0.0f}})};
+        REQUIRE(idx.Add(RefineDataset(invalid), build) != Status::success);
+        REQUIRE(idx.Count() == base.size());
+    } else
+        REQUIRE(idx.Build(RefineDataset(base), build) == Status::success);
+    std::vector<RefineRow> query{RefineTestRow({{0, 2}, {7, .5f}, {100000, 1}})};
+    Json search{{"metric_type", "IP"}, {"k", base.size() + 3}};
+    if (refine) {
+        search["refine_query_mass_percentage"] = .5f;
+        search["refine_k"] = 1.5f;
+    }
+    auto check = [&](auto& index) {
+        auto result = index.Search(RefineDataset(query), search, nullptr);
+        REQUIRE(result.has_value());
+        std::set<int64_t> seen;
+        for (size_t j = 0; j < base.size(); ++j) {
+            auto id = result.value()->GetIds()[j];
+            REQUIRE(id >= 0);
+            REQUIRE(id < int64_t(base.size()));
+            REQUIRE(seen.insert(id).second);
+            float score = 2 * E5Represented(base[id][0].val);
+            if (base[id].size() > 1) {
+                score = std::fma(1.0f, E5Represented(base[id][2].val), score);
+                score = std::fma(.5f, E5Represented(base[id][1].val), score);
+            }
+            REQUIRE(std::abs(result.value()->GetDistance()[j] - score) < 1e-6f);
+        }
+        REQUIRE(result.value()->GetIds()[base.size()] == -1);
+        std::vector<uint8_t> mask((base.size() + 7) / 8, 255);
+        auto empty = index.Search(RefineDataset(query), search, BitsetView(mask.data(), base.size()));
+        REQUIRE(empty.has_value());
+        REQUIRE(empty.value()->GetIds()[0] == -1);
+    };
+    check(idx);
+    if (!growable) {
+        BinarySet bytes;
+        REQUIRE(idx.Serialize(bytes) == Status::success);
+        auto restored = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+        REQUIRE(restored.Deserialize(bytes, Json{{"metric_type", "IP"}}) == Status::success);
+        check(restored);
+        SparseQuantIndexFile file(bytes.GetByName(type));
+        auto mapped = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+        REQUIRE(mapped.DeserializeFromFile(file.path, Json{{"metric_type", "IP"}, {"enable_mmap", true}}) ==
+                Status::success);
+        check(mapped);
+        auto blob = bytes.GetByName(type);
+        using namespace sparse::inverted;
+        uint32_t count;
+        std::memcpy(&count, blob->data.get() + 32, 4);
+        for (size_t i = 0; i < count; ++i) {
+            InvertedIndexSectionHeader h;
+            std::memcpy(&h, blob->data.get() + 36 + i * sizeof(h), sizeof(h));
+            if (h.type == InvertedIndexSectionType::POSTING_LISTS) {
+                uint32_t unsupported = 99;
+                std::memcpy(blob->data.get() + h.offset + 12, &unsupported, 4);
+            }
+        }
+        REQUIRE(restored.Deserialize(bytes, Json{{"metric_type", "IP"}}) != Status::success);
+    }
+}
+
+TEST_CASE("SINDI U12 E5M7 invalid build contracts", "[sparse][sindi][u12]") {
+    using namespace knowhere;
+    std::vector<RefineRow> rows{RefineTestRow({{0, 1}})};
+    auto build = RefineBuild(false);
+    build["quant_type"] = "e5m7";
+    for (auto change : {Json{{"metric_type", "BM25"}}, Json{{"inverted_index_algo", "DAAT_WAND"}},
+                        Json{{"sindi_window_size", 1024}}, Json{{"inverted_index_codec", "block_streamvbyte"}}}) {
+        auto cfg = build;
+        cfg.update(change);
+        auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+        REQUIRE(idx.Build(RefineDataset(rows), cfg) != Status::success);
+    }
+    for (float value :
+         {-1.f, -0.f, std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN(), 1e10f}) {
+        auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+        std::vector<RefineRow> invalid{RefineTestRow({{0, value}})};
+        REQUIRE(idx.Build(RefineDataset(invalid), build) != Status::success);
+    }
+}
+
+TEST_CASE("SINDI U12 E5M7 sparse windows new dimensions and failure isolation", "[sparse][sindi][u12]") {
+    using namespace knowhere;
+    for (bool growable : {false, true}) {
+        const auto type = growable ? IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC : IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+        std::vector<RefineRow> base(70001);
+        base[0] = RefineTestRow({{0, 10}});
+        base[4095] = RefineTestRow({{0, 9}});
+        base[4096] = RefineTestRow({{0, 8}, {100000, 20}});
+        base[70000] = RefineTestRow({{0, 7}, {100000, 30}});
+        auto cfg = RefineBuild();
+        cfg["quant_type"] = "e5m7";
+        auto idx = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+        if (growable) {
+            std::vector<RefineRow> first(base.begin(), base.begin() + 4096), last(base.begin() + 4096, base.end());
+            REQUIRE(idx.Build(RefineDataset(first), cfg) == Status::success);
+            REQUIRE(idx.Add(RefineDataset(last), cfg) == Status::success);
+        } else
+            REQUIRE(idx.Build(RefineDataset(base), cfg) == Status::success);
+        std::vector<RefineRow> query{RefineTestRow({{0, 2}, {100000, 1}})};
+        auto search = RefineSearch();
+        search["refine_k"] = 4;
+        auto result = idx.Search(RefineDataset(query), search, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] == 70000);
+        REQUIRE(result.value()->GetDistance()[0] == 44);
+        std::vector<uint8_t> mask((base.size() + 7) / 8, 0);
+        std::fill(mask.begin(), mask.begin() + 4096 / 8, 255);
+        mask[70000 / 8] |= 1u << (70000 % 8);
+        auto filtered = idx.Search(RefineDataset(query), search, BitsetView(mask.data(), base.size()));
+        REQUIRE(filtered.has_value());
+        REQUIRE(filtered.value()->GetIds()[0] == 4096);
+        REQUIRE(filtered.value()->GetDistance()[0] == 36);
+        Json range{{"metric_type", "IP"}, {"radius", 30}};
+        auto ranged = idx.RangeSearch(RefineDataset(query), range, nullptr);
+        REQUIRE(ranged.has_value());
+        REQUIRE(ranged.value()->GetLims()[1] == 2);
+        if (!growable) {
+            BinarySet bytes;
+            REQUIRE(idx.Serialize(bytes) == Status::success);
+            auto blob = bytes.GetByName(type);
+            auto original = std::vector<uint8_t>(blob->data.get(), blob->data.get() + blob->size);
+            using namespace sparse::inverted;
+            InvertedIndexSectionHeader h;
+            std::memcpy(&h, blob->data.get() + 36, sizeof(h));
+            const std::vector<size_t> corrupt_positions = {size_t(h.offset + 12), size_t(h.offset + 16),
+                                                           size_t(h.offset + h.size - 1)};
+            for (auto position : corrupt_positions) {
+                blob->data[position] = 255;
+                REQUIRE(idx.Deserialize(bytes, Json{{"metric_type", "IP"}}) != Status::success);
+                auto after = idx.Search(RefineDataset(query), search, nullptr);
+                REQUIRE(after.has_value());
+                REQUIRE(after.value()->GetIds()[0] == 70000);
+                std::memcpy(blob->data.get(), original.data(), original.size());
+            }
+        }
+    }
+}
+
+TEST_CASE("SINDI growing E5M7 packed tails survive repeated Adds", "[sparse][sindi][u12]") {
+    using namespace knowhere;
+    const bool refine = GENERATE(false, true);
+    auto build = RefineBuild(refine);
+    build["quant_type"] = "e5m7";
+    auto growing =
+        IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, 11).value();
+    std::vector<RefineRow> base;
+    auto append_rows = [&](size_t count) {
+        std::vector<RefineRow> batch;
+        for (size_t i = base.size(); i < base.size() + count; ++i) {
+            std::vector<std::pair<uint32_t, float>> entries;
+            if (i % 2 == 0)
+                entries.emplace_back(0, 1.0077999830245972f + float(i % 17));
+            if (i % 3 == 0)
+                entries.emplace_back(7, .1257f + float(i % 11));
+            if (i >= 8192 && i % 5 == 0)
+                entries.emplace_back(100000, 31.019f + float(i % 23));
+            RefineRow row(entries.size());
+            for (size_t j = 0; j < entries.size(); ++j) row.set_at(j, entries[j].first, entries[j].second);
+            batch.push_back(std::move(row));
+        }
+        return batch;
+    };
+    auto first = append_rows(4093);
+    REQUIRE(growing.Build(RefineDataset(first), build) == Status::success);
+    base.insert(base.end(), first.begin(), first.end());
+    std::vector<RefineRow> queries{RefineTestRow({{0, 2}, {7, .5f}, {100000, 1}}), RefineTestRow({{0, 1}}),
+                                   RefineTestRow({{7, 1}}), RefineTestRow({{100000, 1}})};
+    for (size_t count : {0, 1, 1, 1, 1, 3, 4097, 8193, 1, 2}) {
+        CAPTURE(refine, count, base.size());
+        auto batch = append_rows(count);
+        REQUIRE(growing.Add(RefineDataset(batch), build) == Status::success);
+        base.insert(base.end(), batch.begin(), batch.end());
+        REQUIRE(growing.Count() == int64_t(base.size()));
+        auto sealed =
+            IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+        REQUIRE(sealed.Build(RefineDataset(base), build) == Status::success);
+        for (int filter : {0, 1, 2}) {
+            std::vector<uint8_t> mask((base.size() + 7) / 8, filter == 2 ? 255 : 0);
+            if (filter == 1) {
+                // Skip a whole window, then filter individual documents in later windows.
+                std::fill_n(mask.begin(), std::min<size_t>(512, mask.size()), 255);
+                for (size_t i = 4096; i < base.size(); i += 7) mask[i / 8] |= 1u << (i % 8);
+            }
+            BitsetView bitset(mask.data(), base.size());
+            Json search{{"metric_type", "IP"},
+                        {"k", 17},
+                        {"dim_max_score_ratio", 1.0},
+                        {"refine_query_mass_percentage", 1.0},
+                        {"refine_k", refine ? 2 : 1}};
+            auto result = growing.Search(RefineDataset(queries), search, bitset);
+            auto reference = sealed.Search(RefineDataset(queries), search, bitset);
+            REQUIRE(result.has_value());
+            REQUIRE(reference.has_value());
+            for (size_t q = 0; q < queries.size(); ++q) {
+                std::vector<float> scores(base.size(), 0), ranked;
+                for (size_t d = 0; d < base.size(); ++d) {
+                    if (bitset.test(d))
+                        continue;
+                    for (size_t j = 0; j < queries[q].size(); ++j)
+                        for (size_t t = 0; t < base[d].size(); ++t)
+                            if (queries[q][j].id == base[d][t].id)
+                                scores[d] = std::fma(queries[q][j].val, E5Represented(base[d][t].val), scores[d]);
+                    if (scores[d] > 0)
+                        ranked.push_back(scores[d]);
+                }
+                std::sort(ranked.begin(), ranked.end(), std::greater<>());
+                std::set<int64_t> seen;
+                for (size_t j = 0; j < 17; ++j) {
+                    const size_t pos = q * 17 + j;
+                    const auto id = result.value()->GetIds()[pos];
+                    if (j >= ranked.size()) {
+                        REQUIRE(id == -1);
+                        REQUIRE(reference.value()->GetIds()[pos] == -1);
+                        continue;
+                    }
+                    REQUIRE(id >= 0);
+                    REQUIRE(id < int64_t(base.size()));
+                    REQUIRE(seen.insert(id).second);
+                    REQUIRE_FALSE(bitset.test(id));
+                    REQUIRE(std::abs(result.value()->GetDistance()[pos] - scores[id]) < 2e-5f);
+                    REQUIRE(std::abs(result.value()->GetDistance()[pos] - ranked[j]) < 2e-5f);
+                    REQUIRE(std::abs(reference.value()->GetDistance()[pos] - ranked[j]) < 2e-5f);
+                }
+                if (!refine) {
+                    std::vector<RefineRow> query{queries[q]};
+                    Json range{{"metric_type", "IP"}, {"radius", 20.0f}};
+                    auto ranged = growing.RangeSearch(RefineDataset(query), range, bitset);
+                    REQUIRE(ranged.has_value());
+                    std::set<int64_t> expected;
+                    for (size_t d = 0; d < scores.size(); ++d)
+                        if (scores[d] > 20)
+                            expected.insert(d);
+                    REQUIRE(ranged.value()->GetLims()[1] == expected.size());
+                    for (size_t j = 0; j < ranged.value()->GetLims()[1]; ++j) {
+                        const auto id = ranged.value()->GetIds()[j];
+                        REQUIRE(expected.erase(id) == 1);
+                        REQUIRE(std::abs(ranged.value()->GetDistance()[j] - scores[id]) < 2e-5f);
+                    }
+                    REQUIRE(expected.empty());
+                }
+            }
+        }
+        std::vector<RefineRow> invalid{RefineTestRow({{0, 2}}), RefineTestRow({{999999, -1}})};
+        const auto bytes = growing.Size();
+        REQUIRE(growing.Add(RefineDataset(invalid), build) != Status::success);
+        REQUIRE(growing.Count() == int64_t(base.size()));
+        REQUIRE(growing.Size() == bytes);
+    }
+    BinarySet bytes;
+    REQUIRE(growing.Serialize(bytes) == Status::not_implemented);
+}
+
+TEST_CASE("SINDI growing E5M7 pruning bounds include upward rounding", "[sparse][sindi][u12]") {
+    using namespace knowhere;
+    auto build = RefineBuild(false);
+    build["quant_type"] = "e5m7";
+    auto index = IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, 11).value();
+    std::vector<RefineRow> first(4096);
+    first[0] = RefineTestRow({{7, 1}});
+    REQUIRE(index.Build(RefineDataset(first), build) == Status::success);
+    // The input is below the first window's score, but its FP16 -> E5M7
+    // representation rounds up above it. A raw-input maximum prunes the winner.
+    std::vector<RefineRow> next{RefineTestRow({{0, 1.0077999830245972f}})};
+    REQUIRE(index.Add(RefineDataset(next), build) == Status::success);
+    std::vector<RefineRow> query{RefineTestRow({{0, 1}, {7, 1.007805f}})};
+    Json search{{"metric_type", "IP"}, {"k", 1}, {"dim_max_score_ratio", 1.0}};
+    auto result = index.Search(RefineDataset(query), search, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == 4096);
+    REQUIRE(result.value()->GetDistance()[0] == E5Represented(next[0][0].val));
+}
+
+TEST_CASE("SINDI growing E5M7 retains compression with append capacity", "[sparse][sindi][u12]") {
+    using namespace knowhere;
+    auto build = RefineBuild(false);
+    auto packed_build = build;
+    packed_build["quant_type"] = "e5m7";
+    const auto type = IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC;
+    auto packed = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+    auto typed = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+    RefineRow row(32);
+    for (size_t d = 0; d < 32; ++d) row.set_at(d, d, 1.0078f + float(d) / 100);
+    std::vector<RefineRow> initial(8191, row);
+    REQUIRE(packed.Build(RefineDataset(initial), packed_build) == Status::success);
+    REQUIRE(typed.Build(RefineDataset(initial), build) == Status::success);
+    REQUIRE(packed.Size() < typed.Size());
+    for (size_t count : {1, 32, 1, 2}) {
+        std::vector<RefineRow> batch(count, row);
+        REQUIRE(packed.Add(RefineDataset(batch), packed_build) == Status::success);
+        REQUIRE(typed.Add(RefineDataset(batch), build) == Status::success);
+        REQUIRE(packed.Count() == typed.Count());
+        REQUIRE(packed.Size() < typed.Size());
+    }
+}
