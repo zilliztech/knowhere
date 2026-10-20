@@ -57,6 +57,9 @@ $ make WITH_GPU=True WITH_UT=True
 # Debug build
 $ make WITH_DEBUG=True
 
+# C ABI and Java JNI bindings with the C tests (see java/README.md)
+$ make WITH_JNI=True WITH_C_API_TESTS=True
+
 # Custom compiler via Conan profile (e.g. clang, gcc-15)
 $ make CONAN_PROFILE=clang14
 ```
@@ -89,6 +92,12 @@ $ pip3 install python/dist/pyknowhere-*-manylinux*.whl
 ```
 
 For more options (clean build, verbose, custom Python binary), see `python/build_portable_wheel.sh -h`.
+
+## C and Java Bindings
+
+Optional C ABI and Java 11 JNI bindings expose indexes, brute-force search and
+named index blobs without a framework dependency. See [java/README.md](java/README.md)
+for build options, platform JAR packaging, ownership rules and tests.
 
 ## Contributing
 
