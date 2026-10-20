@@ -44,7 +44,8 @@ class SvsIvfIndexNode : public IndexNode {
     // pattern: there is no meaningful state between the two steps. Build is overridden to do the whole job and
     // Train/Add are rejected, rather than letting Add silently drop the rows it was handed.
     Status
-    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+          milvus::OpContext* op_context = nullptr) override {
         if (index_) {
             LOG_KNOWHERE_ERROR_ << "SVS IVF index is immutable and has already been built.";
             return Status::invalid_args;

@@ -23,6 +23,21 @@ class IndexNodeThreadPoolWrapper : public IndexNode {
 
     IndexNodeThreadPoolWrapper(std::unique_ptr<IndexNode> index_node, std::shared_ptr<ThreadPool> thread_pool);
 
+    BuildInputOptions
+    GetBuildInputOptions() const override {
+        return index_node_->GetBuildInputOptions();
+    }
+
+    expected<bool>
+    TryReserveBuild(const DataSetPtr dataset, std::shared_ptr<Config> cfg) override {
+        return index_node_->TryReserveBuild(dataset, std::move(cfg));
+    }
+
+    void
+    ReleaseBuildReservation() noexcept override {
+        index_node_->ReleaseBuildReservation();
+    }
+
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
         return index_node_->Train(dataset, std::move(cfg), use_knowhere_build_pool);

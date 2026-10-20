@@ -113,10 +113,11 @@ class SparseInvertedIndexNode : public IndexNode {
     // validate the data, fit the LUT and pack postings. Build a separate candidate
     // for compact indexes and replace index_ only after construction succeeds.
     Status
-    Build(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool,
+          milvus::OpContext* op_context) override {
         const auto& cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
         if (!IsBm25U4QuantType(cfg.quant_type.value_or(""))) {
-            return IndexNode::Build(dataset, std::move(config), use_knowhere_build_pool);
+            return IndexNode::Build(dataset, std::move(config), use_knowhere_build_pool, op_context);
         }
 
         // Sealed compact builds publish only after validation, fitting and packing.

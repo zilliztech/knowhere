@@ -43,7 +43,8 @@ class AisaqIndexNode : public IndexNode {
     }
 
     Status
-    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+          milvus::OpContext* op_context) override;
 
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
@@ -299,7 +300,8 @@ get_pq_size(size_t points_num, size_t dim, double pq_code_size_gb) {
 
 template <typename DataType>
 Status
-AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) {
+AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+                                milvus::OpContext* op_context) {
     assert(file_manager_ != nullptr);
     auto build_conf = static_cast<const AisaqConfig&>(*cfg);
 

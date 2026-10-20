@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "folly/ScopeGuard.h"
 #include "folly/futures/Future.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/dataset.h"
@@ -339,16 +340,32 @@ Index<T>::ImportValidity(const ValidityView& input, const MappingMmapOptions& mm
     });
 }
 
+template <typename T>
+inline expected<bool>
+Index<T>::TryReserveBuild(const DataSetPtr dataset, const Json& json) noexcept {
+    return GuardedCall([&]() -> expected<bool> {
+        auto cfg = this->node->CreateConfig();
+        std::string msg;
+        const auto status = LoadConfig(cfg.get(), json, knowhere::TRAIN, "TryReserveBuild", &msg);
+        if (status != Status::success) {
+            return expected<bool>::Err(status, msg);
+        }
+        return this->node->TryReserveBuild(dataset, std::move(cfg));
+    });
+}
+
 #ifdef KNOWHERE_WITH_CARDINAL
 template <typename T>
 inline const std::shared_ptr<Interrupt>
 Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chrono::seconds timeout,
-                     const BuildOptions& options) noexcept {
+                     const BuildOptions& options, std::shared_ptr<milvus::OpContext> op_context) noexcept {
     return GuardedCall([&]() -> std::shared_ptr<Interrupt> {
+        auto release_on_failure = folly::makeGuard([&] { this->node->ReleaseBuildReservation(); });
         auto pool = ThreadPool::GetGlobalBuildThreadPool();
         auto interrupt = std::make_shared<Interrupt>(timeout);
-        interrupt->Set(pool->push([this, dataset, json, interrupt, options]() {
+        interrupt->Set(pool->push([this, dataset, json, interrupt, options, op_context]() {
             return GuardedCall([&]() -> Status {
+                auto release_reservation = folly::makeGuard([&] { this->node->ReleaseBuildReservation(); });
                 auto cfg = this->node->CreateConfig();
                 RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
                 RETURN_IF_ERROR(PrepareBuildMapping(node, dataset, options));
@@ -361,7 +378,8 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chro
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
                 TimeRecorder rc("BuildAsync index ", 2);
-                auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt.get());
+                auto res =
+                    this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt.get(), op_context.get());
                 if (res == Status::success) {
                     res = this->node->FinalizeIdMap();
                 }
@@ -369,7 +387,8 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chro
                 time *= 0.000001;  // convert to s
                 this->node->GetBuildLatencyMetric().Observe(time);
 #else
-                auto res = this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt.get());
+                auto res =
+                    this->node->BulidAsyncEmbListIfNeed(dataset, std::move(cfg), interrupt.get(), op_context.get());
                 if (res == Status::success) {
                     res = this->node->FinalizeIdMap();
                 }
@@ -377,6 +396,7 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chro
                 return res;
             });
         }));
+        release_on_failure.dismiss();
         return interrupt;
     });
 }
@@ -384,13 +404,15 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chro
 template <typename T>
 inline const std::shared_ptr<Interrupt>
 Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool,
-                     const BuildOptions& options) noexcept {
+                     const BuildOptions& options, std::shared_ptr<milvus::OpContext> op_context) noexcept {
     return GuardedCall([&]() -> std::shared_ptr<Interrupt> {
+        auto release_on_failure = folly::makeGuard([&] { this->node->ReleaseBuildReservation(); });
         auto pool = ThreadPool::GetGlobalBuildThreadPool();
         auto interrupt = std::make_shared<Interrupt>();
-        interrupt->Set(pool->push([this, dataset, json, use_knowhere_build_pool, options]() {
-            return this->Build(dataset, json, use_knowhere_build_pool, options);
+        interrupt->Set(pool->push([this, dataset, json, use_knowhere_build_pool, options, op_context]() {
+            return this->Build(dataset, json, use_knowhere_build_pool, options, op_context.get());
         }));
+        release_on_failure.dismiss();
         return interrupt;
     });
 }
@@ -398,9 +420,10 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhe
 
 template <typename T>
 inline Status
-Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool,
-                const BuildOptions& options) noexcept {
+Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool, const BuildOptions& options,
+                milvus::OpContext* op_context) noexcept {
     return GuardedCall([&]() -> Status {
+        auto release_reservation = folly::makeGuard([&] { this->node->ReleaseBuildReservation(); });
         auto cfg = this->node->CreateConfig();
         RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
         RETURN_IF_ERROR(PrepareBuildMapping(node, dataset, options));
@@ -413,7 +436,7 @@ Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_bu
 
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         TimeRecorder rc("Build index", 2);
-        auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool, op_context);
         if (res == Status::success) {
             res = this->node->FinalizeIdMap();
         }
@@ -421,7 +444,7 @@ Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_bu
         time *= 0.000001;  // convert to s
         this->node->GetBuildLatencyMetric().Observe(time);
 #else
-        auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool);
+        auto res = this->node->BuildEmbListIfNeed(dataset, std::move(cfg), use_knowhere_build_pool, op_context);
         if (res == Status::success) {
             res = this->node->FinalizeIdMap();
         }
