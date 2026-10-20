@@ -164,17 +164,30 @@ LoadTruth(const std::string& path, const std::vector<uint64_t>& selection, uint6
           "Invalid ground-truth header or unsupported k");
     Truth out;
     for (auto q : selection) {
+        Check(q < rows, "Query ID outside ground truth");
         std::set<int64_t> unique;
         float previous = std::numeric_limits<float>::infinity();
-        for (int j = 0; j < k; ++j) {
+        bool padding = false;
+        for (uint64_t j = 0; j < width; ++j) {
             auto id = f.Read<uint32_t>(8 + 4 * (q * width + j));
             auto score = f.Read<float>(8 + 4 * rows * width + 4 * (q * width + j));
+            if (id == UINT32_MAX) {
+                Check(score == 0, "Invalid ground-truth padding");
+                padding = true;
+                if (j < static_cast<uint64_t>(k)) {
+                    out.ids.push_back(-1);
+                    out.scores.push_back(0);
+                }
+                continue;
+            }
             Check(
-                id < nb && unique.insert(id).second && std::isfinite(score) &&
+                !padding && id < nb && unique.insert(id).second && std::isfinite(score) && score >= 0 &&
                     score <= previous + 4 * std::numeric_limits<float>::epsilon() * std::max(1.0f, std::abs(previous)),
                 "Invalid ground-truth IDs or score order");
-            out.ids.push_back(id);
-            out.scores.push_back(score);
+            if (j < static_cast<uint64_t>(k)) {
+                out.ids.push_back(id);
+                out.scores.push_back(score);
+            }
             previous = score;
         }
     }
@@ -183,10 +196,11 @@ LoadTruth(const std::string& path, const std::vector<uint64_t>& selection, uint6
 
 struct Options {
     std::string data, output = "sparse_results.csv", method = "all";
+    std::string base_path, query_path, truth_path, quant = "fp16", simd = "auto";
     uint64_t queries = 100, offset = 0, base_limit = 0;
     bool refine = false;
     float mass = 1, factor = 1, drop = 0;
-    std::string sweep, split = "dev";
+    std::string sweep;
     int threads = std::max(2u, std::thread::hardware_concurrency()), repeats = 3, k = 10;
     std::optional<uint32_t> seed;
     int samples = 100;
@@ -205,8 +219,10 @@ Parse(int argc, char** argv) {
             std::cout
                 << "benchmark_sparse --data-dir DIR [--queries 100] [--query-offset 0] [--seed N]\n"
                    "  [--threads N] [--repeats 3] [--k 10] [--output sparse_results.csv]\n"
+                   "  [--base FILE] [--query-file FILE] [--truth FILE] [--quant-type fp16|e5m7]\n"
+                   "  [--simd auto|avx2|avx512|scalar]\n"
                    "  [--refine 0|1] [--mass 1] [--factor 1] [--drop 0]\n"
-                   "  [--sweep mass|drop|pareto] [--split dev|hidden]\n"
+                   "  [--sweep mass|drop|pareto]\n"
                    "  Pareto: [--scheme mass] [--samples 100] [--pareto-seed 42]\n"
                    "          [--mass-min 0.4] [--mass-max 1] [--factor-min 1] [--factor-max 20]\n"
                    "  Pareto writes .points.csv, .frontier.csv and .pareto.svg beside repeat CSV/JSON.\n"
@@ -220,6 +236,16 @@ Parse(int argc, char** argv) {
         supplied.insert(key);
         if (key == "--data-dir")
             o.data = value;
+        else if (key == "--base")
+            o.base_path = value;
+        else if (key == "--query-file")
+            o.query_path = value;
+        else if (key == "--truth")
+            o.truth_path = value;
+        else if (key == "--simd")
+            o.simd = value;
+        else if (key == "--quant-type")
+            o.quant = value;
         else if (key == "--output")
             o.output = value;
         else if (key == "--refine")
@@ -242,8 +268,6 @@ Parse(int argc, char** argv) {
             o.drop = std::stof(value);
         else if (key == "--sweep")
             o.sweep = value;
-        else if (key == "--split")
-            o.split = value;
         else if (key == "--method")
             o.method = value;
         else {
@@ -304,6 +328,8 @@ Parse(int argc, char** argv) {
               "Pareto bounds require finite 1 <= factor-min <= factor-max");
     }
     Check(!o.data.empty() && o.queries > 0 && o.threads >= 2, "Provide --data-dir, positive queries, and >=2 threads");
+    Check(o.quant == "fp16" || (o.quant == "e5m7" && o.method == "SINDI"),
+          "E5M7 requires --method SINDI; quant type must be fp16/e5m7");
     return o;
 }
 
@@ -444,6 +470,16 @@ int
 main(int argc, char** argv) {
     try {
         const auto o = Parse(argc, argv);
+        auto simd_type = knowhere::KnowhereConfig::SimdType::AUTO;
+        if (o.simd == "avx2")
+            simd_type = knowhere::KnowhereConfig::SimdType::AVX2;
+        else if (o.simd == "avx512")
+            simd_type = knowhere::KnowhereConfig::SimdType::AVX512;
+        else if (o.simd == "scalar")
+            simd_type = knowhere::KnowhereConfig::SimdType::GENERIC;
+        else
+            Check(o.simd == "auto", "Unsupported SIMD selection");
+        const auto selected_simd = knowhere::KnowhereConfig::SetSimdType(simd_type);
         const auto& ip_kernels = knowhere::sparse::inverted::sindi::get_ip_kernels();
         Dl_info accumulate_info{}, insert_info{};
         Check(dladdr(reinterpret_cast<void*>(ip_kernels.accumulate), &accumulate_info) != 0 &&
@@ -452,11 +488,14 @@ main(int argc, char** argv) {
         Check(dladdr(reinterpret_cast<void*>(ip_kernels.batch_insert), &insert_info) != 0 &&
                   insert_info.dli_sname != nullptr,
               "Cannot identify selection kernel");
+        int sve_vl = 0;
+#if defined(__aarch64__) && defined(KNOWHERE_USE_SVE)
         Check(std::string(accumulate_info.dli_sname).find("sve") != std::string::npos &&
                   std::string(insert_info.dli_sname).find("sve") != std::string::npos,
               "Baseline requires SVE kernels");
-        const int sve_vl = prctl(PR_SVE_GET_VL);
+        sve_vl = prctl(PR_SVE_GET_VL);
         Check(sve_vl > 0, "Cannot read SVE vector length");
+#endif
         cpu_set_t affinity;
         CPU_ZERO(&affinity);
         Check(sched_getaffinity(0, sizeof(affinity), &affinity) == 0, "Cannot read CPU affinity");
@@ -473,8 +512,19 @@ main(int argc, char** argv) {
         knowhere::KnowhereConfig::SetBuildThreadPoolSize(o.threads);
         knowhere::KnowhereConfig::SetSearchThreadPoolSize(o.threads);
         const auto version = knowhere::Version::GetMaximumVersion().VersionNumber();
-        Check(o.split == "dev" || o.split == "hidden", "Invalid split");
-        const auto query_path = o.data + "/queries." + o.split + ".csr";
+        const auto query_path = o.query_path.empty() ? o.data + "/queries.csr" : o.query_path;
+        const auto base_path = o.base_path.empty() ? o.data + "/corpus.csr" : o.base_path;
+        const auto truth_path = o.truth_path.empty()
+                                    ? o.data + "/gt/" + std::filesystem::path(query_path).stem().string() + ".k" +
+                                          std::to_string(o.k) + ".gt"
+                                    : o.truth_path;
+        Json truth_metadata;
+        if (!o.base_limit) {
+            std::ifstream metadata_file(std::filesystem::path(truth_path).parent_path() / "metadata.json");
+            Check(metadata_file.good(), "Cannot read ground-truth metadata.json");
+            metadata_file >> truth_metadata;
+            Check(truth_metadata.at("metric") == "ip", "Ground-truth metric must be ip");
+        }
         uint64_t file_queries;
         {
             MappedFile query_file(query_path);
@@ -492,8 +542,8 @@ main(int argc, char** argv) {
         auto queries = LoadCsr(query_path, &selected);
         auto load_start = Clock::now();
         std::cerr << "Loading base vectors..." << std::endl;
-        auto base = LoadCsr(o.data + "/base_full.csr", nullptr, o.base_limit);
-        Check(base.rows.size() >= static_cast<size_t>(o.k), "Base smaller than k");
+        auto base = LoadCsr(base_path, nullptr, o.base_limit);
+        Check(!base.rows.empty(), "Empty base");
         auto load_seconds = Seconds(load_start);
         // Allow a query file with a smaller declared vocabulary; use a shared dimension.
         base.dim = queries.dim = std::max(base.dim, queries.dim);
@@ -515,35 +565,44 @@ main(int argc, char** argv) {
             truth.ids.assign(gt.value()->GetIds(), gt.value()->GetIds() + o.queries * o.k);
             truth.scores.assign(gt.value()->GetDistance(), gt.value()->GetDistance() + o.queries * o.k);
         } else {
-            truth = LoadTruth(o.data + "/base_full." + o.split + ".gt", selected, file_queries, base.file_rows, o.k);
+            truth = LoadTruth(truth_path, selected, file_queries, base.file_rows, o.k);
         }
         struct utsname host {};
         uname(&host);
-        Json metadata = {
-            {"data_dir", std::filesystem::absolute(o.data).string()},
-            {"base_rows", base.rows.size()},
-            {"base_nnz", base.nnz},
-            {"dimension", base.dim},
-            {"query_ids", selected},
-            {"query_nnz", queries.nnz},
-            {"threads", o.threads},
-            {"repeats", o.repeats},
-            {"index_version", version},
-            {"quant_type", "fp16"},
-            {"search_config", search},
-            {"base_load_seconds", load_seconds},
-            {"machine", host.machine},
-            {"hostname", host.nodename},
-            {"kernel", host.release},
-            {"compiler", __VERSION__},
-            {"source_revision", KNOWHERE_SPARSE_BENCHMARK_REVISION},
-            {"ground_truth", o.base_limit ? "reduced-base FP32 brute force" : "base_full." + o.split + ".gt"},
-            {"warmup_batches", 1},
-            {"runs", Json::array()}};
+        Json metadata = {{"data_dir", std::filesystem::absolute(o.data).string()},
+                         {"base_rows", base.rows.size()},
+                         {"base_nnz", base.nnz},
+                         {"dimension", base.dim},
+                         {"query_ids", selected},
+                         {"query_nnz", queries.nnz},
+                         {"threads", o.threads},
+                         {"repeats", o.repeats},
+                         {"index_version", version},
+                         {"quant_type", o.quant},
+                         {"search_config", search},
+                         {"base_load_seconds", load_seconds},
+                         {"machine", host.machine},
+                         {"hostname", host.nodename},
+                         {"kernel", host.release},
+                         {"compiler", __VERSION__},
+                         {"source_revision", KNOWHERE_SPARSE_BENCHMARK_REVISION},
+                         {"ground_truth", o.base_limit ? "reduced-base FP32 brute force" : truth_path},
+                         {"warmup_batches", 1},
+                         {"runs", Json::array()}};
+        metadata["ground_truth_metadata"] = truth_metadata;
+        metadata["recall_denominator"] = "valid ground-truth IDs; exclude padding; empty truth has recall 1";
+        metadata["base_path"] = base_path;
+        metadata["query_path"] = query_path;
+        if (o.quant == "e5m7") {
+            dladdr(reinterpret_cast<void*>(knowhere::sparse::inverted::sindi::get_packed_ip_kernel()),
+                   &accumulate_info);
+        }
         metadata["effective_ip_kernel"] = accumulate_info.dli_sname;
         metadata["effective_selection_kernel"] = insert_info.dli_sname;
         metadata["sve_vector_bytes"] = sve_vl & PR_SVE_VL_LEN_MASK;
         metadata["cpu_affinity"] = cpus;
+        metadata["requested_simd"] = o.simd;
+        metadata["selected_simd"] = selected_simd;
         std::ifstream cpu("/proc/cpuinfo"), mem("/proc/meminfo");
         metadata["cpuinfo"] = std::string(std::istreambuf_iterator<char>(cpu), {});
         metadata["meminfo"] = std::string(std::istreambuf_iterator<char>(mem), {});
@@ -560,8 +619,10 @@ main(int argc, char** argv) {
                 alias ? knowhere::IndexEnum::INDEX_SPARSE_WAND : knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
             const std::string algo = alias ? "DAAT_WAND" : method;
             Json build = {
-                {"dim", base.dim}, {"metric_type", "IP"}, {"inverted_index_algo", algo}, {"quant_type", "fp16"}};
-            const std::string codec = algo == "SINDI" ? "fixed_docid_windows" : "block_streamvbyte";
+                {"dim", base.dim}, {"metric_type", "IP"}, {"inverted_index_algo", algo}, {"quant_type", o.quant}};
+            const std::string codec = algo == "SINDI"
+                                          ? (o.quant == "e5m7" ? "fixed_docid_windows_u12_e5m7" : "fixed_docid_windows")
+                                          : "block_streamvbyte";
             if (algo == "SINDI") {
                 build["sindi_window_size"] = 4096;
                 build["refine"] = o.refine;
@@ -667,10 +728,10 @@ main(int argc, char** argv) {
                           "Invalid Pareto measurement");
                     qps_sum += qps;
                     recall_sum += recall;
-                    csv << method << ',' << type << ',' << version << ",fp16," << codec << ',' << base.rows.size()
-                        << ',' << o.queries << ',' << o.k << ',' << o.threads << ',' << build_seconds << ',' << bytes
-                        << ',' << repeat + 1 << ',' << seconds << ',' << qps << ',' << recall << ','
-                        << search["refine_query_mass_percentage"] << ',' << search["refine_k"] << ','
+                    csv << method << ',' << type << ',' << version << ',' << o.quant << ',' << codec << ','
+                        << base.rows.size() << ',' << o.queries << ',' << o.k << ',' << o.threads << ','
+                        << build_seconds << ',' << bytes << ',' << repeat + 1 << ',' << seconds << ',' << qps << ','
+                        << recall << ',' << search["refine_query_mass_percentage"] << ',' << search["refine_k"] << ','
                         << search["drop_ratio_search"] << ',' << o.refine << ',' << sample_id << '\n';
                     csv.flush();
                     Check(csv.good(), "Failed writing results");
@@ -728,6 +789,7 @@ main(int argc, char** argv) {
                 for (size_t q = 0; q < o.queries; ++q)
                     for (int j = 0; j < o.k; ++j)
                         covered +=
+                            truth.ids[q * o.k + j] >= 0 &&
                             std::find(coarse.value()->GetIds() + q * pool, coarse.value()->GetIds() + (q + 1) * pool,
                                       truth.ids[q * o.k + j]) != coarse.value()->GetIds() + (q + 1) * pool;
                 run["mean_qps"] = qps_sum / o.repeats;
@@ -739,7 +801,9 @@ main(int argc, char** argv) {
                     WritePareto(o.output, points);
                 }
                 run["candidate_pool"] = pool;
-                run["candidate_coverage"] = double(covered) / (o.queries * o.k);
+                const auto valid_truth =
+                    std::count_if(truth.ids.begin(), truth.ids.end(), [](int64_t id) { return id >= 0; });
+                run["candidate_coverage"] = valid_truth ? double(covered) / valid_truth : 0;
                 run["retained_query_nnz_mean"] = double(retained_nnz) / o.queries;
                 run["retained_mass_mean"] = mass_sum / o.queries;
                 metadata["runs"].push_back(std::move(run));

@@ -4,6 +4,7 @@
 // You may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -261,14 +262,14 @@ TEST_CASE("SINDI compacted kernels only accumulate eligible postings", "[sparse]
 }
 
 TEST_CASE("SINDI filtered search matches stored-value scores across windows", "[sparse][sindi][prefilter]") {
-    const auto quant = GENERATE(std::string("fp16"), std::string("u16"), std::string("u8"));
-    const bool ip = quant == "fp16";
+    const auto quant = GENERATE(std::string("fp16"), std::string("e5m7"), std::string("u16"), std::string("u8"));
+    const bool ip = quant == "fp16" || quant == "e5m7";
     const bool growable = quant == "u8" ? false : GENERATE(false, true);
     // Exercise the default, disabled, custom and always-prefilter paths on the
     // same stored-value oracle, including growing and deserialized indexes.
     const float filter_threshold = GENERATE(-1.0f, 0.0f, 1.0f / 96, 1.0f);
-    constexpr size_t window = 1024;
-    constexpr size_t rows = 3 * window + 19;
+    const size_t window = quant == "e5m7" ? 4096 : 1024;
+    const size_t rows = 3 * window + 19;
     std::vector<std::map<int32_t, float>> documents(rows);
     std::vector<float> oracle(rows);
     for (size_t id = 0; id < rows; ++id) {
@@ -294,7 +295,14 @@ TEST_CASE("SINDI filtered search matches stored-value scores across windows", "[
         for (auto [dim, value] : documents[id]) {
             const float weight = dim == 0 ? 1.25f : (dim == 1 ? 0.875f : (dim == 2 ? 0.5f : 0.25f));
             if (ip) {
-                oracle[id] += weight * float(knowhere::fp16(value));
+                auto represented = knowhere::fp16(value);
+                if (quant == "e5m7") {
+                    // Independent stored-value oracle: E5M7 discards the low
+                    // three fraction bits of the nonnegative FP16 value.
+                    const auto bits = std::bit_cast<uint16_t>(represented);
+                    represented = std::bit_cast<knowhere::fp16>(uint16_t(bits & 0xfff8));
+                }
+                oracle[id] += weight * float(represented);
             } else {
                 const float tf = static_cast<uint16_t>(std::min(value, 65535.0f));
                 oracle[id] += weight * 2.2f * tf / (tf + 0.3f + 0.009f * length);
