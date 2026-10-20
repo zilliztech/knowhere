@@ -375,7 +375,6 @@ EmbListAddTest(const knowhere::DataSetPtr train_ds_in, const knowhere::DataSetPt
         knowhere::IndexFactory::Instance()
             .Create<DataType>(knowhere::IndexEnum::INDEX_FAISS_SCANN_DVR, version, data_view_pack)
             .value();
-    scann_with_dv_refiner.SetIdMapType(knowhere::IdMap::Type::GROWING);
     for (size_t i = 0; i < train_ds_list.size(); i++) {
         auto& base = train_ds_list[i];
         auto part_num_el = static_cast<size_t>(base->template Get<int64_t>(knowhere::meta::NQ));
@@ -383,7 +382,9 @@ EmbListAddTest(const knowhere::DataSetPtr train_ds_in, const knowhere::DataSetPt
         std::iota(part_ids.begin(), part_ids.end(), 0);
         base->SetIdMapData(knowhere::IdMapData::FromIds(part_ids.data(), part_ids.size(), part_ids.size()));
         if (i == 0) {
-            REQUIRE(scann_with_dv_refiner.Build(base, conf, false) == knowhere::Status::success);
+            knowhere::BuildOptions build_options;
+            build_options.growing = true;
+            REQUIRE(scann_with_dv_refiner.Build(base, conf, false, build_options) == knowhere::Status::success);
         } else {
             REQUIRE(scann_with_dv_refiner.Add(base, conf, false) == knowhere::Status::success);
         }

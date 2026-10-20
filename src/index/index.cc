@@ -15,6 +15,7 @@
 #include <limits>
 #include <numeric>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "folly/futures/Future.h"
@@ -31,6 +32,104 @@
 #endif
 
 namespace knowhere {
+
+namespace {
+
+Status
+ValidateMappingMmapOptions(const MappingMmapOptions& options, bool growing = false) {
+    if ((options.search_ids || options.retrieval_ids) && (growing || options.directory.empty())) {
+        return Status::invalid_args;
+    }
+    return Status::success;
+}
+
+std::optional<ValidityData>
+CopyValidity(const IdMap& map) {
+    // Export may run after a file-only Build, before its backend is loaded.
+    // It must not query backend Count/Dim just to inspect nullable metadata.
+    const auto bitmap = map.ValidBitmap();
+    if (bitmap.empty()) {
+        return std::nullopt;
+    }
+    ValidityData result;
+    result.logical_row_count = bitmap.size();
+    result.packed_bits.assign(result.logical_row_count / 8 + (result.logical_row_count % 8 != 0), 0xff);
+    bitmap.AndRange(0, result.logical_row_count, result.packed_bits.data());
+    if (result.logical_row_count % 8 != 0) {
+        result.packed_bits.back() &= (1U << (result.logical_row_count % 8)) - 1;
+    }
+    return result;
+}
+
+// Normalize the bit offset before passing it to kernels. Checking bytes avoids
+// overflowing capacity*8 or the caller's bit_offset+count.
+Status
+NormalizeValidityTarget(size_t count, MutableBitmapView& target) {
+    if (count == 0) {
+        return Status::success;
+    }
+    const auto byte_begin = target.bit_offset / 8;
+    const auto intra = target.bit_offset % 8;
+    if (target.data == nullptr || byte_begin > target.capacity_bytes ||
+        count > std::numeric_limits<size_t>::max() - intra) {
+        return Status::invalid_args;
+    }
+    const auto span = intra + count;
+    const auto need = span / 8 + (span % 8 != 0);
+    if (need > target.capacity_bytes - byte_begin) {
+        return Status::invalid_args;
+    }
+    target.data += byte_begin;
+    target.capacity_bytes -= byte_begin;
+    target.bit_offset = intra;
+    return Status::success;
+}
+
+Status
+ValidateValidityInput(const LoadOptions& input) {
+    if (!input.validity.has_value()) {
+        return Status::success;
+    }
+    const auto& validity = *input.validity;
+    if (validity.logical_row_count > static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) + 1) {
+        return Status::invalid_args;
+    }
+    const auto required = validity.logical_row_count / 8 + (validity.logical_row_count % 8 != 0);
+    if (required > validity.size_bytes || (required != 0 && validity.data == nullptr)) {
+        return Status::invalid_args;
+    }
+    return Status::success;
+}
+
+Status
+PrepareNullableLoad(IndexNode* node, const LoadOptions& input) {
+    if (input.validity.has_value()) {
+        auto& map = node->GetIdMap();
+        node->SetIdMapType(IdMap::Type::SEALED);
+        map.ConfigureMmap({.enable_in_to_out_ids = input.mmap.search_ids,
+                           .enable_out_to_in_ids = input.mmap.retrieval_ids,
+                           .mmap_dir_path = input.mmap.directory});
+        const auto& validity = *input.validity;
+        map.AddFromData(IdMapData::FromValidBitmap(validity.data, validity.logical_row_count));
+    }
+    return Status::success;
+}
+
+Status
+PrepareBuildMapping(IndexNode* node, const DataSetPtr& dataset, const BuildOptions& options) {
+    if (dataset != nullptr && dataset->HasIdMapData()) {
+        RETURN_IF_ERROR(ValidateMappingMmapOptions(options.mmap, options.growing));
+        if (!node->GetIdMap().IsEnabled()) {
+            node->SetIdMapType(options.growing ? IdMap::Type::GROWING : IdMap::Type::SEALED);
+        }
+        node->GetIdMap().ConfigureMmap({.enable_in_to_out_ids = options.mmap.search_ids,
+                                        .enable_out_to_in_ids = options.mmap.retrieval_ids,
+                                        .mmap_dir_path = options.mmap.directory});
+    }
+    return Status::success;
+}
+
+}  // namespace
 
 inline Status
 LoadConfig(BaseConfig* cfg, const Json& json, knowhere::PARAM_TYPE param_type, const std::string& method,
@@ -130,17 +229,129 @@ WrapIteratorsWithPreparedBitset(std::vector<IndexNode::IteratorPtr>& iterators,
     }
 }
 
+template <typename T>
+expected<bool>
+Index<T>::HasValidity() const noexcept {
+    return GuardedCall([&]() -> expected<bool> {
+        if (node == nullptr) {
+            return expected<bool>::Err(Status::empty_index, "index is empty");
+        }
+        const auto& map = std::as_const(*node).GetIdMap();
+        return !map.ValidBitmap().empty();
+    });
+}
+
+template <typename T>
+expected<size_t>
+Index<T>::ValidCount() const noexcept {
+    return GuardedCall([&]() -> expected<size_t> {
+        if (node == nullptr) {
+            return expected<size_t>::Err(Status::empty_index, "index is empty");
+        }
+        const auto& map = std::as_const(*node).GetIdMap();
+        return map.InCount();
+    });
+}
+
+template <typename T>
+expected<size_t>
+Index<T>::LogicalCount() const noexcept {
+    return GuardedCall([&]() -> expected<size_t> {
+        if (node == nullptr) {
+            return expected<size_t>::Err(Status::empty_index, "index is empty");
+        }
+        const auto& map = std::as_const(*node).GetIdMap();
+        return map.OutCount();
+    });
+}
+
+template <typename T>
+expected<bool>
+Index<T>::IsRowValid(int64_t logical_offset) const noexcept {
+    return GuardedCall([&]() -> expected<bool> {
+        if (node == nullptr) {
+            return expected<bool>::Err(Status::empty_index, "index is empty");
+        }
+        return std::as_const(*node).GetIdMap().IsValidOutId(logical_offset);
+    });
+}
+
+template <typename T>
+Status
+Index<T>::IntersectValidity(int64_t logical_offset, size_t count, MutableBitmapView target) const noexcept {
+    return GuardedCall([&]() -> Status {
+        if (node == nullptr) {
+            return Status::empty_index;
+        }
+        RETURN_IF_ERROR(NormalizeValidityTarget(count, target));
+        const auto& map = std::as_const(*node).GetIdMap();
+        map.AndValidityByRange(logical_offset, count, target.data, target.bit_offset);
+        return Status::success;
+    });
+}
+
+template <typename T>
+Status
+Index<T>::IntersectValidityAt(const int64_t* logical_offsets, size_t count, MutableBitmapView target) const noexcept {
+    return GuardedCall([&]() -> Status {
+        if (node == nullptr) {
+            return Status::empty_index;
+        }
+        if ((count != 0 && logical_offsets == nullptr) ||
+            count > std::numeric_limits<size_t>::max() / sizeof(int64_t)) {
+            return Status::invalid_args;
+        }
+        RETURN_IF_ERROR(NormalizeValidityTarget(count, target));
+        const auto& map = std::as_const(*node).GetIdMap();
+        map.ApplyValidityByOffsets(logical_offsets, count, [&](size_t i, bool valid) {
+            if (!valid) {
+                const auto bit = target.bit_offset + i;
+                target.data[bit / 8] &= static_cast<uint8_t>(~(1U << (bit % 8)));
+            }
+        });
+        return Status::success;
+    });
+}
+
+template <typename T>
+expected<std::optional<ValidityData>>
+Index<T>::ExportValidity() const noexcept {
+    return GuardedCall([&]() -> expected<std::optional<ValidityData>> {
+        if (node == nullptr) {
+            return expected<std::optional<ValidityData>>::Err(Status::empty_index, "index is empty");
+        }
+        return CopyValidity(std::as_const(*node).GetIdMap());
+    });
+}
+
+template <typename T>
+Status
+Index<T>::ImportValidity(const ValidityView& input, const MappingMmapOptions& mmap) noexcept {
+    return GuardedCall([&]() -> Status {
+        if (node == nullptr) {
+            return Status::empty_index;
+        }
+        const LoadOptions options{.validity = input, .mmap = mmap};
+        RETURN_IF_ERROR(ValidateValidityInput(options));
+        RETURN_IF_ERROR(ValidateMappingMmapOptions(mmap));
+        RETURN_IF_ERROR(PrepareNullableLoad(node, options));
+        return this->node->FinalizeIdMap();
+    });
+}
+
 #ifdef KNOWHERE_WITH_CARDINAL
 template <typename T>
 inline const std::shared_ptr<Interrupt>
-Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chrono::seconds timeout) noexcept {
+Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chrono::seconds timeout,
+                     const BuildOptions& options) noexcept {
     return GuardedCall([&]() -> std::shared_ptr<Interrupt> {
         auto pool = ThreadPool::GetGlobalBuildThreadPool();
         auto interrupt = std::make_shared<Interrupt>(timeout);
-        interrupt->Set(pool->push([this, dataset, json, interrupt]() {
+        interrupt->Set(pool->push([this, dataset, json, interrupt, options]() {
             return GuardedCall([&]() -> Status {
                 auto cfg = this->node->CreateConfig();
                 RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
+                RETURN_IF_ERROR(PrepareBuildMapping(node, dataset, options));
                 auto& id_map = this->node->GetIdMap();
                 const auto has_id_map = AddDatasetIdMapData(dataset, *cfg, id_map, 0);
                 if (has_id_map && dataset != nullptr && dataset->GetRows() == 0) {
@@ -172,12 +383,13 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, const std::chro
 #else
 template <typename T>
 inline const std::shared_ptr<Interrupt>
-Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) noexcept {
+Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool,
+                     const BuildOptions& options) noexcept {
     return GuardedCall([&]() -> std::shared_ptr<Interrupt> {
         auto pool = ThreadPool::GetGlobalBuildThreadPool();
         auto interrupt = std::make_shared<Interrupt>();
-        interrupt->Set(pool->push([this, dataset, json, use_knowhere_build_pool]() {
-            return this->Build(dataset, json, use_knowhere_build_pool);
+        interrupt->Set(pool->push([this, dataset, json, use_knowhere_build_pool, options]() {
+            return this->Build(dataset, json, use_knowhere_build_pool, options);
         }));
         return interrupt;
     });
@@ -186,10 +398,12 @@ Index<T>::BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhe
 
 template <typename T>
 inline Status
-Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool) noexcept {
+Index<T>::Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool,
+                const BuildOptions& options) noexcept {
     return GuardedCall([&]() -> Status {
         auto cfg = this->node->CreateConfig();
         RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Build"));
+        RETURN_IF_ERROR(PrepareBuildMapping(node, dataset, options));
         auto& id_map = this->node->GetIdMap();
         const auto has_id_map = AddDatasetIdMapData(dataset, *cfg, id_map, 0);
         if (has_id_map && dataset != nullptr && dataset->GetRows() == 0) {
@@ -241,6 +455,9 @@ Index<T>::Add(const DataSetPtr dataset, const Json& json, bool use_knowhere_buil
         std::string msg;
         RETURN_IF_ERROR(LoadConfig(cfg.get(), json, knowhere::TRAIN, "Add", &msg));
         auto& id_map = this->node->GetIdMap();
+        if (dataset != nullptr && dataset->HasIdMapData() && !id_map.IsEnabled() && node->Count() == 0) {
+            node->SetIdMapType(IdMap::Type::GROWING);
+        }
         AddDatasetIdMapData(dataset, *cfg, id_map, this->node->Count());
         const auto is_emb_list =
             dataset != nullptr && dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET) != nullptr;
@@ -450,8 +667,11 @@ Index<T>::Serialize(BinarySet& binset) const noexcept {
 
 template <typename T>
 inline Status
-Index<T>::Deserialize(const BinarySet& binset, const Json& json) noexcept {
+Index<T>::Deserialize(const BinarySet& binset, const Json& json, const LoadOptions& options) noexcept {
     return GuardedCall([&]() -> Status {
+        RETURN_IF_ERROR(ValidateValidityInput(options));
+        RETURN_IF_ERROR(ValidateMappingMmapOptions(options.mmap));
+        RETURN_IF_ERROR(PrepareNullableLoad(node, options));
         Json json_(json);
         auto cfg = this->node->CreateConfig();
         {
@@ -487,8 +707,11 @@ Index<T>::Deserialize(const BinarySet& binset, const Json& json) noexcept {
 
 template <typename T>
 inline Status
-Index<T>::DeserializeFromFile(const std::string& filename, const Json& json) noexcept {
+Index<T>::DeserializeFromFile(const std::string& filename, const Json& json, const LoadOptions& options) noexcept {
     return GuardedCall([&]() -> Status {
+        RETURN_IF_ERROR(ValidateValidityInput(options));
+        RETURN_IF_ERROR(ValidateMappingMmapOptions(options.mmap));
+        RETURN_IF_ERROR(PrepareNullableLoad(node, options));
         Json json_(json);
         auto cfg = this->node->CreateConfig();
         {
