@@ -1,13 +1,13 @@
 ---
 name: index-optimization
-description: Use when developing or evaluating Knowhere index performance optimizations, including construction cost, memory use, insertion, and search workload coverage.
+description: Use when developing or evaluating Knowhere index performance optimizations, including construction cost, memory use, insertion, recall, and search workload coverage.
 ---
 
 # Index Optimization
 
 Before changing an index, identify the affected build, insertion, storage, and search paths and define a
-baseline and representative workloads. Consider construction time, construction memory, and query
-performance together. For queries, account for top-k and filtering; for sparse queries, also account for
+baseline and representative workloads. Consider construction time, construction memory, query
+performance, and recall together. For queries, account for top-k and filtering; for sparse queries, also account for
 query NNZ. Use these dimensions during design, not only when writing the final benchmark report.
 
 Respect the user's requested scope and resource budget. Choose representative combinations first, then
@@ -53,12 +53,22 @@ Bucket existing sparse queries without changing their contents. If synthetic gen
 other transformations alter a query, regenerate its ground truth. NNZ alone does not describe posting
 work: consider term frequency or posting-list length when it explains differences between query groups.
 
-Measure QPS and latency at the stated load, including tail latency when the sample count supports it.
-Report recall/accuracy with speed, especially when changing quantization, pruning, or refinement.
-Compare at the same search settings and, when accuracy changes, make the speed/recall tradeoff explicit.
-Use the same metric and filter for ground truth; handle fewer-than-k valid neighbors and document the
-empty-truth convention. For quantized indexes, distinguish accuracy against original vectors from
-correctness of scores computed from stored values.
+## Recall and search performance
+
+Report recall@k alongside QPS and latency for each top-k, filter, and sparse query NNZ workload group.
+Measure latency at the stated load, including tail latency when the sample count supports it. Define
+recall targets and acceptable regression tolerances for the workload before evaluating an optimization.
+
+Compare speed and recall at the same search settings. For approximate search, also compare QPS/latency
+at matched recall targets, sweeping relevant search parameters to show the speed/recall tradeoff.
+Record the settings and achieved recall for each result; if a target cannot be reached, report that
+explicitly. Treat speedups accompanied by recall loss as a tradeoff requiring evaluation against the
+workload's quality target, especially for quantization, pruning, and refinement changes.
+
+Use exact ground truth with the same metric, queries, and filters. Compute recall against the valid
+neighbors available up to k, and document empty-truth and tied-score conventions. For quantized indexes,
+measure recall against the original vectors and distinguish it from correctness of scores computed
+from stored values.
 
 ## Reproducible comparisons
 
