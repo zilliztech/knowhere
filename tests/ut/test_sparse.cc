@@ -2953,6 +2953,86 @@ TEST_CASE("SINDI refinement windows filters and growable Add", "[sparse][sindi][
     REQUIRE(result.value()->GetDistance()[0] == 28);
 }
 
+TEST_CASE("SINDI growing refinement keeps seek ranges across repeated Adds", "[sparse][sindi][refinement]") {
+    using namespace knowhere;
+    const auto window = GENERATE(1024, 4096, 65535);
+    const bool initially_empty = GENERATE(false, true);
+    CAPTURE(window, initially_empty);
+    std::vector<RefineRow> base(window - 1);
+    if (!initially_empty) {
+        base[0] = RefineTestRow({{0, 1}, {9, 2}});
+        base.back() = RefineTestRow({{0, 3}, {9, 5}});
+    }
+    auto build = RefineBuild();
+    build["sindi_window_size"] = window;
+    auto growing =
+        IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC, 11).value();
+    REQUIRE(growing.Build(RefineDataset(base), build) == Status::success);
+
+    std::vector<RefineRow> queries{RefineTestRow({{0, 2}, {9, 1}, {100000, 3}}), RefineTestRow({{9, 2}})};
+    auto check = [&] {
+        auto sealed =
+            IndexFactory::Instance().Create<sparse_u32_f32>(IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11).value();
+        REQUIRE(sealed.Build(RefineDataset(base), build) == Status::success);
+        auto search = RefineSearch();
+        search["k"] = 4;
+        search["refine_k"] = 16;
+        for (const float mass : {1.f, .6f}) {
+            search["refine_query_mass_percentage"] = mass;
+            for (const bool filtered : {false, true}) {
+                std::vector<uint8_t> mask((base.size() + 7) / 8, 0);
+                if (filtered) {
+                    mask[0] |= 1;
+                    mask[(base.size() - 1) / 8] |= 1u << ((base.size() - 1) % 8);
+                }
+                const BitsetView bitset(mask.data(), base.size());
+                auto expected = sealed.Search(RefineDataset(queries), search, bitset);
+                auto actual = growing.Search(RefineDataset(queries), search, bitset);
+                REQUIRE(expected.has_value());
+                REQUIRE(actual.has_value());
+                for (size_t q = 0; q < queries.size(); ++q) {
+                    std::set<int64_t> seen;
+                    for (size_t rank = 0; rank < 4; ++rank) {
+                        const auto pos = q * 4 + rank;
+                        const auto id = actual.value()->GetIds()[pos];
+                        REQUIRE((id < 0) == (expected.value()->GetIds()[pos] < 0));
+                        if (id < 0)
+                            continue;
+                        REQUIRE(id < int64_t(base.size()));
+                        REQUIRE(seen.insert(id).second);
+                        REQUIRE_FALSE(bitset.test(id));
+                        float score = 0;
+                        for (size_t i = 0; i < queries[q].size(); ++i)
+                            for (size_t j = 0; j < base[id].size(); ++j)
+                                if (queries[q][i].id == base[id][j].id)
+                                    score += queries[q][i].val * float(fp16(base[id][j].val));
+                        REQUIRE(actual.value()->GetDistance()[pos] == score);
+                        REQUIRE(actual.value()->GetDistance()[pos] == expected.value()->GetDistance()[pos]);
+                    }
+                }
+            }
+        }
+        REQUIRE(growing.Count() == base.size());
+    };
+    auto append = [&](const std::vector<RefineRow>& batch) {
+        REQUIRE(growing.Add(RefineDataset(batch), build) == Status::success);
+        base.insert(base.end(), batch.begin(), batch.end());
+        check();
+    };
+    check();
+    append({});
+    append({RefineTestRow({{0, 7}, {9, 11}})});  // Finish the current window.
+    append({RefineTestRow({{0, 13}, {100000, 17}}), RefineTestRow({{9, 19}, {100000, 23}})});
+    std::vector<RefineRow> gap(2 * window + 1);
+    gap.back() = RefineTestRow({{0, 29}, {100000, 31}});
+    append(gap);  // Skip empty windows in the existing dimensions.
+    append({RefineTestRow({{9, 37}, {100000, 41}})});
+    const std::vector<RefineRow> invalid{RefineTestRow({{123, 1}}), RefineTestRow({{100000, -1}})};
+    REQUIRE(growing.Add(RefineDataset(invalid), build) != Status::success);
+    check();
+    append({RefineTestRow({{0, 43}, {100000, 47}})});
+}
+
 TEST_CASE("SINDI refinement represented-value oracle and validation", "[sparse][sindi][refinement]") {
     using namespace knowhere;
     std::vector<RefineRow> base;
