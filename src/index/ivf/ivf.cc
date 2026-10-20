@@ -1010,7 +1010,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSetPtr dataset, std::unique_
 
                     faiss::cppcontrib::knowhere::IndexScaNNSearchParameters scann_search_params;
                     scann_search_params.base_index_params = &base_search_params;
-                    scann_search_params.reorder_k = scann_cfg.reorder_k.value();
+                    scann_search_params.reorder_k = std::max<int64_t>(scann_cfg.reorder_k.value(), k);
 
                     index_->search(1, cur_query, k, distances.get() + offset, ids.get() + offset, &scann_search_params);
                 } else if constexpr (std::is_same_v<IndexType, IndexIVFRaBitQWrapper>) {

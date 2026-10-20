@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "index/data_view_dense_index/data_view_dense_index.h"
+#include "knowhere/comp/knowhere_config.h"
 #include "knowhere/log.h"
 
 namespace knowhere {
@@ -297,12 +298,21 @@ MRLIndexNode::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, cons
         return expected<DataSetPtr>::Err(Status::invalid_args, "invalid MRL search config");
     }
 
-    const auto& base_cfg = static_cast<const BaseConfig&>(*cfg);
+    auto& base_cfg = static_cast<BaseConfig&>(*cfg);
     if (!base_cfg.k.has_value()) {
         return expected<DataSetPtr>::Err(Status::invalid_args, "MRL search requires topk");
     }
     const auto nq = dataset->GetRows();
     const auto topk = base_cfg.k.value();
+    if (with_mrl_refine_) {
+        const auto expanded_topk = topk * KnowhereConfig::GetMRLRefineRatio();
+        if (static_cast<double>(expanded_topk) > std::numeric_limits<int>::max()) {
+            return expected<DataSetPtr>::Err(Status::invalid_args,
+                                             "MRL refinement candidate count exceeds integer range");
+        }
+        // Match the DVR wrapper's truncating conversion, preserving the requested final topk.
+        base_cfg.k = static_cast<int>(expanded_topk);
+    }
     auto result = base_index_.Node()->Search(PreparePrefixDataSet(dataset), std::move(cfg), bitset, op_context);
     if (!result.has_value()) {
         return result;
