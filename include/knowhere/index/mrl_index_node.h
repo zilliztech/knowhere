@@ -23,13 +23,13 @@ class DataViewIndexBase;
  * @brief Decorates a dense IndexNode with MRL prefix search.
  *
  * The wrapped index builds and searches the first mrl_dim values of source_dim-wide vectors; it is not a separate ANN
- * algorithm. Optional refinement reranks the base result with full-dimensional vectors borrowed through ViewDataOp.
- * This wrapper does not own or serialize those raw vectors.
+ * algorithm. Optional refinement reranks the base result with full-dimensional vectors borrowed through a
+ * search-scoped ViewDataOp. This wrapper does not own or serialize those raw vectors.
  */
 class MRLIndexNode final : public IndexNode {
  public:
     MRLIndexNode(Index<IndexNode>&& base_index, int64_t source_dim, int64_t mrl_dim, DataFormatEnum data_type,
-                 bool with_mrl_refine, ViewDataOp view_data);
+                 bool with_mrl_refine, ViewDataScopeOp view_data_scope);
 
     ~MRLIndexNode() override;
 
@@ -124,11 +124,11 @@ class MRLIndexNode final : public IndexNode {
     int64_t mrl_dim_ = 0;
     DataFormatEnum data_type_ = DataFormatEnum::fp32;
     bool with_mrl_refine_ = false;
-    ViewDataOp view_data_;
+    ViewDataScopeOp view_data_scope_;
 };
 
 Index<IndexNode>
 CreateMRLIndex(Index<IndexNode>&& base_index, int64_t source_dim, int64_t mrl_dim, DataFormatEnum data_type,
-               bool with_mrl_refine, ViewDataOp view_data);
+               bool with_mrl_refine, ViewDataScopeOp view_data_scope);
 
 }  // namespace knowhere

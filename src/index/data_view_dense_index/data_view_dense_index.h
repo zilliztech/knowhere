@@ -106,7 +106,7 @@ class DataViewIndexBase {
     virtual void
     SearchWithIds(const idx_t n, const void* __restrict x, const idx_t* __restrict ids_num_lims,
                   const idx_t* __restrict ids, const idx_t k, float* __restrict out_dist, idx_t* __restrict out_ids,
-                  const bool use_quant) const = 0;
+                  const bool use_quant, ViewDataOp view_data = {}) const = 0;
 
     /**
      * @brief Calculate distances between query vectors and reference vectors by IDs
@@ -277,7 +277,7 @@ class DataViewIndexFlat : public DataViewIndexBase {
     void
     SearchWithIds(const idx_t n, const void* __restrict x, const idx_t* __restrict ids_num_lims,
                   const idx_t* __restrict ids, const idx_t k, float* __restrict out_dist, idx_t* __restrict out_ids,
-                  const bool use_quant) const override;
+                  const bool use_quant, ViewDataOp view_data = {}) const override;
 
     void
     CalcDistByIDs(const idx_t num_queries, const void* __restrict queries, const idx_t num_ids,
@@ -295,6 +295,11 @@ class DataViewIndexFlat : public DataViewIndexBase {
     void
     ComputeDistanceSubset(const void* __restrict x, const idx_t sub_y_n, float* __restrict x_y_distances,
                           const idx_t* __restrict x_y_labels, const bool use_quant) const override;
+
+    void
+    ComputeDistanceSubsetWithView(const void* __restrict x, const idx_t sub_y_n, float* __restrict x_y_distances,
+                                  const idx_t* __restrict x_y_labels, const bool use_quant,
+                                  const ViewDataOp& view_data) const;
 
     Status
     SerializeState(BinarySet& binset) const override;
@@ -528,7 +533,8 @@ DataViewIndexFlat::Search(const idx_t n, const void* __restrict x, const idx_t k
 inline void
 DataViewIndexFlat::SearchWithIds(const idx_t n, const void* __restrict x, const idx_t* __restrict ids_num_lims,
                                  const idx_t* __restrict ids, const idx_t k, float* __restrict out_dist,
-                                 idx_t* __restrict out_ids, const bool use_quant) const {
+                                 idx_t* __restrict out_ids, const bool use_quant, ViewDataOp view_data) const {
+    const auto effective_view = view_data ? std::move(view_data) : view_data_;
     const auto& search_pool = ThreadPool::GetGlobalSearchThreadPool();
     std::vector<folly::Future<folly::Unit>> futs;
     futs.reserve(n);
@@ -546,7 +552,7 @@ DataViewIndexFlat::SearchWithIds(const idx_t n, const void* __restrict x, const 
             auto x_i = (const char*)x + code_size_ * i;
 
             assert(base_n >= k);
-            ComputeDistanceSubset(x_i, base_n, base_dist.get(), base_ids, use_quant);
+            ComputeDistanceSubsetWithView(x_i, base_n, base_dist.get(), base_ids, use_quant, effective_view);
             if (is_cosine_) {
                 std::shared_lock lock(norms_mutex_);
                 for (auto j = 0; j < base_n; j++) {
@@ -730,8 +736,15 @@ DataViewIndexFlat::RangeSearchWithIds(const idx_t n, const void* __restrict x, c
 inline void
 DataViewIndexFlat::ComputeDistanceSubset(const void* __restrict x, const idx_t sub_y_n, float* x_y_distances,
                                          const idx_t* __restrict x_y_labels, const bool use_quant) const {
+    ComputeDistanceSubsetWithView(x, sub_y_n, x_y_distances, x_y_labels, use_quant, view_data_);
+}
+
+inline void
+DataViewIndexFlat::ComputeDistanceSubsetWithView(const void* __restrict x, const idx_t sub_y_n, float* x_y_distances,
+                                                 const idx_t* __restrict x_y_labels, const bool use_quant,
+                                                 const ViewDataOp& view_data) const {
     auto computer =
-        SelectDataViewComputer(view_data_, data_type_, metric_type_, d_, is_cosine_, use_quant ? quant_data_ : nullptr);
+        SelectDataViewComputer(view_data, data_type_, metric_type_, d_, is_cosine_, use_quant ? quant_data_ : nullptr);
 
     computer->set_query((const float*)(x));
     const idx_t* __restrict idsj = x_y_labels;
