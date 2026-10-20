@@ -73,11 +73,8 @@ correctness of scores computed from stored values.
 - Choose relevant correctness checks through the [testing skill](../testing/SKILL.md); consult the
   [building skill](../building/SKILL.md) when compiling or changing build options.
 
-## Existing benchmark entry points
+## Existing benchmarks
 
-Inspect current code and options before reuse; these entry points may need extension to cover the chosen
-matrix. Do not assume every parameter or platform is supported.
-
-- [Sparse IP benchmark](../../../benchmark/benchmark_sparse.cpp)
-- [Sparse BM25 compact benchmark](../../../benchmark/benchmark_sparse_bm25_compact.cpp)
-- [Dense top-k/filter benchmark](../../../benchmark/hdf5/benchmark_float_bitset.cpp)
+Look for reusable benchmarks in [benchmark/](../../../benchmark/). Inspect current code and options
+before reuse, and extend coverage for the chosen workload matrix where needed. Do not assume every
+parameter or platform is supported.
