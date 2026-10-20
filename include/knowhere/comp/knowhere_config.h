@@ -64,6 +64,14 @@ class KnowhereConfig {
     static int64_t
     GetBlasThreshold();
 
+    // Server-controlled candidate multiplier for the additional full-dimensional MRL refinement.
+    // Returns false for a non-finite ratio or a value below 1, retaining the previous setting.
+    static bool
+    SetMRLRefineRatio(float ratio);
+
+    static float
+    GetMRLRefineRatio();
+
     /**
      * set Clustering early stop [0, 100]
      *   It is to reduce the number of iterations of K-means.
