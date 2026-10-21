@@ -123,7 +123,6 @@ TEST_CASE("MRL search maps compact nullable ids after optional refinement", "[mr
 
     SECTION("prefix search") {
         auto index = CreateMRLIndex(raw_data, false);
-        index.SetIdMapType(knowhere::IdMap::Type::SEALED);
         REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
         auto result = index.Search(query, config, nullptr);
         REQUIRE(result.has_value());
@@ -132,7 +131,6 @@ TEST_CASE("MRL search maps compact nullable ids after optional refinement", "[mr
 
     SECTION("full-dimensional rerank") {
         auto index = CreateMRLIndex(raw_data, true);
-        index.SetIdMapType(knowhere::IdMap::Type::SEALED);
         REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
         auto result = index.Search(query, config, nullptr);
         REQUIRE(result.has_value());
