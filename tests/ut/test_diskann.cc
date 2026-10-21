@@ -410,6 +410,117 @@ TEST_CASE("Test DiskANNIndexNode.", "[diskann]") {
     base_search<knowhere::fp32>();
 }
 
+// At high filter ratios the DiskANN iterator ranks the unfiltered points by PQ distance and refines them from disk
+//   instead of walking the graph, so it must return every unfiltered point, and the top-k must match brute force.
+template <typename DataType>
+inline void
+iterator_brute_force_search() {
+    fs::remove_all(kDir);
+    fs::remove(kDir);
+    REQUIRE_NOTHROW(fs::create_directory(kDir));
+    REQUIRE_NOTHROW(fs::create_directory(kL2IndexDir));
+    REQUIRE_NOTHROW(fs::create_directory(kIPIndexDir));
+    REQUIRE_NOTHROW(fs::create_directory(kCOSINEIndexDir));
+
+    auto metric_str = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::IP, knowhere::metric::COSINE);
+    auto version = GenTestVersionList();
+    std::unordered_map<knowhere::MetricType, std::string> metric_dir_map = {
+        {knowhere::metric::L2, kL2IndexPrefix},
+        {knowhere::metric::IP, kIPIndexPrefix},
+        {knowhere::metric::COSINE, kCOSINEIndexPrefix},
+    };
+
+    knowhere::Json json;
+    json["dim"] = kDim;
+    json["metric_type"] = metric_str;
+    json["k"] = kK;
+    json["index_prefix"] = metric_dir_map[metric_str];
+    json["data_path"] = kRawDataPath;
+    json["max_degree"] = defaultMaxDegree;
+    json["search_list_size"] = 128;
+    json["pq_code_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+    json["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+    json["build_dram_budget_gb"] = 32.0;
+    CAPTURE(metric_str);
+
+    auto base_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(GenDataSet(kNumRows, kDim, 30));
+    auto query_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(GenDataSet(kNumQueries, kDim, 42));
+    WriteRawDataToDisk<DataType>(kRawDataPath, static_cast<const DataType*>(base_ds->GetTensor()), kNumRows, kDim);
+
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+    auto diskann_index_pack = knowhere::Pack(file_manager);
+    knowhere::BinarySet binset;
+    {
+        knowhere::DataSetPtr ds_ptr = nullptr;
+        auto diskann =
+            knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack).value();
+        REQUIRE(diskann.Build(ds_ptr, json) == knowhere::Status::success);
+        REQUIRE(diskann.Serialize(binset) == knowhere::Status::success);
+    }
+    auto diskann = knowhere::IndexFactory::Instance().Create<DataType>("DISKANN", version, diskann_index_pack).value();
+    REQUIRE(diskann.Deserialize(binset, json) == knowhere::Status::success);
+
+    // (filter_threshold, filtered ratio). -1 uses the iterator default (97%); 0.5 checks that the search param
+    //   overrides it, and leaves enough unfiltered points to span several refine windows.
+    const std::vector<std::pair<float, float>> cases = {{-1.0f, 0.98f}, {-1.0f, 0.99f}, {0.5f, 0.6f}};
+    std::vector<std::function<std::vector<uint8_t>(size_t, size_t)>> gen_bitset_funcs = {
+        GenerateBitsetWithFirstTbitsSet, GenerateBitsetWithRandomTbitsSet};
+    for (const auto& [threshold, percentage] : cases) {
+        for (const auto& gen_func : gen_bitset_funcs) {
+            json["filter_threshold"] = threshold;
+            json["search_list_size"] = 16;
+            CAPTURE(threshold, percentage);
+            const size_t n_filtered = percentage * kNumRows;
+            const size_t n_unfiltered = kNumRows - n_filtered;
+            auto bitset_data = gen_func(kNumRows, n_filtered);
+            knowhere::BitsetView bitset(bitset_data.data(), kNumRows);
+
+            auto gt = knowhere::BruteForce::Search<DataType>(base_ds, query_ds, json, bitset);
+            REQUIRE(gt.has_value());
+            const auto gt_ids = gt.value()->GetIds();
+            const auto gt_dists = gt.value()->GetDistance();
+            const size_t expected_k = std::min<size_t>(kK, n_unfiltered);
+
+            auto its = diskann.AnnIterator(query_ds, json, bitset);
+            REQUIRE(its.has_value());
+            size_t n_hit = 0;
+            for (uint32_t i = 0; i < kNumQueries; ++i) {
+                auto& it = its.value()[i];
+                std::unordered_set<int64_t> gt_topk(gt_ids + i * kK, gt_ids + i * kK + expected_k);
+                std::unordered_set<int64_t> returned;
+                while (it->HasNext().value()) {
+                    auto [id, dist] = it->Next().value();
+                    REQUIRE(!bitset.test(id));
+                    REQUIRE(returned.insert(id).second);
+                    if (returned.size() == 1 && id == gt_ids[i * kK]) {
+                        REQUIRE(dist == Catch::Approx(gt_dists[i * kK]).epsilon(0.01));
+                    }
+                    if (returned.size() <= expected_k && gt_topk.count(id) > 0) {
+                        n_hit++;
+                    }
+                }
+                REQUIRE(returned.size() == n_unfiltered);
+            }
+            const float recall = static_cast<float>(n_hit) / (kNumQueries * expected_k);
+            REQUIRE(recall >= 0.98f);
+        }
+    }
+    fs::remove_all(kDir);
+    fs::remove(kDir);
+}
+
+TEST_CASE("Test DiskANN iterator falls back to brute force at high filter ratio", "[diskann]") {
+    SECTION("fp32") {
+        iterator_brute_force_search<knowhere::fp32>();
+    }
+    SECTION("fp16") {
+        iterator_brute_force_search<knowhere::fp16>();
+    }
+    SECTION("bf16") {
+        iterator_brute_force_search<knowhere::bf16>();
+    }
+}
+
 TEST_CASE("Test DiskANN CalcDistByIDs with all vectors cached", "[diskann]") {
     fs::remove_all(kDir);
     REQUIRE_NOTHROW(fs::create_directories(kCOSINEIndexDir));
