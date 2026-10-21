@@ -16,6 +16,7 @@ Read the relevant skill before working on its topic:
 | Source layout, index implementations, dependencies | [architecture](.agents/skills/architecture/SKILL.md) |
 | Build configuration and compiler errors | [building](.agents/skills/building/SKILL.md) |
 | Running and adding tests | [testing](.agents/skills/testing/SKILL.md) |
+| Index performance optimization and benchmarks | [index-optimization](.agents/skills/index-optimization/SKILL.md) |
 | Formatting and static analysis | [code-quality](.agents/skills/code-quality/SKILL.md) |
 | Commits, PR titles, DCO, and labels | [git-workflow](.agents/skills/git-workflow/SKILL.md) |
 
