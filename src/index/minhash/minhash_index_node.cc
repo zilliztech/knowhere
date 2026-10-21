@@ -42,7 +42,8 @@ class MinHashLSHNode : public IndexNode {
     }
 
     Status
-    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override;
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+          milvus::OpContext* op_context) override;
 
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
@@ -211,7 +212,8 @@ class MinHashLSHNode : public IndexNode {
 };
 template <typename DataType>
 Status
-MinHashLSHNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) {
+MinHashLSHNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool,
+                                milvus::OpContext* op_context) {
     auto build_conf = static_cast<const MinHashLSHConfig&>(*cfg);
     if (this->file_manager_ == nullptr) {
         LOG_KNOWHERE_ERROR_ << "Failed to use a null file manager to build.";

@@ -211,19 +211,29 @@ class Index {
     Status
     ImportValidity(const ValidityView& input, const MappingMmapOptions& mmap = {}) noexcept;
 
+    BuildInputOptions
+    GetBuildInputOptions() const {
+        return node->GetBuildInputOptions();
+    }
+
+    // Nonblocking reservation for Build with the same dataset shape and configuration.
+    // See IndexNode::TryReserveBuild for return values and reservation lifetime.
+    expected<bool>
+    TryReserveBuild(const DataSetPtr dataset, const Json& json) noexcept;
+
     Status
     Build(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true,
-          const BuildOptions& options = {}) noexcept;
+          const BuildOptions& options = {}, milvus::OpContext* op_context = nullptr) noexcept;
 
 #ifdef KNOWHERE_WITH_CARDINAL
     const std::shared_ptr<Interrupt>
     BuildAsync(const DataSetPtr dataset, const Json& json,
-               const std::chrono::seconds timeout = std::chrono::seconds::max(),
-               const BuildOptions& options = {}) noexcept;
+               const std::chrono::seconds timeout = std::chrono::seconds::max(), const BuildOptions& options = {},
+               std::shared_ptr<milvus::OpContext> op_context = nullptr) noexcept;
 #else
     const std::shared_ptr<Interrupt>
     BuildAsync(const DataSetPtr dataset, const Json& json, bool use_knowhere_build_pool = true,
-               const BuildOptions& options = {}) noexcept;
+               const BuildOptions& options = {}, std::shared_ptr<milvus::OpContext> op_context = nullptr) noexcept;
 #endif
 
     Status

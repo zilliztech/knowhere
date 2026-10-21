@@ -456,7 +456,7 @@ IndexNode::GetEmbListByStorageIds(const DataSetPtr dataset, const std::string& m
 
 Status
 IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                        size_t num_el, bool use_knowhere_build_pool) {
+                        size_t num_el, bool use_knowhere_build_pool, milvus::OpContext* op_context) {
     auto& config = static_cast<BaseConfig&>(*cfg);
 
     auto metric_info_or = ParseEmbListMetric(config);
@@ -487,7 +487,7 @@ IndexNode::BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, c
     LOG_KNOWHERE_INFO_ << "Build EmbList-Index with strategy: " << strategy_type << ", metric type: " << el_metric_type_
                        << ", sub metric type: " << sub_metric_type;
     if (build_data_or.value().has_value()) {
-        RETURN_IF_ERROR(Build(build_data_or.value().value(), cfg, use_knowhere_build_pool));
+        RETURN_IF_ERROR(Build(build_data_or.value().value(), cfg, use_knowhere_build_pool, op_context));
     }
 
     if (emb_list_strategy_->NeedsRawVectorStorage()) {

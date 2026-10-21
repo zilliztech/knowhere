@@ -31,6 +31,7 @@
 
 #include "knowhere/binaryset.h"
 #include "knowhere/bitsetview.h"
+#include "knowhere/build_scheduler.h"
 #include "knowhere/config.h"
 #include "knowhere/dataset.h"
 #include "knowhere/emb_list_utils.h"
@@ -66,6 +67,11 @@ namespace knowhere {
 
 class Interrupt;
 
+struct BuildInputOptions {
+    // Opt into a resident tensor when the caller would otherwise prepare a raw file.
+    bool use_memory = false;
+};
+
 class IndexNode : public Object {
  public:
     IndexNode(const int32_t ver) : version_(ver) {
@@ -78,6 +84,36 @@ class IndexNode : public Object {
     }
 
     IndexNode(const IndexNode&& other) : version_(other.version_) {
+    }
+
+    // Read before materializing input; stable for this node's lifetime.
+    virtual BuildInputOptions
+    GetBuildInputOptions() const {
+        return {};
+    }
+
+    /**
+     * @brief Attempts to reserve resources for a subsequent build without waiting for capacity.
+     *
+     * @return True if admitted or no reservation is needed, false if capacity is temporarily unavailable,
+     * or an error if the request cannot be served.
+     * @note Retry and build on the same node with the same dataset shape and configuration. Repeated successful
+     * calls reuse the reservation. The default implementation serializes builds without backend resource admission.
+     * Index::Build and Index::BuildAsync release it on completion, including failure; node destruction also releases
+     * it.
+     */
+    virtual expected<bool>
+    TryReserveBuild(const DataSetPtr dataset, std::shared_ptr<Config> cfg) {
+        if (!build_reservation_) {
+            build_reservation_ = BuildScheduler::Instance().TryReserve();
+        }
+        return build_reservation_.has_value();
+    }
+
+    // Direct node callers must also release after Build, including configuration or input failures.
+    virtual void
+    ReleaseBuildReservation() noexcept {
+        build_reservation_.reset();
     }
 
     /**
@@ -98,7 +134,8 @@ class IndexNode : public Object {
      * shared, so `shared_ptr` is used instead.
      */
     virtual Status
-    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
+    Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true,
+          milvus::OpContext* op_context = nullptr) {
         RETURN_IF_ERROR(Train(dataset, cfg, use_knowhere_build_pool));
         return Add(dataset, std::move(cfg), use_knowhere_build_pool);
     }
@@ -110,8 +147,9 @@ class IndexNode : public Object {
      * `IndexNode` vtable layout across library boundaries.
      */
     virtual Status
-    BuildAsync(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const Interrupt* = nullptr) {
-        return Build(dataset, std::move(cfg), true);
+    BuildAsync(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const Interrupt* = nullptr,
+               milvus::OpContext* op_context = nullptr) {
+        return Build(dataset, std::move(cfg), true, op_context);
     }
 
     /**
@@ -824,12 +862,13 @@ class IndexNode : public Object {
 #endif
 
     virtual Status
-    BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true) {
+    BuildEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool = true,
+                       milvus::OpContext* op_context = nullptr) {
         auto& config = static_cast<BaseConfig&>(*cfg);
         auto el_metric_type_or = get_el_metric_type(config.metric_type.value());
         if (!el_metric_type_or.has_value()) {
             // if not emb_list, use the default build method
-            return Build(dataset, std::move(cfg), use_knowhere_build_pool);
+            return Build(dataset, std::move(cfg), use_knowhere_build_pool, op_context);
         }
         if (dataset == nullptr) {
             LOG_KNOWHERE_WARNING_
@@ -843,7 +882,7 @@ class IndexNode : public Object {
         }
 
         return BuildEmbList(dataset, std::move(cfg), lims, dataset->GetRows(), GetEmbListCount(dataset),
-                            use_knowhere_build_pool);
+                            use_knowhere_build_pool, op_context);
     }
 
     virtual Status
@@ -875,9 +914,9 @@ class IndexNode : public Object {
     }
 
     virtual Status
-    BulidAsyncEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg,
-                            const Interrupt* interrupt = nullptr) {
-        return BuildEmbListIfNeed(dataset, std::move(cfg), true);
+    BulidAsyncEmbListIfNeed(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const Interrupt* interrupt = nullptr,
+                            milvus::OpContext* op_context = nullptr) {
+        return BuildEmbListIfNeed(dataset, std::move(cfg), true, op_context);
     }
 
     /**
@@ -986,7 +1025,7 @@ class IndexNode : public Object {
 
     virtual Status
     BuildEmbList(const DataSetPtr dataset, std::shared_ptr<Config> cfg, const size_t* lims, size_t num_rows,
-                 size_t num_el, bool use_knowhere_build_pool);
+                 size_t num_el, bool use_knowhere_build_pool, milvus::OpContext* op_context);
 
     /**
      * @brief Serialize emb_list: strategy meta, raw index, and base index to BinarySet.
@@ -1062,6 +1101,9 @@ class IndexNode : public Object {
     };
     mutable PrometheusMetrics prometheus_metrics_;
 #endif
+
+ private:
+    std::optional<BuildScheduler::Reservation> build_reservation_;
 };
 
 // Common superclass for iterators that expand search range as needed. Subclasses need
