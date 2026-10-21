@@ -128,6 +128,10 @@ namespace diskann {
     void move_last_full_retset_to_backup();
 
     NavigationQuerySetup navigation_setup;
+
+    // convert a full-precision distance to the value stored in `backup_res`
+    float to_backup_dist(float dist) const;
+
     uint64_t q_dim = 0;
     uint64_t lsearch = 0;
     uint64_t beam_width = 0;
@@ -170,6 +174,15 @@ namespace diskann {
     size_t next_count = 0;
 
     std::vector<knowhere::DistId> backup_res;
+
+    // Brute-force mode, decided once on the first `getIteratorNextBatch` call
+    // when the bitset filters out at least the iterator filter threshold.
+    // `bf_candidates` is a min-heap of (navigation dist, id) over all
+    // unfiltered points; each refine pops the next window of it and computes
+    // the full-precision distances.
+    bool                                    bf_mode = false;
+    std::vector<std::pair<float, unsigned>> bf_candidates;
+    size_t                                  bf_next_batch_calls = 0;
   };
 
   template<typename T>
@@ -278,6 +291,13 @@ namespace diskann {
         NavigationDistanceComputer                      &navigation,
         const std::function<_u64(_u64)>                 &origin_id = {},
         bool query_initialized = false);
+
+    // Brute-force counterpart of `getIteratorNextBatch` for highly filtered
+    // queries. The first call ranks the unfiltered points by navigation
+    // distance (memory only); each call then refines the next window from disk
+    // if fewer than `lsearch` refined results are left unconsumed.
+    void iterator_brute_force_next_batch(IteratorWorkspace<T> *workspace,
+                                         ThreadData<T> &data, IOContext &ctx);
 
     // Assign the index of ids to its corresponding sector and if it is in
     // cache, write to the output_data
