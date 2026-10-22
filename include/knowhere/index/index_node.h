@@ -297,6 +297,15 @@ class IndexNode : public Object {
             return expected<PreparedBitset>::Err(Status::invalid_args, msg);
         }
         if (bitset.num_bits() == 0) {
+            // No mandatory bitmap does NOT mean no predicate. Prepare the
+            // backend -> public ID projection and its true domain even for a
+            // callback-only filter; bitmap counters alone cannot describe it.
+            if (!bitset.is_bitmap()) {
+                PrepareBitsetMap(prepared, id_map);
+                prepared.bitset.set_vector_count(prepared.bitset.has_out_ids()
+                                                    ? prepared.bitset.out_ids_count()
+                                                    : static_cast<size_t>(Count()));
+            }
             return prepared;
         }
         if (bitset.mandatory_data() == nullptr) {

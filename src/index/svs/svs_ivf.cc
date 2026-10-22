@@ -111,6 +111,10 @@ class SvsIvfIndexNode : public IndexNode {
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
 
+        if (!bitset.is_bitmap()) {
+            return expected<DataSetPtr>::Err(Status::deferred_filter_unsupported,
+                                             "SVS IVF requires a materialized filter bitmap");
+        }
         if (!bitset.empty() && bitset.count() > 0) {
             return expected<DataSetPtr>::Err(Status::not_implemented, "SVS IVF does not support bitset filtering");
         }

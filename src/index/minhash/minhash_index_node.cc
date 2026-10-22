@@ -289,6 +289,12 @@ MinHashLSHNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
         LOG_KNOWHERE_ERROR_ << "Failed to load minhash index.";
         return expected<DataSetPtr>::Err(Status::empty_index, "Minhash index not loaded");
     }
+    // BatchSearch owns its internal parallelism and currently cannot provide
+    // task-private selector lifetimes. Do not share a mutable callback worker.
+    if (!bitset.is_bitmap()) {
+        return expected<DataSetPtr>::Err(Status::deferred_filter_unsupported,
+                                         "MinHash dynamic filters require task-private selectors");
+    }
     auto search_conf = static_cast<const MinHashLSHConfig&>(*cfg);
     auto stat =
         minhash::MinhashConfigCheck(dataset->GetDim(), DataFormatEnum::bin1, PARAM_TYPE::SEARCH, &search_conf, &bitset);

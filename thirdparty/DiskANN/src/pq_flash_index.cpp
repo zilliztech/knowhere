@@ -15,6 +15,7 @@
 #include <optional>
 #include <random>
 #include <thread>
+#include <folly/ScopeGuard.h>
 #include <unordered_map>
 #include "diskann/distance.h"
 #include "diskann/exceptions.h"
@@ -1097,15 +1098,18 @@ namespace diskann {
       this->thread_data.wait_for_push_notify();
       data = this->thread_data.pop();
     }
+    auto return_scratch = folly::makeGuard([&] {
+      this->thread_data.push(data);
+      this->thread_data.push_notify_all();
+    });
     auto query_norm_opt = init_thread_data(data, query1);
     if (!query_norm_opt.has_value()) {
       // return an empty answer when calcu a zero point
-      this->thread_data.push(data);
-      this->thread_data.push_notify_all();
       return;
     }
     float query_norm = query_norm_opt.value();
     auto  ctx = this->reader->get_ctx();
+    auto return_reader = folly::makeGuard([&] { this->reader->put_ctx(ctx); });
 
     size_t bv_cnt = 0;
 
@@ -1124,23 +1128,13 @@ namespace diskann {
             distances[i] = -1;
           }
         }
-        // Everything is filtered out, but the scratch slot and the reader
-        // context were already acquired above and must be returned, exactly
-        // like on every other exit from this function. Leaking them here
-        // permanently shrinks the thread_data pool: after max_nthreads such
-        // queries every subsequent search blocks in wait_for_push_notify().
-        this->thread_data.push(data);
-        this->thread_data.push_notify_all();
-        this->reader->put_ctx(ctx);
+        // Scope guards return both borrowed resources on every exit.
         return;
       }
 
       if (bv_cnt >= bitset_view.size() * filter_threshold) {
         brute_force_beam_search(data, query_norm, k_search, indices, distances,
                                 beam_width, ctx, stats, feder, bitset_view, this);
-        this->thread_data.push(data);
-        this->thread_data.push_notify_all();
-        this->reader->put_ctx(ctx);
         return;
       }
     }
@@ -1149,9 +1143,6 @@ namespace diskann {
     if (k_search > 0.5 * (num_points - bv_cnt)) {
       brute_force_beam_search(data, query_norm, k_search, indices, distances,
                               beam_width, ctx, stats, feder, bitset_view, this);
-      this->thread_data.push(data);
-      this->thread_data.push_notify_all();
-      this->reader->put_ctx(ctx);
       return;
     }
 
@@ -1512,10 +1503,6 @@ namespace diskann {
         }
       }
     }
-
-    this->thread_data.push(data);
-    this->thread_data.push_notify_all();
-    this->reader->put_ctx(ctx);
 
     if (stats != nullptr) {
       stats->total_us = (double) query_timer.elapsed();

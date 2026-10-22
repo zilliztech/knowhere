@@ -146,10 +146,10 @@ class FaissIndexNode : public IndexNode {
         const auto nq = dataset->GetRows();
         const auto dim = dataset->GetDim();
 
-        BitsetViewIDSelector bw_sel(bitset);
-        ::faiss::IDSelector* sel = bitset.empty() ? nullptr : &bw_sel;
-
-        std::unique_ptr<::faiss::SearchParameters> search_params;
+        // Pure bitmap selectors remain immutable and shareable. Never bind a
+        // dynamic selector outside the independent search task.
+        BitsetViewIDSelector bitmap_selector(bitset.is_bitmap() ? bitset : BitsetView{});
+        auto* bitmap_sel = bitset.is_bitmap() && !bitset.empty() ? &bitmap_selector : nullptr;
         std::string err_msg;
 
         auto ids = std::make_unique<int64_t[]>(nq * k);
@@ -157,8 +157,10 @@ class FaissIndexNode : public IndexNode {
 
         try {
             if constexpr (std::is_same_v<DataType, fp32>) {
+                // Validate once without creating a mutable callback worker.
+                std::unique_ptr<::faiss::SearchParameters> validation_params;
                 Status st = faiss_vanilla::build_search_params(static_cast<const ::faiss::Index*>(index_.get()),
-                                                               fc->raw_params, sel, &search_params, &err_msg);
+                                                               fc->raw_params, bitmap_sel, &validation_params, &err_msg);
                 if (st != Status::success) {
                     LOG_KNOWHERE_ERROR_ << err_msg;
                     return expected<DataSetPtr>::Err(st, err_msg);
@@ -177,14 +179,27 @@ class FaissIndexNode : public IndexNode {
                     futs.emplace_back(search_pool_->push([&, idx = i]() {
                         knowhere::checkCancellation(op_context);
                         ThreadPool::ScopedSearchOmpSetter setter(1);
+                        TaskBitsetViewIDSelector selector(bitset.is_bitmap() ? BitsetView{} : bitset);
+                        std::unique_ptr<::faiss::SearchParameters> search_params;
+                        std::string task_error;
+                        if (!bitset.is_bitmap()) {
+                            const auto status = faiss_vanilla::build_search_params(
+                            static_cast<const ::faiss::Index*>(index_.get()), fc->raw_params,
+                            bitset.empty() ? nullptr : &selector, &search_params, &task_error);
+                            if (status != Status::success) {
+                                throw std::runtime_error(task_error);
+                            }
+                        }
                         index_->search(1, raw + idx * dim, k, distances.get() + idx * k, ids.get() + idx * k,
-                                       search_params.get());
+                                       bitset.is_bitmap() ? validation_params.get() : search_params.get());
+                        selector.RethrowIfFailed();
                     }));
                 }
                 WaitAllSuccess(futs);
             } else {
+                std::unique_ptr<::faiss::SearchParameters> validation_params;
                 Status st = faiss_vanilla::build_search_params(static_cast<const ::faiss::IndexBinary*>(index_.get()),
-                                                               fc->raw_params, sel, &search_params, &err_msg);
+                                                               fc->raw_params, bitmap_sel, &validation_params, &err_msg);
                 if (st != Status::success) {
                     LOG_KNOWHERE_ERROR_ << err_msg;
                     return expected<DataSetPtr>::Err(st, err_msg);
@@ -202,8 +217,20 @@ class FaissIndexNode : public IndexNode {
                     futs.emplace_back(search_pool_->push([&, idx = i]() {
                         knowhere::checkCancellation(op_context);
                         ThreadPool::ScopedSearchOmpSetter setter(1);
+                        TaskBitsetViewIDSelector selector(bitset.is_bitmap() ? BitsetView{} : bitset);
+                        std::unique_ptr<::faiss::SearchParameters> search_params;
+                        std::string task_error;
+                        if (!bitset.is_bitmap()) {
+                            const auto status = faiss_vanilla::build_search_params(
+                            static_cast<const ::faiss::IndexBinary*>(index_.get()), fc->raw_params,
+                            bitset.empty() ? nullptr : &selector, &search_params, &task_error);
+                            if (status != Status::success) {
+                                throw std::runtime_error(task_error);
+                            }
+                        }
                         index_->search(1, raw + idx * bytes_per_vec, k, int_distances.get() + idx * k,
-                                       ids.get() + idx * k, search_params.get());
+                                       ids.get() + idx * k, bitset.is_bitmap() ? validation_params.get() : search_params.get());
+                        selector.RethrowIfFailed();
                     }));
                 }
                 WaitAllSuccess(futs);
@@ -237,13 +264,12 @@ class FaissIndexNode : public IndexNode {
             const auto nq = dataset->GetRows();
             const auto dim = dataset->GetDim();
 
-            BitsetViewIDSelector bw_sel(bitset);
-            ::faiss::IDSelector* sel = bitset.empty() ? nullptr : &bw_sel;
-
-            std::unique_ptr<::faiss::SearchParameters> search_params;
+            BitsetViewIDSelector bitmap_selector(bitset.is_bitmap() ? bitset : BitsetView{});
+            auto* bitmap_sel = bitset.is_bitmap() && !bitset.empty() ? &bitmap_selector : nullptr;
+            std::unique_ptr<::faiss::SearchParameters> validation_params;
             std::string err_msg;
             Status st = faiss_vanilla::build_search_params(static_cast<const ::faiss::Index*>(index_.get()),
-                                                           fc->raw_params, sel, &search_params, &err_msg);
+                                                           fc->raw_params, bitmap_sel, &validation_params, &err_msg);
             if (st != Status::success) {
                 LOG_KNOWHERE_ERROR_ << err_msg;
                 return expected<DataSetPtr>::Err(st, err_msg);
@@ -266,8 +292,21 @@ class FaissIndexNode : public IndexNode {
                     futs.emplace_back(search_pool_->push([&, idx = i]() {
                         knowhere::checkCancellation(op_context);
                         ThreadPool::ScopedSearchOmpSetter setter(1);
+                        TaskBitsetViewIDSelector selector(bitset.is_bitmap() ? BitsetView{} : bitset);
+                        std::unique_ptr<::faiss::SearchParameters> search_params;
+                        std::string task_error;
+                        if (!bitset.is_bitmap()) {
+                            const auto status = faiss_vanilla::build_search_params(
+                            static_cast<const ::faiss::Index*>(index_.get()), fc->raw_params,
+                            bitset.empty() ? nullptr : &selector, &search_params, &task_error);
+                            if (status != Status::success) {
+                                throw std::runtime_error(task_error);
+                            }
+                        }
                         ::faiss::RangeSearchResult r(1);
-                        index_->range_search(1, raw + idx * dim, radius, &r, search_params.get());
+                        index_->range_search(1, raw + idx * dim, radius, &r,
+                                             bitset.is_bitmap() ? validation_params.get() : search_params.get());
+                        selector.RethrowIfFailed();
                         const size_t cnt = r.lims[1];
                         result_distances[idx].assign(r.distances, r.distances + cnt);
                         result_labels[idx].assign(r.labels, r.labels + cnt);

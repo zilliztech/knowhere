@@ -12,6 +12,9 @@
 #pragma once
 
 #include <faiss/impl/IDSelector.h>
+#include <atomic>
+#include <exception>
+#include <mutex>
 
 #include "knowhere/bitsetview.h"
 
@@ -29,6 +32,37 @@ struct BitsetViewIDSelector final : faiss::IDSelector {
         // it is by design that bitset_view.empty() is not tested here
         return (!bitset_view.test(id));
     }
+};
+
+// One independent FAISS task owns this selector. Exceptions cannot unwind an
+// OpenMP region (even a one-thread region): retain failure here and report it
+// only after the FAISS call joins. The success path takes no mutex.
+class TaskBitsetViewIDSelector final : public faiss::IDSelector {
+ public:
+    explicit TaskBitsetViewIDSelector(const BitsetView& filter) : filter_(filter.bind()) {}
+
+    bool is_member(faiss::idx_t id) const noexcept override {
+        try {
+            return !filter_.test(id);
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!failure_) failure_ = std::current_exception();
+            failed_.store(true, std::memory_order_release);
+            return false;
+        }
+    }
+
+    void RethrowIfFailed() const {
+        if (!failed_.load(std::memory_order_acquire)) return;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (failure_) std::rethrow_exception(failure_);
+    }
+
+ private:
+    const BitsetView filter_;
+    mutable std::mutex mutex_;
+    mutable std::exception_ptr failure_;
+    mutable std::atomic<bool> failed_{false};
 };
 
 }  // namespace knowhere

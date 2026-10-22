@@ -65,6 +65,9 @@ enum class Status {
     emb_list_inner_error = 31,
     aisaq_error = 32,
     knowhere_inner_error = 33,
+    // Returned BEFORE search/evaluation by an entry requiring a dense bitmap.
+    // The owner may materialize the predicate and re-enter with bitmap input.
+    deferred_filter_unsupported = 34,
 };
 
 enum class StatusCategory {
@@ -120,6 +123,7 @@ StatusCategoryOf(knowhere::Status status) {
         // mapping: Unsupported). Same for a corrupt serialized index: data
         // corruption is a permanent system error, not the caller's fault.
         case knowhere::Status::not_implemented:
+        case knowhere::Status::deferred_filter_unsupported:
         case knowhere::Status::invalid_instruction_set:
         case knowhere::Status::invalid_serialized_index_type:
             return StatusCategory::permanent_error;
@@ -184,6 +188,8 @@ Status2String(knowhere::Status status) {
             return "empty index";
         case knowhere::Status::not_implemented:
             return "not implemented";
+        case knowhere::Status::deferred_filter_unsupported:
+            return "entry requires a materialized filter bitmap";
         case knowhere::Status::index_not_trained:
             return "index not trained";
         case knowhere::Status::index_already_trained:

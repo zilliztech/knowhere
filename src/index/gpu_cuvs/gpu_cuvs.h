@@ -121,6 +121,10 @@ struct GpuCuvsIndexNode : public IndexNode {
     expected<DataSetPtr>
     Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, const BitsetView& bitset,
            milvus::OpContext* op_context) const override {
+        if (!bitset.is_bitmap()) {
+            return expected<DataSetPtr>::Err(Status::deferred_filter_unsupported,
+                                             "cuVS requires a materialized filter bitmap");
+        }
         auto result = Status::success;
         auto cuvs_cfg = cuvs_knowhere::cuvs_knowhere_config{};
         auto err_msg = std::string{};
