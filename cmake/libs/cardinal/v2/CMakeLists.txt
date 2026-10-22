@@ -3,8 +3,9 @@ project(knowhere CXX C)
 
 # Use short SHA1 as version
 # currenly checkout a commit for cardinal v2. TODO: need a tag here
-set(CARDINAL_VERSION fd18410085071f8034f12c9ab6eae887c9b7494b)
+set(CARDINAL_VERSION 4063f0f6f909edc0c9fea2e25c3f867cb08bc3de)
 set(CARDINAL_REPO_URL "https://github.com/zilliztech/cardinal.git")
+set(CARDINAL_VERSION_FORCE_CHECKOUT ON CACHE BOOL "Use the frozen SAQ experiment revision" FORCE)
 
 set(CARDINAL_ROOT  "${KNOWHERE_THRID_ROOT}/cardinalv2")
 message(STATUS "Build Cardinal-${CARDINAL_VERSION}")
@@ -73,5 +74,13 @@ if(CARDINAL_VERSION_FORCE_CHECKOUT)
                 FATAL_ERROR "Failed to checkout cardinal: ${CARDINAL_CHECKOUT_ERROR}")
     endif()
 endif()
+
+execute_process(COMMAND git -C ${CARDINAL_ROOT} rev-parse HEAD
+    RESULT_VARIABLE SAQ_CARDINAL_REVISION_STATUS OUTPUT_VARIABLE SAQ_CARDINAL_REVISION
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT SAQ_CARDINAL_REVISION_STATUS EQUAL 0 OR NOT SAQ_CARDINAL_REVISION STREQUAL CARDINAL_VERSION)
+    message(FATAL_ERROR "Frozen SAQ Cardinal revision mismatch: ${SAQ_CARDINAL_REVISION}")
+endif()
+message(STATUS "Frozen SAQ Cardinal revision: ${SAQ_CARDINAL_REVISION}")
 
 include(${CARDINAL_ROOT}/know/libcardinal.cmake)
