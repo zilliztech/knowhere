@@ -72,6 +72,9 @@ class SealedDimMap {
 
         dim_map_mphf_ = ptrhash::PtrHash::build(unique_dims);
         dim_map_mphf_view_ = dim_map_mphf_.view();
+        if (dim_map_mphf_view_.n() != unique_dims.size()) {
+            throw std::runtime_error("MPHF generated the wrong sparse dimension count");
+        }
         owned_dim_map_reverse_.assign(dim_map_mphf_view_.n(), 0);
         set_owned_reverse_view();
 
@@ -154,6 +157,17 @@ class SealedDimMap {
     std::vector<uint32_t>
     materialize_reverse() const {
         return {dim_map_reverse_.begin(), dim_map_reverse_.end()};
+    }
+
+    // Borrowed serialization views; valid until this map is mutated/destroyed.
+    [[nodiscard]] std::span<const uint32_t>
+    reverse() const {
+        return dim_map_reverse_;
+    }
+
+    [[nodiscard]] std::span<const uint8_t>
+    mphf_bytes() const {
+        return {mphf_data(), mphf_size()};
     }
 
     void
