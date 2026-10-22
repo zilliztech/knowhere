@@ -301,6 +301,12 @@ list(APPEND KNOWHERE_LINKER_LIBS milvus-common::milvus-common)
 list(APPEND KNOWHERE_LINKER_LIBS simde::simde)
 
 add_library(knowhere SHARED ${KNOWHERE_SRCS})
+# Match the portable ARM Folly package and Cardinal v1/v2 F14 configuration.
+# A native ARM build otherwise selects SimdAndCrc against Folly's Simd ABI.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64)")
+  target_compile_definitions(knowhere PRIVATE FOLLY_ARM_FEATURE_CRC32=0)
+endif()
+
 add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
 if(WITH_CUVS)
   list(
