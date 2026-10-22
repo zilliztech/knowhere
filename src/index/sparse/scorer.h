@@ -159,6 +159,11 @@ class BM25ScoringContext {
         return bm25_score_with_doc_norm(qval_p1, tf, p2_, doc_norm);
     }
 
+    [[nodiscard]] float
+    denominator_bias() const noexcept {
+        return p2_;
+    }
+
     void
     prefetch_document(uint32_t vec_id) const noexcept {
         __builtin_prefetch(&row_sums_[vec_id], 0, 3);

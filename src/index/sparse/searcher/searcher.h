@@ -40,6 +40,7 @@ GetPostingFilterMode(const BitsetView& bitset, size_t required_bits) {
     return bitset.supports_direct_test(required_bits) ? PostingFilterMode::Direct : PostingFilterMode::Generic;
 }
 
+// Dispatch posting advancement using the query's filter mode.
 template <PostingFilterMode FilterMode, typename Cursor>
 inline void
 NextPosting(Cursor& cursor) noexcept {
