@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <vector>
 
 namespace knowhere::sparse::inverted {
@@ -132,14 +133,19 @@ struct BM25IndexScorer : public IndexScorer {
 
 class BM25ScoringContext {
  public:
-    explicit BM25ScoringContext(const std::vector<float>& row_sums, const IndexScorer& scorer) : row_sums_(row_sums) {
-        if (scorer.config().scorer_type == IndexScorerType::BM25) {
-            const auto* bm25_scorer = dynamic_cast<const BM25IndexScorer*>(&scorer);
-            assert(bm25_scorer != nullptr);
-            p1_ = bm25_scorer->p1();
-            p2_ = bm25_scorer->p2();
-            p3_ = bm25_scorer->p3();
+    // The search request owns the immutable row-sum storage for this context's lifetime.
+    explicit BM25ScoringContext(std::span<const float> row_sums, const IndexScorerConfig& config)
+        : row_sums_(row_sums) {
+        if (config.scorer_type == IndexScorerType::BM25) {
+            const auto& params = config.scorer_params.bm25;
+            p1_ = params.k1 + 1.0F;
+            p2_ = params.k1 * (1.0F - params.b);
+            p3_ = params.k1 * params.b / params.avgdl;
         }
+    }
+
+    explicit BM25ScoringContext(std::span<const float> row_sums, const IndexScorer& scorer)
+        : BM25ScoringContext(row_sums, scorer.config()) {
     }
 
     [[nodiscard]] float
@@ -163,7 +169,7 @@ class BM25ScoringContext {
     }
 
  private:
-    const std::vector<float>& row_sums_;
+    std::span<const float> row_sums_;
     float p1_{1.0F};
     float p2_{0.0F};
     float p3_{0.0F};
