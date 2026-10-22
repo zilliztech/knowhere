@@ -402,7 +402,8 @@ TEST_CASE("Sparse long-query bulk windows match brute force", "[sparse][bulk]") 
 
     const auto metric = GENERATE(knowhere::metric::IP, knowhere::metric::BM25);
     const auto filter_ratio = GENERATE(0.0f, 0.5f, 0.9f);
-    CAPTURE(metric, filter_ratio);
+    const auto codec = GENERATE("block_streamvbyte", "block_adaptive");
+    CAPTURE(metric, filter_ratio, codec);
 
     // Every document occurs on two high-impact posting lists. The remaining terms rotate across documents, keeping
     // the query long while still exercising essential-partition shrink. The three dense documents make both sides
@@ -436,7 +437,7 @@ TEST_CASE("Sparse long-query bulk windows match brute force", "[sparse][bulk]") 
     build_json[knowhere::meta::DIM] = dim;
     build_json[knowhere::meta::METRIC_TYPE] = metric;
     build_json[knowhere::indexparam::INVERTED_INDEX_ALGO] = "BLOCK_MAX_MAXSCORE";
-    build_json["inverted_index_codec"] = "block_streamvbyte";
+    build_json["inverted_index_codec"] = codec;
     build_json["block_max_block_size"] = 64;
     build_json[knowhere::meta::BM25_K1] = 1.2;
     build_json[knowhere::meta::BM25_B] = 0.75;

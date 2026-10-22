@@ -118,7 +118,7 @@ class BlockInvertedIndexCursor {
         skip_filtered_ids();
     }
 
-    void
+    inline void
     next_raw() {
         ++pos_in_block_;
         if (pos_in_block_ == cur_block_size_) [[unlikely]] {
@@ -163,7 +163,7 @@ class BlockInvertedIndexCursor {
     // The searcher establishes supports_direct_test() once per query. Keep
     // the bitmap access inside BitsetView while bypassing its generic ID
     // mapping and bounds logic for each posting.
-    void
+    inline void
     next_direct_filtered() {
         next_raw();
         skip_direct_filtered_ids();
@@ -235,6 +235,29 @@ class BlockInvertedIndexCursor {
         skip_direct_filtered_ids();
     }
 
+    // Only for probing a candidate that already passed the query's filter.
+    // A non-essential list need not seek past excluded IDs: only equality with
+    // the accepted candidate matters. The resulting cursor may be filtered and
+    // must not be used to generate candidates without restoring filtering.
+    void
+    seek_accepted_candidate(uint32_t lower_bound) {
+        if (lower_bound <= cur_vec_id_) {
+            return;
+        }
+        if (lower_bound >= valid_upper_bound_) {
+            set_invalid();
+            return;
+        }
+        if (lower_bound > cur_block_maxid_) [[unlikely]] {
+            if (lower_bound > block_maxid(nr_blocks_ - 1)) {
+                cur_vec_id_ = universe_;
+                return;
+            }
+            decode_vecids_block(lower_bound_block(cur_block_ + 1, lower_bound));
+        }
+        advance_to(lower_bound);
+    }
+
     [[nodiscard]] uint32_t
     vec_id() const {
         return cur_vec_id_;
@@ -251,6 +274,73 @@ class BlockInvertedIndexCursor {
             return vals_buf_[pos_in_block_] + 1;
         } else {
             return vals_buf_[pos_in_block_];
+        }
+    }
+
+    // Consume essential postings with local block state, decoding values once
+    // per block. The visitor returns false to stop after the current posting.
+    // A two-argument visitor receives accepted (id, value) pairs only. A
+    // three-argument visitor receives (id, value, accepted) for every posting,
+    // allowing branchless compaction before a separate batch-scoring stage.
+    // On return the cursor points at the next unfiltered posting, as with next().
+    template <PostingFilterMode FilterMode, typename Visitor>
+    void
+    for_each_bulk(uint32_t window_max, Visitor&& visit) {
+        const uint32_t limit = std::min(window_max, valid_upper_bound_);
+        while (cur_vec_id_ < limit) {
+            if (!vals_decoded_) {
+                decode_vals_block();
+            }
+            uint32_t position = pos_in_block_;
+            uint32_t id = cur_vec_id_;
+            while (true) {
+                bool filtered = false;
+                if constexpr (FilterMode == PostingFilterMode::Direct) {
+                    filtered = bitset_.test_direct(id);
+                } else if constexpr (FilterMode == PostingFilterMode::Generic) {
+                    filtered = bitset_.test(id);
+                }
+                bool keep_going = true;
+                if constexpr (requires { visit(id, float{}, !filtered); }) {
+                    // Batch collectors can compact accepted postings without
+                    // an unpredictable branch for each random-filter bit.
+                    float tf;
+                    if constexpr (std::is_same_v<VType, uint32_t>) {
+                        tf = static_cast<float>(vals_buf_[position] + 1);
+                    } else {
+                        tf = static_cast<float>(vals_buf_[position]);
+                    }
+                    keep_going = visit(id, tf, !filtered);
+                } else if (!filtered) {
+                    if constexpr (std::is_same_v<VType, uint32_t>) {
+                        keep_going = visit(id, static_cast<float>(vals_buf_[position] + 1));
+                    } else {
+                        keep_going = visit(id, static_cast<float>(vals_buf_[position]));
+                    }
+                }
+                if (++position == cur_block_size_) {
+                    pos_in_block_ = position - 1;
+                    cur_vec_id_ = id;
+                    NextPosting<FilterMode>(*this);
+                    if (!keep_going) {
+                        return;
+                    }
+                    break;
+                }
+                id += ids_buf_[position] + 1;
+                if (id >= limit || !keep_going) {
+                    pos_in_block_ = position;
+                    cur_vec_id_ = id;
+                    if (id >= valid_upper_bound_) {
+                        set_invalid();
+                    } else if constexpr (FilterMode == PostingFilterMode::Direct) {
+                        skip_direct_filtered_ids();
+                    } else if constexpr (FilterMode == PostingFilterMode::Generic) {
+                        skip_filtered_ids();
+                    }
+                    return;
+                }
+            }
         }
     }
 

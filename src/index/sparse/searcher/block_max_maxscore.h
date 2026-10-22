@@ -16,6 +16,7 @@
 
 #include "index/sparse/block_max_data.h"
 #include "index/sparse/scorer.h"
+#include "index/sparse/searcher/bulk_simd.h"
 #include "index/sparse/searcher/searcher.h"
 #include "knowhere/bitsetview.h"
 
@@ -349,16 +350,12 @@ class BlockMaxMaxScoreSearcher : public RankedSearcher {
 
                 for (size_t i = 0; i < essential_count; ++i) {
                     auto& cursor = cursors_[i];
-                    while (cursor.vec_id() < window_max) {
-                        const uint32_t vec_id = cursor.vec_id();
-                        float doc_norm = 0.0F;
-                        if constexpr (ScorerType == IndexScorerType::BM25) {
-                            doc_norm = bm25_context_.doc_norm(vec_id);
-                        }
-                        const uint32_t offset = vec_id - window_min;
-                        window_scores[offset] += score_term(cursor, doc_norm);
-                        window_matches[offset / 64] |= uint64_t{1} << (offset % 64);
-                        cursor.template next<FilterMode>();
+                    if constexpr (ScorerType == IndexScorerType::BM25) {
+                        AccumulateBM25Bulk<FilterMode>(cursor.index_cursor, cursor.qval_p1, bm25_context_, window_min,
+                                                       window_max, window_scores.data(), window_matches.data());
+                    } else {
+                        AccumulateIPBulk<FilterMode>(cursor.index_cursor, cursor.qval_p1, window_min, window_max,
+                                                     window_scores.data(), window_matches.data());
                     }
                     if constexpr (ScorerType == IndexScorerType::BM25) {
                         if (cursor.vec_id() < max_vec_id_) {
@@ -370,6 +367,10 @@ class BlockMaxMaxScoreSearcher : public RankedSearcher {
                 const size_t window_word_count = (static_cast<size_t>(window_max - window_min) + 63) / 64;
                 for (size_t word_index = 0; word_index < window_word_count; ++word_index) {
                     uint64_t matches = std::exchange(window_matches[word_index], 0);
+                    if (topk_.Full() && std::popcount(matches) >= 16) {
+                        matches = FilterBulkCandidates(window_scores.data() + word_index * 64, matches,
+                                                       upper_bounds[essential_count], topk_.Threshold());
+                    }
                     while (matches != 0) {
                         const uint32_t bit_index = static_cast<uint32_t>(std::countr_zero(matches));
                         matches &= matches - 1;
