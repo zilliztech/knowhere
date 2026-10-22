@@ -36,14 +36,9 @@ public:
         _rearrange_during_search = rearrange_during_search;
         _max_ios = max_ios;
 	}
-    	virtual _u8* get_pq_data() {
-		return nullptr;
-	}
-	virtual _u64 get_origin_id(_u64 id){
-		return !_rearranged_index  ? id :  _aisaq_rearranged_vectors_map[(_u32)id];
-	}
-	virtual void release_pq_data(size_t offset=0, size_t size=0) {
-	}
+    _u64 get_origin_id(_u64 id) {
+        return !_rearranged_index  ? id :  _aisaq_rearranged_vectors_map[(_u32)id];
+    }
 
     virtual void aggregate_pq_coords(const unsigned* ids, const _u64 n_ids, const _u64 ndims, _u8* out);
 };
@@ -82,11 +77,7 @@ public:
     bool get_rearranged_index();
     bool get_rearrange_during_search();
     int  aisaq_load(uint32_t num_threads, const char *index_prefix,
-                    std::unique_ptr<PQNavigationStore> navigation = nullptr);
-    int  aisaq_load_from_separate_paths(
-         uint32_t num_threads, const char *index_filepath,
-         const char *pivots_filepath, const char *compressed_filepath,
-         std::unique_ptr<PQNavigationStore> navigation = nullptr);
+                    std::unique_ptr<PQNavigationStore> navigation);
     void use_medoids_data_as_centroids();
     
     uint8_t *aisaq_pq_cache_lookup(uint32_t id);

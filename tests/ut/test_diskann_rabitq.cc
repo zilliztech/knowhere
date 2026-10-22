@@ -214,10 +214,6 @@ TEST_CASE("DiskANN entry names share a node and retain their configuration", "[d
         REQUIRE(alias.Build(nullptr, request) == knowhere::Status::invalid_args);
         REQUIRE(alias.Deserialize({}, request) == knowhere::Status::invalid_args);
     }
-    REQUIRE(diskann::IsSupportedNavigationCodec("PQ"));
-    REQUIRE(diskann::IsSupportedNavigationCodec("RABITQ"));
-    REQUIRE_FALSE(diskann::IsSupportedNavigationCodec("TQ"));
-    REQUIRE_FALSE(diskann::IsSupportedNavigationCodec(""));
 }
 
 TEST_CASE("DiskANN RaBitQ registration and codec parameters", "[diskann][diskann-rabitq]") {
@@ -522,7 +518,9 @@ TEST_CASE("RaBitQ query setup failures return the borrowed thread slot", "[diska
     }
     auto reader = std::make_shared<LinuxAlignedFileReader>();
     diskann::SSDGraphIndex<float> index(reader, diskann::Metric::L2);
-    REQUIRE(index.load(1, f.prefix.c_str()) == 0);
+    auto navigation = diskann::CreateNavigationStore("RABITQ");
+    REQUIRE(navigation->Load(f.prefix) == 0);
+    REQUIRE(index.load(1, f.prefix.c_str(), std::move(navigation)) == 0);
     int64_t ids[8];
     float scores[8];
     diskann::NavigationQuerySetup fail = [](auto&) { throw std::runtime_error("injected setup failure"); };

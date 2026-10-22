@@ -86,7 +86,7 @@ class DiskANNNavigationConfig {
     CreateForBuild() const {
         const auto codec = navigation_codec.value_or("PQ");
         if (codec == "PQ")
-            return std::make_unique<diskann::PQNavigationStore>(true, false, std::string{}, pq.BuildOptions());
+            return std::make_unique<diskann::PQNavigationStore>(true, false, pq.BuildOptions());
         if (codec == "RABITQ")
             return std::make_unique<diskann::RaBitQNavigationStore>(rabitq.BuildOptions());
         throw diskann::NavigationTypeError("Unsupported DiskANN navigation codec: " + codec);

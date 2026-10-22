@@ -689,19 +689,6 @@ namespace diskann {
 
   template<typename T>
   int SSDGraphIndex<T>::load(uint32_t num_threads, const char *index_prefix,
-                             const std::optional<std::string> &navigation_codec) {
-    const auto codec = ReadNavigationCodec({index_prefix, {}, {}});
-    if (navigation_codec && *navigation_codec != codec)
-      throw NavigationTypeError("Requested navigation codec does not match stored model");
-    auto navigation = CreateNavigationStore(codec);
-    int result = navigation->Load(index_prefix);
-    if (result != 0)
-      return result;
-    return load(num_threads, index_prefix, std::move(navigation));
-  }
-
-  template<typename T>
-  int SSDGraphIndex<T>::load(uint32_t num_threads, const char *index_prefix,
                             std::unique_ptr<NavigationStore> navigation) {
     std::string disk_index_file =
         get_disk_index_filename(std::string(index_prefix));
