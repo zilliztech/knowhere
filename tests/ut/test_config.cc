@@ -638,7 +638,8 @@ TEST_CASE("Test config json parse", "[config]") {
             checkBuildConfig(knowhere::IndexEnum::INDEX_DISKANN, json);
             s = knowhere::Config::Load(train_cfg, json, knowhere::TRAIN);
             CHECK(s == knowhere::Status::success);
-            CHECK_EQ(128, train_cfg.search_list_size.value());
+            // An omitted build search list uses the shipped graph default.
+            CHECK_EQ(100, train_cfg.search_list_size.value());
             CHECK_EQ("L2", train_cfg.metric_type.value());
         }
 

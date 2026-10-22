@@ -23,6 +23,7 @@
 #include "filemanager/FileManager.h"
 #include "fmt/core.h"
 #include "index/diskann/diskann_config.h"
+#include "index/diskann/diskann_utils.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/context.h"
 #include "knowhere/dataset.h"
@@ -108,7 +109,8 @@ class DiskANNIndexNode : public IndexNode {
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
         knowhere::MetricType metric_type = config.metric_type.has_value() ? config.metric_type.value() : "";
         const auto& base_metric = get_sub_metric_type(metric_type).value_or(metric_type);
-        return IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::COSINE);
+        return !static_cast<const DiskANNConfig&>(config).UsesDiskPQ() &&
+               (IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::COSINE));
     }
 
     static Status
@@ -125,7 +127,8 @@ class DiskANNIndexNode : public IndexNode {
     bool
     HasRawData(const std::string& metric_type) const override {
         const auto& base_metric = get_sub_metric_type(metric_type).value_or(metric_type);
-        return IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::COSINE);
+        return is_prepared_.load() && pq_flash_index_ && pq_flash_index_->get_disk_pq_dims() == 0 &&
+               (IsMetricType(base_metric, metric::L2) || IsMetricType(base_metric, metric::COSINE));
     }
 
     expected<DataSetPtr>
@@ -460,7 +463,8 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
 
     size_t count;
     size_t dim;
-    diskann::get_bin_metadata(build_conf.data_path.value(), count, dim);
+    RETURN_IF_ERROR(ReadDiskANNRawMetadata(data_path, sizeof(DataType), count, dim));
+    RETURN_IF_ERROR(build_conf.ResolveBuildBudgets(count, dim, sizeof(DataType)));
     count_.store(count);
     dim_.store(dim);
 
@@ -499,6 +503,12 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
                                                        build_conf.accelerate_build.value(),
                                                        static_cast<uint32_t>(num_nodes_to_cache),
                                                        build_conf.shuffle_build.value()};
+    std::unique_ptr<ThreadPool::ScopedBuildOmpSetter> omp_setter;
+    if (build_conf.num_build_thread.has_value()) {
+        omp_setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>(build_conf.num_build_thread.value());
+    } else {
+        omp_setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>();
+    }
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
         int res = diskann::build_disk_index<DataType>(diskann_internal_build_config);
         if (res != 0)
@@ -530,7 +540,11 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
                                                bool use_knowhere_build_pool, milvus::OpContext* op_context) {
     assert(file_manager_ != nullptr);
     std::scoped_lock lock(preparation_lock_);
-    auto& config = static_cast<BaseConfig&>(*cfg);
+    auto& config = static_cast<DiskANNConfig&>(*cfg);
+    if (config.UsesDiskPQ() && dataset != nullptr && dataset->Get<const size_t*>(meta::EMB_LIST_OFFSET) != nullptr) {
+        LOG_KNOWHERE_ERROR_ << "disk PQ is unsupported for embedding-list exact reranking";
+        return Status::invalid_param_in_json;
+    }
     auto el_metric_type_or = get_el_metric_type(config.metric_type.value());
     if (!el_metric_type_or.has_value()) {
         // If not emb_list metric type, use the default build method
@@ -619,7 +633,9 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
 
     // Load file from file manager.
     for (auto& filename : GetNecessaryFilenames(
-             index_prefix_, need_norm, prep_conf.search_cache_budget_gb.value() > 0 && !prep_conf.use_bfs_cache.value(),
+             index_prefix_, need_norm,
+             prep_conf.search_cache_budget_gb.value_or(prep_conf.search_cache_budget_gb_ratio.value()) > 0 &&
+                 !prep_conf.use_bfs_cache.value(),
              prep_conf.warm_up.value())) {
         if (!LoadFile(filename)) {
             return Status::disk_file_error;
@@ -664,35 +680,29 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
         dim_.store(pq_flash_index_->get_data_dim());
     }
 
+    prep_conf.ResolveCacheBudget(count_.load(), dim_.load(), sizeof(DataType));
+
     std::string warmup_query_file = diskann::get_sample_data_filename(index_prefix_);
     // load cache
     auto cached_nodes_file = diskann::get_cached_nodes_file(index_prefix_);
     std::vector<uint32_t> node_list;
-    if (file_exists(cached_nodes_file)) {
+    const auto num_nodes_to_cache = std::min<uint64_t>(
+        GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), ((pq_flash_index_->get_data_dim() + 7) / 8) * 8,
+                         sizeof(DataType), pq_flash_index_->get_max_degree()),
+        pq_flash_index_->get_num_points() / 3);
+    if (num_nodes_to_cache > 0 && file_exists(cached_nodes_file)) {
         LOG_KNOWHERE_INFO_ << "Reading cached nodes from file.";
         size_t num_nodes, nodes_id_dim;
         std::unique_ptr<uint32_t[]> cached_nodes_ids = nullptr;
         diskann::load_bin<uint32_t>(cached_nodes_file, cached_nodes_ids, num_nodes, nodes_id_dim);
-        node_list.assign(cached_nodes_ids.get(), cached_nodes_ids.get() + num_nodes);
-    } else {
-        uint64_t num_nodes_to_cache = 0;
-        if (prep_conf.disk_pq_dims.value() > 0) {
-            uint64_t disk_pq_nchunks = pq_flash_index_->get_data_dim();
-            if (prep_conf.disk_pq_dims.value() < static_cast<int>(pq_flash_index_->get_data_dim())) {
-                disk_pq_nchunks = prep_conf.disk_pq_dims.value();
-            }
-            num_nodes_to_cache = GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), disk_pq_nchunks,
-                                                  sizeof(_u8), prep_conf.max_degree.value());
-        } else {
-            num_nodes_to_cache =
-                GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), pq_flash_index_->get_data_dim(),
-                                 sizeof(DataType), prep_conf.max_degree.value());
-        }
-        if (num_nodes_to_cache > pq_flash_index_->get_num_points() / 3) {
-            LOG_KNOWHERE_ERROR_ << "Failed to generate cache, num_nodes_to_cache(" << num_nodes_to_cache
-                                << ") is larger than 1/3 of the total data number.";
-            return Status::invalid_args;
-        }
+        node_list.assign(cached_nodes_ids.get(),
+                         cached_nodes_ids.get() + std::min<uint64_t>(num_nodes, num_nodes_to_cache));
+    }
+    if (node_list.size() < num_nodes_to_cache) {
+        // A build-time candidate list is only a hint. Larger load budgets must be
+        // allowed to regenerate candidates, without loading a short list alongside
+        // the asynchronous generator's separately allocated cache buffers.
+        node_list.clear();
         if (num_nodes_to_cache > 0) {
             LOG_KNOWHERE_INFO_ << "Caching " << num_nodes_to_cache << " sample nodes around medoid(s).";
             if (prep_conf.use_bfs_cache.value()) {
@@ -907,8 +917,8 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
             return expected<DataSetPtr>::Err(Status::invalid_args, "nq must be 1");
         }
         feder_result = std::make_unique<feder::diskann::FederResult>();
-        feder_result->visit_info_.SetQueryConfig(search_conf.k.value(), search_conf.beamwidth.value(),
-                                                 search_conf.search_list_size.value(), search_conf.beamwidth.value());
+        feder_result->visit_info_.SetQueryConfig(search_conf.k.value(), search_conf.search_list_size.value(),
+                                                 search_conf.beamwidth.value(), 0);
     }
 
     auto p_id = std::make_unique<int64_t[]>(k * nq);
@@ -980,6 +990,9 @@ DiskANNIndexNode<DataType>::CalcDistByStorageIds(const DataSetPtr dataset, const
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<DataSetPtr>::Err(Status::empty_index, "DiskANN not loaded");
     }
+    if (pq_flash_index_->get_disk_pq_dims() != 0) {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "exact distances are unavailable with disk PQ");
+    }
     if (!search_pool_) {
         LOG_KNOWHERE_ERROR_ << "Search thread pool is not initialized.";
         return expected<DataSetPtr>::Err(Status::internal_error, "search pool not initialized");
@@ -1042,6 +1055,9 @@ DiskANNIndexNode<DataType>::GetVectorByStorageIds(const DataSetPtr dataset, milv
         LOG_KNOWHERE_ERROR_ << "Failed to load diskann.";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
+    if (pq_flash_index_->get_disk_pq_dims() != 0) {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "raw vectors are unavailable with disk PQ");
+    }
     auto dim = Dim();
     auto rows = dataset->GetRows();
     auto ids = dataset->GetIds();
@@ -1062,15 +1078,21 @@ DiskANNIndexNode<DataType>::GetVectorByStorageIds(const DataSetPtr dataset, milv
 template <typename DataType>
 expected<DataSetPtr>
 DiskANNIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
+    if (!is_prepared_.load() || !pq_flash_index_) {
+        return expected<DataSetPtr>::Err(Status::empty_index, "disk index not loaded");
+    }
     std::vector<int64_t> entry_points;
     entry_points.reserve(pq_flash_index_->get_num_medoids());
     for (size_t i = 0; i < pq_flash_index_->get_num_medoids(); i++) {
         entry_points.push_back(pq_flash_index_->get_medoids()[i]);
     }
     auto diskann_conf = static_cast<const DiskANNConfig&>(*cfg);
-    feder::diskann::DiskANNMeta meta(diskann_conf.data_path.value(), diskann_conf.max_degree.value(),
-                                     diskann_conf.search_list_size.value(), diskann_conf.pq_code_budget_gb.value(),
-                                     diskann_conf.build_dram_budget_gb.value(), diskann_conf.disk_pq_dims.value(),
+    // Quantization is a property of the loaded artifact, not of the caller's current defaults.
+    const float pq_code_gb = static_cast<double>(pq_flash_index_->get_pq_code_size()) *
+                             pq_flash_index_->get_num_points() / (1024.0 * 1024 * 1024);
+    feder::diskann::DiskANNMeta meta(diskann_conf.data_path.value_or(""), pq_flash_index_->get_max_degree(),
+                                     diskann_conf.search_list_size.value(), pq_code_gb,
+                                     diskann_conf.build_dram_budget_gb.value(), pq_flash_index_->get_disk_pq_dims(),
                                      diskann_conf.accelerate_build.value(), Count(), entry_points);
     std::unordered_set<int64_t> id_set(entry_points.begin(), entry_points.end());
 
@@ -1084,9 +1106,10 @@ template <typename DataType>
 uint64_t
 DiskANNIndexNode<DataType>::GetCachedNodeNum(const float cache_dram_budget, const uint64_t data_dim, size_t chunk_size,
                                              const uint64_t max_degree) {
-    uint32_t one_cached_node_budget = (max_degree + 1) * sizeof(unsigned) + chunk_size * data_dim;
-    auto num_nodes_to_cache =
-        static_cast<uint64_t>(1024 * 1024 * 1024 * cache_dram_budget) / (one_cached_node_budget * kCacheExpansionRate);
+    uint64_t one_cached_node_budget = (max_degree + 1) * sizeof(unsigned) + chunk_size * data_dim;
+    auto num_nodes_to_cache = static_cast<uint64_t>(std::min<double>(
+        static_cast<double>(cache_dram_budget) * 1024 * 1024 * 1024 / (one_cached_node_budget * kCacheExpansionRate),
+        std::numeric_limits<uint32_t>::max()));
     return num_nodes_to_cache;
 }
 

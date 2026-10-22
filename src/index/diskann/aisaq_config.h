@@ -23,12 +23,22 @@ class AisaqConfig : public DiskANNConfig {
     CFG_BOOL rearrange;
     // enable compressed vectors read-page cache DRAM size per thread, default 0
     CFG_INT pq_read_page_cache_size;
-    // pq vectors read io engine to use, one of {aio, uring} valid only with aisaq option.
+    // pq vectors read io engine to use, currently only aio is supported valid only with aisaq option.
     CFG_STRING pq_read_io_engine;
     // number of entry points valid only with aisaq option.
     CFG_INT num_entry_points;
 
     KNOWHERE_DECLARE_CONFIG(AisaqConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(disk_pq_code_budget_gb_ratio)
+            .set_default(0.25f)
+            .set_range(0, 1)
+            .for_train()
+            .for_static();
+        KNOWHERE_CONFIG_DECLARE_FIELD(search_cache_budget_gb_ratio)
+            .set_default(0)
+            .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
+            .for_train()
+            .for_deserialize();
         // Block AiSAQ parameters
 
         KNOWHERE_CONFIG_DECLARE_FIELD(beamwidth)
@@ -62,7 +72,7 @@ class AisaqConfig : public DiskANNConfig {
             .for_deserialize();
 
         KNOWHERE_CONFIG_DECLARE_FIELD(pq_read_page_cache_size)
-            .set_default(diskann::defaults::DEFAULT_PQ_READ_PAGE_CACHE_SIZE)
+            .allow_empty_without_default()
             .set_range(diskann::defaults::MIN_PQ_READ_PAGE_CACHE_SIZE, diskann::defaults::MAX_PQ_READ_PAGE_CACHE_SIZE)
             .description("compressed vectors read-page cache DRAM size per thread")
             .for_train()
@@ -78,7 +88,7 @@ class AisaqConfig : public DiskANNConfig {
 
         KNOWHERE_CONFIG_DECLARE_FIELD(pq_read_io_engine)
             .set_default("aio")
-            .description("pq vectors read io engine to use, one of {aio, uring}")
+            .description("pq vectors read io engine to use, currently only aio is supported")
             .for_train()
             .for_deserialize();
 
@@ -87,6 +97,35 @@ class AisaqConfig : public DiskANNConfig {
             .set_range(diskann::defaults::MIN_NUM_ENTRY_POINTS, diskann::defaults::MAX_NUM_ENTRY_POINTS)
             .description("number of entry points")
             .for_train();
+    }
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        auto status = DiskANNConfig::CheckAndAdjust(param_type, err_msg);
+        if (status != Status::success) {
+            return status;
+        }
+        if ((param_type == PARAM_TYPE::TRAIN || param_type == PARAM_TYPE::DESERIALIZE) &&
+            !pq_read_page_cache_size.has_value()) {
+            pq_read_page_cache_size = 0;
+        }
+        if (param_type == PARAM_TYPE::TRAIN) {
+            if (inline_pq.value() > max_degree.value() ||
+                max_degree.value() > static_cast<int>(diskann::defaults::MAX_AISAQ_MAX_DEGREE) ||
+                search_list_size.value() > static_cast<int>(diskann::defaults::MAX_AISAQ_SEARCH_LIST_SIZE)) {
+                return HandleError(err_msg, "AiSAQ graph parameters exceed supported limits",
+                                   Status::out_of_range_in_json);
+            }
+        }
+        if ((param_type == PARAM_TYPE::TRAIN || param_type == PARAM_TYPE::DESERIALIZE) &&
+            pq_read_io_engine.value() != "aio") {
+            return HandleError(err_msg, "pq_read_io_engine must be aio", Status::invalid_param_in_json);
+        }
+        if ((param_type == PARAM_TYPE::SEARCH || param_type == PARAM_TYPE::RANGE_SEARCH ||
+             param_type == PARAM_TYPE::ITERATOR) &&
+            vectors_beamwidth.value() > beamwidth.value()) {
+            return HandleError(err_msg, "vectors_beamwidth exceeds beamwidth", Status::out_of_range_in_json);
+        }
+        return Status::success;
     }
 };
 }  // namespace knowhere

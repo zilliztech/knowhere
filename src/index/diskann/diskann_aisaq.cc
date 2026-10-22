@@ -12,6 +12,7 @@
 #include "filemanager/FileManager.h"
 #include "fmt/core.h"
 #include "index/diskann/aisaq_config.h"
+#include "index/diskann/diskann_utils.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/context.h"
 #include "knowhere/dataset.h"
@@ -71,12 +72,14 @@ class AisaqIndexNode : public IndexNode {
     static bool
     StaticHasRawData(const knowhere::BaseConfig& config, const IndexVersion& version) {
         knowhere::MetricType metric_type = config.metric_type.has_value() ? config.metric_type.value() : "";
-        return IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE);
+        return !static_cast<const DiskANNConfig&>(config).UsesDiskPQ() &&
+               (IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE));
     }
 
     bool
     HasRawData(const std::string& metric_type) const override {
-        return IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE);
+        return is_prepared_.load() && pq_flash_index_ && pq_flash_index_->get_disk_pq_dims() == 0 &&
+               (IsMetricType(metric_type, metric::L2) || IsMetricType(metric_type, metric::COSINE));
     }
 
     expected<DataSetPtr>
@@ -176,7 +179,7 @@ class AisaqIndexNode : public IndexNode {
     }
 
     uint64_t
-    GetCachedNodeNum(const float cache_dram_budget, const uint32_t max_node_len = 0);
+    GetCachedNodeNum(const float cache_dram_budget, const uint64_t max_node_len = 0);
 
     std::string index_prefix_;
     mutable std::mutex preparation_lock_;
@@ -186,6 +189,8 @@ class AisaqIndexNode : public IndexNode {
     std::atomic_int64_t dim_;
     std::atomic_int64_t count_;
     std::shared_ptr<ThreadPool> search_pool_;
+    // Deserialize establishes the index cache policy; an explicit query value overrides it.
+    uint32_t pq_read_page_cache_size_ = 0;
 };
 
 }  // namespace knowhere
@@ -305,43 +310,6 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
     assert(file_manager_ != nullptr);
     auto build_conf = static_cast<const AisaqConfig&>(*cfg);
 
-    assert(build_conf.inline_pq.has_value());
-    assert(build_conf.rearrange.has_value());
-    assert(build_conf.num_entry_points.has_value());
-    if (build_conf.inline_pq.value() > build_conf.max_degree.value()) {
-        LOG_KNOWHERE_ERROR_ << "inline pq more than max degree value";
-        return Status::aisaq_error;
-    }
-
-    const int32_t max_degree = static_cast<int32_t>(diskann::defaults::MAX_AISAQ_MAX_DEGREE);
-    if (build_conf.max_degree.value() > max_degree) {
-        LOG_KNOWHERE_ERROR_ << "max degree more than maximum allowed max degree value";
-        return Status::aisaq_error;
-    }
-
-    if (build_conf.disk_pq_dims.value() < 0 || build_conf.disk_pq_dims.value() > build_conf.dim.value()) {
-        LOG_KNOWHERE_ERROR_ << "disk PQ badget more than dimension value";
-        return Status::aisaq_error;
-    }
-
-    const int32_t max_aisaq_search_list_size = static_cast<int32_t>(diskann::defaults::MAX_AISAQ_SEARCH_LIST_SIZE);
-    if (build_conf.search_list_size.value() > max_aisaq_search_list_size) {
-        LOG_KNOWHERE_ERROR_ << "search list size value more than maximum allowed value";
-        return Status::aisaq_error;
-    }
-
-    LOG_KNOWHERE_INFO_ << "AiSAQ build Configuration:"
-                       << " metric type: " << build_conf.metric_type.value()
-                       << " inline pq: " << build_conf.inline_pq.value()
-                       << " rearrange: " << build_conf.rearrange.value()
-                       << " number of entry points: " << build_conf.num_entry_points.value()
-                       << " max degree: " << build_conf.max_degree.value()
-                       << " search list size: " << build_conf.search_list_size.value()
-                       << " pq_code_budget_gb: " << build_conf.pq_code_budget_gb.value()
-                       << " build_dram_budget_gb: " << build_conf.build_dram_budget_gb.value()
-                       << " search_cache_budget_gb: " << build_conf.search_cache_budget_gb.value()
-                       << " disk PQ budget: " << build_conf.disk_pq_dims.value();
-
     std::scoped_lock lock(preparation_lock_);
     if (!CheckMetric(build_conf.metric_type.value())) {
         LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << build_conf.metric_type.value();
@@ -364,7 +332,8 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
     index_prefix_ = build_conf.index_prefix.value();
     size_t count;
     size_t dim;
-    diskann::get_bin_metadata(build_conf.data_path.value(), count, dim);
+    RETURN_IF_ERROR(ReadDiskANNRawMetadata(data_path, sizeof(DataType), count, dim));
+    RETURN_IF_ERROR(build_conf.ResolveBuildBudgets(count, dim, sizeof(DataType)));
     count_.store(count);
     dim_.store(dim);
 
@@ -419,6 +388,12 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                                                      static_cast<uint32_t>(build_conf.inline_pq.value()),
                                                      build_conf.rearrange.value(),
                                                      build_conf.num_entry_points.value()};
+    std::unique_ptr<ThreadPool::ScopedBuildOmpSetter> omp_setter;
+    if (build_conf.num_build_thread.has_value()) {
+        omp_setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>(build_conf.num_build_thread.value());
+    } else {
+        omp_setter = std::make_unique<ThreadPool::ScopedBuildOmpSetter>();
+    }
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
         int res = diskann::build_disk_index<DataType>(aisaq_internal_build_config);
         if (res != 0)
@@ -484,9 +459,11 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
 
     // Load file from file manager.
     bool use_bfs_cache = prep_conf.use_bfs_cache.value();
-    for (auto& filename :
-         GetNecessaryFilenames(index_prefix_, need_norm, prep_conf.search_cache_budget_gb.value() > 0 && !use_bfs_cache,
-                               prep_conf.warm_up.value(), rearrange, entry_points)) {
+    for (auto& filename : GetNecessaryFilenames(
+             index_prefix_, need_norm,
+             prep_conf.search_cache_budget_gb.value_or(prep_conf.search_cache_budget_gb_ratio.value()) > 0 &&
+                 !use_bfs_cache,
+             prep_conf.warm_up.value(), rearrange, entry_points)) {
         if (filename == diskann::get_pq_compressed_filename(index_prefix_)) {
             LOG_KNOWHERE_DEBUG_ << "File load " << filename << " skipped";
             continue;
@@ -533,6 +510,8 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         prep_conf.pq_read_page_cache_size.value() = 0;
     }
 
+    pq_read_page_cache_size_ = prep_conf.pq_read_page_cache_size.value();
+
     if (pq_flash_index_->aisaq_init(pq_read_io_engine, index_prefix_.c_str()) != 0) {
         return Status::aisaq_error;
     }
@@ -554,24 +533,30 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         dim_.store(pq_flash_index_->get_data_dim());
     }
 
+    prep_conf.ResolveCacheBudget(count_.load(), dim_.load(), sizeof(DataType));
+
     std::string warmup_query_file = diskann::get_sample_data_filename(index_prefix_);
     // load cache
     auto cached_nodes_file = diskann::get_cached_nodes_file(index_prefix_);
     std::vector<uint32_t> node_list;
-    if (file_exists(cached_nodes_file)) {
+    const auto num_nodes_to_cache =
+        std::min<uint64_t>(GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(),
+                                            pq_flash_index_->get_max_node_len() +
+                                                ((pq_flash_index_->get_data_dim() + 7) / 8) * 8 * sizeof(DataType)),
+                           pq_flash_index_->get_num_points() / 3);
+    if (num_nodes_to_cache > 0 && file_exists(cached_nodes_file)) {
         LOG_KNOWHERE_INFO_ << "Reading cached nodes from file.";
         size_t num_nodes, nodes_id_dim;
         std::unique_ptr<uint32_t[]> cached_nodes_ids = nullptr;
         diskann::load_bin<uint32_t>(cached_nodes_file, cached_nodes_ids, num_nodes, nodes_id_dim);
-        node_list.assign(cached_nodes_ids.get(), cached_nodes_ids.get() + num_nodes);
-    } else {
-        auto num_nodes_to_cache =
-            GetCachedNodeNum(prep_conf.search_cache_budget_gb.value(), pq_flash_index_->get_max_node_len());
-        if (num_nodes_to_cache > pq_flash_index_->get_num_points() / 3) {
-            LOG_KNOWHERE_ERROR_ << "Failed to generate cache, num_nodes_to_cache(" << num_nodes_to_cache
-                                << ") is larger than 1/3 of the total data number.";
-            return Status::invalid_args;
-        }
+        node_list.assign(cached_nodes_ids.get(),
+                         cached_nodes_ids.get() + std::min<uint64_t>(num_nodes, num_nodes_to_cache));
+    }
+    if (node_list.size() < num_nodes_to_cache) {
+        // A build-time candidate list is only a hint. Larger load budgets must be
+        // allowed to regenerate candidates, without loading a short list alongside
+        // the asynchronous generator's separately allocated cache buffers.
+        node_list.clear();
         if (num_nodes_to_cache > 0) {
             if (use_bfs_cache) {
                 LOG_KNOWHERE_INFO_ << "Use bfs to generate cache list";
@@ -668,7 +653,6 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
     struct diskann::aisaq_search_config aisaq_search_config;
     assert(search_conf.beamwidth.has_value());
     assert(search_conf.vectors_beamwidth.has_value());
-    assert(search_conf.pq_read_page_cache_size.has_value());
 
     if (std::cmp_greater(search_conf.beamwidth.value(), diskann::defaults::MAX_AISAQ_BEAMWIDTH)) {
         LOG_KNOWHERE_ERROR_ << "Error. Beam width more than max value";
@@ -681,7 +665,8 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
     }
     aisaq_search_config.vector_beamwidth = search_conf.vectors_beamwidth.value();
 
-    aisaq_search_config.pq_read_page_cache_size = search_conf.pq_read_page_cache_size.value();
+    aisaq_search_config.pq_read_page_cache_size =
+        search_conf.pq_read_page_cache_size.value_or(pq_read_page_cache_size_);
 
     auto nq = static_cast<uint64_t>(dataset->GetRows());
     auto dim = dataset->GetDim();
@@ -773,6 +758,9 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
         LOG_KNOWHERE_ERROR_ << "Failed to load AiSAQ.";
         return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
     }
+    if (pq_flash_index_->get_disk_pq_dims() != 0) {
+        return expected<DataSetPtr>::Err(Status::not_implemented, "raw vectors are unavailable with disk PQ");
+    }
     auto* data = new DataType[dim * rows];
     if (data == nullptr) {
         LOG_KNOWHERE_ERROR_ << "Failed to allocate memory for data.";
@@ -790,6 +778,9 @@ AisaqIndexNode<DataType>::GetVectorByIds(const DataSetPtr dataset, milvus::OpCon
 template <typename DataType>
 expected<DataSetPtr>
 AisaqIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
+    if (!is_prepared_.load() || !pq_flash_index_) {
+        return expected<DataSetPtr>::Err(Status::empty_index, "disk index not loaded");
+    }
     std::vector<int64_t> entry_points;
     auto num_medoids = pq_flash_index_->get_num_medoids();
     entry_points.reserve(num_medoids);
@@ -798,17 +789,12 @@ AisaqIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
         entry_points.push_back(pq_flash_index_->get_medoids()[i]);
     }
     auto aisaq_conf = static_cast<const DiskANNConfig&>(*cfg);
-    LOG_KNOWHERE_INFO_ << "Count " << Count();
-    LOG_KNOWHERE_INFO_ << "max_degree " << aisaq_conf.max_degree.value();
-    LOG_KNOWHERE_INFO_ << "search_list_size " << aisaq_conf.search_list_size.value();
-    LOG_KNOWHERE_INFO_ << "pq_code_budget_gb " << aisaq_conf.pq_code_budget_gb.value();
-    LOG_KNOWHERE_INFO_ << "build_dram_budget_gb " << aisaq_conf.build_dram_budget_gb.value();
-    LOG_KNOWHERE_INFO_ << "disk_pq_dims " << aisaq_conf.disk_pq_dims.value();
-    LOG_KNOWHERE_INFO_ << "accelerate_build " << aisaq_conf.accelerate_build.value();
-    LOG_KNOWHERE_INFO_ << "data_path " << aisaq_conf.data_path.value();
-    feder::diskann::DiskANNMeta meta(aisaq_conf.data_path.value(), aisaq_conf.max_degree.value(),
-                                     aisaq_conf.search_list_size.value(), aisaq_conf.pq_code_budget_gb.value(),
-                                     aisaq_conf.build_dram_budget_gb.value(), aisaq_conf.disk_pq_dims.value(),
+    // Quantization is a property of the loaded artifact, not of the caller's current defaults.
+    const float pq_code_gb = static_cast<double>(pq_flash_index_->get_pq_code_size()) *
+                             pq_flash_index_->get_num_points() / (1024.0 * 1024 * 1024);
+    feder::diskann::DiskANNMeta meta(aisaq_conf.data_path.value_or(""), pq_flash_index_->get_max_degree(),
+                                     aisaq_conf.search_list_size.value(), pq_code_gb,
+                                     aisaq_conf.build_dram_budget_gb.value(), pq_flash_index_->get_disk_pq_dims(),
                                      aisaq_conf.accelerate_build.value(), Count(), entry_points);
     std::unordered_set<int64_t> id_set(entry_points.begin(), entry_points.end());
 
@@ -820,9 +806,10 @@ AisaqIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
 
 template <typename DataType>
 uint64_t
-AisaqIndexNode<DataType>::GetCachedNodeNum(const float cache_dram_budget, const uint32_t max_node_len) {
-    auto num_nodes_to_cache =
-        static_cast<uint64_t>(1024 * 1024 * 1024 * cache_dram_budget) / (max_node_len * kCacheExpansionRate);
+AisaqIndexNode<DataType>::GetCachedNodeNum(const float cache_dram_budget, const uint64_t max_node_len) {
+    auto num_nodes_to_cache = static_cast<uint64_t>(std::min<double>(
+        static_cast<double>(cache_dram_budget) * 1024 * 1024 * 1024 / (max_node_len * kCacheExpansionRate),
+        std::numeric_limits<uint32_t>::max()));
     return num_nodes_to_cache;
 }
 
