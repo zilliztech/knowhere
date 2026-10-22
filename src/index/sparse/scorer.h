@@ -134,18 +134,14 @@ struct BM25IndexScorer : public IndexScorer {
 class BM25ScoringContext {
  public:
     // The search request owns the immutable row-sum storage for this context's lifetime.
-    explicit BM25ScoringContext(std::span<const float> row_sums, const IndexScorerConfig& config)
-        : row_sums_(row_sums) {
-        if (config.scorer_type == IndexScorerType::BM25) {
-            const auto& params = config.scorer_params.bm25;
-            p1_ = params.k1 + 1.0F;
-            p2_ = params.k1 * (1.0F - params.b);
-            p3_ = params.k1 * params.b / params.avgdl;
+    explicit BM25ScoringContext(std::span<const float> row_sums, const IndexScorer& scorer) : row_sums_(row_sums) {
+        if (scorer.config().scorer_type == IndexScorerType::BM25) {
+            const auto* bm25_scorer = dynamic_cast<const BM25IndexScorer*>(&scorer);
+            assert(bm25_scorer != nullptr);
+            p1_ = bm25_scorer->p1();
+            p2_ = bm25_scorer->p2();
+            p3_ = bm25_scorer->p3();
         }
-    }
-
-    explicit BM25ScoringContext(std::span<const float> row_sums, const IndexScorer& scorer)
-        : BM25ScoringContext(row_sums, scorer.config()) {
     }
 
     [[nodiscard]] float
