@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #pragma once
+#include "diskann/navigation_runtime.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
@@ -39,7 +40,7 @@ namespace diskann {
   const uint32_t   NUM_KMEANS_REPS = 12;
 
   template<typename T>
-  class PQFlashIndex;
+  class SSDGraphIndex;
 
   double get_memory_budget(const std::string &mem_budget_str);
   double get_memory_budget(double search_ram_budget_in_gb);
@@ -98,7 +99,7 @@ namespace diskann {
 
   template<typename T>
   uint32_t optimize_beamwidth(
-      std::unique_ptr<diskann::PQFlashIndex<T>> &_pFlashIndex, T *tuning_sample,
+      std::unique_ptr<diskann::SSDGraphIndex<T>> &_pFlashIndex, const NavigationStore& navigation, T *tuning_sample,
       _u64 tuning_sample_num, _u64 tuning_sample_aligned_dim, uint32_t L,
       uint32_t nthreads, uint32_t start_bw = 2);
 
@@ -110,8 +111,6 @@ namespace diskann {
     unsigned max_degree = 0;
     // L (indexing list size, better if >= R)
     unsigned search_list_size = 0;
-    // B (PQ code size in GB)
-    double pq_code_size_gb = 0.0;
     // M (memory limit while indexing)
     double index_mem_gb = 0.0;
     // B' (PQ dim for disk index: optional parameter for very
@@ -130,11 +129,54 @@ namespace diskann {
     bool aisaq_mode = false;
     uint32_t inline_pq = 0;
     bool rearrange = false;
-    int num_entry_points = 0;
+    int      num_entry_points = 0;
+  };
+
+  // One build owns its prepared input and intermediate files. The original
+  // input is never owned. Commit completed local outputs before publication:
+  // failed uploads cannot be rolled back by every FileManager implementation.
+  class PreparedBuildContext {
+   public:
+    explicit PreparedBuildContext(const BuildConfig &config);
+    ~PreparedBuildContext();
+    PreparedBuildContext(const PreparedBuildContext &) = delete;
+    PreparedBuildContext &operator=(const PreparedBuildContext &) = delete;
+    void                  own_temporary(const std::string &path);
+    void                  own_output(const std::string &path);
+    void                  create_graph_workspace();
+    void                  commit_outputs() noexcept {
+      committed_ = true;
+    }
+
+    const std::string     raw_source;
+    const std::string     prefix;
+    const std::string     graph_index_path;
+    const diskann::Metric metric;
+    std::string           prepared_source;
+    std::string           ssd_source;
+    size_t                rows = 0;
+    size_t                raw_dim = 0;
+    size_t                prepared_dim = 0;
+
+   private:
+    void own(const std::string &path, std::vector<std::string> &paths);
+    std::vector<std::string> temporaries_;
+    std::vector<std::string> outputs_;
+    bool                     committed_ = false;
+    bool                     owns_graph_workspace_ = false;
   };
 
   template<typename T>
-  int build_disk_index(BuildConfig &config);
+  std::unique_ptr<PreparedBuildContext> prepare_build_context(
+      const BuildConfig &config);
+
+  class NavigationBuilder;
+  template<typename T>
+  int build_disk_index(BuildConfig &config, PreparedBuildContext &context,
+                       const NavigationBuilder &navigation);
+
+  template<typename T>
+  int build_disk_index(BuildConfig &config, const NavigationBuilder& navigation);
 
   template <typename T>
   void create_aisaq_layout(const std::string base_file, const std::string mem_index_file, const std::string output_file,

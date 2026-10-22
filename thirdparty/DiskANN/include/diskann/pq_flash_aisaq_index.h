@@ -6,6 +6,7 @@
 
 #include "diskann/aisaq_neighbor_priority_queue.h"
 #include "diskann/pq_flash_index.h"
+#include "diskann/pq_navigation.h"
 #include "diskann/timer.h"
 
 #pragma once
@@ -15,40 +16,41 @@ namespace diskann {
         class AisaqPQReaderContext *aisaq_pq_reader_ctx = nullptr;
         uint32_t aisaq_max_read_nodes;
         std::vector<uint64_t> aisaq_scratch_mem_offset;
+        std::shared_ptr<PQNavigationDistanceComputer> navigation;
         NeighborPriorityQueue retset;
         std::vector<Neighbor> full_retset;
     };
 
-class AisaqPQDataGetter: public PQDataGetter {
+class AisaqPQCodeSource: public PQCodeSource {
 	uint32_t* _aisaq_rearranged_vectors_map;
-	bool _rearranged_index;
     bool _rearrange_during_search;
     uint32_t _max_ios;
     class AisaqPQReader &_aisaq_pq_vectors_reader;
     class AisaqPQReaderContext &_ctx;
 
 public:
-	AisaqPQDataGetter(bool rearranged_index, bool rearrange_during_search, uint32_t* aisaq_rearranged_vectors_map, class AisaqPQReader &aisaq_pq_vectors_reader,
+	AisaqPQCodeSource(bool rearrange_during_search, uint32_t* aisaq_rearranged_vectors_map, class AisaqPQReader &aisaq_pq_vectors_reader,
         class AisaqPQReaderContext &ctx, uint32_t max_ios) : _aisaq_pq_vectors_reader(aisaq_pq_vectors_reader), _ctx(ctx) { 
 		_aisaq_rearranged_vectors_map = aisaq_rearranged_vectors_map;
-		_rearranged_index = rearranged_index;
         _rearrange_during_search = rearrange_during_search;
         _max_ios = max_ios;
 	}
-    	virtual _u8* get_pq_data() {
-		return nullptr;
-	}
-	virtual _u64 get_origin_id(_u64 id){
-		return !_rearranged_index  ? id :  _aisaq_rearranged_vectors_map[(_u32)id];
-	}
-	virtual void release_pq_data(size_t offset=0, size_t size=0) {
-	}
+    void gather(const unsigned* ids, uint64_t count, uint64_t chunks,
+                uint8_t* output) override;
 
-    virtual void aggregate_pq_coords(const unsigned* ids, const _u64 n_ids, const _u64 ndims, _u8* out);
+};
+
+class AisaqIdMapping final : public IndexIdMapping {
+ public:
+    AisaqIdMapping(bool rearranged, const uint32_t* map) : rearranged_(rearranged), map_(map) {}
+    uint64_t get_origin_id(uint64_t id) const override { return rearranged_ ? map_[id] : id; }
+ private:
+    bool rearranged_;
+    const uint32_t* map_;
 };
 
 template<typename T>
-class PQFlashAisaqIndex: public PQFlashIndex<T> {
+class PQFlashAisaqIndex: public SSDGraphIndex<T> {
 public:
     PQFlashAisaqIndex(std::shared_ptr<AlignedFileReader> fileReader,
                 diskann::Metric metric = diskann::Metric::L2);
@@ -88,7 +90,7 @@ public:
     uint8_t *aisaq_pq_cache_lookup(uint32_t id);
 
     void get_entry_point_medoid(uint32_t &best_medoid, float &best_dist,
-                                float *pq_dists, float *dist_scratch,
+                                const float *pq_dists, float *dist_scratch,
                                 float *query_float);
     
     void updata_io_stats(QueryStats &stats, size_t count, uint64_t size_in_sectors);
@@ -152,6 +154,7 @@ public:
     bool _reorder_data_exists = false;
     
     ConcurrentQueue<AisaqThreadData <T>> aisaq_thread_data;
+    std::shared_ptr<PQNavigationStore> navigation_;
     std::string index_prefix;
 };
 } // namespace diskann

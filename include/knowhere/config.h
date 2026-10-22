@@ -344,6 +344,7 @@ class Config {
 
     static Status
     Load(Config& cfg, const Json& json, PARAM_TYPE type, std::string* const err_msg = nullptr) {
+        cfg.CaptureRawJson(json);
         for (const auto& it : cfg.__DICT__) {
             const auto& var = it.second;
 
@@ -549,6 +550,11 @@ class Config {
         return cfg.CheckAndAdjust(type, err_msg);
     }
 
+    // Retain codec-owned flat JSON before typed fields are loaded.
+    virtual void
+    CaptureRawJson(const Json& /*json*/) {
+    }
+
     virtual ~Config() {
     }
 
@@ -660,7 +666,7 @@ class BaseConfig : public Config {
     /// faiss's ParameterSpace. Default is a no-op; do NOT override unless you need raw
     /// JSON (most configs should rely on KNOWHERE_CONFIG_DECLARE_FIELD).
     virtual void
-    CaptureRawJson(const Json& /*json*/) {
+    CaptureRawJson(const Json& /*json*/) override {
     }
 
     KNOWHERE_DECLARE_CONFIG(BaseConfig) {

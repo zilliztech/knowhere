@@ -17,6 +17,10 @@
 
 namespace knowhere {
 
+class DiskANNNavigationConfig;
+Status
+ValidateNavigationConfig(const DiskANNNavigationConfig& config, PARAM_TYPE phase, std::string* error);
+
 namespace {
 
 constexpr const CFG_INT::value_type kSearchListSizeMinValue = 16;
@@ -35,14 +39,6 @@ class DiskANNConfig : public BaseConfig {
     // somewhat compromise on quality.
     CFG_INT search_list_size;
 
-    // The ratio of the size reserved for the pq code to the size of the raw data (defined with vec_field_size_gb)
-    // This parameter will replace pq_code_budget_gb to avoid calculating the actual size on the Milvus side.
-    // The index can indirectly obtain pq_code_budget_gb by vec_field_size_gb * pq_code_budget_gb_ratio
-    CFG_FLOAT pq_code_budget_gb_ratio;
-    // Limit the size of the PQ code after the raw vector has been PQ-encoded. PQ code is a (pq_code_budget_gb * 1024 *
-    // 1024 * 1024) / row_num)-dimensional uint8 vector. If pq_code_budget_gb is too large, it will be adjusted to the
-    // size of dim*row_num.
-    CFG_FLOAT pq_code_budget_gb;
     // Limit on the memory allowed for building the index in GB. If you specify a value less than what is required to
     // build the index in one pass, the index is built using a divide and conquer approach so that sub-graphs will fit
     // in the RAM budget. The sub-graphs are overlayed to build the overall index. This approach can be up to 1.5 times
@@ -58,7 +54,7 @@ class DiskANNConfig : public BaseConfig {
     CFG_BOOL accelerate_build;
 
     // The ratio of the size reserved for the search cache to the size of the raw data (defined with vec_field_size_gb)
-    // This parameter will replace pq_code_budget_gb to avoid calculating the actual size on the Milvus side.
+    // This parameter replaces search_cache_budget_gb on the Milvus side.
     // The index can indirectly obtain search_cache_budget_gb by vec_field_size_gb * search_cache_budget_gb_ratio
     CFG_FLOAT search_cache_budget_gb_ratio;
 
@@ -85,11 +81,13 @@ class DiskANNConfig : public BaseConfig {
     // use PQ + Refine. Default to -1.0f, negative vlaues will use dynamic threshold calculator given topk.
     CFG_FLOAT filter_threshold;
     KNOWHERE_DECLARE_CONFIG(DiskANNConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(data_path).allow_empty_without_default().for_train().for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_degree)
             .description("the degree of the graph index.")
             .set_default(48)
             .set_range(1, 2048)
-            .for_train();
+            .for_train()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_list_size)
             .description("the size of search list during the index build or search.")
             .allow_empty_without_default()
@@ -97,42 +95,39 @@ class DiskANNConfig : public BaseConfig {
             .for_train()
             .for_search()
             .for_range_search()
-            .for_iterator();
-        KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb_ratio)
-            .description("the size of PQ compared with vector field data")
-            .set_default(0)
-            .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
-            .for_train();
-        KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb)
-            .description("the ratio of the size reserved for the pq code to the size of the raw data.")
-            .set_default(0)
-            .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
-            .for_train();
+            .for_iterator()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(build_dram_budget_gb)
             .description("limit on the memory allowed for building the index in GB.")
             .set_default(0)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
-            .for_train();
+            .for_train()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(disk_pq_dims)
             .description("the dimension of compressed vectors stored on the ssd, use 0 to store uncompressed data.")
             .set_default(0)
-            .for_train();
+            .for_train()
+            .for_static()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(accelerate_build)
             .description("a flag to enbale fast build.")
             .set_default(false)
-            .for_train();
+            .for_train()
+            .for_feder();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_cache_budget_gb_ratio)
             .description("the ratio of the size reserved for the search cache to the size of the raw data.")
             .set_default(0)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .for_train()
-            .for_deserialize();
+            .for_deserialize()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(search_cache_budget_gb)
             .description("the size of cached nodes in GB.")
             .set_default(0)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .for_train()
-            .for_deserialize();
+            .for_deserialize()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(warm_up)
             .description("should do warm up before search.")
             .set_default(false)
@@ -173,8 +168,6 @@ class DiskANNConfig : public BaseConfig {
                 if (!search_list_size.has_value()) {
                     search_list_size = kDefaultSearchListSizeForBuild;
                 }
-                pq_code_budget_gb =
-                    std::max(pq_code_budget_gb.value(), pq_code_budget_gb_ratio.value() * vec_field_size_gb.value());
                 search_cache_budget_gb = std::max(search_cache_budget_gb.value(),
                                                   search_cache_budget_gb_ratio.value() * vec_field_size_gb.value());
                 break;
@@ -193,6 +186,64 @@ class DiskANNConfig : public BaseConfig {
                 break;
         }
         return Status::success;
+    }
+};
+
+// Codec selection and codec-specific knobs are validated at this boundary;
+// the disk graph searcher receives only a query-local distance computer.
+class DiskANNNavigationConfig : public DiskANNConfig {
+ public:
+    CFG_STRING navigation_codec;
+
+    // The selected codec parses its own fields from this request. Keeping the
+    // public flat JSON preserves DISKANN aliases and automatic model loading.
+    void
+    CaptureRawJson(const Json& json) override {
+        codec_parameters_ = json;
+    }
+    const Json&
+    CodecParameters() const {
+        return codec_parameters_;
+    }
+
+    KNOWHERE_DECLARE_CONFIG(DiskANNNavigationConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(navigation_codec)
+            .description("navigation codec: build defaults to PQ; load detects stored codec unless constrained")
+            .allow_empty_without_default()
+            .for_train()
+            .for_deserialize()
+            .for_static();
+    }
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        const auto base_status = DiskANNConfig::CheckAndAdjust(param_type, err_msg);
+        if (base_status != Status::success) {
+            return base_status;
+        }
+        return ValidateNavigationConfig(*this, param_type, err_msg);
+    }
+
+ private:
+    Json codec_parameters_ = Json::object();
+};
+
+class DiskANNRaBitQConfig : public DiskANNNavigationConfig {
+ public:
+    KNOWHERE_DECLARE_CONFIG(DiskANNRaBitQConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(navigation_codec)
+            .description("DISKANN_RABITQ fixes the navigation codec to RABITQ")
+            .set_default("RABITQ")
+            .for_train()
+            .for_deserialize()
+            .for_static();
+    }
+    Status
+    CheckAndAdjust(PARAM_TYPE type, std::string* error) override {
+        if (navigation_codec.value_or("RABITQ") != "RABITQ") {
+            return HandleError(error, "DISKANN_RABITQ requires navigation_codec=RABITQ", Status::invalid_args);
+        }
+        return DiskANNNavigationConfig::CheckAndAdjust(type, error);
     }
 };
 }  // namespace knowhere
