@@ -23,8 +23,9 @@ Build options and output paths are defined in [Makefile](../../../Makefile) and
 | CPU Debug | `make WITH_DEBUG=True` |
 | CPU + UT | `make WITH_UT=True` |
 | CPU + UT + ASAN | `make WITH_UT=True WITH_ASAN=True` |
-| GPU (CUVS) | `make WITH_GPU=True` |
-| GPU + UT | `make WITH_GPU=True WITH_UT=True` |
+| Cardinal GPU | `make WITH_CARDINAL=True WITH_GPU=True` |
+| GPU (cuVS) | `make WITH_GPU=True` |
+| GPU (cuVS) + UT | `make WITH_GPU=True WITH_UT=True` |
 | macOS | `make` (auto-detects libc++) |
 
 Build outputs default to `build/Release/` or `build/Debug/`. Run tests after building with `WITH_UT=True`:
@@ -41,7 +42,8 @@ make test BUILD_DIR=/path/to/build
 
 | Flag | Description |
 |------|-------------|
-| `WITH_GPU=True` | Enable GPU (cuVS) build |
+| `WITH_GPU=True` | Enable cuVS, or Cardinal GPU when `WITH_CARDINAL=True` |
+| `WITH_CARDINAL=True` | Enable Cardinal |
 | `WITH_UT=True` | Enable unit tests |
 | `WITH_BENCHMARK=True` | Enable benchmarks |
 | `WITH_ASAN=True` | Enable AddressSanitizer |

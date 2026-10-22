@@ -83,9 +83,9 @@ ifneq ($(UNAME_S),Darwin)
     endif
 endif
 
-# GPU builds use cuVS.
+# CMake selects the GPU backend through WITH_CARDINAL.
 ifdef WITH_GPU
-    CONAN_SETTINGS += -o \&:with_cuvs=True
+    CONAN_SETTINGS += -o \&:with_gpu=True
 endif
 
 ifdef WITH_UT
@@ -145,9 +145,6 @@ all: build ## Default: CPU release build
 # ---------- Build ----------
 
 build: ## Build knowhere (use WITH_GPU=True, WITH_UT=True, WITH_BENCHMARK=True, WITH_ASAN=True, WITH_JNI=True)
-ifdef WITH_GPU
-	@$(PWD)/scripts/prepare_gpu_build.sh
-endif
 	@mkdir -p $(BUILD_DIR) && \
 		conan install . -of $(BUILD_DIR) $(CONAN_INSTALL_FLAGS) $(CONAN_SETTINGS) && \
 		conan build . -of $(BUILD_DIR) $(CONAN_SETTINGS)
@@ -196,7 +193,7 @@ help: ## Show available targets
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Build flags:"
-	@echo "  WITH_GPU=True      Enable GPU (cuVS) build"
+	@echo "  WITH_GPU=True      Enable cuVS, or Cardinal GPU with WITH_CARDINAL=True"
 	@echo "  WITH_UT=True       Enable unit tests"
 	@echo "  WITH_BENCHMARK=True Enable benchmarks build"
 	@echo "  WITH_ASAN=True     Enable AddressSanitizer"
@@ -214,6 +211,7 @@ help: ## Show available targets
 	@echo "Examples:"
 	@echo "  make                              # CPU release"
 	@echo "  make WITH_GPU=True                # GPU release"
+	@echo "  make WITH_CARDINAL=True WITH_GPU=True # Cardinal GPU release"
 	@echo "  make WITH_UT=True WITH_ASAN=True  # CPU UT + ASAN"
 	@echo "  make WITH_GPU=True WITH_UT=True   # GPU UT"
 	@echo "  make WITH_DEBUG=True WITH_UT=True # CPU debug + UT"
