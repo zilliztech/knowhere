@@ -12,6 +12,7 @@
 #include <faiss/utils/simd_levels.h>
 
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include "simd/hook.h" // knowhere bf16_vec_* kernels (SVE BFDOT / NEON / ref)
@@ -138,6 +139,12 @@ struct DistanceComputerByte<Similarity, SIMDLevel::NONE> : SQDistanceComputer {
  * BF16 kernels (SVE: BFDOT = BF16 multiply, FP32 accumulate) instead of
  * widening every stored component to FP32 (DCTemplate<QuantizerBF16>).
  * Used by HNSW build (symmetric_dis) and search (query_to_code[s]).
+ *
+ * BFDOT needs the query in BF16 too. That is lossless when the query was
+ * widened from BF16 (BF16 vectors: Knowhere widens them to FP32 before
+ * the index sees them). An FP32 query that is not exactly representable
+ * in BF16 (FP32 data with a BF16 SQ / refine store) would be rounded, so
+ * such queries use `exact` instead: the regular FP32 x BF16 computer.
  *******************************************************************/
 
 namespace detail {
@@ -149,6 +156,17 @@ inline uint16_t fp32_to_bf16_rne(float x) {
     u += 0x7FFFu + ((u >> 16) & 1u);
     return static_cast<uint16_t>(u >> 16);
 }
+
+// true when every component of x is exactly a BF16 value (low 16 bits zero)
+inline bool is_exact_bf16(const float* x, size_t d) {
+    uint32_t low = 0;
+    for (size_t i = 0; i < d; i++) {
+        uint32_t u;
+        std::memcpy(&u, x + i, sizeof(u));
+        low |= u & 0xFFFFu;
+    }
+    return low == 0;
+}
 } // namespace detail
 
 template <class Similarity>
@@ -158,8 +176,12 @@ struct DistanceComputerBF16Native : SQDistanceComputer {
 
     size_t d;
     std::vector<uint16_t> qbf; // current query in BF16
+    // exact FP32-query x BF16-code computer, for queries that are not BF16
+    std::unique_ptr<SQDistanceComputer> exact;
+    bool use_exact = false;
 
-    explicit DistanceComputerBF16Native(size_t d_in) : d(d_in), qbf(d_in) {}
+    DistanceComputerBF16Native(size_t d_in, SQDistanceComputer* exact_dc)
+            : d(d_in), qbf(d_in), exact(exact_dc) {}
 
     static const bf16_t* as_bf16(const void* p) {
         return reinterpret_cast<const bf16_t*>(p);
@@ -177,12 +199,20 @@ struct DistanceComputerBF16Native : SQDistanceComputer {
 
     void set_query(const float* x) final {
         q = x;
+        use_exact = !detail::is_exact_bf16(x, d);
+        if (use_exact) {
+            exact->set_query(x);
+            return;
+        }
         for (size_t i = 0; i < d; i++) {
             qbf[i] = detail::fp32_to_bf16_rne(x[i]);
         }
     }
 
     float query_to_code(const uint8_t* code) const final {
+        if (use_exact) {
+            return exact->query_to_code(code);
+        }
         return dist(qbf.data(), code);
     }
 
@@ -195,6 +225,10 @@ struct DistanceComputerBF16Native : SQDistanceComputer {
             float& d1,
             float& d2,
             float& d3) const override {
+        if (use_exact) {
+            exact->query_to_codes_batch_4(c0, c1, c2, c3, d0, d1, d2, d3);
+            return;
+        }
         if constexpr (Sim::metric_type == METRIC_INNER_PRODUCT) {
             ::faiss::cppcontrib::knowhere::bf16_vec_inner_product_batch_4(
                     as_bf16(qbf.data()),
