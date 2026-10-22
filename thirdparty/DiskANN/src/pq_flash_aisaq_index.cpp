@@ -900,20 +900,8 @@ int PQFlashAisaqIndex<T>::aisaq_load(uint32_t num_threads,
                                      const char *index_prefix,
                                      std::unique_ptr<PQNavigationStore> navigation) {
 	this->index_prefix = std::string(index_prefix);
-    std::string pq_table_bin = this->index_prefix + "_pq_pivots.bin";
-    std::string pq_compressed_vectors =
-    		this->index_prefix + "_pq_compressed.bin";
-    std::string disk_index_file = this->index_prefix + "_disk.index";
-    return aisaq_load_from_separate_paths(num_threads, disk_index_file.c_str(),
-                                          pq_table_bin.c_str(),
-                                          pq_compressed_vectors.c_str(), std::move(navigation));
-}
-
-template <typename T>
-int PQFlashAisaqIndex<T>::aisaq_load_from_separate_paths(
-    uint32_t num_threads, const char *index_filepath,
-    const char *pivots_filepath, const char *compressed_filepath,
-    std::unique_ptr<PQNavigationStore> navigation) {
+    const std::string index_filepath =
+        get_disk_index_filename(this->index_prefix);
     std::string medoids_file = std::string(index_filepath) + "_medoids.bin";
     std::string centroids_file = std::string(index_filepath) + "_centroids.bin";
     std::string labels_file = std::string(index_filepath) + "_labels.txt";
@@ -922,14 +910,6 @@ int PQFlashAisaqIndex<T>::aisaq_load_from_separate_paths(
     std::string labels_map_file =
         std::string(index_filepath) + "_labels_map.txt";
 
-    if (!navigation) {
-        if (ReadNavigationCodec({this->index_prefix, {}, {}}) != "PQ")
-            throw NavigationTypeError("AiSAQ requires PQ navigation");
-        navigation = std::make_unique<PQNavigationStore>(false, false, pivots_filepath);
-        int result = navigation->Load(this->index_prefix);
-        if (result != 0)
-            return result;
-    }
     this->navigation_ = std::move(navigation);
     this->disk_index_file = index_filepath;
     this->num_points = this->navigation_->Count();

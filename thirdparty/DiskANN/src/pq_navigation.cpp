@@ -44,10 +44,9 @@ namespace diskann {
   }
 
   PQNavigationStore::PQNavigationStore(bool resident_codes, bool rearranged,
-                                       std::string              pivots_path,
                                        PQNavigationBuildOptions build_options)
       : build_options_(build_options), resident_codes_(resident_codes),
-        rearranged_(rearranged), pivots_path_(std::move(pivots_path)) {
+        rearranged_(rearranged) {
   }
 
   size_t PQNavigationStore::CodeSize(size_t count, size_t dimension,
@@ -133,8 +132,7 @@ namespace diskann {
   }
 
   int PQNavigationStore::Load(const std::string& prefix) {
-    const auto pivots =
-        pivots_path_.empty() ? get_pq_pivots_filename(prefix) : pivots_path_;
+    const auto pivots = get_pq_pivots_filename(prefix);
     size_t centroids, dimension;
     get_bin_metadata(pivots, centroids, dimension);
     if (centroids != 256) {

@@ -181,8 +181,6 @@ namespace diskann {
 
     // load compressed data, and obtains the handle to the disk-resident index
     int load(uint32_t num_threads, const char *index_prefix,
-             const std::optional<std::string> &navigation_codec = std::nullopt);
-    int load(uint32_t num_threads, const char *index_prefix,
              std::unique_ptr<NavigationStore> navigation);
 
     virtual void load_cache_list(std::vector<uint32_t> &node_list);

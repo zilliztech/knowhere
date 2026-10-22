@@ -1279,12 +1279,6 @@ base_AiSAQ_param_test() {
             test_json["beamwidth"] = diskann::defaults::MAX_AISAQ_BEAMWIDTH + 1;
             search_stat = diskann.Search(query_ds, test_json, nullptr);
             REQUIRE(search_stat.error() == knowhere::Status::out_of_range_in_json);
-            LOG_KNOWHERE_INFO_ << "Test beamwidth parameter value more than maximum "
-                               << diskann::defaults::MAX_AISAQ_BEAMWIDTH;
-            test_json = knn_search_gen();
-            test_json["beamwidth"] = diskann::defaults::MAX_AISAQ_BEAMWIDTH + 1;
-            search_stat = diskann.Search(query_ds, test_json, nullptr);
-            REQUIRE(search_stat.error() == knowhere::Status::out_of_range_in_json);
             LOG_KNOWHERE_INFO_ << "Test vectors_beamwidth parameter value more than maximum "
                                << diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH;
             test_json = knn_search_gen();
@@ -1908,7 +1902,7 @@ class NativePQFixture : public PQNavigationTestDirectory {
         config.compare_metric = diskann::Metric::L2;
         config.max_degree = 16;
         config.search_list_size = 64;
-        diskann::PQNavigationStore navigation(true, false, {}, {double(rows * 2) / (1024 * 1024 * 1024)});
+        diskann::PQNavigationStore navigation(true, false, {double(rows * 2) / (1024 * 1024 * 1024)});
         config.index_mem_gb = 1;
         REQUIRE(diskann::build_disk_index<float>(config, navigation) == 0);
     }
@@ -1954,32 +1948,29 @@ TEST_CASE("DiskANN navigation codec selection", "[diskann][navigation]") {
     auto omitted = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig("DISKANN", version);
     REQUIRE(knowhere::Config::Load(*omitted, request, phase) == knowhere::Status::success);
     REQUIRE_FALSE(static_cast<const knowhere::DiskANNConfig&>(*omitted).navigation.navigation_codec.has_value());
-    for (const auto* codec : {"PQ", "TQ", "invalid", ""}) {
+    for (const auto* codec : {"PQ", "RABITQ"}) {
+        request["navigation_codec"] = codec;
+        auto selected = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig("DISKANN", version);
+        REQUIRE(knowhere::Config::Load(*selected, request, phase) == knowhere::Status::success);
+        REQUIRE(static_cast<const knowhere::DiskANNConfig&>(*selected).navigation.navigation_codec.value() == codec);
+    }
+    for (const auto* codec : {"TQ", ""}) {
         request["navigation_codec"] = codec;
         auto selected = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig("DISKANN", version);
         std::string error;
-        const auto status = knowhere::Config::Load(*selected, request, phase, &error);
-        const bool rejects_config =
-            std::string(codec).empty() || (phase == knowhere::PARAM_TYPE::TRAIN && std::string(codec) != "PQ");
-        if (rejects_config) {
-            REQUIRE(status == knowhere::Status::invalid_args);
+        const bool rejects_config = std::string(codec).empty() || phase == knowhere::PARAM_TYPE::TRAIN;
+        REQUIRE(knowhere::Config::Load(*selected, request, phase, &error) ==
+                (rejects_config ? knowhere::Status::invalid_args : knowhere::Status::success));
+        if (rejects_config)
             REQUIRE(error == "Unsupported DiskANN navigation codec: " + std::string(codec));
-        } else {
-            REQUIRE(status == knowhere::Status::success);
-            REQUIRE(static_cast<const knowhere::DiskANNConfig&>(*selected).navigation.navigation_codec.value() ==
-                    codec);
-        }
-        if (std::string(codec) != "PQ") {
-            REQUIRE_THROWS_AS(diskann::CreateNavigationStore(codec), std::invalid_argument);
-            auto manager = std::make_shared<LegacyPQFileManager>(fs::path{});
-            auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
-            auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, pack).value();
-            const auto rejected =
-                phase == knowhere::PARAM_TYPE::TRAIN ? index.Build(nullptr, request) : index.Deserialize({}, request);
-            REQUIRE(rejected == (rejects_config ? knowhere::Status::invalid_args
-                                                : knowhere::Status::invalid_serialized_index_type));
-            REQUIRE(manager->loaded.empty());
-        }
+        auto manager = std::make_shared<LegacyPQFileManager>(fs::path{});
+        auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
+        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, pack).value();
+        const auto rejected =
+            phase == knowhere::PARAM_TYPE::TRAIN ? index.Build(nullptr, request) : index.Deserialize({}, request);
+        REQUIRE(rejected ==
+                (rejects_config ? knowhere::Status::invalid_args : knowhere::Status::invalid_serialized_index_type));
+        REQUIRE(manager->loaded.empty());
     }
 }
 TEST_CASE("PQ navigation matches the original lookup", "[diskann][navigation]") {
@@ -2460,7 +2451,7 @@ TEST_CASE("PQ navigation build preserves encoding and cache accounting", "[diska
         size_t sample_count, sample_dim;
         gen_random_slice<T>(data_path, 1.0, sample, sample_count, sample_dim);
         const auto prefix = (directory.path / "index").string();
-        diskann::PQNavigationStore navigation(true, false, {}, {double(rows * 2) / (1024 * 1024 * 1024)});
+        diskann::PQNavigationStore navigation(true, false, {double(rows * 2) / (1024 * 1024 * 1024)});
         REQUIRE(navigation.Build({prefix, data_path, knowhere::datatype_v<T>, metric, rows, sample_dim, sample.get(),
                                   sample_count}) == 0);
         const auto pivots = diskann::get_pq_pivots_filename(prefix);

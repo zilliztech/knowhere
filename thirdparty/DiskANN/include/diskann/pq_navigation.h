@@ -10,9 +10,6 @@ namespace diskann {
   // AiSAQ retains its existing reader and layout-specific code source.
   class PQDataGetter {
    public:
-    virtual _u8* get_pq_data() = 0;
-    virtual _u64 get_origin_id(_u64 id) = 0;
-    virtual void release_pq_data(size_t offset = 0, size_t size = 0) = 0;
     virtual void aggregate_pq_coords(const unsigned* ids, _u64 count,
                                      _u64 chunks, _u8* output) = 0;
     virtual ~PQDataGetter() = default;
@@ -69,7 +66,6 @@ namespace diskann {
    public:
     explicit PQNavigationStore(bool                     resident_codes = true,
                                bool                     rearranged = false,
-                               std::string              pivots_path = {},
                                PQNavigationBuildOptions build_options = {});
     const char* CodecName() const override {
       return "PQ";
@@ -112,7 +108,6 @@ namespace diskann {
     PQNavigationBuildOptions   build_options_;
     bool                       resident_codes_;
     bool                       rearranged_;
-    std::string                pivots_path_;
     uint64_t                   count_ = 0, dimension_ = 0, chunks_ = 0;
     std::unique_ptr<uint8_t[]> codes_;
     // The existing table API is non-const; query preparation only reads it.
