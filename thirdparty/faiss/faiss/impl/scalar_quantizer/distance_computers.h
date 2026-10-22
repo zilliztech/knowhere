@@ -165,18 +165,13 @@ struct DistanceComputerBF16Native : SQDistanceComputer {
         return reinterpret_cast<const bf16_t*>(p);
     }
 
-    static float clamp0(float v) {
-        // SVE L2 kernel uses |x|^2 + |y|^2 - 2xy; avoid tiny negatives.
-        return v < 0.f ? 0.f : v;
-    }
-
     float dist(const void* a, const void* b) const {
         if constexpr (Sim::metric_type == METRIC_INNER_PRODUCT) {
             return ::faiss::cppcontrib::knowhere::bf16_vec_inner_product(
                     as_bf16(a), as_bf16(b), d);
         } else {
-            return clamp0(::faiss::cppcontrib::knowhere::bf16_vec_L2sqr(
-                    as_bf16(a), as_bf16(b), d));
+            return ::faiss::cppcontrib::knowhere::bf16_vec_L2sqr(
+                    as_bf16(a), as_bf16(b), d);
         }
     }
 
@@ -224,10 +219,6 @@ struct DistanceComputerBF16Native : SQDistanceComputer {
                     d1,
                     d2,
                     d3);
-            d0 = clamp0(d0);
-            d1 = clamp0(d1);
-            d2 = clamp0(d2);
-            d3 = clamp0(d3);
         }
     }
 
