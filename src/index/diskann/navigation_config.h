@@ -55,14 +55,14 @@ class PQNavigationConfig {
 class DiskANNNavigationConfig {
  public:
     // Omission uses legacy PQ behavior; keep it distinct from an explicit choice.
-    CFG_STRING navigation_codec;
+    CFG_STRING quant_type;
     PQNavigationConfig pq;
     RaBitQNavigationConfig rabitq;
 
     void
     Register(Config& config) {
         auto& __DICT__ = config.__DICT__;
-        KNOWHERE_CONFIG_DECLARE_FIELD(navigation_codec)
+        KNOWHERE_CONFIG_DECLARE_FIELD(quant_type)
             .description("navigation codec: build defaults to PQ; load reads the stored type, optionally constrained")
             .allow_empty_without_default()
             .for_train()
@@ -73,18 +73,17 @@ class DiskANNNavigationConfig {
     }
     std::optional<std::string>
     CheckAndAdjust(PARAM_TYPE type, float vec_field_size_gb) {
-        if (navigation_codec &&
-            (navigation_codec->empty() ||
-             (type == PARAM_TYPE::TRAIN && !diskann::IsSupportedNavigationCodec(*navigation_codec)))) {
-            return "Unsupported DiskANN navigation codec: " + navigation_codec.value();
+        if (quant_type &&
+            (quant_type->empty() || (type == PARAM_TYPE::TRAIN && !diskann::IsSupportedNavigationCodec(*quant_type)))) {
+            return "Unsupported DiskANN navigation codec: " + quant_type.value();
         }
-        if (type == PARAM_TYPE::TRAIN && navigation_codec.value_or("PQ") == "PQ")
+        if (type == PARAM_TYPE::TRAIN && quant_type.value_or("PQ") == "PQ")
             pq.Adjust(vec_field_size_gb);
         return std::nullopt;
     }
     std::unique_ptr<diskann::NavigationStore>
     CreateForBuild() const {
-        const auto codec = navigation_codec.value_or("PQ");
+        const auto codec = quant_type.value_or("PQ");
         if (codec == "PQ")
             return std::make_unique<diskann::PQNavigationStore>(true, false, pq.BuildOptions());
         if (codec == "RABITQ")
@@ -93,10 +92,10 @@ class DiskANNNavigationConfig {
     }
     std::optional<uint64_t>
     EstimateLoadMemory(uint64_t file_size) const {
-        if (navigation_codec == "PQ")
+        if (quant_type.value_or("PQ") == "PQ")
             return file_size / 4;
-        // Before reading metadata, the serialized payload is a conservative
-        // model allowance. Do not assume PQ or RaBitQ's build-time bit default.
+        // Static estimation receives persisted build + load parameters. Omission
+        // preserves the legacy PQ estimate; explicit RaBitQ reserves its payload.
         if (file_size > std::numeric_limits<uint64_t>::max() - file_size / 4)
             return std::nullopt;
         return file_size + file_size / 4;

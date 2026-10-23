@@ -270,8 +270,8 @@ AnyIndexFileExist(const std::string& index_prefix, const diskann::NavigationStor
         }
         return false;
     };
-    return file_exist(GetNecessaryFilenames(index_prefix, diskann::INNER_PRODUCT, true, true, false, false,
-                                           navigation)) ||
+    return file_exist(
+               GetNecessaryFilenames(index_prefix, diskann::INNER_PRODUCT, true, true, false, false, navigation)) ||
            file_exist(GetOptionalFilenames(index_prefix));
 }
 
@@ -417,9 +417,8 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
     }));
 
     navigation = std::make_unique<diskann::PQNavigationStore>(false, aisaq_internal_build_config.rearrange);
-    RETURN_IF_ERROR(TryDiskANNCall([&]() {
-        diskann::WriteNavigationMetadata(index_prefix_, navigation->CodecName());
-    }));
+    RETURN_IF_ERROR(
+        TryDiskANNCall([&]() { diskann::WriteNavigationMetadata(index_prefix_, navigation->CodecName()); }));
     // Register navigation, graph and SSD files through one collected list.
     for (auto& filename :
          GetNecessaryFilenames(index_prefix_, need_norm, true, true, aisaq_internal_build_config.rearrange,
@@ -457,8 +456,8 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         return Status::invalid_metric_type;
     }
     if (is_prepared_.load()) {
-        if (prep_conf.navigation.navigation_codec &&
-            *prep_conf.navigation.navigation_codec != ssd_graph_index_->get_navigation_codec()) {
+        if (prep_conf.navigation.quant_type &&
+            *prep_conf.navigation.quant_type != ssd_graph_index_->get_navigation_codec()) {
             return Status::invalid_serialized_index_type;
         }
         return Status::success;
@@ -483,15 +482,15 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
 
     std::unique_ptr<diskann::PQNavigationStore> navigation;
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
-        diskann::NavigationMetadataContext context{index_prefix_, {},
-            [&](const std::string& file) { return LoadFile(file); }};
+        diskann::NavigationMetadataContext context{
+            index_prefix_, {}, [&](const std::string& file) { return LoadFile(file); }};
         // The exact LocalFileManager placeholder tracks registrations only.
         // Other managers, including remote adapters, own the existence result.
         if (typeid(*file_manager_) != typeid(milvus::LocalFileManager)) {
             context.exists = [&](const std::string& file) { return file_manager_->IsExisted(file); };
         }
         const auto codec = diskann::ReadNavigationCodec(context);
-        if (prep_conf.navigation.navigation_codec && *prep_conf.navigation.navigation_codec != codec) {
+        if (prep_conf.navigation.quant_type && *prep_conf.navigation.quant_type != codec) {
             throw diskann::NavigationTypeError("Requested navigation codec does not match stored model");
         }
         if (codec != "PQ") {
@@ -502,10 +501,9 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
 
     // Metadata selected the implementation; prepare all model and graph files together.
     bool use_bfs_cache = prep_conf.use_bfs_cache.value();
-    for (auto& filename :
-         GetNecessaryFilenames(index_prefix_, need_norm, prep_conf.search_cache_budget_gb.value() > 0 && !use_bfs_cache,
-                               prep_conf.warm_up.value(), rearrange, entry_points, *navigation,
-                               diskann::NavigationFilePurpose::Load)) {
+    for (auto& filename : GetNecessaryFilenames(
+             index_prefix_, need_norm, prep_conf.search_cache_budget_gb.value() > 0 && !use_bfs_cache,
+             prep_conf.warm_up.value(), rearrange, entry_points, *navigation, diskann::NavigationFilePurpose::Load)) {
         if (!LoadFile(filename)) {
             return Status::disk_file_error;
         }
@@ -561,8 +559,8 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
 
     if (prep_conf.pq_cache_size.value() > 0) {
         if (ssd_graph_index_->aisaq_load_pq_cache(index_prefix_, prep_conf.pq_cache_size.value(),
-                                                 diskann::aisaq_pq_cache_policy_auto,
-                                                 ssd_graph_index_->get_rearrange_during_search()) != true) {
+                                                  diskann::aisaq_pq_cache_policy_auto,
+                                                  ssd_graph_index_->get_rearrange_during_search()) != true) {
             LOG_KNOWHERE_ERROR_ << "Failed to load aisaq cache";
             return Status::aisaq_error;
         }
@@ -606,7 +604,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
                 LOG_KNOWHERE_INFO_ << "Use sample_queries to generate cache list";
                 if (TryDiskANNCall([&]() {
                         ssd_graph_index_->aisaq_async_generate_cache_list_from_sample_queries(warmup_query_file, 15, 6,
-                                                                                             num_nodes_to_cache);
+                                                                                              num_nodes_to_cache);
                     }) != Status::success) {
                     LOG_KNOWHERE_ERROR_ << "Failed to generate cache from sample queries for AiSAQ.";
                     return Status::aisaq_error;
@@ -646,8 +644,8 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         for (uint64_t i = 0; i < warmup_num; ++i) {
             futures.emplace_back(search_pool_->push([&, index = i]() {
                 ssd_graph_index_->aisaq_cached_beam_search(warmup + (index * warmup_aligned_dim), 1, warmup_L,
-                                                          warmup_result_ids_64.data() + (index * 1),
-                                                          warmup_result_dists.data() + (index * 1), 4);
+                                                           warmup_result_ids_64.data() + (index * 1),
+                                                           warmup_result_dists.data() + (index * 1), 4);
             }));
         }
 
@@ -735,8 +733,8 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
             knowhere::checkCancellation(op_context);
             diskann::QueryStats stats;
             ssd_graph_index_->aisaq_cached_beam_search(xq + (index * dim), k, lsearch, p_id_ptr + (index * k),
-                                                      p_dist_ptr + (index * k), beamwidth, false, &stats, feder_result,
-                                                      bitset, filter_ratio, &aisaq_search_config);
+                                                       p_dist_ptr + (index * k), beamwidth, false, &stats, feder_result,
+                                                       bitset, filter_ratio, &aisaq_search_config);
 #ifdef NOT_COMPILE_FOR_SWIG
             knowhere_diskann_search_hops.Observe(stats.n_hops);
 #endif
@@ -827,10 +825,10 @@ AisaqIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     LOG_KNOWHERE_INFO_ << "disk_pq_dims " << aisaq_conf.disk_pq_dims.value();
     LOG_KNOWHERE_INFO_ << "accelerate_build " << aisaq_conf.accelerate_build.value();
     LOG_KNOWHERE_INFO_ << "data_path " << aisaq_conf.data_path.value();
-    feder::diskann::DiskANNMeta meta(
-        aisaq_conf.data_path.value(), aisaq_conf.max_degree.value(), aisaq_conf.search_list_size.value(),
-        aisaq_conf.build_dram_budget_gb.value(), aisaq_conf.disk_pq_dims.value(),
-        aisaq_conf.accelerate_build.value(), Count(), entry_points);
+    feder::diskann::DiskANNMeta meta(aisaq_conf.data_path.value(), aisaq_conf.max_degree.value(),
+                                     aisaq_conf.search_list_size.value(), aisaq_conf.build_dram_budget_gb.value(),
+                                     aisaq_conf.disk_pq_dims.value(), aisaq_conf.accelerate_build.value(), Count(),
+                                     entry_points);
     std::unordered_set<int64_t> id_set(entry_points.begin(), entry_points.end());
 
     Json json_meta, json_id_set;

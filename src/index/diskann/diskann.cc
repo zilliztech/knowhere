@@ -46,15 +46,8 @@ class DiskANNIndexNode : public IndexNode {
 
  public:
     using DistType = float;
-    using ConfigFactory = std::unique_ptr<BaseConfig> (*)();
-    DiskANNIndexNode(const int32_t& version, const Object& object, std::string index_type = IndexEnum::INDEX_DISKANN,
-                     ConfigFactory create_config = StaticCreateConfig)
-        : IndexNode(version),
-          index_type_(std::move(index_type)),
-          create_config_(create_config),
-          is_prepared_(false),
-          dim_(-1),
-          count_(-1) {
+    DiskANNIndexNode(const int32_t& version, const Object& object)
+        : IndexNode(version), is_prepared_(false), dim_(-1), count_(-1) {
         assert(typeid(object) == typeid(Pack<std::shared_ptr<milvus::FileManager>>));
         auto diskann_index_pack = dynamic_cast<const Pack<std::shared_ptr<milvus::FileManager>>*>(&object);
         assert(diskann_index_pack != nullptr);
@@ -184,7 +177,7 @@ class DiskANNIndexNode : public IndexNode {
 
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return create_config_();
+        return StaticCreateConfig();
     }
 
     Status
@@ -226,7 +219,7 @@ class DiskANNIndexNode : public IndexNode {
 
     std::string
     Type() const override {
-        return index_type_;
+        return knowhere::IndexEnum::INDEX_DISKANN;
     }
 
     expected<std::vector<IndexNode::IteratorPtr>>
@@ -291,8 +284,6 @@ class DiskANNIndexNode : public IndexNode {
     GetCachedNodeNum(const float cache_dram_budget, const uint64_t data_dim, size_t chunk_size,
                      const uint64_t max_degree);
 
-    const std::string index_type_;
-    const ConfigFactory create_config_;
     std::string index_prefix_;
     mutable std::mutex preparation_lock_;
     std::atomic_bool is_prepared_;
@@ -620,8 +611,8 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
     }
     if (is_prepared_.load()) {
         if (!ssd_graph_index_->is_navigation_compatible(datatype_v<DataType>, !el_metric_type_.empty()) ||
-            (prep_conf.navigation.navigation_codec &&
-             *prep_conf.navigation.navigation_codec != ssd_graph_index_->get_navigation_codec())) {
+            (prep_conf.navigation.quant_type &&
+             *prep_conf.navigation.quant_type != ssd_graph_index_->get_navigation_codec())) {
             return Status::invalid_serialized_index_type;
         }
         return Status::success;
@@ -654,7 +645,7 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
             context.exists = [&](const std::string& file) { return file_manager_->IsExisted(file); };
         }
         const auto codec = diskann::ReadNavigationCodec(context);
-        if (prep_conf.navigation.navigation_codec && *prep_conf.navigation.navigation_codec != codec) {
+        if (prep_conf.navigation.quant_type && *prep_conf.navigation.quant_type != codec) {
             throw diskann::NavigationTypeError("Requested navigation codec does not match stored model");
         }
         navigation = diskann::CreateNavigationStore(codec);
@@ -1151,31 +1142,6 @@ DiskANNIndexNode<DataType>::GetCachedNodeNum(const float cache_dram_budget, cons
     return num_nodes_to_cache;
 }
 
-// Entry metadata adapts the existing static registration API. Both names
-// construct the same Node; codec implementations own navigation behavior.
-template <typename DataType, typename EntryConfig>
-struct DiskANNEntryRegistration {
-    using Node = DiskANNIndexNode<DataType>;
-    static std::unique_ptr<BaseConfig>
-    StaticCreateConfig() {
-        return std::make_unique<EntryConfig>();
-    }
-    static constexpr auto StaticHasRawData = Node::StaticHasRawData;
-    static constexpr auto StaticConfigCheck = Node::StaticConfigCheck;
-    static constexpr auto StaticEstimateLoadResource = Node::StaticEstimateLoadResource;
-
-    static const IndexFactory&
-    Register(const std::string& name, uint64_t features) {
-        IndexStaticFaced<DataType>::Instance().template RegisterStaticFunc<DiskANNEntryRegistration>(name);
-        return IndexFactory::Instance().Register<DataType>(
-            name,
-            [name](const int32_t& version, const Object& object) -> Index<IndexNode> {
-                return Index<Node>::Create(version, object, name, StaticCreateConfig);
-            },
-            features);
-    }
-};
-
 #ifdef KNOWHERE_WITH_CARDINAL
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN_DEPRECATED, DiskANNIndexNode,
                                                 knowhere::feature::DISK | knowhere::feature::EMB_LIST)
@@ -1183,6 +1149,4 @@ KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN_DEPRECATED, DiskANNIndex
 KNOWHERE_SIMPLE_REGISTER_DENSE_FLOAT_ALL_GLOBAL(DISKANN, DiskANNIndexNode,
                                                 knowhere::feature::DISK | knowhere::feature::EMB_LIST)
 #endif
-const auto& diskann_rabitq_entry = DiskANNEntryRegistration<fp32, DiskANNRaBitQConfig>::Register(
-    IndexEnum::INDEX_DISKANN_RABITQ, feature::DISK | feature::FLOAT32);
 }  // namespace knowhere

@@ -13,7 +13,7 @@ class AisaqConfig : public DiskANNConfig {
  public:
     Status
     CheckAndAdjust(PARAM_TYPE type, std::string* error) override {
-        if (type == PARAM_TYPE::TRAIN && navigation.navigation_codec && *navigation.navigation_codec != "PQ")
+        if (type == PARAM_TYPE::TRAIN && navigation.quant_type && *navigation.quant_type != "PQ")
             return HandleError(error, "AiSAQ requires PQ navigation", Status::invalid_args);
         return DiskANNConfig::CheckAndAdjust(type, error);
     }
