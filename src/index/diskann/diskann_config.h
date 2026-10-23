@@ -27,7 +27,8 @@ constexpr const CFG_INT::value_type kDefaultSearchListSizeForBuild = 128;
 
 class DiskANNConfig : public BaseConfig {
  public:
-    DiskANNNavigationConfig navigation;
+    CFG_STRING quant_type;
+    std::unique_ptr<NavigationConfig> navigation;
     // This is the degree of the graph index, typically between 60 and 150. Larger R will result in larger indices and
     // longer indexing times, but better search quality.
     CFG_INT max_degree;
@@ -79,7 +80,12 @@ class DiskANNConfig : public BaseConfig {
     // use PQ + Refine. Default to -1.0f, negative vlaues will use dynamic threshold calculator given topk.
     CFG_FLOAT filter_threshold;
     KNOWHERE_DECLARE_CONFIG(DiskANNConfig) {
-        navigation.Register(*this);
+        KNOWHERE_CONFIG_DECLARE_FIELD(quant_type)
+            .description("navigation codec: build defaults to PQ; load reads the stored type, optionally constrained")
+            .allow_empty_without_default()
+            .for_train()
+            .for_deserialize()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(max_degree)
             .description("the degree of the graph index.")
             .set_default(48)
@@ -152,10 +158,16 @@ class DiskANNConfig : public BaseConfig {
     }
 
     Status
+    LoadSubConfig(const Json& json, PARAM_TYPE type, std::string* error) override {
+        if (quant_type && (quant_type->empty() || ((type == PARAM_TYPE::TRAIN || type == PARAM_TYPE::STATIC) &&
+                                                   !diskann::IsSupportedNavigationCodec(*quant_type))))
+            return HandleError(error, "Unsupported DiskANN navigation codec: " + *quant_type, Status::invalid_args);
+        if (type == PARAM_TYPE::TRAIN || type == PARAM_TYPE::STATIC)
+            navigation = CreateNavigationConfig(quant_type.value_or("PQ"));
+        return navigation ? navigation->Load(json, type, vec_field_size_gb.value_or(0), error) : Status::success;
+    }
+    Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
-        if (auto error = navigation.CheckAndAdjust(param_type, vec_field_size_gb.value_or(0))) {
-            return HandleError(err_msg, *error, Status::invalid_args);
-        }
         switch (param_type) {
             case PARAM_TYPE::TRAIN: {
                 if (!search_list_size.has_value()) {

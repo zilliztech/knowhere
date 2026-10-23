@@ -13,6 +13,7 @@
 #include "filemanager/impl/LocalFileManager.h"
 #include "fmt/core.h"
 #include "index/diskann/aisaq_config.h"
+#include "index/diskann/pq_navigation_config.h"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/context.h"
 #include "knowhere/dataset.h"
@@ -111,7 +112,10 @@ class AisaqIndexNode : public IndexNode {
 
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return StaticCreateConfig();
+        auto config = std::make_unique<AisaqConfig>();
+        if (is_prepared_.load())
+            config->navigation = CreateNavigationConfig(ssd_graph_index_->get_navigation_codec());
+        return config;
     }
 
     Status
@@ -294,7 +298,7 @@ template <typename DataType>
 Status
 AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) {
     assert(file_manager_ != nullptr);
-    auto build_conf = static_cast<const AisaqConfig&>(*cfg);
+    const auto& build_conf = static_cast<const AisaqConfig&>(*cfg);
 
     assert(build_conf.inline_pq.has_value());
     assert(build_conf.rearrange.has_value());
@@ -341,7 +345,7 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
         LOG_KNOWHERE_ERROR_ << "AiSAQ file path for build is empty.";
         return Status::invalid_param_in_json;
     }
-    auto navigation = build_conf.navigation.CreateForBuild();
+    auto navigation = build_conf.navigation->CreateForBuild();
     if (AnyIndexFileExist(build_conf.index_prefix.value(), *navigation)) {
         LOG_KNOWHERE_ERROR_ << "This index prefix already has index files.";
         return Status::disk_file_error;
@@ -371,9 +375,10 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
         }
     }();
 
+    bool rearrange = build_conf.rearrange.value();
     uint32_t inline_pq_vectors;
-    uint32_t pq_compressed_nbytes =
-        diskann::PQNavigationStore::CodeSize(count, dim, build_conf.navigation.pq.BuildOptions());
+    uint32_t pq_compressed_nbytes = diskann::PQNavigationStore::CodeSize(
+        count, dim, static_cast<const PQNavigationConfig&>(*build_conf.navigation).BuildOptions());
     uint64_t max_node_len;
     // calc max_node_len in order to estimate number of nodes to cache
     if (build_conf.disk_pq_dims.value() > 0) {
@@ -384,14 +389,14 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
         max_node_len = (static_cast<uint64_t>(build_conf.max_degree.value()) + 1) * sizeof(uint32_t) +
                        disk_pq_nchunks * sizeof(_u8);
         diskann::aisaq_calc_inline_layout<_u8>(build_conf.inline_pq.value(), pq_compressed_nbytes,
-                                               build_conf.max_degree.value(), build_conf.rearrange.value(),
-                                               inline_pq_vectors, max_node_len);
+                                               build_conf.max_degree.value(), rearrange, inline_pq_vectors,
+                                               max_node_len);
     } else {
         max_node_len =
             (static_cast<uint64_t>(build_conf.max_degree.value()) + 1) * sizeof(uint32_t) + dim * sizeof(DataType);
         diskann::aisaq_calc_inline_layout<DataType>(build_conf.inline_pq.value(), pq_compressed_nbytes,
-                                                    build_conf.max_degree.value(), build_conf.rearrange.value(),
-                                                    inline_pq_vectors, max_node_len);
+                                                    build_conf.max_degree.value(), rearrange, inline_pq_vectors,
+                                                    max_node_len);
     }
 
     auto num_nodes_to_cache = GetCachedNodeNum(build_conf.search_cache_budget_gb.value(), max_node_len);
@@ -408,7 +413,7 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
                                                      build_conf.shuffle_build.value(),
                                                      true,
                                                      static_cast<uint32_t>(build_conf.inline_pq.value()),
-                                                     build_conf.rearrange.value(),
+                                                     rearrange,
                                                      build_conf.num_entry_points.value()};
     RETURN_IF_ERROR(TryDiskANNCall([&]() {
         int res = diskann::build_disk_index<DataType>(aisaq_internal_build_config, *navigation);
@@ -441,7 +446,7 @@ AisaqIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config
 template <typename DataType>
 Status
 AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) {
-    auto prep_conf = static_cast<const AisaqConfig&>(*cfg);
+    const auto& prep_conf = static_cast<const AisaqConfig&>(*cfg);
     bool rearrange = prep_conf.rearrange.value();
     bool entry_points = prep_conf.num_entry_points.value() > 0;
     assert(prep_conf.pq_cache_size.has_value());
@@ -456,8 +461,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         return Status::invalid_metric_type;
     }
     if (is_prepared_.load()) {
-        if (prep_conf.navigation.quant_type &&
-            *prep_conf.navigation.quant_type != ssd_graph_index_->get_navigation_codec()) {
+        if (prep_conf.quant_type && *prep_conf.quant_type != ssd_graph_index_->get_navigation_codec()) {
             return Status::invalid_serialized_index_type;
         }
         return Status::success;
@@ -490,7 +494,7 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
             context.exists = [&](const std::string& file) { return file_manager_->IsExisted(file); };
         }
         const auto codec = diskann::ReadNavigationCodec(context);
-        if (prep_conf.navigation.quant_type && *prep_conf.navigation.quant_type != codec) {
+        if (prep_conf.quant_type && *prep_conf.quant_type != codec) {
             throw diskann::NavigationTypeError("Requested navigation codec does not match stored model");
         }
         if (codec != "PQ") {
@@ -550,7 +554,6 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
         prep_conf.pq_read_page_cache_size.value() > 0) {
         LOG_KNOWHERE_WARNING_
             << "Dynamic cache can only be used when vectors rearrangement is enabled. dynamic cache will be disabled";
-        prep_conf.pq_read_page_cache_size.value() = 0;
     }
 
     if (ssd_graph_index_->aisaq_init(pq_read_io_engine, index_prefix_.c_str()) != 0) {
@@ -675,7 +678,7 @@ AisaqIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Confi
         return expected<DataSetPtr>::Err(Status::empty_index, "AiSAQ not loaded");
     }
 
-    auto search_conf = static_cast<const AisaqConfig&>(*cfg);
+    const auto& search_conf = static_cast<const AisaqConfig&>(*cfg);
     if (!CheckMetric(search_conf.metric_type.value())) {
         return expected<DataSetPtr>::Err(Status::invalid_metric_type, "unsupported metric type");
     }
@@ -817,7 +820,7 @@ AisaqIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     for (size_t i = 0; i < num_medoids; i++) {
         entry_points.push_back(ssd_graph_index_->get_medoids()[i]);
     }
-    auto aisaq_conf = static_cast<const DiskANNConfig&>(*cfg);
+    const auto& aisaq_conf = static_cast<const DiskANNConfig&>(*cfg);
     LOG_KNOWHERE_INFO_ << "Count " << Count();
     LOG_KNOWHERE_INFO_ << "max_degree " << aisaq_conf.max_degree.value();
     LOG_KNOWHERE_INFO_ << "search_list_size " << aisaq_conf.search_list_size.value();
@@ -833,7 +836,7 @@ AisaqIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
 
     Json json_meta, json_id_set;
     nlohmann::to_json(json_meta, meta);
-    aisaq_conf.navigation.AppendBuildMetadata(ssd_graph_index_->get_navigation_codec(), json_meta["build_params_"]);
+    aisaq_conf.navigation->AppendBuildMetadata(json_meta["build_params_"]);
     nlohmann::to_json(json_id_set, id_set);
     return GenResultDataSet(json_meta.dump(), json_id_set.dump());
 }

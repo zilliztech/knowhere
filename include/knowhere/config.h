@@ -542,11 +542,10 @@ class Config {
             }
         }
 
-        if (!err_msg) {
-            std::string tem_msg;
-            return cfg.CheckAndAdjust(type, &tem_msg);
-        }
-        return cfg.CheckAndAdjust(type, err_msg);
+        std::string local_error;
+        auto* error = err_msg ? err_msg : &local_error;
+        const auto status = cfg.LoadSubConfig(json, type, error);
+        return status == Status::success ? cfg.CheckAndAdjust(type, error) : status;
     }
 
     virtual ~Config() {
@@ -557,6 +556,10 @@ class Config {
     std::unordered_map<std::string, VarEntry> __DICT__;
 
  protected:
+    virtual Status
+    LoadSubConfig(const Json&, PARAM_TYPE, std::string*) {
+        return Status::success;
+    }
     inline virtual Status
     CheckAndAdjust(PARAM_TYPE param_type, std::string* const err_msg) {
         return Status::success;

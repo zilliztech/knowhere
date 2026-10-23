@@ -29,6 +29,7 @@
 #include "filemanager/FileManager.h"
 #include "filemanager/impl/LocalFileManager.h"
 #include "index/diskann/diskann_config.h"
+#include "index/diskann/pq_navigation_config.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/knowhere_check.h"
 #include "knowhere/expected.h"
@@ -128,8 +129,9 @@ TEST_CASE("Valid diskann build params test", "[diskann]") {
         res = knowhere::Config::Load(*cfg, json_, knowhere::PARAM_TYPE::TRAIN, &msg);
         REQUIRE(res == knowhere::Status::success);
 
-        knowhere::DiskANNConfig diskCfg = static_cast<const knowhere::DiskANNConfig&>(*cfg);
-        REQUIRE(diskCfg.navigation.pq.pq_code_budget_gb == std::max(pq_code_budget_gb, 1.0f * ratio));
+        const auto& diskCfg = static_cast<const knowhere::DiskANNConfig&>(*cfg);
+        REQUIRE(static_cast<const knowhere::PQNavigationConfig&>(*diskCfg.navigation).pq_code_budget_gb ==
+                std::max(pq_code_budget_gb, 1.0f * ratio));
         REQUIRE(diskCfg.search_cache_budget_gb == std::max(search_cache_budget_gb, 1.0f * ratio));
     }
 }
@@ -1947,16 +1949,36 @@ TEST_CASE("DiskANN navigation codec selection", "[diskann][navigation]") {
         {"metric_type", "L2"}, {"dim", 8}, {"index_prefix", "unused_index"}, {"data_path", "unused_data"}};
     auto omitted = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig("DISKANN", version);
     REQUIRE(knowhere::Config::Load(*omitted, request, phase) == knowhere::Status::success);
-    REQUIRE_FALSE(static_cast<const knowhere::DiskANNConfig&>(*omitted).navigation.quant_type.has_value());
+    REQUIRE_FALSE(static_cast<const knowhere::DiskANNConfig&>(*omitted).quant_type.has_value());
     if (phase == knowhere::PARAM_TYPE::TRAIN)
         REQUIRE(std::string(
-                    static_cast<const knowhere::DiskANNConfig&>(*omitted).navigation.CreateForBuild()->CodecName()) ==
+                    static_cast<const knowhere::DiskANNConfig&>(*omitted).navigation->CreateForBuild()->CodecName()) ==
                 "PQ");
+    else
+        REQUIRE_FALSE(static_cast<const knowhere::DiskANNConfig&>(*omitted).navigation);
     for (const auto* codec : {"PQ", "RABITQ"}) {
         request["quant_type"] = codec;
+        const bool pq = std::string(codec) == "PQ";
+        request["pq_code_budget_gb"] = pq ? knowhere::Json("0.25") : knowhere::Json(-1);
+        request["pq_code_budget_gb_ratio"] = pq ? knowhere::Json("0.5") : knowhere::Json(-1);
+        request["vec_field_size_gb"] = 2.0;
+        request["rbq_bits"] = pq ? knowhere::Json(10) : knowhere::Json("3");
         auto selected = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig("DISKANN", version);
         REQUIRE(knowhere::Config::Load(*selected, request, phase) == knowhere::Status::success);
-        REQUIRE(static_cast<const knowhere::DiskANNConfig&>(*selected).navigation.quant_type.value() == codec);
+        const auto& selected_config = static_cast<const knowhere::DiskANNConfig&>(*selected);
+        REQUIRE(selected_config.quant_type.value() == codec);
+        if (phase == knowhere::PARAM_TYPE::TRAIN) {
+            REQUIRE(std::string(selected_config.navigation->CreateForBuild()->CodecName()) == codec);
+            knowhere::Json metadata;
+            selected_config.navigation->AppendBuildMetadata(metadata);
+            REQUIRE(metadata.at(pq ? "pq_code_budget_gb" : "rbq_bits") == (pq ? 1.0 : 3.0));
+            std::string error;
+            REQUIRE(knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck("DISKANN", version, request, error) ==
+                    knowhere::Status::success);
+            if (pq)
+                REQUIRE(knowhere::Config::Load(*selected, {{"k", 8}, {"rbq_bits_query", 9}},
+                                               knowhere::PARAM_TYPE::SEARCH) == knowhere::Status::success);
+        }
     }
     for (const auto* codec : {"TQ", ""}) {
         request["quant_type"] = codec;
@@ -2556,14 +2578,14 @@ TEST_CASE("DiskANN common metadata does not own navigation parameters", "[diskan
     REQUIRE(params.at("disk_pq_dims") == 7);
     REQUIRE_FALSE(params.contains("pq_code_budget_gb"));
 
-    knowhere::DiskANNNavigationConfig navigation;
-    navigation.AppendBuildMetadata("PQ", params);
+    auto navigation = knowhere::CreateNavigationConfig("PQ");
+    navigation->AppendBuildMetadata(params);
     REQUIRE_FALSE(params.contains("pq_code_budget_gb"));
-    navigation.pq.pq_code_budget_gb = 0.25f;
-    navigation.AppendBuildMetadata("PQ", params);
+    static_cast<knowhere::PQNavigationConfig&>(*navigation).pq_code_budget_gb = 0.25f;
+    navigation->AppendBuildMetadata(params);
     REQUIRE(params.at("pq_code_budget_gb") == 0.25f);
     REQUIRE(params.at("disk_pq_dims") == 7);
-    REQUIRE_THROWS_AS(navigation.AppendBuildMetadata("TQ", params), diskann::NavigationTypeError);
+    REQUIRE_THROWS_AS(knowhere::CreateNavigationConfig("TQ"), diskann::NavigationTypeError);
 }
 
 TEST_CASE("DiskANN and AiSAQ delegate PQ metadata to navigation", "[diskann][navigation][navigation-metadata]") {

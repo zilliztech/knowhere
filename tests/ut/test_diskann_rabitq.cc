@@ -24,6 +24,7 @@
 #include "diskann/ssd_graph_index.h"
 #include "filemanager/impl/LocalFileManager.h"
 #include "index/diskann/aisaq_config.h"
+#include "index/diskann/rabitq_navigation_config.h"
 #include "knowhere/comp/knowhere_check.h"
 #include "knowhere/context.h"
 #include "knowhere/index/index_factory.h"
@@ -206,20 +207,20 @@ TEST_CASE("DiskANN RaBitQ registration and codec parameters", "[diskann][diskann
     auto config = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig("DISKANN", version);
     REQUIRE(knowhere::Config::Load(*config, json, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::success);
     auto& navigation = static_cast<knowhere::DiskANNConfig&>(*config).navigation;
-    REQUIRE(navigation.rabitq.BuildOptions().bits == 1);
+    REQUIRE(static_cast<const knowhere::RaBitQNavigationConfig&>(*navigation).BuildOptions().bits == 1);
     knowhere::Json metadata;
-    navigation.AppendBuildMetadata("RABITQ", metadata);
+    navigation->AppendBuildMetadata(metadata);
     // Loading without the original build config must not invent stored bits.
     REQUIRE_FALSE(metadata.contains("rbq_bits"));
-    REQUIRE(std::string(navigation.CreateForBuild()->CodecName()) == "RABITQ");
-    for (int bits : {0, 10}) {
-        json["rbq_bits"] = bits;
-        REQUIRE(knowhere::Config::Load(*config, json, knowhere::PARAM_TYPE::TRAIN) ==
-                knowhere::Status::out_of_range_in_json);
-    }
+    REQUIRE(std::string(navigation->CreateForBuild()->CodecName()) == "RABITQ");
     for (int bits : {-1, 9}) {
         auto search = knowhere::Json{{"metric_type", "L2"}, {"k", 8}, {"rbq_bits_query", bits}};
         REQUIRE(knowhere::Config::Load(*config, search, knowhere::PARAM_TYPE::SEARCH) ==
+                knowhere::Status::out_of_range_in_json);
+    }
+    for (int bits : {0, 10}) {
+        json["rbq_bits"] = bits;
+        REQUIRE(knowhere::Config::Load(*config, json, knowhere::PARAM_TYPE::TRAIN) ==
                 knowhere::Status::out_of_range_in_json);
     }
     knowhere::AisaqConfig aisaq;
@@ -312,6 +313,20 @@ TEST_CASE("DiskANN RaBitQ searches independent SSD encodings and metrics", "[dis
     const auto params = knowhere::Json::parse(meta.value()->GetJsonInfo()).at("build_params_");
     REQUIRE(params.at("rbq_bits") == build.at("rbq_bits"));
     REQUIRE_FALSE(params.contains("pq_code_budget_gb"));
+    auto fresh = index.Node()->CreateConfig();
+    REQUIRE(knowhere::Config::Load(*fresh, {}, knowhere::PARAM_TYPE::FEDER) == knowhere::Status::success);
+    auto& fresh_navigation = static_cast<knowhere::DiskANNConfig&>(*fresh).navigation;
+    REQUIRE(dynamic_cast<knowhere::RaBitQNavigationConfig*>(fresh_navigation.get()) != nullptr);
+    knowhere::Json unloaded_params;
+    fresh_navigation->AppendBuildMetadata(unloaded_params);
+    REQUIRE_FALSE(unloaded_params.contains("rbq_bits"));
+    // A loaded RBQ model must not change the default for a new build.
+    auto rebuild = build;
+    rebuild.erase("quant_type");
+    rebuild["rbq_bits"] = 10;
+    REQUIRE(knowhere::Config::Load(*fresh, rebuild, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::success);
+    REQUIRE(std::string(static_cast<knowhere::DiskANNConfig&>(*fresh).navigation->CreateForBuild()->CodecName()) ==
+            "PQ");
 }
 
 TEST_CASE("RaBitQ iterators interleave query parameters and searches", "[diskann][diskann-rabitq]") {
@@ -536,4 +551,9 @@ TEST_CASE("DiskANN load admission preserves legacy PQ estimates", "[diskann][dis
     auto overflow = knowhere::IndexStaticFaced<knowhere::fp32>::EstimateLoadResource(
         "DISKANN", version, std::numeric_limits<uint64_t>::max(), 512, 16, rabitq);
     REQUIRE_FALSE(overflow.has_value());
+    auto unsupported = request;
+    unsupported["quant_type"] = "TQ";
+    auto rejected = estimate(unsupported);
+    REQUIRE_FALSE(rejected.has_value());
+    REQUIRE(rejected.error() == knowhere::Status::invalid_args);
 }

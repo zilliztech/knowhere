@@ -146,7 +146,8 @@ class DiskANNIndexNode : public IndexNode {
     static expected<Resource>
     StaticEstimateLoadResource(const uint64_t file_size_in_bytes, const int64_t num_rows, const int64_t dim,
                                const knowhere::BaseConfig& config, const IndexVersion& version) {
-        const auto memory = static_cast<const DiskANNConfig&>(config).navigation.EstimateLoadMemory(file_size_in_bytes);
+        const auto memory =
+            static_cast<const DiskANNConfig&>(config).navigation->EstimateLoadMemory(file_size_in_bytes);
         if (!memory)
             return expected<Resource>::Err(Status::invalid_args, "DiskANN resource estimate overflows");
         return Resource{.memoryCost = *memory, .diskCost = file_size_in_bytes};
@@ -177,7 +178,10 @@ class DiskANNIndexNode : public IndexNode {
 
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
-        return StaticCreateConfig();
+        auto config = std::make_unique<DiskANNConfig>();
+        if (is_prepared_.load())
+            config->navigation = CreateNavigationConfig(ssd_graph_index_->get_navigation_codec());
+        return config;
     }
 
     Status
@@ -442,7 +446,7 @@ template <typename DataType>
 Status
 DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) {
     assert(file_manager_ != nullptr);
-    auto build_conf = static_cast<const DiskANNConfig&>(*cfg);
+    const auto& build_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(build_conf.metric_type.value())) {
         LOG_KNOWHERE_ERROR_ << "Invalid metric type: " << build_conf.metric_type.value();
         return Status::invalid_metric_type;
@@ -451,7 +455,7 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
         LOG_KNOWHERE_ERROR_ << "DiskANN file path for build is empty." << std::endl;
         return Status::invalid_param_in_json;
     }
-    auto navigation = build_conf.navigation.CreateForBuild();
+    auto navigation = build_conf.navigation->CreateForBuild();
     if (!navigation->IsCompatible(datatype_v<DataType>, false))
         return Status::invalid_args;
     if (AnyIndexFileExist(build_conf.index_prefix.value(), *navigation)) {
@@ -546,7 +550,7 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
         return Build(dataset, std::move(cfg), use_knowhere_build_pool);
     }
 
-    const auto navigation = static_cast<const DiskANNConfig&>(*cfg).navigation.CreateForBuild();
+    const auto navigation = static_cast<const DiskANNConfig&>(*cfg).navigation->CreateForBuild();
     if (!navigation->IsCompatible(datatype_v<DataType>, true))
         return Status::invalid_args;
 
@@ -605,14 +609,13 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
 template <typename DataType>
 Status
 DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) {
-    auto prep_conf = static_cast<const DiskANNConfig&>(*cfg);
+    const auto& prep_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(prep_conf.metric_type.value())) {
         return Status::invalid_metric_type;
     }
     if (is_prepared_.load()) {
         if (!ssd_graph_index_->is_navigation_compatible(datatype_v<DataType>, !el_metric_type_.empty()) ||
-            (prep_conf.navigation.quant_type &&
-             *prep_conf.navigation.quant_type != ssd_graph_index_->get_navigation_codec())) {
+            (prep_conf.quant_type && *prep_conf.quant_type != ssd_graph_index_->get_navigation_codec())) {
             return Status::invalid_serialized_index_type;
         }
         return Status::success;
@@ -645,7 +648,7 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
             context.exists = [&](const std::string& file) { return file_manager_->IsExisted(file); };
         }
         const auto codec = diskann::ReadNavigationCodec(context);
-        if (prep_conf.navigation.quant_type && *prep_conf.navigation.quant_type != codec) {
+        if (prep_conf.quant_type && *prep_conf.quant_type != codec) {
             throw diskann::NavigationTypeError("Requested navigation codec does not match stored model");
         }
         navigation = diskann::CreateNavigationStore(codec);
@@ -893,7 +896,7 @@ DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_pt
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::empty_index, "DiskANN not loaded");
     }
 
-    auto search_conf = static_cast<const DiskANNConfig&>(*cfg);
+    const auto& search_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(search_conf.metric_type.value())) {
         return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::invalid_metric_type,
                                                                   "unsupported metric type");
@@ -917,9 +920,9 @@ DiskANNIndexNode<DataType>::AnnIterator(const DataSetPtr dataset, std::unique_pt
     try {
         for (int i = 0; i < nq; i++) {
             auto single_query = static_cast<const DataType*>(xq) + i * dim;
-            auto it = std::make_shared<iterator>(
-                transform, single_query, lsearch, beamwidth, filter_ratio, bitset, ssd_graph_index_.get(),
-                use_knowhere_search_pool, search_conf.navigation.QuerySetup(ssd_graph_index_->get_navigation_codec()));
+            auto it = std::make_shared<iterator>(transform, single_query, lsearch, beamwidth, filter_ratio, bitset,
+                                                 ssd_graph_index_.get(), use_knowhere_search_pool,
+                                                 search_conf.navigation->QuerySetup());
             it->SetResultIdMap(result_id_map);
             vec[i] = it;
         }
@@ -939,7 +942,7 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
         return expected<DataSetPtr>::Err(Status::empty_index, "DiskANN not loaded");
     }
 
-    auto search_conf = static_cast<const DiskANNConfig&>(*cfg);
+    const auto& search_conf = static_cast<const DiskANNConfig&>(*cfg);
     if (!CheckMetric(search_conf.metric_type.value())) {
         return expected<DataSetPtr>::Err(Status::invalid_metric_type, "unsupported metric type");
     }
@@ -961,7 +964,7 @@ DiskANNIndexNode<DataType>::Search(const DataSetPtr dataset, std::unique_ptr<Con
                                                  search_conf.search_list_size.value(), search_conf.beamwidth.value());
     }
 
-    const auto navigation_setup = search_conf.navigation.QuerySetup(ssd_graph_index_->get_navigation_codec());
+    const auto navigation_setup = search_conf.navigation->QuerySetup();
     auto p_id = std::make_unique<int64_t[]>(k * nq);
     auto p_dist = std::make_unique<DistType[]>(k * nq);
 
@@ -1118,7 +1121,7 @@ DiskANNIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
     for (size_t i = 0; i < ssd_graph_index_->get_num_medoids(); i++) {
         entry_points.push_back(ssd_graph_index_->get_medoids()[i]);
     }
-    auto diskann_conf = static_cast<const DiskANNConfig&>(*cfg);
+    const auto& diskann_conf = static_cast<const DiskANNConfig&>(*cfg);
     feder::diskann::DiskANNMeta meta(diskann_conf.data_path.value(), diskann_conf.max_degree.value(),
                                      diskann_conf.search_list_size.value(), diskann_conf.build_dram_budget_gb.value(),
                                      diskann_conf.disk_pq_dims.value(), diskann_conf.accelerate_build.value(), Count(),
@@ -1127,7 +1130,7 @@ DiskANNIndexNode<DataType>::GetIndexMeta(std::unique_ptr<Config> cfg) const {
 
     Json json_meta, json_id_set;
     nlohmann::to_json(json_meta, meta);
-    diskann_conf.navigation.AppendBuildMetadata(ssd_graph_index_->get_navigation_codec(), json_meta["build_params_"]);
+    diskann_conf.navigation->AppendBuildMetadata(json_meta["build_params_"]);
     nlohmann::to_json(json_id_set, id_set);
     return GenResultDataSet(json_meta.dump(), json_id_set.dump());
 }
