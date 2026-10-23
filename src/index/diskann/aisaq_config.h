@@ -11,6 +11,12 @@ namespace knowhere {
 
 class AisaqConfig : public DiskANNConfig {
  public:
+    Status
+    LoadSubConfig(const Json& json, PARAM_TYPE type, std::string* error) override {
+        if (type == PARAM_TYPE::TRAIN && quant_type && *quant_type != "PQ")
+            return HandleError(error, "AiSAQ requires PQ navigation", Status::invalid_args);
+        return DiskANNConfig::LoadSubConfig(json, type, error);
+    }
     // Block AiSAQ parameters
     // PQ vector beam width
     CFG_INT vectors_beamwidth;

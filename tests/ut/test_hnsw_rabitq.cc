@@ -136,12 +136,12 @@ TEST_CASE("RaBitQ batch4 integer kernel matches independent scalar candidates", 
 #endif
 }
 
-TEST_CASE("RaBitQ batch4 estimates exactly match scalar calls across query modes", "[hnsw_rabitq_core]") {
+TEST_CASE("RaBitQ standard batch4 and estimates match scalar calls across query modes", "[hnsw_rabitq_core]") {
     for (int dim : {65, 960, 1024, 1536}) {
         auto base = GenDataSet(32, dim, 9201);
         auto query = GenDataSet(2, dim, 9202);
         for (auto metric : {faiss::METRIC_L2, faiss::METRIC_INNER_PRODUCT}) {
-            for (int bits : {1, 4, 8, 9}) {
+            for (int bits = 1; bits <= 9; ++bits) {
                 faiss::IndexRaBitQ index(dim, metric, bits);
                 index.train(32, static_cast<const float*>(base->GetTensor()));
                 index.add(32, static_cast<const float*>(base->GetTensor()));
@@ -158,6 +158,19 @@ TEST_CASE("RaBitQ batch4 estimates exactly match scalar calls across query modes
                             for (int i = 0; i < 4; ++i) codes[i] = dc->codes + (i * 7 + q) * dc->code_size;
                             dc->distance_to_code_1bit_batch_4(codes, actual);
                             for (int i = 0; i < 4; ++i) REQUIRE(actual[i] == dc->distance_to_code_1bit(codes[i]));
+                            // Exercise the standard ID and code interfaces, including
+                            // duplicate IDs, shuffled pointers and output references.
+                            faiss::DistanceComputer& standard = *owner;
+                            const faiss::idx_t ids[4] = {31, q, 31, 7};
+                            standard.distances_batch_4(ids[0], ids[1], ids[2], ids[3], actual[0], actual[1], actual[2],
+                                                       actual[3]);
+                            for (int i = 0; i < 4; ++i) REQUIRE(actual[i] == standard(ids[i]));
+                            owner->distance_to_code_batch_4(codes[3], codes[1], codes[1], codes[0], actual[0],
+                                                            actual[1], actual[2], actual[3]);
+                            REQUIRE(actual[0] == owner->distance_to_code(codes[3]));
+                            REQUIRE(actual[1] == owner->distance_to_code(codes[1]));
+                            REQUIRE(actual[2] == owner->distance_to_code(codes[1]));
+                            REQUIRE(actual[3] == owner->distance_to_code(codes[0]));
                         }
                     }
                 }
