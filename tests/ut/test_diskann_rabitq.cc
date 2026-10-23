@@ -10,6 +10,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <unordered_set>
@@ -23,6 +24,7 @@
 #include "diskann/ssd_graph_index.h"
 #include "filemanager/impl/LocalFileManager.h"
 #include "index/diskann/aisaq_config.h"
+#include "knowhere/comp/knowhere_check.h"
 #include "knowhere/context.h"
 #include "knowhere/index/index_factory.h"
 #include "utils.h"
@@ -50,6 +52,7 @@ struct RaBitQFixture {
     knowhere::Json
     BuildConfig(const std::string& metric, int ssd_pq = 0) const {
         return {{"metric_type", metric},
+                {"quant_type", "RABITQ"},
                 {"dim", dim},
                 {"data_path", source},
                 {"index_prefix", prefix},
@@ -189,40 +192,18 @@ TEST_CASE("RaBitQ navigation build validates its file and context", "[diskann][d
     REQUIRE_FALSE(fs::exists(diskann::RaBitQNavigationStore::SidecarFilename(f.prefix)));
 }
 
-TEST_CASE("DiskANN entry names share a node and retain their configuration", "[diskann][diskann-rabitq]") {
-    const auto version = GenTestVersionList();
-    RaBitQFixture f;
-    auto ordinary = CreateDiskANN("DISKANN", version);
-    auto alias = CreateDiskANN("DISKANN_RABITQ", version);
-    REQUIRE(typeid(*ordinary.Node()) == typeid(*alias.Node()));
-    REQUIRE(ordinary.Type() == "DISKANN");
-    REQUIRE(alias.Type() == "DISKANN_RABITQ");
-    for (const auto& type : {std::string("DISKANN"), std::string("DISKANN_RABITQ")}) {
-        auto& index = type == "DISKANN" ? ordinary : alias;
-        for (bool static_api : {false, true}) {
-            auto config = static_api ? knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig(type, version)
-                                     : index.Node()->CreateConfig();
-            REQUIRE(knowhere::Config::Load(*config, f.BuildConfig("L2"), knowhere::PARAM_TYPE::TRAIN) ==
-                    knowhere::Status::success);
-            auto& navigation = static_cast<knowhere::DiskANNConfig&>(*config).navigation;
-            REQUIRE(std::string(navigation.CreateForBuild()->CodecName()) == (type == "DISKANN" ? "PQ" : "RABITQ"));
-        }
-    }
-    for (const auto& codec : {"PQ", "TQ"}) {
-        auto request = f.BuildConfig("L2");
-        request["navigation_codec"] = codec;
-        REQUIRE(alias.Build(nullptr, request) == knowhere::Status::invalid_args);
-        REQUIRE(alias.Deserialize({}, request) == knowhere::Status::invalid_args);
-    }
-}
-
 TEST_CASE("DiskANN RaBitQ registration and codec parameters", "[diskann][diskann-rabitq]") {
     const auto version = GenTestVersionList();
-    const auto type = GENERATE("DISKANN", "DISKANN_RABITQ");
+    REQUIRE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck("DISKANN", knowhere::VecType::VECTOR_FLOAT, true));
+    for (bool embedding : {false, true})
+        REQUIRE_FALSE(knowhere::KnowhereCheck::IndexTypeAndDataTypeCheck("DISKANN_RABITQ",
+                                                                         knowhere::VecType::VECTOR_FLOAT, embedding));
+    REQUIRE_FALSE(knowhere::IndexFactory::Instance().FeatureCheck("DISKANN_RABITQ", knowhere::feature::EMB_LIST));
     RaBitQFixture f;
+    auto index = CreateDiskANN("DISKANN", version);
+    REQUIRE(index.Type() == "DISKANN");
     auto json = f.BuildConfig("L2");
-    json["navigation_codec"] = "RABITQ";
-    auto config = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig(type, version);
+    auto config = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig("DISKANN", version);
     REQUIRE(knowhere::Config::Load(*config, json, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::success);
     auto& navigation = static_cast<knowhere::DiskANNConfig&>(*config).navigation;
     REQUIRE(navigation.rabitq.BuildOptions().bits == 1);
@@ -241,7 +222,6 @@ TEST_CASE("DiskANN RaBitQ registration and codec parameters", "[diskann][diskann
         REQUIRE(knowhere::Config::Load(*config, search, knowhere::PARAM_TYPE::SEARCH) ==
                 knowhere::Status::out_of_range_in_json);
     }
-    REQUIRE_FALSE(knowhere::IndexFactory::Instance().Create<knowhere::fp16>("DISKANN_RABITQ", version).has_value());
     knowhere::AisaqConfig aisaq;
     json.erase("rbq_bits");
     REQUIRE(knowhere::Config::Load(aisaq, json, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::invalid_args);
@@ -253,13 +233,10 @@ TEST_CASE("DiskANN RaBitQ searches independent SSD encodings and metrics", "[dis
     const auto version = GenTestVersionList();
     RaBitQFixture f;
     auto build = f.BuildConfig(metric, ssd_pq);
-    // Exercise ordinary DISKANN selection as well as the registered alias.
-    const std::string type = ssd_pq ? "DISKANN" : "DISKANN_RABITQ";
-    build["navigation_codec"] = "RABITQ";
     build["rbq_bits"] = ssd_pq ? 3 : 1;
     build["search_cache_budget_gb"] = 0.000001;
     {
-        auto index = CreateDiskANN(type, version);
+        auto index = CreateDiskANN("DISKANN", version);
         REQUIRE(index.Build(nullptr, build) == knowhere::Status::success);
     }
     REQUIRE(diskann::ReadNavigationCodec({f.prefix, {}, {}}) == "RABITQ");
@@ -340,7 +317,7 @@ TEST_CASE("DiskANN RaBitQ searches independent SSD encodings and metrics", "[dis
 TEST_CASE("RaBitQ iterators interleave query parameters and searches", "[diskann][diskann-rabitq]") {
     RaBitQFixture f;
     const auto version = GenTestVersionList();
-    auto index = CreateDiskANN("DISKANN_RABITQ", version);
+    auto index = CreateDiskANN("DISKANN", version);
     REQUIRE(index.Build(nullptr, f.BuildConfig("L2")) == knowhere::Status::success);
     REQUIRE(index.Deserialize({}, {{"metric_type", "L2"}, {"index_prefix", f.prefix}}) == knowhere::Status::success);
     auto query = knowhere::GenDataSet(f.nq, f.dim, f.query.data());
@@ -418,14 +395,14 @@ TEST_CASE("RaBitQ loading rejects wrong metadata and unsupported consumers", "[d
     RaBitQFixture f;
     const auto version = GenTestVersionList();
     {
-        auto index = CreateDiskANN("DISKANN_RABITQ", version);
+        auto index = CreateDiskANN("DISKANN", version);
         REQUIRE(index.Build(nullptr, f.BuildConfig("L2")) == knowhere::Status::success);
     }
     const knowhere::Json load = {{"metric_type", "L2"}, {"index_prefix", f.prefix}};
     SECTION("Expected PQ conflicts") {
         auto index = CreateDiskANN("DISKANN", version);
         auto request = load;
-        request["navigation_codec"] = "PQ";
+        request["quant_type"] = "PQ";
         REQUIRE(index.Deserialize({}, request) == knowhere::Status::invalid_serialized_index_type);
     }
     SECTION("Missing metadata means PQ only") {
@@ -477,7 +454,6 @@ TEST_CASE("RaBitQ loading rejects wrong metadata and unsupported consumers", "[d
             auto index = knowhere::IndexFactory::Instance().Create<T>("DISKANN", version, pack).value();
             REQUIRE(index.Deserialize({}, load) == knowhere::Status::invalid_serialized_index_type);
             auto request = f.BuildConfig("L2");
-            request["navigation_codec"] = "RABITQ";
             REQUIRE(index.Build(nullptr, request) == knowhere::Status::invalid_args);
         };
         check(knowhere::fp16{});
@@ -490,7 +466,6 @@ TEST_CASE("RaBitQ loading rejects wrong metadata and unsupported consumers", "[d
     SECTION("Embedding list build") {
         auto index = CreateDiskANN("DISKANN", version);
         auto request = f.BuildConfig("MAX_SIM_L2");
-        request["navigation_codec"] = "RABITQ";
         REQUIRE(index.Build(nullptr, request) == knowhere::Status::invalid_args);
     }
     SECTION("Embedding list autoload") {
@@ -513,7 +488,7 @@ TEST_CASE("RaBitQ loading rejects wrong metadata and unsupported consumers", "[d
 TEST_CASE("RaBitQ query setup failures return the borrowed thread slot", "[diskann][diskann-rabitq]") {
     RaBitQFixture f;
     {
-        auto index = CreateDiskANN("DISKANN_RABITQ", GenTestVersionList());
+        auto index = CreateDiskANN("DISKANN", GenTestVersionList());
         REQUIRE(index.Build(nullptr, f.BuildConfig("L2")) == knowhere::Status::success);
     }
     auto reader = std::make_shared<LinuxAlignedFileReader>();
@@ -537,17 +512,28 @@ TEST_CASE("RaBitQ query setup failures return the borrowed thread slot", "[diska
     REQUIRE_FALSE(workspace->backup_res.empty());
 }
 
-TEST_CASE("DiskANN load admission does not assume PQ for an unknown codec", "[diskann][diskann-rabitq]") {
+TEST_CASE("DiskANN load admission preserves legacy PQ estimates", "[diskann][diskann-rabitq]") {
     const auto version = GenTestVersionList();
-    for (const char* type : {"DISKANN", "DISKANN_RABITQ"}) {
-        auto resource = knowhere::IndexStaticFaced<knowhere::fp32>::EstimateLoadResource(type, version, 1000000, 512,
-                                                                                         16, {{"metric_type", "L2"}});
-        REQUIRE(resource.has_value());
-        REQUIRE(resource.value().memoryCost >= 1000000);
-        REQUIRE(resource.value().diskCost == 1000000);
-    }
-    auto pq = knowhere::IndexStaticFaced<knowhere::fp32>::EstimateLoadResource(
-        "DISKANN", version, 1000000, 512, 16, {{"metric_type", "L2"}, {"navigation_codec", "PQ"}});
-    REQUIRE(pq.has_value());
-    REQUIRE(pq.value().memoryCost == 250000);
+    constexpr uint64_t file_size = uint64_t(8) << 30;
+    const knowhere::Json request = {{"metric_type", "L2"}};
+    auto estimate = [&](knowhere::Json config) {
+        return knowhere::IndexStaticFaced<knowhere::fp32>::EstimateLoadResource("DISKANN", version, file_size, 512, 16,
+                                                                                config);
+    };
+    auto omitted = estimate(request);
+    auto pq = request;
+    pq["quant_type"] = "PQ";
+    auto explicit_pq = estimate(pq);
+    REQUIRE(omitted.has_value());
+    REQUIRE(explicit_pq.has_value());
+    REQUIRE(omitted.value().memoryCost == file_size / 4);
+    REQUIRE(omitted.value().memoryCost == explicit_pq.value().memoryCost);
+    auto rabitq = request;
+    rabitq["quant_type"] = "RABITQ";
+    auto explicit_rabitq = estimate(rabitq);
+    REQUIRE(explicit_rabitq.has_value());
+    REQUIRE(explicit_rabitq.value().memoryCost == file_size + file_size / 4);
+    auto overflow = knowhere::IndexStaticFaced<knowhere::fp32>::EstimateLoadResource(
+        "DISKANN", version, std::numeric_limits<uint64_t>::max(), 512, 16, rabitq);
+    REQUIRE_FALSE(overflow.has_value());
 }

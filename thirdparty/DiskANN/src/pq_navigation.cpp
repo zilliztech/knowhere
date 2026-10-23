@@ -192,8 +192,10 @@ namespace diskann {
       const PQNavigationStore& model, uint64_t aligned_dimension,
       uint64_t batch_capacity)
       : model_(model) {
-    alloc_aligned(reinterpret_cast<void**>(&gathered_codes_),
-                  batch_capacity * aligned_dimension * sizeof(uint8_t), 256);
+    alloc_aligned(
+        reinterpret_cast<void**>(&gathered_codes_),
+        ROUND_UP(batch_capacity * aligned_dimension * sizeof(uint8_t), 256),
+        256);
     try {
       alloc_aligned(reinterpret_cast<void**>(&lookup_table_),
                     256 * aligned_dimension * sizeof(float), 256);
