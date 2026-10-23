@@ -726,41 +726,44 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             }
         }
 
-        if (packed_) {
-            if (rows > uint64_t(std::numeric_limits<uint32_t>::max()) - this->nr_rows_) {
+        if (packed_ && rows > uint64_t(std::numeric_limits<uint32_t>::max()) - this->nr_rows_) {
+            return Status::invalid_args;
+        }
+        if constexpr (!is_ip) {
+            if ((refine_ || packed_) && (!packed_ || refine_))
                 return Status::invalid_args;
-            }
+        }
+        const auto validate_coordinate = [&](const SparseRow<DataType>& row, size_t j) {
+            if (!refine_ && !packed_)
+                return true;
+            const auto [dimension, value] = row[j];
+            return std::isfinite(value) && value >= 0 && (j == 0 || row[j - 1].id < dimension) &&
+                   (!is_ip || std::isfinite(static_cast<float>(knowhere::fp16(value)))) &&
+                   (!packed_ || !std::signbit(value)) && (!is_bm25 || (value <= 65535 && std::floor(value) == value));
+        };
 
+        RowScanResult row_scan;
+        if constexpr (!AllowIncremental) {
+            // Validate even zero/tiny coordinates before skipping them. A failed
+            // worker or an excessive total must not mutate the index's dimension map.
+            if (refine_ || packed_) {
+                row_scan = scan_rows_for_build(
+                    data, rows, nullptr, nullptr, validate_coordinate,
+                    packed_ ? std::numeric_limits<uint32_t>::max() : std::numeric_limits<size_t>::max());
+            } else {
+                row_scan = scan_rows_for_build(data, rows);
+            }
+            if (!row_scan.valid)
+                return Status::invalid_args;
+        } else if (refine_ || packed_) {
             uint64_t postings = plists_dim_offsets_span_.empty() ? 0 : plists_dim_offsets_span_.back();
             for (size_t i = 0; i < rows; ++i) {
                 for (size_t j = 0; j < data[i].size(); ++j) {
-                    postings += std::abs(data[i][j].val) >= std::numeric_limits<DataType>::epsilon();
-                }
-
-                if (postings > std::numeric_limits<uint32_t>::max()) {
-                    return Status::invalid_args;
-                }
-            }
-        }
-
-        if (refine_ || packed_) {
-            if constexpr (!is_ip) {
-                if (!packed_ || refine_)
-                    return Status::invalid_args;
-            }
-
-            for (size_t i = 0; i < rows; ++i) {
-                if (!sindi::valid_refinement_row(data[i])) {
-                    return Status::invalid_args;
-                }
-
-                for (size_t j = 0; j < data[i].size(); ++j) {
-                    const float value = data[i][j].val;
-                    if ((is_ip && !std::isfinite(static_cast<float>(knowhere::fp16(value)))) ||
-                        (packed_ && std::signbit(value)) ||
-                        (is_bm25 && (value > 65535 || std::floor(value) != value))) {
+                    if (!validate_coordinate(data[i], j))
                         return Status::invalid_args;
-                    }
+                    if (packed_ && std::abs(data[i][j].val) >= std::numeric_limits<DataType>::epsilon() &&
+                        ++postings > std::numeric_limits<uint32_t>::max())
+                        return Status::invalid_args;
                 }
             }
         }
@@ -785,7 +788,6 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             }
             this->nr_inner_dims_ = this->dim_map_.size();
         } else {
-            auto row_scan = scan_rows_for_build(data, rows);
             LOG_KNOWHERE_INFO_ << "SindiInvertedIndex row scan completed: external_dims="
                                << row_scan.external_dims.size();
             this->dim_map_.build_from_external_dims(row_scan.external_dims);
@@ -812,6 +814,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             }
 
             build_window_indexes_parallel(data, rows, std::move(posting_plan));
+
             this->nr_rows_ = rows;
             if (packed_)
                 pack_postings();
@@ -2371,19 +2374,17 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         if constexpr (is_ip) {
             const size_t count = plists_dim_offsets_span_.back();
             std::vector<uint8_t> ids(sindi::packed12_bytes(count), 0), vals(ids.size(), 0);
-            max_scores_per_dim_.assign(this->nr_inner_dims_, 0);
-            // Sequential pair ownership avoids shared-nibble races at term boundaries.
-            for (size_t dim = 0; dim < this->nr_inner_dims_; ++dim) {
-                const auto source_ids = posting_ids(dim);
-                const auto source_vals = posting_vals(dim);
-                const size_t start = plists_dim_offsets_span_[dim];
-                for (size_t j = 0; j < source_ids.size(); ++j) {
-                    const auto code = sindi::encode_e5m7(source_vals[j]);
-                    sindi::pack12(ids.data(), start + j, source_ids[j]);
-                    sindi::pack12(vals.data(), start + j, code);
-                    max_scores_per_dim_[dim] = std::max(max_scores_per_dim_[dim], sindi::decode_e5m7(code));
+            // Each task owns both words of a global 12-bit pair, including
+            // pairs crossing dimension boundaries. No two workers share a byte.
+            // Values were quantized during filling, and their represented-value
+            // maxima were already computed in the parallel construction phase.
+            parallel_for((count + 1) / 2, [&](size_t pair) {
+                const size_t begin = pair * 2;
+                for (size_t i = begin; i < std::min(begin + 2, count); ++i) {
+                    sindi::pack12(ids.data(), i, total_plists_ids_flat_span_[i]);
+                    sindi::pack12(vals.data(), i, sindi::encode_e5m7(total_plists_vals_flat_span_[i]));
                 }
-            }
+            });
 
             packed_ids_.swap(ids);
             packed_vals_.swap(vals);
