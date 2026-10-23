@@ -3,17 +3,15 @@
 #pragma once
 
 #include "diskann/rabitq_navigation.h"
-#include "knowhere/config.h"
+#include "navigation_config.h"
 
 namespace knowhere {
-class RaBitQNavigationConfig {
+class RaBitQNavigationConfig : public NavigationConfig {
  public:
     CFG_INT rbq_bits;
     CFG_INT rbq_bits_query;
 
-    void
-    Register(Config& config) {
-        auto& __DICT__ = config.__DICT__;
+    RaBitQNavigationConfig() {
         KNOWHERE_CONFIG_DECLARE_FIELD(rbq_bits)
             .description("RaBitQ database bits per dimension (build defaults to 1)")
             .allow_empty_without_default()
@@ -28,18 +26,28 @@ class RaBitQNavigationConfig {
             .for_range_search()
             .for_iterator();
     }
+    std::unique_ptr<diskann::NavigationStore>
+    CreateForBuild() const override {
+        return std::make_unique<diskann::RaBitQNavigationStore>(BuildOptions());
+    }
+    std::optional<uint64_t>
+    EstimateLoadMemory(uint64_t file_size) const override {
+        if (file_size > std::numeric_limits<uint64_t>::max() - file_size / 4)
+            return std::nullopt;
+        return file_size + file_size / 4;
+    }
     diskann::RaBitQNavigationBuildOptions
     BuildOptions() const {
         return {static_cast<uint8_t>(rbq_bits.value_or(1))};
     }
     diskann::NavigationQuerySetup
-    QuerySetup() const {
+    QuerySetup() const override {
         return [bits = static_cast<uint8_t>(rbq_bits_query.value_or(4))](auto& computer) {
             diskann::RaBitQNavigationStore::ConfigureQuery(computer, bits);
         };
     }
     void
-    AppendBuildMetadata(Json& params) const {
+    AppendBuildMetadata(Json& params) const override {
         if (rbq_bits)
             params["rbq_bits"] = *rbq_bits;
     }
