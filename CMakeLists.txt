@@ -202,7 +202,7 @@ if(WITH_LIGHT)
   list(REMOVE_ITEM KNOWHERE_SRCS ${KNOWHERE_TRACER_SRCS})
 endif()
 
-set(KNOWHERE_LINKER_LIBS "")
+set(KNOWHERE_PRIVATE_LIBS "")
 set(CARDINAL_LIBS "")
 
 if(WITH_DISKANN)
@@ -297,22 +297,26 @@ endif()
 include_directories(src)
 include_directories(include)
 
-list(APPEND KNOWHERE_LINKER_LIBS Boost::boost)
-list(APPEND KNOWHERE_LINKER_LIBS faiss)
-list(APPEND KNOWHERE_LINKER_LIBS glog::glog)
-list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
-list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
-list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt)
-list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
-list(APPEND KNOWHERE_LINKER_LIBS milvus-common::milvus-common)
-list(APPEND KNOWHERE_LINKER_LIBS simde::simde)
+list(APPEND KNOWHERE_PRIVATE_LIBS faiss)
+list(APPEND KNOWHERE_PRIVATE_LIBS prometheus-cpp::push)
+list(APPEND KNOWHERE_PRIVATE_LIBS fmt::fmt)
+list(APPEND KNOWHERE_PRIVATE_LIBS simde::simde)
+
+set(KNOWHERE_PUBLIC_LIBS
+    Boost::boost
+    nlohmann_json::nlohmann_json
+    glog::glog
+    Folly::folly
+    milvus-common::milvus-common
+    prometheus-cpp::core
+    opentelemetry-cpp::opentelemetry_trace
+    OpenMP::OpenMP_CXX)
 
 add_library(knowhere SHARED ${KNOWHERE_SRCS})
-add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
 if(WITH_CUVS)
   list(
     APPEND
-    KNOWHERE_LINKER_LIBS
+    KNOWHERE_PRIVATE_LIBS
     raft::raft
     cuvs::cuvs
     CUDA::cublas
@@ -320,8 +324,10 @@ if(WITH_CUVS)
     CUDA::cusolver)
 endif()
 
-target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS})
-target_link_libraries(knowhere PUBLIC Boost::boost nlohmann_json::nlohmann_json glog::glog Folly::folly prometheus-cpp::core opentelemetry-cpp::opentelemetry_trace)
+target_link_libraries(knowhere
+    PRIVATE ${KNOWHERE_PRIVATE_LIBS}
+    PUBLIC ${KNOWHERE_PUBLIC_LIBS})
+target_compile_features(knowhere PUBLIC cxx_std_20)
 
 if (WITH_CARDINAL)
   target_compile_definitions(knowhere PRIVATE
@@ -331,6 +337,7 @@ if (WITH_CARDINAL)
 endif()
 
 target_include_directories(knowhere PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(knowhere PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/faiss)
 
 if(WITH_UT)
   find_package(Catch2 REQUIRED)
