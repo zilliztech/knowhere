@@ -5,11 +5,11 @@
 #define AISAQ_CONFIG_H
 
 #include "../../../thirdparty/DiskANN/include/diskann/aisaq.h"
-#include "diskann_config.h"
+#include "pq_navigation_config.h"
 
 namespace knowhere {
 
-class AisaqConfig : public DiskANNConfig {
+class AisaqConfig : public PQDiskANNConfig {
  public:
     // Block AiSAQ parameters
     // PQ vector beam width
