@@ -148,8 +148,9 @@ class DiskANNIndexNode : public IndexNode {
                                const knowhere::BaseConfig& config, const IndexVersion& version) {
         const auto memory =
             static_cast<const DiskANNConfig&>(config).navigation->EstimateLoadMemory(file_size_in_bytes);
-        if (!memory)
+        if (!memory) {
             return expected<Resource>::Err(Status::invalid_args, "DiskANN resource estimate overflows");
+        }
         return Resource{.memoryCost = *memory, .diskCost = file_size_in_bytes};
     }
 
@@ -179,8 +180,9 @@ class DiskANNIndexNode : public IndexNode {
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
         auto config = std::make_unique<DiskANNConfig>();
-        if (is_prepared_.load())
+        if (is_prepared_.load()) {
             config->navigation = CreateNavigationConfig(ssd_graph_index_->get_navigation_codec());
+        }
         return config;
     }
 
@@ -456,8 +458,9 @@ DiskANNIndexNode<DataType>::Build(const DataSetPtr dataset, std::shared_ptr<Conf
         return Status::invalid_param_in_json;
     }
     auto navigation = build_conf.navigation->CreateForBuild();
-    if (!navigation->IsCompatible(datatype_v<DataType>, false))
+    if (!navigation->IsCompatible(datatype_v<DataType>, false)) {
         return Status::invalid_args;
+    }
     if (AnyIndexFileExist(build_conf.index_prefix.value(), *navigation)) {
         LOG_KNOWHERE_ERROR_ << "This index prefix already has index files." << std::endl;
         return Status::disk_file_error;
@@ -551,8 +554,9 @@ DiskANNIndexNode<DataType>::BuildEmbListIfNeed(const DataSetPtr dataset, std::sh
     }
 
     const auto navigation = static_cast<const DiskANNConfig&>(*cfg).navigation->CreateForBuild();
-    if (!navigation->IsCompatible(datatype_v<DataType>, true))
+    if (!navigation->IsCompatible(datatype_v<DataType>, true)) {
         return Status::invalid_args;
+    }
 
     // DiskANN only supports TokenANN strategy
     auto strategy_type = config.emb_list_strategy.value_or(meta::EMB_LIST_STRATEGY_TOKENANN);
@@ -644,7 +648,8 @@ DiskANNIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr
             index_prefix_, {}, [&](const std::string& file) { return LoadFile(file); }};
         // The exact LocalFileManager placeholder tracks registrations only.
         // Other managers, including remote adapters, own the existence result.
-        if (typeid(*file_manager_) != typeid(milvus::LocalFileManager)) {
+        const auto& file_manager = *file_manager_;
+        if (typeid(file_manager) != typeid(milvus::LocalFileManager)) {
             context.exists = [&](const std::string& file) { return file_manager_->IsExisted(file); };
         }
         const auto codec = diskann::ReadNavigationCodec(context);

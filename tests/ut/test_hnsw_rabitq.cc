@@ -605,13 +605,16 @@ TEST_CASE("Generic HNSW parameter factory preserves SQ and PQ searches", "[hnsw_
             knowhere::Json config = {
                 {"dim", 32}, {"metric_type", metric}, {"k", 10}, {"M", 8},    {"efConstruction", 64},
                 {"ef", 128}, {"sq_type", "SQ8"},      {"m", 4},  {"nbits", 4}};
+            INFO("Build");
             auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
             REQUIRE(index.Build(base, config) == knowhere::Status::success);
+            INFO("Search");
             auto result = index.Search(query, config, nullptr);
             REQUIRE(result.has_value());
             // Same graph and codes: compare the new default evaluator with
             // the pre-refactor full batch rule, including moderate filtering.
             knowhere::BinarySet binary;
+            INFO("Serialize and decode reference index");
             REQUIRE(index.Serialize(binary) == knowhere::Status::success);
             auto blob = binary.binary_map_.begin()->second;
             faiss::VectorIOReader reader;
@@ -620,6 +623,7 @@ TEST_CASE("Generic HNSW parameter factory preserves SQ and PQ searches", "[hnsw_
             auto* graph = dynamic_cast<faiss::cppcontrib::knowhere::IndexHNSW*>(decoded.get());
             REQUIRE(graph != nullptr);
             for (int excluded : {0, 128}) {
+                CAPTURE(excluded);
                 std::vector<uint8_t> bits(128, 0);
                 std::fill_n(bits.begin(), excluded / 8, uint8_t(255));
                 knowhere::BitsetView filter(bits.data(), 1024, excluded);
@@ -631,6 +635,7 @@ TEST_CASE("Generic HNSW parameter factory preserves SQ and PQ searches", "[hnsw_
                 auto actual = index.Search(query, config, excluded ? filter : knowhere::BitsetView{});
                 REQUIRE(actual.has_value());
                 for (int q = 0; q < 2; ++q) {
+                    CAPTURE(q);
                     std::unique_ptr<faiss::DistanceComputer> dc(graph->storage->get_distance_computer());
                     const bool similarity = std::string(metric) != "L2";
                     if (similarity)
@@ -648,12 +653,14 @@ TEST_CASE("Generic HNSW parameter factory preserves SQ and PQ searches", "[hnsw_
                     }
                 }
             }
+            INFO("Iterator");
             auto iterators = index.AnnIterator(query, config, nullptr);
             REQUIRE(iterators.has_value());
             REQUIRE(iterators.value()[0]->HasNext().value());
             REQUIRE(std::isfinite(iterators.value()[0]->Next().value().second));
             std::vector<uint8_t> mask(128, 255);
             mask.back() = 0;
+            INFO("Search with high filter ratio");
             auto filtered = index.Search(query, config, knowhere::BitsetView(mask.data(), 1024));
             REQUIRE(filtered.has_value());
             for (int i = 0; i < 20; ++i) {

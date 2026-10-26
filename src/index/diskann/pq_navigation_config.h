@@ -32,9 +32,10 @@ class PQNavigationConfig : public NavigationConfig {
     Status
     Load(const Json& json, PARAM_TYPE type, float vec_field_size_gb, std::string* error) override {
         auto status = NavigationConfig::Load(json, type, vec_field_size_gb, error);
-        if (status == Status::success && type == PARAM_TYPE::TRAIN)
+        if (status == Status::success && type == PARAM_TYPE::TRAIN) {
             pq_code_budget_gb =
                 std::max(pq_code_budget_gb.value_or(0), pq_code_budget_gb_ratio.value() * vec_field_size_gb);
+        }
         return status;
     }
     std::unique_ptr<diskann::NavigationStore>
@@ -52,8 +53,9 @@ class PQNavigationConfig : public NavigationConfig {
     void
     AppendBuildMetadata(Json& build_params) const override {
         // A loaded index does not recover its original configured budget.
-        if (pq_code_budget_gb.has_value())
+        if (pq_code_budget_gb.has_value()) {
             build_params["pq_code_budget_gb"] = *pq_code_budget_gb;
+        }
     }
 };
 }  // namespace knowhere

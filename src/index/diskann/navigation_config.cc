@@ -7,10 +7,12 @@
 namespace knowhere {
 std::unique_ptr<NavigationConfig>
 CreateNavigationConfig(const std::string& codec) {
-    if (codec == "PQ")
+    if (codec == "PQ") {
         return std::make_unique<PQNavigationConfig>();
-    if (codec == "RABITQ")
+    }
+    if (codec == "RABITQ") {
         return std::make_unique<RaBitQNavigationConfig>();
+    }
     throw diskann::NavigationTypeError("Unsupported DiskANN navigation codec: " + codec);
 }
 }  // namespace knowhere

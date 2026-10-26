@@ -41,8 +41,8 @@ class DiskANNMeta {
     DiskANNMeta() = default;
 
     DiskANNMeta(const std::string& data_path, const int32_t max_degree, const int32_t search_list_size,
-                const float build_dram_budget_gb, const int32_t disk_pq_dims,
-                const bool accelerate_build, const int64_t num_elem, const std::vector<int64_t>& entry_points)
+                const float build_dram_budget_gb, const int32_t disk_pq_dims, const bool accelerate_build,
+                const int64_t num_elem, const std::vector<int64_t>& entry_points)
         : num_elem_(num_elem), entry_points_(entry_points) {
         build_params_.data_path = data_path;
         build_params_.max_degree = max_degree;

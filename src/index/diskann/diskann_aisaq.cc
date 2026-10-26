@@ -113,8 +113,9 @@ class AisaqIndexNode : public IndexNode {
     std::unique_ptr<BaseConfig>
     CreateConfig() const override {
         auto config = std::make_unique<AisaqConfig>();
-        if (is_prepared_.load())
+        if (is_prepared_.load()) {
             config->navigation = CreateNavigationConfig(ssd_graph_index_->get_navigation_codec());
+        }
         return config;
     }
 
@@ -490,7 +491,8 @@ AisaqIndexNode<DataType>::Deserialize(const BinarySet& binset, std::shared_ptr<C
             index_prefix_, {}, [&](const std::string& file) { return LoadFile(file); }};
         // The exact LocalFileManager placeholder tracks registrations only.
         // Other managers, including remote adapters, own the existence result.
-        if (typeid(*file_manager_) != typeid(milvus::LocalFileManager)) {
+        const auto& file_manager = *file_manager_;
+        if (typeid(file_manager) != typeid(milvus::LocalFileManager)) {
             context.exists = [&](const std::string& file) { return file_manager_->IsExisted(file); };
         }
         const auto codec = diskann::ReadNavigationCodec(context);

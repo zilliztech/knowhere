@@ -32,8 +32,9 @@ class RaBitQNavigationConfig : public NavigationConfig {
     }
     std::optional<uint64_t>
     EstimateLoadMemory(uint64_t file_size) const override {
-        if (file_size > std::numeric_limits<uint64_t>::max() - file_size / 4)
+        if (file_size > std::numeric_limits<uint64_t>::max() - file_size / 4) {
             return std::nullopt;
+        }
         return file_size + file_size / 4;
     }
     diskann::RaBitQNavigationBuildOptions
@@ -48,8 +49,9 @@ class RaBitQNavigationConfig : public NavigationConfig {
     }
     void
     AppendBuildMetadata(Json& params) const override {
-        if (rbq_bits)
+        if (rbq_bits) {
             params["rbq_bits"] = *rbq_bits;
+        }
     }
 };
 }  // namespace knowhere
