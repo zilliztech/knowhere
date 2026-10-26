@@ -24,6 +24,7 @@
 #include <variant>
 
 #include "comp/index_param.h"
+#include "knowhere/comp/cluster_data.h"
 #include "knowhere/comp/search_hint.h"
 #include "knowhere/range_util.h"
 #include "knowhere/sparse_utils.h"
@@ -78,6 +79,30 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
     using Var = std::variant<const float*, const size_t*, const int64_t*, const void*, int64_t, std::string, std::any>;
     DataSet() = default;
     void
+    SetClusterData(ClusterData clusters) {
+        auto owned = std::make_shared<const ClusterData>(std::move(clusters));
+        std::unique_lock lock(mutex_);
+        data_[kClusterDataField] = Var(std::in_place_type<std::any>, std::move(owned));
+    }
+    std::shared_ptr<const ClusterData>
+    GetClusterData() const {
+        std::shared_lock lock(mutex_);
+        auto it = data_.find(kClusterDataField);
+        if (it == data_.end())
+            return nullptr;
+        auto holder = std::get_if<std::any>(&it->second);
+        auto value = std::any_cast<std::shared_ptr<const ClusterData>>(holder);
+        if (!value)
+            throw std::invalid_argument("invalid typed cluster data");
+        return *value;
+    }
+    void
+    ClearClusterData() {
+        std::unique_lock lock(mutex_);
+        data_.erase(kClusterDataField);
+    }
+
+    void
     SetSearchHints(BatchSearchHints hints) {
         auto owned = std::make_shared<const BatchSearchHints>(std::move(hints));
         std::unique_lock lock(mutex_);
@@ -110,33 +135,33 @@ class DataSet : public std::enable_shared_from_this<const DataSet> {
             {
                 auto ptr = std::get_if<0>(&x.second);
                 if (ptr != nullptr) {
-                    delete[] * ptr;
+                    delete[] *ptr;
                 }
             }
             {
                 auto ptr = std::get_if<1>(&x.second);
                 if (ptr != nullptr) {
-                    delete[] * ptr;
+                    delete[] *ptr;
                 }
             }
             {
                 auto ptr = std::get_if<2>(&x.second);
                 if (ptr != nullptr) {
-                    delete[] * ptr;
+                    delete[] *ptr;
                 }
             }
             {
                 auto ptr = std::get_if<3>(&x.second);
                 if (ptr != nullptr) {
                     if (is_sparse) {
-                        delete[](sparse::SparseRow<float>*)(*ptr);
+                        delete[] (sparse::SparseRow<float>*)(*ptr);
                     } else if (is_chunk) {
                         for (auto i = 0; i < num_chunk; i += 1) {
-                            delete[]((char**)(*ptr))[i];
+                            delete[] ((char**)(*ptr))[i];
                         }
-                        delete[](char**)(*ptr);
+                        delete[] (char**)(*ptr);
                     } else {
-                        delete[](char*)(*ptr);
+                        delete[] (char*)(*ptr);
                     }
                 }
             }

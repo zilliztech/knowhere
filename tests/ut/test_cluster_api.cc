@@ -194,17 +194,13 @@ TEST_CASE("SetCentroids forwards input and contains exceptions", "[cluster_api]"
 
 TEST_CASE("Search hints survive a DataSet metadata round trip", "[cluster_api]") {
     DataSet dataset;
-    dataset.SetSearchHints({QuerySearchHints{{{11, 7, 0.5f}}}, QuerySearchHints{{{29, 3, 1.0f}, {41, 2, 2.5f}}}});
+    dataset.SetSearchHints({SearchHint{{11}}, SearchHint{{29, 41}}});
 
     const auto result = dataset.GetSearchHints();
     REQUIRE(result != nullptr);
     REQUIRE(result->size() == 2);
-    REQUIRE(result->at(0)->ranges.size() == 1);
-    REQUIRE(result->at(1)->ranges.size() == 2);
-    REQUIRE(result->at(0)->ranges[0].offset == 11);
-    REQUIRE(result->at(0)->ranges[0].count == 7);
-    REQUIRE(result->at(0)->ranges[0].id_distance == 0.5f);
-    REQUIRE(result->at(1)->ranges[1].offset == 41);
-    REQUIRE(result->at(1)->ranges[1].count == 2);
-    REQUIRE(result->at(1)->ranges[1].id_distance == 2.5f);
+    REQUIRE(result->at(0)->clusters.size() == 1);
+    REQUIRE(result->at(1)->clusters.size() == 2);
+    REQUIRE(result->at(0)->clusters[0] == 11);
+    REQUIRE(result->at(1)->clusters[1] == 41);
 }
