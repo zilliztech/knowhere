@@ -60,4 +60,4 @@ if (WITH_CUVS)
     target_link_libraries(diskann PRIVATE cuvs::cuvs)
 endif()
 
-list(APPEND KNOWHERE_LINKER_LIBS diskann)
+list(APPEND KNOWHERE_PRIVATE_LIBS diskann)
