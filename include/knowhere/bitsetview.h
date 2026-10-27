@@ -61,10 +61,10 @@ class BitsetView {
     // bitmap: the public row domain is independent of a backend's vector count.
     // Production search consumers reject this form until explicitly adapted.
     void
-    set_candidate_evaluator(const CandidateEvaluatorViewV1* evaluator,
+    set_candidate_evaluator(const CandidateEvaluatorView* evaluator,
                             std::optional<size_t> public_row_count = std::nullopt) {
         if (evaluator != nullptr && !evaluator->valid()) {
-            throw std::invalid_argument("invalid candidate evaluator V1");
+            throw std::invalid_argument("invalid candidate evaluator descriptor");
         }
         if (evaluator != nullptr && ((!public_row_count.has_value() && num_bits_ == 0) ||
                                      (num_bits_ != 0 && public_row_count.value_or(num_bits_) != num_bits_))) {
@@ -119,7 +119,7 @@ class BitsetView {
         return candidate_evaluator_ == nullptr;
     }
 
-    const CandidateEvaluatorViewV1*
+    const CandidateEvaluatorView*
     candidate_evaluator() const {
         return candidate_evaluator_;
     }
@@ -327,7 +327,7 @@ class BitsetView {
         // the existing public-domain, mandatory bitmap, binding and producer
         // error handling and writes the REAL projected row before callback.
         const int32_t lane = 0;
-        return test_rows(&lane, 1, 1, false, [=, this](int32_t) -> int64_t {
+        return test_rows(&lane, 1, false, [=, this](int32_t) -> int64_t {
                    if (unprojected < id_offset_ || row > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
                        return -1;
                    }
@@ -372,42 +372,17 @@ class BitsetView {
     // mandatory-only; an all-visible bitmap still runs the callback.
     uint64_t
     test(const int32_t* ids, uint32_t count) const {
-        const auto lanes = CandidateEvaluatorExecution::LaneMask(count);
+        CandidateEvaluatorExecution::LaneMask(count);
         if (count != 0 && ids == nullptr) {
             throw std::invalid_argument("invalid batch IDs");
         }
         if (candidate_evaluator_ != nullptr) [[unlikely]] {
-            return test_deferred_batch_(ids, count, lanes);
+            return test_deferred_batch_(ids, count);
         }
         // This is the original single-ID bitmap test packed once per batch.
         // No callback workspace, active-lane checks or 64-ID scratch array
         // enters the ordinary bitmap path.
         return test_bitmap_batch_(ids, count);
-    }
-
-    // Inactive lanes are excluded without reading their IDs or source values.
-    uint64_t
-    test(const int32_t* ids, uint32_t count, uint64_t active_mask) const {
-        const auto lanes = CandidateEvaluatorExecution::LaneMask(count);
-        if ((count != 0 && ids == nullptr) || (active_mask & ~lanes) != 0) {
-            throw std::invalid_argument("invalid batch IDs/mask");
-        }
-        if (candidate_evaluator_ != nullptr) [[unlikely]] {
-            return test_deferred_batch_(ids, count, active_mask);
-        }
-        if (active_mask == lanes) {
-            return test_bitmap_batch_(ids, count);
-        }
-        if (id_offset_ > std::numeric_limits<size_t>::max() - std::numeric_limits<int32_t>::max()) [[unlikely]] {
-            return test_bitmap_large_offset_(ids, count, lanes, active_mask);
-        }
-        uint64_t excluded = lanes & ~active_mask;
-        for (uint32_t lane = 0; lane < count; ++lane) {
-            if ((active_mask & (uint64_t{1} << lane)) != 0) {
-                excluded |= uint64_t{test_mandatory(ids[lane])} << lane;
-            }
-        }
-        return excluded;
     }
 
  private:
@@ -417,8 +392,7 @@ class BitsetView {
         // only extreme offsets need checked per-lane addition. The legacy
         // int64 single-ID API is left unchanged, but this new API fails closed.
         if (id_offset_ > std::numeric_limits<size_t>::max() - std::numeric_limits<int32_t>::max()) [[unlikely]] {
-            const auto lanes = CandidateEvaluatorExecution::LaneMask(count);
-            return test_bitmap_large_offset_(ids, count, lanes, lanes);
+            return test_bitmap_large_offset_(ids, count);
         }
         uint64_t excluded = 0;
         for (uint32_t lane = 0; lane < count; ++lane) {
@@ -428,22 +402,20 @@ class BitsetView {
     }
 
     [[gnu::noinline]] uint64_t
-    test_bitmap_large_offset_(const int32_t* ids, uint32_t count, uint64_t lanes, uint64_t active) const {
+    test_bitmap_large_offset_(const int32_t* ids, uint32_t count) const {
         const auto largest_id = std::numeric_limits<size_t>::max() - id_offset_;
-        uint64_t excluded = lanes & ~active;
+        uint64_t excluded = 0;
         for (uint32_t lane = 0; lane < count; ++lane) {
-            if ((active & (uint64_t{1} << lane)) != 0) {
-                const auto id = ids[lane];
-                const bool reject = id < 0 || static_cast<size_t>(id) > largest_id || test_mandatory(id);
-                excluded |= uint64_t{reject} << lane;
-            }
+            const auto id = ids[lane];
+            const bool reject = id < 0 || static_cast<size_t>(id) > largest_id || test_mandatory(id);
+            excluded |= uint64_t{reject} << lane;
         }
         return excluded;
     }
 
     [[gnu::noinline]] uint64_t
-    test_deferred_batch_(const int32_t* ids, uint32_t count, uint64_t active_mask) const {
-        return test_rows(ids, count, active_mask, !has_out_ids() && id_offset_ == 0, [&](int32_t id) -> int64_t {
+    test_deferred_batch_(const int32_t* ids, uint32_t count) const {
+        return test_rows(ids, count, !has_out_ids() && id_offset_ == 0, [&](int32_t id) -> int64_t {
             if (id < 0 || static_cast<size_t>(id) > std::numeric_limits<size_t>::max() - id_offset_) {
                 return -1;
             }
@@ -461,39 +433,19 @@ class BitsetView {
  public:
     // Adapter entry for backends with their own reorder map. This map replaces
     // the view's ID projection: its output is already in the public bitmap /
-    // segment-row domain. The non-owning map is read once per active input;
+    // segment-row domain. The non-owning map is read once per valid input ID;
     // no allocation, intermediate ID pass or extra indirect call is needed.
     uint64_t
     test_mapped(const int32_t* ids, uint32_t count, const int32_t* row_map, size_t id_count) const {
-        return test_mapped(ids, count, row_map, id_count, CandidateEvaluatorExecution::LaneMask(count));
-    }
-
-    uint64_t
-    test_mapped(const int32_t* ids, uint32_t count, const int32_t* row_map, size_t id_count,
-                uint64_t active_mask) const {
-        const auto lanes = CandidateEvaluatorExecution::LaneMask(count);
-        if ((count != 0 && ids == nullptr) || (active_mask & ~lanes) != 0) {
-            throw std::invalid_argument("invalid mapped batch IDs/mask");
+        CandidateEvaluatorExecution::LaneMask(count);
+        if (count != 0 && ids == nullptr) {
+            throw std::invalid_argument("invalid mapped batch IDs");
         }
         if (candidate_evaluator_ != nullptr) [[unlikely]] {
-            return test_deferred_mapped_(ids, count, row_map, id_count, active_mask);
+            return test_deferred_mapped_(ids, count, row_map, id_count);
         }
-        return active_mask == lanes ? test_bitmap_mapped_<false>(ids, count, row_map, id_count, lanes, active_mask)
-                                    : test_bitmap_mapped_<true>(ids, count, row_map, id_count, lanes, active_mask);
-    }
-
- private:
-    template <bool CheckActive>
-    uint64_t
-    test_bitmap_mapped_(const int32_t* ids, uint32_t count, const int32_t* row_map, size_t id_count, uint64_t lanes,
-                        uint64_t active) const {
-        uint64_t excluded = lanes & ~active;
+        uint64_t excluded = 0;
         for (uint32_t lane = 0; lane < count; ++lane) {
-            if constexpr (CheckActive) {
-                if ((active & (uint64_t{1} << lane)) == 0) {
-                    continue;
-                }
-            }
             const auto id = ids[lane];
             bool reject = id < 0 || static_cast<size_t>(id) >= id_count;
             if (!reject) {
@@ -506,15 +458,15 @@ class BitsetView {
         return excluded;
     }
 
+ private:
     [[gnu::noinline]] uint64_t
-    test_deferred_mapped_(const int32_t* ids, uint32_t count, const int32_t* row_map, size_t id_count,
-                          uint64_t active_mask) const {
+    test_deferred_mapped_(const int32_t* ids, uint32_t count, const int32_t* row_map, size_t id_count) const {
         if (row_map == nullptr) {
-            return test_rows(ids, count, active_mask, true, [=](int32_t id) -> int32_t {
+            return test_rows(ids, count, true, [=](int32_t id) -> int32_t {
                 return id < 0 || static_cast<size_t>(id) >= id_count ? -1 : id;
             });
         }
-        return test_rows(ids, count, active_mask, false, [=](int32_t id) -> int32_t {
+        return test_rows(ids, count, false, [=](int32_t id) -> int32_t {
             if (id < 0 || static_cast<size_t>(id) >= id_count) {
                 return -1;
             }
@@ -524,41 +476,38 @@ class BitsetView {
 
     template <typename RowAt>
     uint64_t
-    test_rows(const int32_t* ids, uint32_t count, uint64_t active, bool borrow_ids, RowAt row_at) const {
+    test_rows(const int32_t* ids, uint32_t count, bool borrow_ids, RowAt row_at) const {
         const auto lanes = CandidateEvaluatorExecution::LaneMask(count);
-        if ((count != 0 && ids == nullptr) || (active & ~lanes) != 0 || !bound()) {
-            throw std::invalid_argument("invalid batch IDs/mask or unbound filter");
+        if ((count != 0 && ids == nullptr) || !bound()) {
+            throw std::invalid_argument("invalid batch IDs or unbound filter");
         }
-        if (active == 0) {
-            return lanes;
+        if (count == 0) {
+            return 0;
         }
         // Choose once per batch, not once per lane. An absent mandatory bitmap
         // is common for all-visible sealed segments, but a zero backend count
         // is NOT enough to omit a public-domain bitmap (see below).
         if (num_bits_ == 0) {
-            return test_rows_impl<false>(ids, count, lanes, active, borrow_ids, row_at);
+            return test_rows_impl<false>(ids, count, lanes, borrow_ids, row_at);
         }
         // With an identity projection and a count covering the entire public
         // domain, an exact zero proves that the bitmap contains no exclusions.
         // A window or compacted/mapped count cannot establish this property.
         // Still check public row bounds, including an adapter's reorder map.
         if (vector_count_ == num_bits_ && id_offset_ == 0 && !has_out_ids() && filtered_count_.value_or(1) == 0) {
-            return test_rows_impl<false>(ids, count, lanes, active, borrow_ids, row_at);
+            return test_rows_impl<false>(ids, count, lanes, borrow_ids, row_at);
         }
-        return test_rows_impl<true>(ids, count, lanes, active, borrow_ids, row_at);
+        return test_rows_impl<true>(ids, count, lanes, borrow_ids, row_at);
     }
 
     template <bool CheckBitmap, typename RowAt>
     uint64_t
-    test_rows_impl(const int32_t* ids, uint32_t count, uint64_t lanes, uint64_t active, bool borrow_ids,
-                   RowAt row_at) const {
+    test_rows_impl(const int32_t* ids, uint32_t count, uint64_t lanes, bool borrow_ids, RowAt row_at) const {
         // Most candidate IDs survive mandatory visibility. Clear rejected
         // lanes only, avoiding a shift/OR for every normally active candidate.
+        uint64_t active = lanes;  // Only mandatory visibility/ID checks clear lanes.
         std::array<int32_t, 64> rows;
         for (uint32_t lane = 0; lane < count; ++lane) {
-            if ((active & (uint64_t{1} << lane)) == 0) {
-                continue;
-            }
             const auto row = row_at(ids[lane]);
             if (row < 0 || static_cast<size_t>(row) >= public_row_count()) {
                 active &= ~(uint64_t{1} << lane);
@@ -914,7 +863,7 @@ class BitsetView {
     // Append deferred state after the original bitmap metadata, preserving its
     // field order for bitmap-only code generation. The overall C++ object is
     // still larger: this is NOT a mixed-version binary ABI compatibility claim.
-    const CandidateEvaluatorViewV1* candidate_evaluator_ = nullptr;
+    const CandidateEvaluatorView* candidate_evaluator_ = nullptr;
     size_t evaluator_rows_ = 0;
     std::shared_ptr<CandidateEvaluatorExecution> execution_;
 };

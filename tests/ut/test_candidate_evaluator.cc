@@ -20,6 +20,17 @@
 
 namespace {
 
+// Keep the public foundation API minimal; sparse input lanes are not exposed.
+template <typename Filter>
+concept HasMaskedTest =
+    requires(const Filter& filter, const int32_t* ids) { filter.test(ids, uint32_t{1}, uint64_t{1}); };
+template <typename Filter>
+concept HasMaskedMappedTest = requires(const Filter& filter, const int32_t* ids) {
+                                  filter.test_mapped(ids, uint32_t{1}, ids, size_t{1}, uint64_t{1});
+                              };
+static_assert(!HasMaskedTest<knowhere::BitsetView>);
+static_assert(!HasMaskedMappedTest<knowhere::BitsetView>);
+
 // Unchanged Cohere train IDs, rows [0, 64); only callback contract inputs.
 // Source: https://s3.us-west-2.amazonaws.com/assets.zilliz.com/benchmark/cohere_medium_1m/train.parquet
 // Parquet SHA256: de6b84eb08fc5203a56eef619970a14f5cae08d0a0ae0bcd23b8058d7045f381
@@ -100,7 +111,7 @@ Evaluate(void* opaque, const int32_t* ids, uint32_t count, uint64_t active, uint
     return knowhere::CandidateEvalStatus::Success;
 }
 
-knowhere::CandidateEvaluatorViewV1
+knowhere::CandidateEvaluatorView
 Descriptor(const Factory& factory) {
     return {.context = &factory, .create_worker = Create, .destroy_worker = Destroy, .eval_batch = Evaluate};
 }
@@ -152,15 +163,13 @@ TEST_CASE("Candidate evaluator combines mandatory bits, lanes and original scala
         }
         const auto batches = factory.batches.load();
         REQUIRE(copy.test(nullptr, 0) == 0);
-        REQUIRE(copy.test(ids.data(), 64, 0) == ~uint64_t{0});
         REQUIRE(factory.batches == batches);
-        const int32_t masked[] = {-1, 0, std::numeric_limits<int32_t>::max(), 3};
+        const int32_t checked[] = {-1, 0, std::numeric_limits<int32_t>::max(), 3};
         const auto before_rows = factory.evaluated.load();
-        REQUIRE(copy.test(masked, 4, 2) == 13);
-        REQUIRE(factory.evaluated == before_rows + 1);
+        REQUIRE(copy.test(checked, 4) == 13);
+        REQUIRE(factory.evaluated == before_rows + 2);
         REQUIRE_THROWS_AS(copy.test(ids.data(), 65), std::invalid_argument);
         REQUIRE_THROWS_AS(copy.test(nullptr, 1), std::invalid_argument);
-        REQUIRE_THROWS_AS(copy.test(ids.data(), 1, 2), std::invalid_argument);
         auto independent = description.bind();
         REQUIRE(factory.created == 2);
         REQUIRE(independent.callback_batches() == 0);
@@ -425,14 +434,12 @@ TEST_CASE("Candidate new bitmap batch rejects projection addition overflow", "[b
     const int32_t ids[] = {0, 1, 2, -1, std::numeric_limits<int32_t>::max()};
     bitmap.set_id_offset(std::numeric_limits<size_t>::max() - 1);
     REQUIRE(bitmap.test(ids, 5) == 31);
-    REQUIRE(bitmap.test(ids, 5, 0x15) == 31);
     const int32_t mapped[] = {0, 1};
     knowhere::IdArray out_ids;
     out_ids.SetType(knowhere::IdArray::Type::ARRAY);
     out_ids.Set(mapped, 2);
     bitmap.set_out_ids(out_ids, 2);
     REQUIRE(bitmap.test(ids, 5) == 31);
-    REQUIRE(bitmap.test(ids, 5, 0x15) == 31);
 }
 
 TEST_CASE("Candidate construction and callback errors preserve ownership", "[bitset][candidate]") {

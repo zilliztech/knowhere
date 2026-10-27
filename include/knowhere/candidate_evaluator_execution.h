@@ -13,12 +13,12 @@ namespace knowhere {
 // Private execution state owned by a bound filter, not by a search algorithm.
 // One independent search task binds once; all its test() calls reuse this state.
 // Neither this adapter nor the backend knows expressions or scalar types.
-// Not a DSO ABI: only CandidateEvaluatorViewV1 crosses the callback boundary.
+// Not a DSO ABI: only CandidateEvaluatorView crosses the callback boundary.
 class CandidateEvaluatorExecution {
  public:
-    explicit CandidateEvaluatorExecution(const CandidateEvaluatorViewV1& view) : view_(view) {
+    explicit CandidateEvaluatorExecution(const CandidateEvaluatorView& view) : view_(view) {
         if (!view_.valid()) {
-            throw std::invalid_argument("invalid candidate evaluator V1");
+            throw std::invalid_argument("invalid candidate evaluator descriptor");
         }
         if (view_.create_worker(view_.context, &worker_) != CandidateEvalStatus::Success || worker_ == nullptr) {
             if (worker_ != nullptr) {
@@ -70,7 +70,7 @@ class CandidateEvaluatorExecution {
     size_t rows = 0;
 
  private:
-    CandidateEvaluatorViewV1 view_;
+    CandidateEvaluatorView view_;
     void* worker_ = nullptr;
 };
 }  // namespace knowhere
