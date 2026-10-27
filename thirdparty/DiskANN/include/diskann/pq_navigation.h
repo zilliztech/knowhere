@@ -1,0 +1,116 @@
+// Copyright (C) 2026 Zilliz. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+#pragma once
+
+#include <vector>
+#include "diskann/navigation_runtime.h"
+#include "diskann/pq_table.h"
+
+namespace diskann {
+  // AiSAQ retains its existing reader and layout-specific code source.
+  class PQDataGetter {
+   public:
+    virtual void aggregate_pq_coords(const unsigned* ids, _u64 count,
+                                     _u64 chunks, _u8* output) = 0;
+    virtual ~PQDataGetter() = default;
+  };
+
+  struct PQNavigationBuildOptions {
+    double code_budget_gb = 0;
+  };
+
+  class PQNavigationStore;
+
+  class PQNavigationDistanceComputer final : public NavigationDistanceComputer {
+   public:
+    PQNavigationDistanceComputer(
+        const PQNavigationStore& model, uint64_t aligned_dimension,
+        uint64_t batch_capacity = defaults::MAX_GRAPH_DEGREE);
+    ~PQNavigationDistanceComputer() override;
+    void set_query(const float* query) override;
+    void compute_distances(const unsigned* ids, uint64_t count,
+                           float* distances) override;
+    void compute_distances(const unsigned* ids, uint64_t count,
+                           float* distances, PQDataGetter& source);
+    // Inline, cached and reader-completed codes use the same PQ lookup.
+    void EvaluateCodes(const uint8_t* codes, uint64_t count, float* distances);
+
+   private:
+    const PQNavigationStore& model_;
+    uint8_t*                 gathered_codes_ = nullptr;
+    float*                   lookup_table_ = nullptr;
+  };
+
+  // A stack adapter for AiSAQ's filtered scan. It shares the borrowed slot's
+  // LUT and gather buffer and does not allocate another query workspace.
+  class PQCodeDistanceComputer final : public NavigationDistanceComputer {
+   public:
+    PQCodeDistanceComputer(PQNavigationDistanceComputer& computer,
+                           PQDataGetter&                 source)
+        : computer_(computer), source_(source) {
+    }
+    void set_query(const float* query) override {
+      computer_.set_query(query);
+    }
+    void compute_distances(const unsigned* ids, uint64_t count,
+                           float* distances) override {
+      computer_.compute_distances(ids, count, distances, source_);
+    }
+
+   private:
+    PQNavigationDistanceComputer& computer_;
+    PQDataGetter&                 source_;
+  };
+
+  class PQNavigationStore final : public NavigationStore {
+   public:
+    explicit PQNavigationStore(bool                     resident_codes = true,
+                               bool                     rearranged = false,
+                               PQNavigationBuildOptions build_options = {});
+    const char* CodecName() const override {
+      return "PQ";
+    }
+    bool IsCompatible(knowhere::DataFormatEnum, bool) const override {
+      // Preserve the existing PQ data-format and embedding-list behavior.
+      return true;
+    }
+    int  ValidateBuild() const override;
+    bool NeedsTrainingSample() const override {
+      return true;
+    }
+    int                   Build(const NavigationBuildContext& context) override;
+    std::optional<size_t> BuildCacheMemorySize(
+        const std::string& prefix) const override;
+    static size_t CodeSize(size_t count, size_t dimension,
+                           const PQNavigationBuildOptions& options);
+    int      Load(const std::string& prefix) override;
+    void     GetNecessaryFilenames(const std::string&        prefix,
+                                   std::vector<std::string>& filenames,
+                                   NavigationFilePurpose     purpose =
+                                       NavigationFilePurpose::Build) const override;
+    uint64_t Count() const override {
+      return count_;
+    }
+    uint64_t Dimension() const override {
+      return dimension_;
+    }
+    size_t MemorySize() const override;
+    size_t QueryMemorySize(uint64_t aligned_dimension) const override;
+    std::unique_ptr<NavigationDistanceComputer> CreateDistanceComputer(
+        uint64_t aligned_dimension,
+        uint64_t batch_capacity = defaults::MAX_GRAPH_DEGREE) const override;
+    uint64_t ChunkCount() const {
+      return chunks_;
+    }
+
+   private:
+    friend class PQNavigationDistanceComputer;
+    PQNavigationBuildOptions   build_options_;
+    bool                       resident_codes_;
+    bool                       rearranged_;
+    uint64_t                   count_ = 0, dimension_ = 0, chunks_ = 0;
+    std::unique_ptr<uint8_t[]> codes_;
+    // The existing table API is non-const; query preparation only reads it.
+    mutable FixedChunkPQTable pq_table_;
+  };
+}  // namespace diskann

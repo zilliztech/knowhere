@@ -12,21 +12,28 @@
 #include <sys/resource.h>
 
 #include <atomic>
+#include <random>
 #include <string>
 #include <thread>
+#include <unordered_set>
 
 #include "../DiskANN/include/diskann/defaults.h"
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "diskann/aux_utils.h"
 #include "diskann/diskann_gpu.h"
+#include "diskann/partition_and_pq.h"
+#include "diskann/pq_navigation.h"
 #include "diskann/utils.h"
 #include "filemanager/FileManager.h"
 #include "filemanager/impl/LocalFileManager.h"
 #include "index/diskann/diskann_config.h"
+#include "index/diskann/pq_navigation_config.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/knowhere_check.h"
 #include "knowhere/expected.h"
+#include "knowhere/feder/DiskANN.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/utils.h"
 #include "utils.h"
@@ -41,8 +48,14 @@ namespace fs = std::experimental::filesystem;
 error "Missing the <filesystem> header."
 #endif
 #include <fstream>
+#include <stdexcept>
 
 namespace {
+#ifdef KNOWHERE_WITH_CARDINAL
+constexpr const char* kNativeDiskANNType = "DISKANN_DEPRECATED";
+#else
+constexpr const char* kNativeDiskANNType = "DISKANN";
+#endif
 std::string kDir = fs::current_path().string() + "/diskann_test";
 std::string kRawDataPath = kDir + "/raw_data";
 std::string kL2IndexDir = kDir + "/l2_index";
@@ -113,7 +126,7 @@ TEST_CASE("Valid diskann build params test", "[diskann]") {
     SECTION("Dynamic param check") {
         knowhere::Json test_json = test_gen();
 
-        auto cfg = knowhere::IndexStaticFaced<float>::CreateConfig(knowhere::IndexEnum::INDEX_DISKANN, version);
+        auto cfg = knowhere::IndexStaticFaced<float>::CreateConfig(kNativeDiskANNType, version);
         knowhere::Json json_(test_json);
         std::string msg;
         auto res = knowhere::Config::FormatAndCheck(*cfg, json_, &msg);
@@ -121,8 +134,9 @@ TEST_CASE("Valid diskann build params test", "[diskann]") {
         res = knowhere::Config::Load(*cfg, json_, knowhere::PARAM_TYPE::TRAIN, &msg);
         REQUIRE(res == knowhere::Status::success);
 
-        knowhere::DiskANNConfig diskCfg = static_cast<const knowhere::DiskANNConfig&>(*cfg);
-        REQUIRE(diskCfg.pq_code_budget_gb == std::max(pq_code_budget_gb, 1.0f * ratio));
+        const auto& diskCfg = static_cast<const knowhere::DiskANNConfig&>(*cfg);
+        REQUIRE(static_cast<const knowhere::PQNavigationConfig&>(*diskCfg.navigation).pq_code_budget_gb ==
+                std::max(pq_code_budget_gb, 1.0f * ratio));
         REQUIRE(diskCfg.search_cache_budget_gb == std::max(search_cache_budget_gb, 1.0f * ratio));
     }
 }
@@ -256,6 +270,7 @@ base_search() {
 
     auto build_gen = [&base_gen, &metric_str, &metric_dir_map, max_degree]() {
         knowhere::Json json = base_gen();
+        json["quant_type"] = "PQ";
         json["index_prefix"] = metric_dir_map[metric_str];
         json["data_path"] = kRawDataPath;
         json["max_degree"] = max_degree;
@@ -1271,12 +1286,6 @@ base_AiSAQ_param_test() {
             test_json["beamwidth"] = diskann::defaults::MAX_AISAQ_BEAMWIDTH + 1;
             search_stat = diskann.Search(query_ds, test_json, nullptr);
             REQUIRE(search_stat.error() == knowhere::Status::out_of_range_in_json);
-            LOG_KNOWHERE_INFO_ << "Test beamwidth parameter value more than maximum "
-                               << diskann::defaults::MAX_AISAQ_BEAMWIDTH;
-            test_json = knn_search_gen();
-            test_json["beamwidth"] = diskann::defaults::MAX_AISAQ_BEAMWIDTH + 1;
-            search_stat = diskann.Search(query_ds, test_json, nullptr);
-            REQUIRE(search_stat.error() == knowhere::Status::out_of_range_in_json);
             LOG_KNOWHERE_INFO_ << "Test vectors_beamwidth parameter value more than maximum "
                                << diskann::defaults::MAX_AISAQ_VECTORS_BEAMWIDTH;
             test_json = knn_search_gen();
@@ -1865,4 +1874,790 @@ TEST_CASE("Test DiskANN Search Cancellation", "[diskann][cancellation]") {
 
     fs::remove_all(kDir);
     fs::remove(kDir);
+}
+
+namespace {
+class PQNavigationTestDirectory {
+ public:
+    explicit PQNavigationTestDirectory(const std::string& name) : path(kDir + "/" + name) {
+        fs::remove_all(path);
+        fs::create_directories(path);
+    }
+    ~PQNavigationTestDirectory() {
+        fs::remove_all(path);
+    }
+    fs::path path;
+};
+
+// Generate the existing PQ format through the navigation-aware build pipeline.
+// Compatibility with the unchanged main-branch writer is checked separately.
+class NativePQFixture : public PQNavigationTestDirectory {
+ public:
+    explicit NativePQFixture(const std::string& name) : PQNavigationTestDirectory(name) {
+        constexpr size_t rows = 512, dim = 8, nq = 4;
+        std::mt19937 rng(20261014);
+        std::vector<float> base(rows * dim), queries(nq * dim);
+        for (auto& value : base) value = float(rng() & 65535) / 32768.0f - 1.0f;
+        for (size_t q = 0; q < nq; ++q) {
+            std::copy_n(base.data() + (q * 113 + 7) * dim, dim, queries.data() + q * dim);
+        }
+        diskann::save_bin<float>((path / "base.bin").string(), base.data(), rows, dim);
+        diskann::save_bin<float>((path / "queries.bin").string(), queries.data(), nq, dim);
+        diskann::BuildConfig config;
+        config.data_file_path = (path / "base.bin").string();
+        config.index_file_path = (path / "index").string();
+        config.compare_metric = diskann::Metric::L2;
+        config.max_degree = 16;
+        config.search_list_size = 64;
+        diskann::PQNavigationStore navigation(true, false, {double(rows * 2) / (1024 * 1024 * 1024)});
+        config.index_mem_gb = 1;
+        REQUIRE(diskann::build_disk_index<float>(config, navigation) == 0);
+    }
+};
+
+class LegacyPQFileManager : public milvus::LocalFileManager {
+ public:
+    explicit LegacyPQFileManager(fs::path source) : source_(std::move(source)) {
+    }
+    bool
+    LoadFile(const std::string& filename) override {
+        loaded.push_back(filename);
+        if (fs::path(filename).filename() == missing_file) {
+            return false;
+        }
+        const auto source = source_ / fs::path(filename).filename();
+        if (!fs::exists(source)) {
+            return false;
+        }
+        fs::copy_file(source, filename, fs::copy_options::overwrite_existing);
+        return true;
+    }
+    std::optional<bool>
+    IsExisted(const std::string& filename) override {
+        if (fail_exists)
+            return std::nullopt;
+        return fs::exists(source_ / fs::path(filename).filename());
+    }
+    bool fail_exists = false;
+    std::string missing_file;
+    std::vector<std::string> loaded;
+
+ private:
+    fs::path source_;
+};
+}  // namespace
+
+TEST_CASE("DiskANN SSD configuration does not select a navigation codec", "[diskann][navigation]") {
+    knowhere::DiskANNSSDConfig config;
+    knowhere::Json request = {{"metric_type", "L2"},
+                              {"dim", 8},
+                              {"index_prefix", "unused_index"},
+                              {"data_path", "unused_data"},
+                              {"vec_field_size_gb", 2.0},
+                              {"search_cache_budget_gb", 0.1},
+                              {"search_cache_budget_gb_ratio", 0.2},
+                              {"quant_type", "UNKNOWN"},
+                              {"rbq_bits", 0}};
+    REQUIRE(knowhere::Config::Load(config, request, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::success);
+    REQUIRE(config.search_list_size == 128);
+    REQUIRE(config.search_cache_budget_gb.value() == Catch::Approx(0.4));
+    for (const auto* field : {"quant_type", "pq_code_budget_gb", "rbq_bits"}) {
+        REQUIRE(config.__DICT__.count(field) == 0);
+    }
+    knowhere::DiskANNConfig native;
+    REQUIRE(knowhere::Config::Load(native, request, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::invalid_args);
+}
+
+TEST_CASE("DiskANN navigation codec selection", "[diskann][navigation]") {
+    const auto version = GenTestVersionList();
+    const auto phase = GENERATE(knowhere::PARAM_TYPE::TRAIN, knowhere::PARAM_TYPE::DESERIALIZE);
+    knowhere::Json request = {
+        {"metric_type", "L2"}, {"dim", 8}, {"index_prefix", "unused_index"}, {"data_path", "unused_data"}};
+    auto omitted = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig(kNativeDiskANNType, version);
+    REQUIRE(knowhere::Config::Load(*omitted, request, phase) == knowhere::Status::success);
+    REQUIRE_FALSE(static_cast<const knowhere::DiskANNConfig&>(*omitted).quant_type.has_value());
+    if (phase == knowhere::PARAM_TYPE::TRAIN)
+        REQUIRE(std::string(
+                    static_cast<const knowhere::DiskANNConfig&>(*omitted).navigation->CreateForBuild()->CodecName()) ==
+                "PQ");
+    else
+        REQUIRE_FALSE(static_cast<const knowhere::DiskANNConfig&>(*omitted).navigation);
+    for (const auto* codec : {"PQ", "RABITQ"}) {
+        request["quant_type"] = codec;
+        const bool pq = std::string(codec) == "PQ";
+        request["pq_code_budget_gb"] = pq ? knowhere::Json("0.25") : knowhere::Json(-1);
+        request["pq_code_budget_gb_ratio"] = pq ? knowhere::Json("0.5") : knowhere::Json(-1);
+        request["vec_field_size_gb"] = 2.0;
+        request["rbq_bits"] = pq ? knowhere::Json(10) : knowhere::Json("3");
+        auto selected = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig(kNativeDiskANNType, version);
+        REQUIRE(knowhere::Config::Load(*selected, request, phase) == knowhere::Status::success);
+        const auto& selected_config = static_cast<const knowhere::DiskANNConfig&>(*selected);
+        REQUIRE(selected_config.quant_type.value() == codec);
+        if (phase == knowhere::PARAM_TYPE::TRAIN) {
+            REQUIRE(std::string(selected_config.navigation->CreateForBuild()->CodecName()) == codec);
+            knowhere::Json metadata;
+            selected_config.navigation->AppendBuildMetadata(metadata);
+            REQUIRE(metadata.at(pq ? "pq_code_budget_gb" : "rbq_bits") == (pq ? 1.0 : 3.0));
+            std::string error;
+            REQUIRE(knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck(kNativeDiskANNType, version, request,
+                                                                            error) == knowhere::Status::success);
+            if (pq)
+                REQUIRE(knowhere::Config::Load(*selected, {{"k", 8}, {"rbq_bits_query", 9}},
+                                               knowhere::PARAM_TYPE::SEARCH) == knowhere::Status::success);
+        }
+    }
+    for (const auto* codec : {"TQ", ""}) {
+        request["quant_type"] = codec;
+        auto selected = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig(kNativeDiskANNType, version);
+        std::string error;
+        const bool rejects_config = std::string(codec).empty() || phase == knowhere::PARAM_TYPE::TRAIN;
+        REQUIRE(knowhere::Config::Load(*selected, request, phase, &error) ==
+                (rejects_config ? knowhere::Status::invalid_args : knowhere::Status::success));
+        if (rejects_config)
+            REQUIRE(error == "Unsupported DiskANN navigation codec: " + std::string(codec));
+        auto manager = std::make_shared<LegacyPQFileManager>(fs::path{});
+        auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(kNativeDiskANNType, version, pack).value();
+        const auto rejected =
+            phase == knowhere::PARAM_TYPE::TRAIN ? index.Build(nullptr, request) : index.Deserialize({}, request);
+        REQUIRE(rejected ==
+                (rejects_config ? knowhere::Status::invalid_args : knowhere::Status::invalid_serialized_index_type));
+        REQUIRE(manager->loaded.empty());
+    }
+}
+TEST_CASE("PQ navigation matches the original lookup", "[diskann][navigation]") {
+    NativePQFixture fixture("pq_lookup_source");
+    const auto prefix = (fixture.path / "index").string();
+    auto model = diskann::CreateNavigationStore("PQ");
+    REQUIRE(model->Load(prefix) == 0);
+    size_t rows, chunks, nq, dimension;
+    std::unique_ptr<uint8_t[]> codes;
+    std::unique_ptr<float[]> queries;
+    diskann::load_bin<uint8_t>(diskann::get_pq_compressed_filename(prefix), codes, rows, chunks);
+    diskann::load_bin<float>((fixture.path / "queries.bin").string(), queries, nq, dimension);
+    REQUIRE(model->Count() == rows);
+    REQUIRE(model->Dimension() == dimension);
+    diskann::FixedChunkPQTable native;
+    native.load_pq_centroid_bin(diskann::get_pq_pivots_filename(prefix).c_str(), chunks);
+    // Build-cache capacities need not make the allocation a multiple of 256.
+    const auto capacity = GENERATE(size_t(40), size_t(diskann::defaults::MAX_GRAPH_DEGREE));
+    auto first = model->CreateDistanceComputer(ROUND_UP(dimension, 8), capacity);
+    auto second = model->CreateDistanceComputer(ROUND_UP(dimension, 8), capacity);
+    std::vector<float> lut(256 * chunks);
+    for (size_t q = 0; q < nq; ++q) {
+        auto& computer = q % 2 ? second : first;
+        computer->set_query(queries.get() + q * dimension);
+        native.populate_chunk_distances(queries.get() + q * dimension, lut.data());
+        for (const size_t count : {size_t(1), size_t(17), capacity}) {
+            std::vector<unsigned> ids(count);
+            for (size_t i = 0; i < count; ++i) ids[i] = (i * 7 + q) % rows;
+            std::vector<uint8_t> gathered(count * chunks);
+            std::vector<float> expected(count), actual(count);
+            diskann::aggregate_coords(ids.data(), count, codes.get(), chunks, gathered.data());
+            diskann::pq_dist_lookup(gathered.data(), count, chunks, lut.data(), expected.data());
+            computer->compute_distances(ids.data(), count, actual.data());
+            REQUIRE(actual == expected);
+        }
+    }
+
+    first->set_query(queries.get());
+    second->set_query(queries.get() + dimension);
+    const unsigned id = 0;
+    for (size_t q = 0; q < 2; ++q) {
+        native.populate_chunk_distances(queries.get() + q * dimension, lut.data());
+        float expected, actual;
+        diskann::pq_dist_lookup(codes.get(), 1, chunks, lut.data(), &expected);
+        auto& computer = q == 0 ? first : second;
+        computer->compute_distances(&id, 1, &actual);
+        REQUIRE(actual == expected);
+    }
+
+    // AiSAQ's header-only model retains ordinary -> rearranged fallback and
+    // scores reader-provided codes without loading the full codes into RAM.
+    for (const bool rearranged : {false, true}) {
+        PQNavigationTestDirectory directory(rearranged ? "pq_reader_rearranged" : "pq_reader");
+        const auto reader_prefix = (directory.path / "index").string();
+        std::vector<std::string> loaded;
+        if (!rearranged) {
+            fs::copy_file(diskann::get_pq_compressed_filename(prefix),
+                          diskann::get_pq_compressed_filename(reader_prefix));
+        }
+        diskann::PQNavigationStore reader_model(false, rearranged);
+        std::vector<std::string> artifacts;
+        reader_model.GetNecessaryFilenames(reader_prefix, artifacts);
+        REQUIRE(std::find(artifacts.begin(), artifacts.end(),
+                          rearranged ? diskann::get_pq_compressed_rearranged_filename(reader_prefix)
+                                     : diskann::get_pq_compressed_filename(reader_prefix)) != artifacts.end());
+        reader_model.GetNecessaryFilenames(reader_prefix, loaded, diskann::NavigationFilePurpose::Load);
+        for (const auto& file : loaded) {
+            auto source = fixture.path / fs::path(file).filename();
+            if (file == diskann::get_pq_compressed_rearranged_filename(reader_prefix)) {
+                source = diskann::get_pq_compressed_filename(prefix);
+            }
+            fs::copy_file(source, file);
+        }
+        REQUIRE(reader_model.Load(reader_prefix) == 0);
+        REQUIRE(reader_model.Count() == rows);
+        REQUIRE(reader_model.Dimension() == dimension);
+        REQUIRE(std::find(loaded.begin(), loaded.end(), diskann::get_pq_compressed_filename(reader_prefix)) ==
+                loaded.end());
+        auto computer = reader_model.CreateDistanceComputer(ROUND_UP(dimension, 8));
+        computer->set_query(queries.get());
+        native.populate_chunk_distances(queries.get(), lut.data());
+        float expected, actual;
+        diskann::pq_dist_lookup(codes.get(), 1, chunks, lut.data(), &expected);
+        static_cast<diskann::PQNavigationDistanceComputer&>(*computer).EvaluateCodes(codes.get(), 1, &actual);
+        REQUIRE(actual == expected);
+    }
+}
+
+TEST_CASE("DiskANN loads legacy PQ files and localizes navigation assets", "[diskann][navigation]") {
+    const auto version = GenTestVersionList();
+    const bool explicit_pq = GENERATE(false, true);
+    const bool with_metadata = GENERATE(false, true);
+    NativePQFixture fixture("pq_load_source");
+    const auto source_prefix = (fixture.path / "index").string();
+    if (with_metadata)
+        diskann::WriteNavigationMetadata(source_prefix, "PQ");
+    PQNavigationTestDirectory directory("pq_legacy_load");
+    const auto prefix = (directory.path / "index").string();
+    auto manager = std::make_shared<LegacyPQFileManager>(fixture.path);
+    SECTION("Successful legacy load") {
+    }
+    SECTION("Missing navigation file preserves the file error") {
+        manager->missing_file = "index_pq_pivots.bin_chunk_offsets.bin";
+    }
+    auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(kNativeDiskANNType, version, pack).value();
+    SECTION("A navigation-only artifact prevents overwriting an existing index") {
+        for (const bool metadata_only : {false, true}) {
+            const auto artifact = metadata_only ? diskann::GetNavigationMetadataFilename(prefix)
+                                                : diskann::get_pq_pivots_filename(prefix);
+            if (metadata_only)
+                diskann::WriteNavigationMetadata(prefix, "PQ");
+            else
+                fs::copy_file(diskann::get_pq_pivots_filename(source_prefix), artifact);
+            REQUIRE(index.Build(nullptr, {{"metric_type", "L2"},
+                                          {"dim", 8},
+                                          {"index_prefix", prefix},
+                                          {"data_path", (fixture.path / "base.bin").string()},
+                                          {"max_degree", 16},
+                                          {"search_list_size", 64},
+                                          {"pq_code_budget_gb", 1e-6},
+                                          {"build_dram_budget_gb", 1.0}}) == knowhere::Status::disk_file_error);
+            REQUIRE(manager->loaded.empty());
+            fs::remove(artifact);
+        }
+        return;
+    }
+    SECTION("Source absence overrides stale cached metadata") {
+        fs::remove(diskann::GetNavigationMetadataFilename(source_prefix));
+        diskann::WriteNavigationMetadata(prefix, "TQ");
+    }
+    knowhere::Json load = {
+        {"metric_type", "L2"}, {"index_prefix", prefix}, {"search_cache_budget_gb", 0.0}, {"warm_up", false}};
+    if (explicit_pq) {
+        load["quant_type"] = "PQ";
+    }
+    const auto status = index.Deserialize({}, load);
+    if (!manager->missing_file.empty()) {
+        REQUIRE(status == knowhere::Status::disk_file_error);
+        return;
+    }
+    REQUIRE(status == knowhere::Status::success);
+    const auto metadata = diskann::GetNavigationMetadataFilename(prefix);
+    REQUIRE(std::count(manager->loaded.begin(), manager->loaded.end(), metadata) ==
+            (fs::exists(diskann::GetNavigationMetadataFilename(source_prefix)) ? 1 : 0));
+    for (const auto& file : fs::directory_iterator(fixture.path)) {
+        if (file.path().filename().string().rfind("index_pq_", 0) == 0) {
+            const auto destination = (directory.path / file.path().filename()).string();
+            REQUIRE(std::count(manager->loaded.begin(), manager->loaded.end(), destination) == 1);
+        }
+    }
+    size_t nq, dim, rows, base_dim;
+    std::unique_ptr<float[]> queries, base;
+    diskann::load_bin<float>((fixture.path / "queries.bin").string(), queries, nq, dim);
+    diskann::load_bin<float>((fixture.path / "base.bin").string(), base, rows, base_dim);
+    REQUIRE(index.Count() == int64_t(rows));
+    REQUIRE(index.Dim() == int64_t(dim));
+    auto dataset = knowhere::GenDataSet(nq, dim, queries.get());
+    knowhere::Json search = {{"metric_type", "L2"}, {"dim", dim}, {"k", 5}, {"search_list_size", 64}, {"beamwidth", 4}};
+    auto result = index.Search(dataset, search, nullptr);
+    REQUIRE(result.has_value());
+    for (size_t q = 0; q < nq; ++q) {
+        REQUIRE(result.value()->GetIds()[q * 5] == int64_t(q * 113 + 7));
+        for (size_t i = 0; i < 5; ++i) {
+            const auto id = result.value()->GetIds()[q * 5 + i];
+            REQUIRE(id >= 0);
+            REQUIRE(id < int64_t(rows));
+            float reference = 0;
+            for (size_t d = 0; d < dim; ++d) {
+                const float delta = queries[q * dim + d] - base[id * base_dim + d];
+                reference += delta * delta;
+            }
+            REQUIRE(result.value()->GetDistance()[q * 5 + i] == Catch::Approx(reference).margin(1e-5));
+        }
+    }
+
+    search["search_list_size"] = 16;
+    auto iterators = index.AnnIterator(dataset, search, nullptr, false);
+    REQUIRE(iterators.has_value());
+    REQUIRE(iterators.value().size() == nq);
+    for (size_t q = 0; q < nq; ++q) {
+        auto& iterator = iterators.value()[q];
+        std::unordered_set<int64_t> visited;
+        // Consume beyond a single lsearch batch, with several iterators alive.
+        for (size_t i = 0; i < 80; ++i) {
+            REQUIRE(iterator->HasNext().value());
+            auto next = iterator->Next();
+            REQUIRE(next.has_value());
+            const auto [id, distance] = next.value();
+            REQUIRE(id >= 0);
+            REQUIRE(id < int64_t(rows));
+            REQUIRE(visited.insert(id).second);
+            float reference = 0;
+            for (size_t d = 0; d < dim; ++d) {
+                const float delta = queries[q * dim + d] - base[id * base_dim + d];
+                reference += delta * delta;
+            }
+            REQUIRE(distance == Catch::Approx(reference).margin(1e-5));
+        }
+    }
+}
+
+TEST_CASE("Navigation metadata errors never fall back to legacy PQ", "[diskann][navigation]") {
+    const auto version = GenTestVersionList();
+    const auto type = GENERATE(kNativeDiskANNType, "AISAQ");
+    NativePQFixture source("metadata_source");
+    PQNavigationTestDirectory destination("metadata_destination");
+    const auto source_prefix = (source.path / "index").string();
+    const auto prefix = (destination.path / "index").string();
+    const auto source_metadata = diskann::GetNavigationMetadataFilename(source_prefix);
+    diskann::WriteNavigationMetadata(source_prefix, "PQ");
+    auto manager = std::make_shared<LegacyPQFileManager>(source.path);
+    auto expected = knowhere::Status::invalid_serialized_index_type;
+    knowhere::Json config = {{"metric_type", "L2"}, {"index_prefix", prefix}, {"search_cache_budget_gb", 0.0}};
+    auto overwrite = [&](size_t offset, uint8_t byte) {
+        std::fstream file(source_metadata, std::ios::binary | std::ios::in | std::ios::out);
+        file.seekp(offset);
+        file.put(char(byte));
+        REQUIRE(bool(file));
+    };
+    SECTION("Unknown codec with complete PQ files present") {
+        diskann::WriteNavigationMetadata(source_prefix, "TQ");
+    }
+    SECTION("Unsupported version") {
+        overwrite(8, 2);
+    }
+    SECTION("Invalid magic") {
+        overwrite(0, 'X');
+    }
+    SECTION("Truncated header") {
+        fs::resize_file(source_metadata, 10);
+    }
+    SECTION("Oversized codec name") {
+        overwrite(12, 255);
+    }
+    SECTION("Truncated codec name") {
+        fs::resize_file(source_metadata, 17);
+    }
+    SECTION("Trailing bytes") {
+        std::ofstream file(source_metadata, std::ios::binary | std::ios::app);
+        file.put('X');
+    }
+    SECTION("Existence query fails") {
+        manager->fail_exists = true;
+        expected = knowhere::Status::disk_file_error;
+    }
+    SECTION("Metadata localization fails") {
+        manager->missing_file = fs::path(source_metadata).filename().string();
+        expected = knowhere::Status::disk_file_error;
+    }
+    SECTION("Explicit codec disagrees with the stored type") {
+        config["quant_type"] = "RABITQ";
+    }
+    auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(type, version, pack).value();
+    REQUIRE(index.Deserialize({}, config) == expected);
+    REQUIRE(manager->loaded.size() == (manager->fail_exists ? 0 : 1));
+    if (!manager->loaded.empty())
+        REQUIRE(manager->loaded.front() == diskann::GetNavigationMetadataFilename(prefix));
+}
+
+TEST_CASE("Navigation metadata loads with a fresh local file manager", "[diskann][navigation]") {
+    const auto version = GenTestVersionList();
+    NativePQFixture source("metadata_local_source");
+    const auto prefix = (source.path / "index").string();
+    diskann::WriteNavigationMetadata(prefix, "PQ");
+    auto manager = std::make_shared<milvus::LocalFileManager>();
+    REQUIRE(manager->IsExisted(diskann::GetNavigationMetadataFilename(prefix)) == false);
+    auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(kNativeDiskANNType, version, pack).value();
+    knowhere::Json config = {{"metric_type", "L2"}, {"index_prefix", prefix}, {"search_cache_budget_gb", 0.0}};
+    REQUIRE(index.Deserialize({}, config) == knowhere::Status::success);
+    REQUIRE(index.Count() == 512);
+    REQUIRE(index.Dim() == 8);
+    config["quant_type"] = "TQ";
+    REQUIRE(index.Deserialize({}, config) == knowhere::Status::invalid_serialized_index_type);
+    REQUIRE(index.Count() == 512);
+}
+
+namespace {
+// A different encoding with no PQ files: exercises the common build/cache
+// contract without introducing another production codec or a factory hook.
+class RawBuildNavigation final : public diskann::NavigationStore {
+ public:
+    explicit RawBuildNavigation(bool sample, std::optional<size_t> cache_memory = 0)
+        : sample_(sample), cache_memory_(cache_memory) {
+    }
+    const char*
+    CodecName() const override {
+        return "TEST_RAW";
+    }
+    bool
+    IsCompatible(knowhere::DataFormatEnum, bool) const override {
+        return true;
+    }
+    int
+    ValidateBuild() const override {
+        return 0;
+    }
+    bool
+    NeedsTrainingSample() const override {
+        return sample_;
+    }
+    int
+    Build(const diskann::NavigationBuildContext& context) override {
+        metric = context.metric;
+        diskann::load_bin<float>(context.data_path, data_, count_, dimension_);
+        metadata_matches = context.count == count_ && context.dimension == dimension_ &&
+                           context.data_type == knowhere::DataFormatEnum::fp32;
+        training_count = context.training_count;
+        shared_sample_matches =
+            context.training_data == nullptr
+                ? training_count == 0
+                : training_count == count_ &&
+                      std::equal(data_.get(), data_.get() + count_ * dimension_, context.training_data);
+        return 0;
+    }
+    std::optional<size_t>
+    BuildCacheMemorySize(const std::string&) const override {
+        return cache_memory_;
+    }
+    int
+    Load(const std::string&) override {
+        ++loads;
+        return 0;
+    }
+    void
+    GetNecessaryFilenames(const std::string&, std::vector<std::string>&,
+                          diskann::NavigationFilePurpose) const override {
+    }
+    uint64_t
+    Count() const override {
+        return count_;
+    }
+    uint64_t
+    Dimension() const override {
+        return dimension_;
+    }
+    size_t
+    MemorySize() const override {
+        return count_ * dimension_ * sizeof(float);
+    }
+    size_t
+    QueryMemorySize(uint64_t aligned_dimension) const override {
+        return aligned_dimension * sizeof(float);
+    }
+    std::unique_ptr<diskann::NavigationDistanceComputer>
+    CreateDistanceComputer(uint64_t, uint64_t capacity) const override {
+        struct Computer final : diskann::NavigationDistanceComputer {
+            Computer(const RawBuildNavigation& store, size_t capacity)
+                : store(store), capacity(capacity), query(store.dimension_) {
+            }
+            void
+            set_query(const float* input) override {
+                std::copy_n(input, query.size(), query.data());
+            }
+            void
+            compute_distances(const unsigned* ids, uint64_t count, float* distances) override {
+                if (count > capacity)
+                    throw std::runtime_error("cache exceeded its batch capacity");
+                for (size_t i = 0; i < count; ++i) {
+                    float distance = 0;
+                    for (size_t d = 0; d < query.size(); ++d) {
+                        const float delta = query[d] - store.data_[ids[i] * query.size() + d];
+                        distance += delta * delta;
+                    }
+                    distances[i] = distance;
+                }
+            }
+            const RawBuildNavigation& store;
+            size_t capacity;
+            std::vector<float> query;
+        };
+        if (loads != 1)
+            throw std::runtime_error("cache model was not loaded once after the memory gate");
+        ++computers;
+        return std::make_unique<Computer>(*this, capacity);
+    }
+    diskann::Metric metric;
+    bool metadata_matches = false, shared_sample_matches = false;
+    size_t training_count = 0, loads = 0;
+    mutable std::atomic<size_t> computers{0};
+
+ private:
+    bool sample_;
+    std::optional<size_t> cache_memory_;
+    std::unique_ptr<float[]> data_;
+    size_t count_ = 0, dimension_ = 0;
+};
+}  // namespace
+
+TEST_CASE("DiskANN build and cache do not require navigation PQ", "[diskann][navigation][navigation-build]") {
+    const auto metric = GENERATE(diskann::Metric::L2, diskann::Metric::INNER_PRODUCT, diskann::Metric::COSINE);
+    const auto disk_chunks = GENERATE(0, 2);
+    const auto needs_sample = GENERATE(false, true);
+    PQNavigationTestDirectory directory("independent_build");
+    constexpr size_t rows = 512, dim = 8;
+    auto dataset = GenDataSet(rows, dim, 123);
+    const auto source = (directory.path / "base.bin").string();
+    diskann::save_bin<const float>(source, static_cast<const float*>(dataset->GetTensor()), rows, dim);
+    diskann::BuildConfig config;
+    config.data_file_path = source;
+    config.index_file_path = (directory.path / "index").string();
+    config.compare_metric = metric;
+    config.max_degree = 16;
+    config.search_list_size = 64;
+    config.index_mem_gb = 1;
+    config.disk_pq_dims = disk_chunks;
+    config.num_nodes_to_cache = 16;
+    RawBuildNavigation navigation(needs_sample);
+    REQUIRE(diskann::build_disk_index<float>(config, navigation) == 0);
+    REQUIRE(navigation.metadata_matches);
+    REQUIRE(navigation.metric == metric);
+    REQUIRE(navigation.Dimension() == dim + (metric == diskann::Metric::INNER_PRODUCT));
+    REQUIRE(navigation.shared_sample_matches);
+    REQUIRE(navigation.training_count == ((needs_sample || disk_chunks) ? rows : 0));
+    REQUIRE(navigation.loads == 1);
+    REQUIRE(navigation.computers > 0);
+    REQUIRE_FALSE(fs::exists(diskann::get_pq_pivots_filename(config.index_file_path)));
+    REQUIRE_FALSE(fs::exists(diskann::get_pq_compressed_filename(config.index_file_path)));
+    REQUIRE(fs::exists(diskann::get_disk_index_filename(config.index_file_path)));
+    REQUIRE(fs::exists(config.index_file_path + "_disk.index_pq_pivots.bin") == bool(disk_chunks));
+    std::unique_ptr<uint32_t[]> cached;
+    size_t count, columns;
+    diskann::load_bin<uint32_t>(diskann::get_cached_nodes_file(config.index_file_path), cached, count, columns);
+    REQUIRE(count == config.num_nodes_to_cache);
+    REQUIRE(columns == 1);
+    std::unordered_set<uint32_t> ids(cached.get(), cached.get() + count);
+    REQUIRE(ids.size() == count);
+    for (auto id : ids) REQUIRE(id < rows);
+}
+
+TEST_CASE("PQ build cache accepts nonaligned gather buffer sizes", "[diskann][navigation][pq-build-cache]") {
+    PQNavigationTestDirectory directory("pq_build_cache_alignment");
+    // IP adds one dimension: ROUND_UP(128 + 1, 8) * 56 = 7616 bytes,
+    // which is not a multiple of the allocator's 256-byte alignment.
+    constexpr size_t rows = 512, dim = 128;
+    auto dataset = GenDataSet(rows, dim, 123);
+    diskann::BuildConfig config;
+    config.data_file_path = (directory.path / "base.bin").string();
+    config.index_file_path = (directory.path / "index").string();
+    config.compare_metric = diskann::Metric::INNER_PRODUCT;
+    config.max_degree = 56;
+    config.search_list_size = 64;
+    config.index_mem_gb = 1;
+    config.num_nodes_to_cache = 16;
+    diskann::save_bin<const float>(config.data_file_path, static_cast<const float*>(dataset->GetTensor()), rows, dim);
+    diskann::PQNavigationStore navigation(true, false, {double(rows * 16) / (1 << 30)});
+    REQUIRE(diskann::build_disk_index<float>(config, navigation) == 0);
+    std::unique_ptr<uint32_t[]> cached;
+    size_t count, columns;
+    diskann::load_bin<uint32_t>(diskann::get_cached_nodes_file(config.index_file_path), cached, count, columns);
+    REQUIRE(count == config.num_nodes_to_cache);
+    REQUIRE(columns == 1);
+    std::unordered_set<uint32_t> ids(cached.get(), cached.get() + count);
+    REQUIRE(ids.size() == count);
+    for (auto id : ids) REQUIRE(id < rows);
+}
+
+TEST_CASE("DiskANN build cache respects missing assets and memory gate", "[diskann][navigation][navigation-build]") {
+    const auto available = GENERATE(false, true);
+    PQNavigationTestDirectory directory("build_cache_gate");
+    auto dataset = GenDataSet(64, 8, 123);
+    const auto source = (directory.path / "base.bin").string();
+    diskann::save_bin<const float>(source, static_cast<const float*>(dataset->GetTensor()), 64, 8);
+    diskann::BuildConfig config;
+    config.data_file_path = source;
+    config.index_file_path = (directory.path / "index").string();
+    config.max_degree = 8;
+    config.search_list_size = 32;
+    config.index_mem_gb = 1;
+    config.num_nodes_to_cache = 8;
+    RawBuildNavigation navigation(false, available ? std::optional<size_t>(size_t(2) << 30) : std::nullopt);
+    REQUIRE(diskann::build_disk_index<float>(config, navigation) == 0);
+    REQUIRE(navigation.loads == 0);
+    REQUIRE(navigation.computers == 0);
+    REQUIRE_FALSE(fs::exists(diskann::get_cached_nodes_file(config.index_file_path)));
+}
+
+TEST_CASE("PQ navigation build preserves encoding and cache accounting", "[diskann][navigation][navigation-build]") {
+    // Include metric-prepared FP32 data and both existing low-precision L2 inputs.
+    const auto mode = GENERATE(0, 1, 2, 3, 4);
+    PQNavigationTestDirectory directory("pq_build_equivalence");
+    constexpr size_t rows = 512, dim = 8;
+    const auto metric = mode == 1   ? diskann::Metric::INNER_PRODUCT
+                        : mode == 2 ? diskann::Metric::COSINE
+                                    : diskann::Metric::L2;
+    auto dataset = GenDataSet(rows, dim, 123);
+    auto check = [&](auto value) {
+        using T = decltype(value);
+        std::vector<T> base(rows * dim);
+        const auto* source = static_cast<const float*>(dataset->GetTensor());
+        for (size_t i = 0; i < base.size(); ++i) base[i] = T(source[i]);
+        auto data_path = (directory.path / "base.bin").string();
+        diskann::save_bin<T>(data_path, base.data(), rows, dim);
+        if constexpr (std::is_same_v<T, float>) {
+            const auto prepared = (directory.path / "prepared.bin").string();
+            if (metric == diskann::Metric::INNER_PRODUCT) {
+                diskann::prepare_base_for_inner_products<T>(data_path, prepared);
+                data_path = prepared;
+            } else if (metric == diskann::Metric::COSINE) {
+                diskann::prepare_base_for_cosine<T>(data_path, prepared);
+                data_path = prepared;
+            }
+        }
+        std::unique_ptr<float[]> sample;
+        size_t sample_count, sample_dim;
+        gen_random_slice<T>(data_path, 1.0, sample, sample_count, sample_dim);
+        const auto prefix = (directory.path / "index").string();
+        diskann::PQNavigationStore navigation(true, false, {double(rows * 2) / (1024 * 1024 * 1024)});
+        REQUIRE(navigation.Build({prefix, data_path, knowhere::datatype_v<T>, metric, rows, sample_dim, sample.get(),
+                                  sample_count}) == 0);
+        const auto pivots = diskann::get_pq_pivots_filename(prefix);
+        // Reference uses the original native encoder and the written codebook.
+        const auto reference = (directory.path / "reference.bin").string();
+        generate_pq_data_from_pivots<T>(data_path, 256, 2, pivots, reference);
+        std::unique_ptr<uint8_t[]> actual, expected;
+        size_t actual_rows, chunks, expected_rows, expected_chunks;
+        diskann::load_bin<uint8_t>(diskann::get_pq_compressed_filename(prefix), actual, actual_rows, chunks);
+        diskann::load_bin<uint8_t>(reference, expected, expected_rows, expected_chunks);
+        REQUIRE(actual_rows == rows);
+        REQUIRE(chunks == 2);
+        REQUIRE(expected_rows == rows);
+        REQUIRE(expected_chunks == chunks);
+        REQUIRE(std::equal(actual.get(), actual.get() + rows * chunks, expected.get()));
+        std::unique_ptr<float[]> centroid;
+        size_t centroid_rows, centroid_columns;
+        diskann::load_bin<float>(diskann::get_pq_centroid_filename(pivots), centroid, centroid_rows, centroid_columns);
+        REQUIRE(centroid_rows == sample_dim);
+        REQUIRE(centroid_columns == 1);
+        for (size_t d = 0; d < sample_dim; ++d) {
+            float mean = 0;
+            if (metric == diskann::Metric::L2) {
+                for (size_t i = 0; i < sample_count; ++i) mean += sample[i * sample_dim + d];
+                mean /= sample_count;
+            }
+            REQUIRE(centroid[d] == mean);
+        }
+        REQUIRE(navigation.BuildCacheMemorySize(prefix).value() ==
+                fs::file_size(pivots) + fs::file_size(diskann::get_pq_compressed_filename(prefix)));
+        REQUIRE(navigation.Load(prefix) == 0);
+        REQUIRE(navigation.Count() == rows);
+        REQUIRE(navigation.Dimension() == sample_dim);
+        fs::remove(diskann::get_pq_compressed_filename(prefix));
+        REQUIRE_FALSE(navigation.BuildCacheMemorySize(prefix).has_value());
+    };
+    if (mode == 3)
+        check(knowhere::fp16{});
+    else if (mode == 4)
+        check(knowhere::bf16{});
+    else
+        check(float{});
+}
+
+TEST_CASE("PQ build rejects invalid budget before SSD encoding", "[diskann][navigation][navigation-build]") {
+    PQNavigationTestDirectory directory("pq_build_validation");
+    auto dataset = GenDataSet(64, 8, 123);
+    diskann::BuildConfig config;
+    config.data_file_path = (directory.path / "base.bin").string();
+    config.index_file_path = (directory.path / "index").string();
+    config.index_mem_gb = 1;
+    config.disk_pq_dims = 2;
+    diskann::save_bin<const float>(config.data_file_path, static_cast<const float*>(dataset->GetTensor()), 64, 8);
+    REQUIRE(diskann::PQNavigationStore::CodeSize(512, 8, {256.0 / (1 << 30)}) == 1);
+    REQUIRE(diskann::PQNavigationStore::CodeSize(512, 8, {8192.0 / (1 << 30)}) == 8);
+    REQUIRE(diskann::PQNavigationStore::CodeSize(512, 1024, {1048576.0 / (1 << 30)}) ==
+            diskann::defaults::MAX_PQ_CHUNKS);
+    diskann::PQNavigationStore navigation;
+    REQUIRE(diskann::build_disk_index<float>(config, navigation) == -1);
+    REQUIRE_FALSE(fs::exists(config.index_file_path + "_disk.index_pq_pivots.bin"));
+    REQUIRE_FALSE(fs::exists(diskann::get_pq_pivots_filename(config.index_file_path)));
+    REQUIRE_FALSE(fs::exists(diskann::get_disk_index_filename(config.index_file_path)));
+}
+
+TEST_CASE("DiskANN common metadata does not own navigation parameters", "[diskann][navigation][navigation-metadata]") {
+    knowhere::feder::diskann::DiskANNBuildConfig common{};
+    common.disk_pq_dims = 7;
+    knowhere::Json params = common;
+    REQUIRE(params.at("disk_pq_dims") == 7);
+    REQUIRE_FALSE(params.contains("pq_code_budget_gb"));
+
+    auto navigation = knowhere::CreateNavigationConfig("PQ");
+    navigation->AppendBuildMetadata(params);
+    REQUIRE_FALSE(params.contains("pq_code_budget_gb"));
+    static_cast<knowhere::PQNavigationConfig&>(*navigation).pq_code_budget_gb = 0.25f;
+    navigation->AppendBuildMetadata(params);
+    REQUIRE(params.at("pq_code_budget_gb") == 0.25f);
+    REQUIRE(params.at("disk_pq_dims") == 7);
+    REQUIRE_THROWS_AS(knowhere::CreateNavigationConfig("TQ"), diskann::NavigationTypeError);
+}
+
+TEST_CASE("DiskANN and AiSAQ delegate PQ metadata to navigation", "[diskann][navigation][navigation-metadata]") {
+    const auto type = GENERATE(kNativeDiskANNType, "AISAQ");
+    PQNavigationTestDirectory directory("navigation_metadata");
+    constexpr size_t rows = 512, dim = 8;
+    auto base = GenDataSet(rows, dim, 123);
+    const auto source = (directory.path / "base.bin").string();
+    const auto prefix = (directory.path / "index").string();
+    diskann::save_bin<const float>(source, static_cast<const float*>(base->GetTensor()), rows, dim);
+    knowhere::Json build = {{"metric_type", "L2"},
+                            {"dim", dim},
+                            {"data_path", source},
+                            {"index_prefix", prefix},
+                            {"max_degree", 16},
+                            {"search_list_size", 64},
+                            {"build_dram_budget_gb", 1.0},
+                            {"disk_pq_dims", 0},
+                            {"pq_code_budget_gb", double(rows) / (1 << 30)},
+                            {"pq_code_budget_gb_ratio", 0.0625},
+                            {"vec_field_size_gb", double(rows * dim * sizeof(float)) / (1 << 30)}};
+    if (std::string(type) == "AISAQ")
+        build["inline_pq"] = -1;
+    auto manager = std::make_shared<milvus::LocalFileManager>();
+    auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(type, GenTestVersionList(), pack).value();
+    REQUIRE(index.Build(nullptr, build) == knowhere::Status::success);
+    REQUIRE(index.Deserialize({}, {{"metric_type", "L2"}, {"index_prefix", prefix}, {"search_cache_budget_gb", 0.0}}) ==
+            knowhere::Status::success);
+    // Exercise the modified Node implementation with a prepared build config;
+    // the existing FEDER request parser is outside this navigation refactor.
+    auto config = index.Node()->CreateConfig();
+    REQUIRE(knowhere::Config::Load(*config, build, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::success);
+    auto result = index.Node()->GetIndexMeta(std::move(config));
+    REQUIRE(result.has_value());
+    const auto metadata = knowhere::Json::parse(result.value()->GetJsonInfo());
+    const auto& params = metadata.at("build_params_");
+    REQUIRE(params.at("data_path") == source);
+    REQUIRE(params.at("max_degree") == 16);
+    REQUIRE(params.at("search_list_size") == 64);
+    REQUIRE(params.at("build_dram_budget_gb") == 1.0);
+    REQUIRE(params.at("disk_pq_dims") == 0);
+    REQUIRE(params.at("accelerate_build") == false);
+    REQUIRE(metadata.at("num_elem_") == rows);
+    REQUIRE_FALSE(metadata.at("entry_points_").empty());
+    // Preserve the existing flat PQ JSON field with the ratio-adjusted value.
+    REQUIRE(params.at("pq_code_budget_gb") == double(rows * 2) / (1 << 30));
 }
