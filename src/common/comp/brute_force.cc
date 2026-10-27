@@ -1884,6 +1884,10 @@ expected<DataSetPtr>
 BruteForce::Search(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                    const BitsetView& bitset, milvus::OpContext* op_context) noexcept {
     return GuardedCall([&]() -> expected<DataSetPtr> {
+        if (!bitset.is_bitmap()) {
+            return expected<DataSetPtr>::Err(Status::not_implemented,
+                                             "BruteForce consumers are not yet adapted for deferred filters");
+        }
         return BruteForceSearchImpl<DataType>(base_dataset, query_dataset, config, bitset, op_context);
     });
 }
@@ -1893,6 +1897,10 @@ Status
 BruteForce::SearchWithBuf(const DataSetPtr base_dataset, const DataSetPtr query_dataset, int64_t* ids, float* dis,
                           const Json& config, const BitsetView& bitset, milvus::OpContext* op_context) noexcept {
     return GuardedCall([&]() -> Status {
+        if (!bitset.is_bitmap()) {
+            LOG_KNOWHERE_WARNING_ << "BruteForce buffer search is not yet adapted for deferred filters";
+            return Status::not_implemented;
+        }
         return BruteForceSearchWithBufImpl<DataType>(base_dataset, query_dataset, ids, dis, config, bitset, op_context);
     });
 }
@@ -1903,6 +1911,10 @@ BruteForce::SearchOnChunkWithBuf(const DataSetPtr base_dataset, const DataSetPtr
                                  float* dis, const Json& config, const BitsetView& bitset,
                                  milvus::OpContext* op_context) noexcept {
     return GuardedCall([&]() -> Status {
+        if (!bitset.is_bitmap()) {
+            LOG_KNOWHERE_WARNING_ << "BruteForce chunk buffer search is not yet adapted for deferred filters";
+            return Status::not_implemented;
+        }
         return BruteForceSearchOnChunkWithBufImpl<DataType>(base_dataset, query_dataset, ids, dis, config, bitset,
                                                             op_context);
     });
@@ -1913,6 +1925,10 @@ expected<DataSetPtr>
 BruteForce::RangeSearch(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                         const BitsetView& bitset, milvus::OpContext* op_context) noexcept {
     return GuardedCall([&]() -> expected<DataSetPtr> {
+        if (!bitset.is_bitmap()) {
+            return expected<DataSetPtr>::Err(Status::not_implemented,
+                                             "BruteForce consumers are not yet adapted for deferred filters");
+        }
         return BruteForceRangeSearchImpl<DataType>(base_dataset, query_dataset, config, bitset, op_context);
     });
 }
@@ -1922,6 +1938,10 @@ BruteForce::SearchSparseWithBuf(const DataSetPtr base_dataset, const DataSetPtr 
                                 float* distances, const Json& config, const BitsetView& bitset,
                                 milvus::OpContext* op_context) noexcept {
     return GuardedCall([&]() -> Status {
+        if (!bitset.is_bitmap()) {
+            LOG_KNOWHERE_WARNING_ << "BruteForce sparse buffer search is not yet adapted for deferred filters";
+            return Status::not_implemented;
+        }
         return SearchSparseWithBufImpl(base_dataset, query_dataset, labels, distances, config, bitset, op_context);
     });
 }
@@ -1930,6 +1950,10 @@ expected<DataSetPtr>
 BruteForce::SearchSparse(const DataSetPtr base_dataset, const DataSetPtr query_dataset, const Json& config,
                          const BitsetView& bitset, milvus::OpContext* op_context) noexcept {
     return GuardedCall([&]() -> expected<DataSetPtr> {
+        if (!bitset.is_bitmap()) {
+            return expected<DataSetPtr>::Err(Status::not_implemented,
+                                             "BruteForce consumers are not yet adapted for deferred filters");
+        }
         return BruteForceSearchSparseImpl(base_dataset, query_dataset, config, bitset, op_context);
     });
 }
@@ -1940,6 +1964,10 @@ BruteForce::AnnIterator(const DataSetPtr base_dataset, const DataSetPtr query_da
                         const BitsetView& bitset, bool use_knowhere_search_pool,
                         milvus::OpContext* op_context) noexcept {
     return GuardedCall([&]() -> expected<std::vector<IndexNode::IteratorPtr>> {
+        if (!bitset.is_bitmap()) {
+            return expected<std::vector<IndexNode::IteratorPtr>>::Err(
+                Status::not_implemented, "BruteForce iterator is not yet adapted for deferred filters");
+        }
         return BruteForceAnnIteratorImpl<DataType>(base_dataset, query_dataset, config, bitset,
                                                    use_knowhere_search_pool, op_context);
     });
@@ -1951,6 +1979,10 @@ BruteForce::AnnIteratorOnChunk(const DataSetPtr base_dataset, const DataSetPtr q
                                const BitsetView& bitset, bool use_knowhere_search_pool,
                                milvus::OpContext* op_context) noexcept {
     return GuardedCall([&]() -> expected<std::vector<IndexNode::IteratorPtr>> {
+        if (!bitset.is_bitmap()) {
+            return expected<std::vector<IndexNode::IteratorPtr>>::Err(
+                Status::not_implemented, "BruteForce iterator is not yet adapted for deferred filters");
+        }
         return BruteForceAnnIteratorOnChunkImpl<DataType>(base_dataset, query_dataset, config, bitset,
                                                           use_knowhere_search_pool, op_context);
     });
@@ -1960,6 +1992,23 @@ template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,
                                              const knowhere::BitsetView& bitset, milvus::OpContext* op_context);
+
+// The chunk wrappers are publicly declared too. Export the fp32 entries so
+// their staged deferred-filter guards can be exercised without bypassing the
+// public API or including this implementation file in a unit test.
+template knowhere::Status
+knowhere::BruteForce::SearchOnChunkWithBuf<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
+                                                           const knowhere::DataSetPtr query_dataset, int64_t* ids,
+                                                           float* dis, const knowhere::Json& config,
+                                                           const knowhere::BitsetView& bitset,
+                                                           milvus::OpContext* op_context);
+
+template knowhere::expected<std::vector<knowhere::IndexNode::IteratorPtr>>
+knowhere::BruteForce::AnnIteratorOnChunk<knowhere::fp32>(const knowhere::DataSetPtr base_dataset,
+                                                         const knowhere::DataSetPtr query_dataset,
+                                                         const knowhere::Json& config,
+                                                         const knowhere::BitsetView& bitset,
+                                                         bool use_knowhere_search_pool, milvus::OpContext* op_context);
 template knowhere::expected<knowhere::DataSetPtr>
 knowhere::BruteForce::Search<knowhere::fp16>(const knowhere::DataSetPtr base_dataset,
                                              const knowhere::DataSetPtr query_dataset, const knowhere::Json& config,

@@ -13,12 +13,14 @@
 #define BITSET_H
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -26,6 +28,8 @@
 #include <utility>
 
 #include "knowhere/array_store.h"
+#include "knowhere/candidate_evaluator.h"
+#include "knowhere/candidate_evaluator_execution.h"
 
 namespace knowhere {
 
@@ -41,21 +45,94 @@ class BitsetView {
     ~BitsetView() = default;
 
     BitsetView(const uint8_t* data, size_t num_bits, std::optional<size_t> filtered_count = std::nullopt)
-        : bits_(data), num_bits_(num_bits), vector_count_(num_bits), filtered_count_(filtered_count) {
+        : bits_(data),
+          num_bits_(num_bits),
+          vector_count_(num_bits),
+          filtered_count_(filtered_count),
+          bitmap_test_limit_(static_cast<uint32_t>(std::min<size_t>(num_bits, size_t{1} << 31))) {
     }
 
     BitsetView(const std::nullptr_t) : BitsetView() {
     }
 
+    // Separate, non-owning predicate attachment. Counts describe mandatory
+    // exclusions only. The descriptor, its context, sources and producer DSO
+    // must outlive all bound copies. public_row_count is required without a
+    // bitmap: the public row domain is independent of a backend's vector count.
+    // Production search consumers reject this form until explicitly adapted.
+    void
+    set_candidate_evaluator(const CandidateEvaluatorViewV1* evaluator,
+                            std::optional<size_t> public_row_count = std::nullopt) {
+        if (evaluator != nullptr && !evaluator->valid()) {
+            throw std::invalid_argument("invalid candidate evaluator V1");
+        }
+        if (evaluator != nullptr && ((!public_row_count.has_value() && num_bits_ == 0) ||
+                                     (num_bits_ != 0 && public_row_count.value_or(num_bits_) != num_bits_))) {
+            throw std::invalid_argument("candidate evaluator requires a consistent public row domain");
+        }
+        candidate_evaluator_ = evaluator;
+        bitmap_test_limit_ =
+            evaluator == nullptr ? static_cast<uint32_t>(std::min<size_t>(num_bits_, size_t{1} << 31)) : 0;
+        evaluator_rows_ = public_row_count.value_or(num_bits_);
+        if (evaluator != nullptr && num_bits_ == 0) {
+            vector_count_ = evaluator_rows_;
+        }
+        execution_.reset();
+    }
+
+    size_t
+    public_row_count() const {
+        return is_bitmap() ? num_bits_ : evaluator_rows_;
+    }
+
+    // Copies the immutable filter description, creating fresh execution state
+    // for ONE independent search task. Subsequent copies belong to that same
+    // task and retain its state; never share a bound filter across query tasks.
+    BitsetView
+    bind() const {
+        auto result = *this;
+        result.execution_ = candidate_evaluator_ == nullptr
+                                ? nullptr
+                                : std::make_shared<CandidateEvaluatorExecution>(*candidate_evaluator_);
+        return result;
+    }
+
+    bool
+    bound() const {
+        return candidate_evaluator_ == nullptr || execution_ != nullptr;
+    }
+
+    size_t
+    callback_batches() const {
+        return execution_ ? execution_->batch_calls : 0;
+    }
+
+    size_t
+    callback_rows() const {
+        return execution_ ? execution_->rows : 0;
+    }
+
+    // Representation, not a strategy decision. Raw bitmap scans/counts are
+    // complete only for this form; other forms must use test().
+    bool
+    is_bitmap() const {
+        return candidate_evaluator_ == nullptr;
+    }
+
+    const CandidateEvaluatorViewV1*
+    candidate_evaluator() const {
+        return candidate_evaluator_;
+    }
+
     bool
     empty() const {
         if (num_bits_ == 0) {
-            return true;
+            return candidate_evaluator_ == nullptr;
         }
         if (!filtered_count_.has_value() || filtered_count_.value() != 0) {
             return false;
         }
-        return !has_id_boundary_filter_();
+        return !has_id_boundary_filter_() && candidate_evaluator_ == nullptr;
     }
 
     size_t
@@ -91,10 +168,24 @@ class BitsetView {
 
     const uint8_t*
     data() const {
+        if (candidate_evaluator_ != nullptr) {
+            throw std::logic_error("dynamic filter cannot be consumed as a complete raw bitmap");
+        }
         return bits_;
     }
 
-    // Recomputes filter counters for a backend id range.
+    // Transport for an adapter that ALSO preserves candidate_evaluator(). This
+    // is not the complete predicate bitmap and must not replace test().
+    const uint8_t*
+    mandatory_data() const {
+        return bits_;
+    }
+
+    // Recomputes bitmap-only counters for a backend id range. Deferred count
+    // projection belongs to the later consumer adaptation; reject it without
+    // changing size/count rather than treating a callback-only null bitmap as
+    // an empty backend domain. Exact mandatory counts may be prepared before
+    // attaching the descriptor; estimated user truth must never be set here.
     void
     count_filtered_bits(size_t bit_offset, size_t bit_count, const uint8_t* valid_bitmap = nullptr) {
         count_filtered_bits_impl_(
@@ -173,7 +264,7 @@ class BitsetView {
     // once outside a hot loop.
     bool
     supports_direct_test(size_t required_bits) const {
-        return !has_out_ids() && id_offset_ == 0 && num_bits_ >= required_bits;
+        return is_bitmap() && !has_out_ids() && id_offset_ == 0 && num_bits_ >= required_bits;
     }
 
     // Fast path for identity-mapped, in-range backend IDs. Keep bitmap access
@@ -181,6 +272,10 @@ class BitsetView {
     // in test() after supports_direct_test() has established the invariants.
     bool
     test_direct(size_t index) const {
+        // Like the existing mapping/bounds assertions below, this is a
+        // precondition checked by supports_direct_test() once outside the loop.
+        // Public search ingress still rejects an unadapted deferred predicate.
+        assert(is_bitmap());
         assert(!has_out_ids());
         assert(id_offset_ == 0);
         assert(index < num_bits_);
@@ -190,6 +285,60 @@ class BitsetView {
     // Returns true when a backend id should be skipped.
     bool
     test(int64_t index) const {
+        if (index < 0) [[unlikely]] {
+            return true;
+        }
+        const auto unprojected = static_cast<size_t>(index) + id_offset_;
+        if (!has_out_ids()) {
+            if (unprojected < bitmap_test_limit_) {
+                return bits_[unprojected >> 3] & (0x1 << (unprojected & 0x7));
+            }
+            return test_outside_projected_(unprojected, unprojected, index > std::numeric_limits<int32_t>::max());
+        }
+        if (unprojected >= out_ids_count_) [[unlikely]] {
+            return test_outside_projected_(std::numeric_limits<size_t>::max(), unprojected,
+                                           index > std::numeric_limits<int32_t>::max());
+        }
+        const auto row = static_cast<uint32_t>(out_ids_[unprojected]);
+        if (row >= bitmap_test_limit_) [[unlikely]] {
+            return test_outside_projected_(row > static_cast<uint32_t>(std::numeric_limits<int32_t>::max())
+                                               ? std::numeric_limits<size_t>::max()
+                                               : row,
+                                           unprojected, index > std::numeric_limits<int32_t>::max());
+        }
+        return bits_[row >> 3] & (0x1 << (row & 0x7));
+    }
+
+ private:
+    // Carry the projected row, not the original backend ID, across the bitmap
+    // fast path. Inlining a normal int32 caller proves input_too_wide=false.
+    // The unsigned preprojection sum is enough to detect a callback's checked
+    // addition overflow; bitmap-only test intentionally keeps its old wrap.
+    [[gnu::noinline]] bool
+    test_outside_projected_(size_t row, size_t unprojected, bool input_too_wide) const {
+        if (is_bitmap()) {
+            return row >= num_bits_ || (bits_[row >> 3] & (0x1 << (row & 0x7)));
+        }
+        // Match the existing single API's width-before-binding error order.
+        if (input_too_wide) {
+            return true;
+        }
+        // This value is only a one-lane transport placeholder. test_rows owns
+        // the existing public-domain, mandatory bitmap, binding and producer
+        // error handling and writes the REAL projected row before callback.
+        const int32_t lane = 0;
+        return test_rows(&lane, 1, 1, false, [=, this](int32_t) -> int64_t {
+                   if (unprojected < id_offset_ || row > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+                       return -1;
+                   }
+                   return static_cast<int64_t>(row);
+               }) != 0;
+    }
+
+    // Internal prefilter only: true means excluded by mandatory visibility.
+    // Does not evaluate the callback and is NOT a complete predicate test.
+    bool
+    test_mandatory(int64_t index) const {
         if (index < 0) {
             return true;
         }
@@ -208,12 +357,232 @@ class BitsetView {
         return out_id >= num_bits_ || (bits_[out_id >> 3] & (0x1 << (out_id & 0x7)));
     }
 
+ public:
     float
     filter_ratio() const {
         auto current_size = size();
         return current_size == 0 ? 0.0f : ((float)count() / current_size);
     }
 
+    // Batch form of test: bit i is set when backend ID ids[i] is excluded.
+    // The callback transport accepts int32 backend IDs and public row offsets;
+    // larger-ID consumer adaptation is not provided by this version. The
+    // original bitmap-only single-ID int64 API is unchanged.
+    // The bound filter owns its private execution state. Bitmap counts remain
+    // mandatory-only; an all-visible bitmap still runs the callback.
+    uint64_t
+    test(const int32_t* ids, uint32_t count) const {
+        const auto lanes = CandidateEvaluatorExecution::LaneMask(count);
+        if (count != 0 && ids == nullptr) {
+            throw std::invalid_argument("invalid batch IDs");
+        }
+        if (candidate_evaluator_ != nullptr) [[unlikely]] {
+            return test_deferred_batch_(ids, count, lanes);
+        }
+        // This is the original single-ID bitmap test packed once per batch.
+        // No callback workspace, active-lane checks or 64-ID scratch array
+        // enters the ordinary bitmap path.
+        return test_bitmap_batch_(ids, count);
+    }
+
+    // Inactive lanes are excluded without reading their IDs or source values.
+    uint64_t
+    test(const int32_t* ids, uint32_t count, uint64_t active_mask) const {
+        const auto lanes = CandidateEvaluatorExecution::LaneMask(count);
+        if ((count != 0 && ids == nullptr) || (active_mask & ~lanes) != 0) {
+            throw std::invalid_argument("invalid batch IDs/mask");
+        }
+        if (candidate_evaluator_ != nullptr) [[unlikely]] {
+            return test_deferred_batch_(ids, count, active_mask);
+        }
+        if (active_mask == lanes) {
+            return test_bitmap_batch_(ids, count);
+        }
+        if (id_offset_ > std::numeric_limits<size_t>::max() - std::numeric_limits<int32_t>::max()) [[unlikely]] {
+            return test_bitmap_large_offset_(ids, count, lanes, active_mask);
+        }
+        uint64_t excluded = lanes & ~active_mask;
+        for (uint32_t lane = 0; lane < count; ++lane) {
+            if ((active_mask & (uint64_t{1} << lane)) != 0) {
+                excluded |= uint64_t{test_mandatory(ids[lane])} << lane;
+            }
+        }
+        return excluded;
+    }
+
+ private:
+    uint64_t
+    test_bitmap_batch_(const int32_t* ids, uint32_t count) const {
+        // IDs are int32. One proof per batch is enough for ordinary windows;
+        // only extreme offsets need checked per-lane addition. The legacy
+        // int64 single-ID API is left unchanged, but this new API fails closed.
+        if (id_offset_ > std::numeric_limits<size_t>::max() - std::numeric_limits<int32_t>::max()) [[unlikely]] {
+            const auto lanes = CandidateEvaluatorExecution::LaneMask(count);
+            return test_bitmap_large_offset_(ids, count, lanes, lanes);
+        }
+        uint64_t excluded = 0;
+        for (uint32_t lane = 0; lane < count; ++lane) {
+            excluded |= uint64_t{test_mandatory(ids[lane])} << lane;
+        }
+        return excluded;
+    }
+
+    [[gnu::noinline]] uint64_t
+    test_bitmap_large_offset_(const int32_t* ids, uint32_t count, uint64_t lanes, uint64_t active) const {
+        const auto largest_id = std::numeric_limits<size_t>::max() - id_offset_;
+        uint64_t excluded = lanes & ~active;
+        for (uint32_t lane = 0; lane < count; ++lane) {
+            if ((active & (uint64_t{1} << lane)) != 0) {
+                const auto id = ids[lane];
+                const bool reject = id < 0 || static_cast<size_t>(id) > largest_id || test_mandatory(id);
+                excluded |= uint64_t{reject} << lane;
+            }
+        }
+        return excluded;
+    }
+
+    [[gnu::noinline]] uint64_t
+    test_deferred_batch_(const int32_t* ids, uint32_t count, uint64_t active_mask) const {
+        return test_rows(ids, count, active_mask, !has_out_ids() && id_offset_ == 0, [&](int32_t id) -> int64_t {
+            if (id < 0 || static_cast<size_t>(id) > std::numeric_limits<size_t>::max() - id_offset_) {
+                return -1;
+            }
+            size_t row = static_cast<size_t>(id) + id_offset_;
+            if (has_out_ids()) {
+                return row < out_ids_count_ ? out_ids_[row] : -1;
+            }
+            if (row > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+                return -1;
+            }
+            return row;
+        });
+    }
+
+ public:
+    // Adapter entry for backends with their own reorder map. This map replaces
+    // the view's ID projection: its output is already in the public bitmap /
+    // segment-row domain. The non-owning map is read once per active input;
+    // no allocation, intermediate ID pass or extra indirect call is needed.
+    uint64_t
+    test_mapped(const int32_t* ids, uint32_t count, const int32_t* row_map, size_t id_count) const {
+        return test_mapped(ids, count, row_map, id_count, CandidateEvaluatorExecution::LaneMask(count));
+    }
+
+    uint64_t
+    test_mapped(const int32_t* ids, uint32_t count, const int32_t* row_map, size_t id_count,
+                uint64_t active_mask) const {
+        const auto lanes = CandidateEvaluatorExecution::LaneMask(count);
+        if ((count != 0 && ids == nullptr) || (active_mask & ~lanes) != 0) {
+            throw std::invalid_argument("invalid mapped batch IDs/mask");
+        }
+        if (candidate_evaluator_ != nullptr) [[unlikely]] {
+            return test_deferred_mapped_(ids, count, row_map, id_count, active_mask);
+        }
+        return active_mask == lanes ? test_bitmap_mapped_<false>(ids, count, row_map, id_count, lanes, active_mask)
+                                    : test_bitmap_mapped_<true>(ids, count, row_map, id_count, lanes, active_mask);
+    }
+
+ private:
+    template <bool CheckActive>
+    uint64_t
+    test_bitmap_mapped_(const int32_t* ids, uint32_t count, const int32_t* row_map, size_t id_count, uint64_t lanes,
+                        uint64_t active) const {
+        uint64_t excluded = lanes & ~active;
+        for (uint32_t lane = 0; lane < count; ++lane) {
+            if constexpr (CheckActive) {
+                if ((active & (uint64_t{1} << lane)) == 0) {
+                    continue;
+                }
+            }
+            const auto id = ids[lane];
+            bool reject = id < 0 || static_cast<size_t>(id) >= id_count;
+            if (!reject) {
+                const auto row = row_map == nullptr ? id : row_map[id];
+                reject =
+                    row < 0 || static_cast<size_t>(row) >= num_bits_ || (bits_[row >> 3] & (uint8_t{1} << (row & 7)));
+            }
+            excluded |= uint64_t{reject} << lane;
+        }
+        return excluded;
+    }
+
+    [[gnu::noinline]] uint64_t
+    test_deferred_mapped_(const int32_t* ids, uint32_t count, const int32_t* row_map, size_t id_count,
+                          uint64_t active_mask) const {
+        if (row_map == nullptr) {
+            return test_rows(ids, count, active_mask, true, [=](int32_t id) -> int32_t {
+                return id < 0 || static_cast<size_t>(id) >= id_count ? -1 : id;
+            });
+        }
+        return test_rows(ids, count, active_mask, false, [=](int32_t id) -> int32_t {
+            if (id < 0 || static_cast<size_t>(id) >= id_count) {
+                return -1;
+            }
+            return row_map[id];
+        });
+    }
+
+    template <typename RowAt>
+    uint64_t
+    test_rows(const int32_t* ids, uint32_t count, uint64_t active, bool borrow_ids, RowAt row_at) const {
+        const auto lanes = CandidateEvaluatorExecution::LaneMask(count);
+        if ((count != 0 && ids == nullptr) || (active & ~lanes) != 0 || !bound()) {
+            throw std::invalid_argument("invalid batch IDs/mask or unbound filter");
+        }
+        if (active == 0) {
+            return lanes;
+        }
+        // Choose once per batch, not once per lane. An absent mandatory bitmap
+        // is common for all-visible sealed segments, but a zero backend count
+        // is NOT enough to omit a public-domain bitmap (see below).
+        if (num_bits_ == 0) {
+            return test_rows_impl<false>(ids, count, lanes, active, borrow_ids, row_at);
+        }
+        // With an identity projection and a count covering the entire public
+        // domain, an exact zero proves that the bitmap contains no exclusions.
+        // A window or compacted/mapped count cannot establish this property.
+        // Still check public row bounds, including an adapter's reorder map.
+        if (vector_count_ == num_bits_ && id_offset_ == 0 && !has_out_ids() && filtered_count_.value_or(1) == 0) {
+            return test_rows_impl<false>(ids, count, lanes, active, borrow_ids, row_at);
+        }
+        return test_rows_impl<true>(ids, count, lanes, active, borrow_ids, row_at);
+    }
+
+    template <bool CheckBitmap, typename RowAt>
+    uint64_t
+    test_rows_impl(const int32_t* ids, uint32_t count, uint64_t lanes, uint64_t active, bool borrow_ids,
+                   RowAt row_at) const {
+        // Most candidate IDs survive mandatory visibility. Clear rejected
+        // lanes only, avoiding a shift/OR for every normally active candidate.
+        std::array<int32_t, 64> rows;
+        for (uint32_t lane = 0; lane < count; ++lane) {
+            if ((active & (uint64_t{1} << lane)) == 0) {
+                continue;
+            }
+            const auto row = row_at(ids[lane]);
+            if (row < 0 || static_cast<size_t>(row) >= public_row_count()) {
+                active &= ~(uint64_t{1} << lane);
+                continue;
+            }
+            if constexpr (CheckBitmap) {
+                // A zero backend-domain count need not mean all public rows
+                // are visible (e.g. a sparse reorder map or a public-ID scan).
+                if (bits_[row >> 3] & (uint8_t{1} << (row & 7))) {
+                    active &= ~(uint64_t{1} << lane);
+                    continue;
+                }
+            }
+            if (!is_bitmap() && row > std::numeric_limits<int32_t>::max()) {
+                throw std::out_of_range("segment row exceeds callback ID domain");
+            }
+            if (!borrow_ids) {
+                rows[lane] = static_cast<int32_t>(row);
+            }
+        }
+        return is_bitmap() ? lanes & ~active : execution_->test(borrow_ids ? ids : rows.data(), count, active);
+    }
+
+ public:
     // Return whether every backend id in [begin, end) is filtered.
     bool
     range_all_filtered(size_t begin, size_t end) const {
@@ -224,13 +593,11 @@ class BitsetView {
         }
 
         // Mapped ids require per-id tests.
-        if (has_out_ids()) {
-            for (size_t index = begin; index < end; ++index) {
-                if (!test(index)) {
-                    return false;
-                }
+        if (has_out_ids() || bitmap_test_limit_ == 0) {
+            if (bitmap_test_limit_ == 0 && is_bitmap()) {
+                return true;
             }
-            return true;
+            return range_all_filtered_by_id_(begin, end);
         }
 
         // Contiguous ids can scan the translated public-bit range.
@@ -254,15 +621,8 @@ class BitsetView {
         }
 
         // Mapped ids require per-id tests.
-        if (has_out_ids()) {
-            size_t index = std::min(upper_bound, size());
-            while (index > 0) {
-                --index;
-                if (!test(index)) {
-                    return index;
-                }
-            }
-            return std::nullopt;
+        if (has_out_ids() || bitmap_test_limit_ == 0) {
+            return previous_valid_by_id_(upper_bound);
         }
 
         // Contiguous ids can scan the translated public-bit range.
@@ -293,13 +653,11 @@ class BitsetView {
     // Return the first unfiltered backend id.
     size_t
     get_first_valid_index() const {
-        if (has_out_ids()) {
-            for (size_t i = 0; i < size(); i++) {
-                if (!test(i)) {
-                    return i;
-                }
+        if (has_out_ids() || bitmap_test_limit_ == 0) {
+            if (bitmap_test_limit_ == 0 && is_bitmap()) {
+                return size();
             }
-            return size();
+            return first_valid_by_id_();
         }
 
         const size_t bit_begin = std::min(id_offset_, num_bits_);
@@ -332,7 +690,7 @@ class BitsetView {
             return "";
         }
         std::stringbuf buf;
-        to = std::min<size_t>(to, num_bits_);
+        to = std::min<size_t>(to, is_bitmap() ? num_bits_ : size());
         for (size_t i = from; i < to; i++) {
             buf.sputc(test(i) ? '1' : '0');
         }
@@ -340,11 +698,45 @@ class BitsetView {
     }
 
  private:
+    // Mapped/deferred scans may execute an opaque producer and retain loop
+    // state across it. Keep those scans out of the contiguous bitmap kernels
+    // without declaring actual mapped/fusing work cold or changing semantics.
+    [[gnu::noinline]] bool
+    range_all_filtered_by_id_(size_t begin, size_t end) const {
+        for (size_t index = begin; index < end; ++index) {
+            if (!test(index))
+                return false;
+        }
+        return true;
+    }
+
+    [[gnu::noinline]] std::optional<size_t>
+    previous_valid_by_id_(size_t upper_bound) const {
+        size_t index = std::min(upper_bound, size());
+        while (index > 0) {
+            if (!test(--index))
+                return index;
+        }
+        return std::nullopt;
+    }
+
+    [[gnu::noinline]] size_t
+    first_valid_by_id_() const {
+        for (size_t index = 0; index < size(); ++index) {
+            if (!test(index))
+                return index;
+        }
+        return size();
+    }
+
     template <typename ValidByteAt, typename ValidWordAt>
     void
     count_filtered_bits_impl_(size_t bit_offset, size_t bit_count, bool has_valid_bitmap, ValidByteAt valid_byte_at,
                               ValidWordAt valid_word_at) {
-        if (bits_ == nullptr || num_bits_ == 0 || bit_count == 0 || bit_offset >= num_bits_) {
+        if (bits_ == nullptr || bitmap_test_limit_ == 0 || bit_count == 0 || bit_offset >= num_bits_) {
+            if (!is_bitmap()) {
+                throw std::logic_error("deferred filter count projection is not yet supported");
+            }
             set_vector_count(0);
             set_filter_count(0);
             return;
@@ -503,6 +895,13 @@ class BitsetView {
     // std::nullopt means unknown; 0 means known empty filtering.
     std::optional<size_t> filtered_count_ = std::nullopt;
     bool require_id_boundary_ = false;
+    // This private hot limit saturates at 2^31 and fits the existing metadata
+    // padding. A negative int32 map entry converts above that limit, so the
+    // ordinary mapped path needs only the same unsigned bounds comparison.
+    // Zero sends a deferred predicate through the single-ID bounds tail;
+    // large bitmap IDs use that tail's original 64-bit mandatory kernel.
+    // It must NEVER replace true num_bits_ in public metadata or scans/counts.
+    uint32_t bitmap_test_limit_ = 0;
 
     // Contiguous backend id window into the public bitset.
     size_t id_offset_ = 0;
@@ -511,6 +910,13 @@ class BitsetView {
     // pointer windows are both represented by IdArray without copying data.
     IdArray out_ids_;
     size_t out_ids_count_ = 0;
+
+    // Append deferred state after the original bitmap metadata, preserving its
+    // field order for bitmap-only code generation. The overall C++ object is
+    // still larger: this is NOT a mixed-version binary ABI compatibility claim.
+    const CandidateEvaluatorViewV1* candidate_evaluator_ = nullptr;
+    size_t evaluator_rows_ = 0;
+    std::shared_ptr<CandidateEvaluatorExecution> execution_;
 };
 
 }  // namespace knowhere
