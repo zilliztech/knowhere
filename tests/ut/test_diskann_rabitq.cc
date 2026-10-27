@@ -31,6 +31,11 @@
 #include "utils.h"
 
 namespace {
+#ifdef KNOWHERE_WITH_CARDINAL
+constexpr const char* kNativeDiskANNType = "DISKANN_DEPRECATED";
+#else
+constexpr const char* kNativeDiskANNType = "DISKANN";
+#endif
 namespace fs = std::filesystem;
 struct RaBitQFixture {
     static constexpr size_t rows = 512, nq = 3;
@@ -73,7 +78,9 @@ auto
 CreateDiskANN(const std::string& type, int version) {
     auto manager = std::make_shared<milvus::LocalFileManager>();
     auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
-    return knowhere::IndexFactory::Instance().Create<knowhere::fp32>(type, version, pack).value();
+    return knowhere::IndexFactory::Instance()
+        .Create<knowhere::fp32>(type == "DISKANN" ? kNativeDiskANNType : type, version, pack)
+        .value();
 }
 
 float
@@ -204,7 +211,7 @@ TEST_CASE("DiskANN RaBitQ registration and codec parameters", "[diskann][diskann
     auto index = CreateDiskANN("DISKANN", version);
     REQUIRE(index.Type() == "DISKANN");
     auto json = f.BuildConfig("L2");
-    auto config = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig("DISKANN", version);
+    auto config = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig(kNativeDiskANNType, version);
     REQUIRE(knowhere::Config::Load(*config, json, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::success);
     auto& navigation = static_cast<knowhere::DiskANNConfig&>(*config).navigation;
     REQUIRE(static_cast<const knowhere::RaBitQNavigationConfig&>(*navigation).BuildOptions().bits == 1);
@@ -466,7 +473,7 @@ TEST_CASE("RaBitQ loading rejects wrong metadata and unsupported consumers", "[d
             using T = decltype(value);
             auto manager = std::make_shared<milvus::LocalFileManager>();
             auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
-            auto index = knowhere::IndexFactory::Instance().Create<T>("DISKANN", version, pack).value();
+            auto index = knowhere::IndexFactory::Instance().Create<T>(kNativeDiskANNType, version, pack).value();
             REQUIRE(index.Deserialize({}, load) == knowhere::Status::invalid_serialized_index_type);
             auto request = f.BuildConfig("L2");
             REQUIRE(index.Build(nullptr, request) == knowhere::Status::invalid_args);
@@ -532,8 +539,8 @@ TEST_CASE("DiskANN load admission preserves legacy PQ estimates", "[diskann][dis
     constexpr uint64_t file_size = uint64_t(8) << 30;
     const knowhere::Json request = {{"metric_type", "L2"}};
     auto estimate = [&](knowhere::Json config) {
-        return knowhere::IndexStaticFaced<knowhere::fp32>::EstimateLoadResource("DISKANN", version, file_size, 512, 16,
-                                                                                config);
+        return knowhere::IndexStaticFaced<knowhere::fp32>::EstimateLoadResource(kNativeDiskANNType, version, file_size,
+                                                                                512, 16, config);
     };
     auto omitted = estimate(request);
     auto pq = request;
@@ -549,7 +556,7 @@ TEST_CASE("DiskANN load admission preserves legacy PQ estimates", "[diskann][dis
     REQUIRE(explicit_rabitq.has_value());
     REQUIRE(explicit_rabitq.value().memoryCost == file_size + file_size / 4);
     auto overflow = knowhere::IndexStaticFaced<knowhere::fp32>::EstimateLoadResource(
-        "DISKANN", version, std::numeric_limits<uint64_t>::max(), 512, 16, rabitq);
+        kNativeDiskANNType, version, std::numeric_limits<uint64_t>::max(), 512, 16, rabitq);
     REQUIRE_FALSE(overflow.has_value());
     auto unsupported = request;
     unsupported["quant_type"] = "TQ";

@@ -51,6 +51,11 @@ error "Missing the <filesystem> header."
 #include <stdexcept>
 
 namespace {
+#ifdef KNOWHERE_WITH_CARDINAL
+constexpr const char* kNativeDiskANNType = "DISKANN_DEPRECATED";
+#else
+constexpr const char* kNativeDiskANNType = "DISKANN";
+#endif
 std::string kDir = fs::current_path().string() + "/diskann_test";
 std::string kRawDataPath = kDir + "/raw_data";
 std::string kL2IndexDir = kDir + "/l2_index";
@@ -121,7 +126,7 @@ TEST_CASE("Valid diskann build params test", "[diskann]") {
     SECTION("Dynamic param check") {
         knowhere::Json test_json = test_gen();
 
-        auto cfg = knowhere::IndexStaticFaced<float>::CreateConfig(knowhere::IndexEnum::INDEX_DISKANN, version);
+        auto cfg = knowhere::IndexStaticFaced<float>::CreateConfig(kNativeDiskANNType, version);
         knowhere::Json json_(test_json);
         std::string msg;
         auto res = knowhere::Config::FormatAndCheck(*cfg, json_, &msg);
@@ -1942,12 +1947,33 @@ class LegacyPQFileManager : public milvus::LocalFileManager {
 };
 }  // namespace
 
+TEST_CASE("DiskANN common configuration does not select a navigation codec", "[diskann][navigation]") {
+    knowhere::DiskANNCommonConfig config;
+    knowhere::Json request = {{"metric_type", "L2"},
+                              {"dim", 8},
+                              {"index_prefix", "unused_index"},
+                              {"data_path", "unused_data"},
+                              {"vec_field_size_gb", 2.0},
+                              {"search_cache_budget_gb", 0.1},
+                              {"search_cache_budget_gb_ratio", 0.2},
+                              {"quant_type", "UNKNOWN"},
+                              {"rbq_bits", 0}};
+    REQUIRE(knowhere::Config::Load(config, request, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::success);
+    REQUIRE(config.search_list_size == 128);
+    REQUIRE(config.search_cache_budget_gb.value() == Catch::Approx(0.4));
+    for (const auto* field : {"quant_type", "pq_code_budget_gb", "rbq_bits"}) {
+        REQUIRE(config.__DICT__.count(field) == 0);
+    }
+    knowhere::DiskANNConfig native;
+    REQUIRE(knowhere::Config::Load(native, request, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::invalid_args);
+}
+
 TEST_CASE("DiskANN navigation codec selection", "[diskann][navigation]") {
     const auto version = GenTestVersionList();
     const auto phase = GENERATE(knowhere::PARAM_TYPE::TRAIN, knowhere::PARAM_TYPE::DESERIALIZE);
     knowhere::Json request = {
         {"metric_type", "L2"}, {"dim", 8}, {"index_prefix", "unused_index"}, {"data_path", "unused_data"}};
-    auto omitted = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig("DISKANN", version);
+    auto omitted = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig(kNativeDiskANNType, version);
     REQUIRE(knowhere::Config::Load(*omitted, request, phase) == knowhere::Status::success);
     REQUIRE_FALSE(static_cast<const knowhere::DiskANNConfig&>(*omitted).quant_type.has_value());
     if (phase == knowhere::PARAM_TYPE::TRAIN)
@@ -1963,7 +1989,7 @@ TEST_CASE("DiskANN navigation codec selection", "[diskann][navigation]") {
         request["pq_code_budget_gb_ratio"] = pq ? knowhere::Json("0.5") : knowhere::Json(-1);
         request["vec_field_size_gb"] = 2.0;
         request["rbq_bits"] = pq ? knowhere::Json(10) : knowhere::Json("3");
-        auto selected = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig("DISKANN", version);
+        auto selected = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig(kNativeDiskANNType, version);
         REQUIRE(knowhere::Config::Load(*selected, request, phase) == knowhere::Status::success);
         const auto& selected_config = static_cast<const knowhere::DiskANNConfig&>(*selected);
         REQUIRE(selected_config.quant_type.value() == codec);
@@ -1973,8 +1999,8 @@ TEST_CASE("DiskANN navigation codec selection", "[diskann][navigation]") {
             selected_config.navigation->AppendBuildMetadata(metadata);
             REQUIRE(metadata.at(pq ? "pq_code_budget_gb" : "rbq_bits") == (pq ? 1.0 : 3.0));
             std::string error;
-            REQUIRE(knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck("DISKANN", version, request, error) ==
-                    knowhere::Status::success);
+            REQUIRE(knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck(kNativeDiskANNType, version, request,
+                                                                            error) == knowhere::Status::success);
             if (pq)
                 REQUIRE(knowhere::Config::Load(*selected, {{"k", 8}, {"rbq_bits_query", 9}},
                                                knowhere::PARAM_TYPE::SEARCH) == knowhere::Status::success);
@@ -1982,7 +2008,7 @@ TEST_CASE("DiskANN navigation codec selection", "[diskann][navigation]") {
     }
     for (const auto* codec : {"TQ", ""}) {
         request["quant_type"] = codec;
-        auto selected = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig("DISKANN", version);
+        auto selected = knowhere::IndexStaticFaced<knowhere::fp32>::CreateConfig(kNativeDiskANNType, version);
         std::string error;
         const bool rejects_config = std::string(codec).empty() || phase == knowhere::PARAM_TYPE::TRAIN;
         REQUIRE(knowhere::Config::Load(*selected, request, phase, &error) ==
@@ -1991,7 +2017,8 @@ TEST_CASE("DiskANN navigation codec selection", "[diskann][navigation]") {
             REQUIRE(error == "Unsupported DiskANN navigation codec: " + std::string(codec));
         auto manager = std::make_shared<LegacyPQFileManager>(fs::path{});
         auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
-        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, pack).value();
+        auto index =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>(kNativeDiskANNType, version, pack).value();
         const auto rejected =
             phase == knowhere::PARAM_TYPE::TRAIN ? index.Build(nullptr, request) : index.Deserialize({}, request);
         REQUIRE(rejected ==
@@ -2102,7 +2129,7 @@ TEST_CASE("DiskANN loads legacy PQ files and localizes navigation assets", "[dis
         manager->missing_file = "index_pq_pivots.bin_chunk_offsets.bin";
     }
     auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
-    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, pack).value();
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(kNativeDiskANNType, version, pack).value();
     SECTION("A navigation-only artifact prevents overwriting an existing index") {
         for (const bool metadata_only : {false, true}) {
             const auto artifact = metadata_only ? diskann::GetNavigationMetadataFilename(prefix)
@@ -2201,7 +2228,7 @@ TEST_CASE("DiskANN loads legacy PQ files and localizes navigation assets", "[dis
 
 TEST_CASE("Navigation metadata errors never fall back to legacy PQ", "[diskann][navigation]") {
     const auto version = GenTestVersionList();
-    const auto type = GENERATE("DISKANN", "AISAQ");
+    const auto type = GENERATE(kNativeDiskANNType, "AISAQ");
     NativePQFixture source("metadata_source");
     PQNavigationTestDirectory destination("metadata_destination");
     const auto source_prefix = (source.path / "index").string();
@@ -2266,7 +2293,7 @@ TEST_CASE("Navigation metadata loads with a fresh local file manager", "[diskann
     auto manager = std::make_shared<milvus::LocalFileManager>();
     REQUIRE(manager->IsExisted(diskann::GetNavigationMetadataFilename(prefix)) == false);
     auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
-    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, pack).value();
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(kNativeDiskANNType, version, pack).value();
     knowhere::Json config = {{"metric_type", "L2"}, {"index_prefix", prefix}, {"search_cache_budget_gb", 0.0}};
     REQUIRE(index.Deserialize({}, config) == knowhere::Status::success);
     REQUIRE(index.Count() == 512);
@@ -2589,7 +2616,7 @@ TEST_CASE("DiskANN common metadata does not own navigation parameters", "[diskan
 }
 
 TEST_CASE("DiskANN and AiSAQ delegate PQ metadata to navigation", "[diskann][navigation][navigation-metadata]") {
-    const auto type = GENERATE("DISKANN", "AISAQ");
+    const auto type = GENERATE(kNativeDiskANNType, "AISAQ");
     PQNavigationTestDirectory directory("navigation_metadata");
     constexpr size_t rows = 512, dim = 8;
     auto base = GenDataSet(rows, dim, 123);
