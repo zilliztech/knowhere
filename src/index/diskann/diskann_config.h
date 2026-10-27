@@ -12,11 +12,11 @@
 #ifndef DISKANN_CONFIG_H
 #define DISKANN_CONFIG_H
 
-#include "diskann_common_config.h"
+#include "diskann_ssd_config.h"
 #include "navigation_config.h"
 
 namespace knowhere {
-class DiskANNConfig : public DiskANNCommonConfig {
+class DiskANNConfig : public DiskANNSSDConfig {
  public:
     CFG_STRING quant_type;
     std::unique_ptr<NavigationConfig> navigation;

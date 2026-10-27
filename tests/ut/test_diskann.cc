@@ -1947,8 +1947,8 @@ class LegacyPQFileManager : public milvus::LocalFileManager {
 };
 }  // namespace
 
-TEST_CASE("DiskANN common configuration does not select a navigation codec", "[diskann][navigation]") {
-    knowhere::DiskANNCommonConfig config;
+TEST_CASE("DiskANN SSD configuration does not select a navigation codec", "[diskann][navigation]") {
+    knowhere::DiskANNSSDConfig config;
     knowhere::Json request = {{"metric_type", "L2"},
                               {"dim", 8},
                               {"index_prefix", "unused_index"},

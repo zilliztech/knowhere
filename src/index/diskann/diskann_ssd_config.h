@@ -9,8 +9,8 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
-#ifndef DISKANN_COMMON_CONFIG_H
-#define DISKANN_COMMON_CONFIG_H
+#ifndef DISKANN_SSD_CONFIG_H
+#define DISKANN_SSD_CONFIG_H
 
 #include "diskann/defaults.h"
 #include "knowhere/config.h"
@@ -24,7 +24,7 @@ constexpr const CFG_INT::value_type kDefaultSearchListSizeForBuild = 128;
 
 }  // namespace
 
-class DiskANNCommonConfig : public BaseConfig {
+class DiskANNSSDConfig : public BaseConfig {
  public:
     // This is the degree of the graph index, typically between 60 and 150. Larger R will result in larger indices and
     // longer indexing times, but better search quality.
@@ -76,7 +76,7 @@ class DiskANNCommonConfig : public BaseConfig {
     // value should be in range of [0.0, 1.0] which means when greater or equal to x% of the bits are set,
     // use PQ + Refine. Default to -1.0f, negative vlaues will use dynamic threshold calculator given topk.
     CFG_FLOAT filter_threshold;
-    KNOWHERE_DECLARE_CONFIG(DiskANNCommonConfig) {
+    KNOWHERE_DECLARE_CONFIG(DiskANNSSDConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(max_degree)
             .description("the degree of the graph index.")
             .set_default(48)
@@ -176,4 +176,4 @@ class DiskANNCommonConfig : public BaseConfig {
     }
 };
 }  // namespace knowhere
-#endif /* DISKANN_COMMON_CONFIG_H */
+#endif /* DISKANN_SSD_CONFIG_H */
