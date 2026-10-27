@@ -9,6 +9,7 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include "common/EasyAssert.h"
 #include "folly/futures/Future.h"
 #include "knowhere/expected.h"
 
@@ -19,7 +20,11 @@ namespace knowhere::detail {
 // because the message carries no contract.
 bool
 IsCancellationException(const std::exception& e) noexcept {
-    return dynamic_cast<const folly::FutureCancellation*>(&e) != nullptr;
+    if (dynamic_cast<const folly::FutureCancellation*>(&e) != nullptr) {
+        return true;
+    }
+    const auto* segcore_error = dynamic_cast<const milvus::SegcoreError*>(&e);
+    return segcore_error != nullptr && segcore_error->get_error_code() == milvus::ErrorCode::FollyCancel;
 }
 
 }  // namespace knowhere::detail
