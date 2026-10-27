@@ -32,11 +32,9 @@ void
 RequireRoundTrip(const sparse::BlockCodecPtr& codec, std::span<const uint32_t> ids, std::span<const Value> values,
                  sparse::PostingEncodeWorkspace& workspace) {
     CAPTURE(codec->get_name(), ids.size());
-    const auto encoded = sparse::EncodePostingList<Metric, Value>(codec, ids, values, workspace);
-    REQUIRE(encoded.has_value());
-    REQUIRE(encoded.value() == workspace.encoded.size());
+    sparse::EncodePostingList<Metric, Value>(codec, ids, values, workspace);
     const auto first_encoding = workspace.encoded;
-    REQUIRE(sparse::EncodePostingList<Metric, Value>(codec, ids, values, workspace).has_value());
+    sparse::EncodePostingList<Metric, Value>(codec, ids, values, workspace);
     REQUIRE(workspace.encoded == first_encoding);
     workspace.encoded.resize(workspace.encoded.size() + 16, 0);  // Ordinary decoder's SIMD tail guard.
     using DecodedValue = std::conditional_t<Metric == sparse::IndexScorerType::IP, Value, uint32_t>;
@@ -90,36 +88,38 @@ TEST_CASE("Sparse shared posting encoder preserves singleton wire bytes", "[spar
     const std::array<uint32_t, 1> ids{7};
     sparse::PostingEncodeWorkspace workspace;
     const std::array<float, 1> ip{3.5F};
-    REQUIRE(sparse::EncodePostingList<sparse::IndexScorerType::IP, float>(codec, ids, ip, workspace).has_value());
+    sparse::EncodePostingList<sparse::IndexScorerType::IP, float>(codec, ids, ip, workspace);
     REQUIRE(workspace.encoded == std::vector<uint8_t>{0x80, 7, 0, 0, 0, 0, 0, 0x60, 0x40});
     for (const auto tf : {1U, 2U, 128U}) {
         const std::array<uint32_t, 1> values{tf};
-        REQUIRE(sparse::EncodePostingList<sparse::IndexScorerType::BM25, uint32_t>(codec, ids, values, workspace)
-                    .has_value());
+        sparse::EncodePostingList<sparse::IndexScorerType::BM25, uint32_t>(codec, ids, values, workspace);
         REQUIRE(workspace.encoded == std::vector<uint8_t>{0x80, 7, 0, 0, 0, static_cast<uint8_t>(0x80 | (tf - 1))});
     }
 }
 
-TEST_CASE("Sparse shared posting encoder rejects invalid input shape", "[sparse][posting-encoder]") {
-    sparse::BlockCodecPtr codec = std::make_shared<sparse::AdaptiveBlockCodec>();
-    std::vector<uint32_t> ids{7};
-    std::vector<float> values{1.0F};
-    SECTION("missing codec") {
-        codec.reset();
+TEST_CASE("Sparse shared posting encoder preserves BM25 U16 clamping", "[sparse][posting-encoder]") {
+    // U16 TF - 1 promotes to signed int. Preserve the old clamp of -1 to zero,
+    // which decodes to TF == 1, without routing the subtraction through float.
+    for (const auto& codec : Codecs()) {
+        for (const uint32_t count : {1U, 257U}) {
+            CAPTURE(codec->get_name(), count);
+            std::vector<uint32_t> ids(count);
+            for (uint32_t i = 0; i < count; ++i) {
+                ids[i] = i;
+            }
+            const std::vector<uint16_t> values(count, 0);
+            sparse::PostingEncodeWorkspace workspace;
+            sparse::EncodePostingList<sparse::IndexScorerType::BM25, uint16_t>(codec, ids, values, workspace);
+            workspace.encoded.resize(workspace.encoded.size() + 16, 0);
+            sparse::BlockInvertedIndexCursor<uint32_t> cursor(codec, workspace.encoded.data(), count, {});
+            for (uint32_t i = 0; i < count; ++i) {
+                REQUIRE(cursor.vec_id() == i);
+                REQUIRE(cursor.val() == 1);
+                cursor.next();
+            }
+            REQUIRE(cursor.vec_id() == count);
+        }
     }
-    SECTION("empty posting") {
-        ids.clear();
-        values.clear();
-    }
-    SECTION("mismatched values") {
-        values.push_back(2.0F);
-    }
-    sparse::PostingEncodeWorkspace workspace;
-    workspace.encoded = {1, 2, 3};
-    const auto encoded = sparse::EncodePostingList<sparse::IndexScorerType::IP, float>(codec, ids, values, workspace);
-    REQUIRE_FALSE(encoded.has_value());
-    REQUIRE(encoded.error() == knowhere::Status::invalid_args);
-    REQUIRE(workspace.encoded.empty());
 }
 
 TEST_CASE("Sparse ordinary BM25 build preserves quantized U32 term frequencies", "[sparse][posting-encoder]") {
