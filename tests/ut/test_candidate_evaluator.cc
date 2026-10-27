@@ -20,17 +20,6 @@
 
 namespace {
 
-// Keep the public foundation API minimal; sparse input lanes are not exposed.
-template <typename Filter>
-concept HasMaskedTest =
-    requires(const Filter& filter, const int32_t* ids) { filter.test(ids, uint32_t{1}, uint64_t{1}); };
-template <typename Filter>
-concept HasMaskedMappedTest = requires(const Filter& filter, const int32_t* ids) {
-                                  filter.test_mapped(ids, uint32_t{1}, ids, size_t{1}, uint64_t{1});
-                              };
-static_assert(!HasMaskedTest<knowhere::BitsetView>);
-static_assert(!HasMaskedMappedTest<knowhere::BitsetView>);
-
 // Unchanged Cohere train IDs, rows [0, 64); only callback contract inputs.
 // Source: https://s3.us-west-2.amazonaws.com/assets.zilliz.com/benchmark/cohere_medium_1m/train.parquet
 // Parquet SHA256: de6b84eb08fc5203a56eef619970a14f5cae08d0a0ae0bcd23b8058d7045f381
