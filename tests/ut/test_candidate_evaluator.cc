@@ -3,8 +3,6 @@
 
 #include <array>
 #include <atomic>
-#include <filesystem>
-#include <fstream>
 #include <future>
 #include <limits>
 #include <memory>
@@ -22,18 +20,16 @@
 
 namespace {
 
-// These are unchanged original Cohere train IDs, not generated scalar data.
-// Source URL, immutable train SHA256 and ordered IDs hash are in the fixture.
+// Unchanged Cohere train IDs, rows [0, 64); only callback contract inputs.
+// Source: https://s3.us-west-2.amazonaws.com/assets.zilliz.com/benchmark/cohere_medium_1m/train.parquet
+// Parquet SHA256: de6b84eb08fc5203a56eef619970a14f5cae08d0a0ae0bcd23b8058d7045f381
 const std::vector<int64_t>&
 OriginalIds() {
-    static const auto ids = [] {
-        std::ifstream input(std::filesystem::path(__FILE__).parent_path() / "test_data/cohere_original_ids_1024.json");
-        if (!input.good()) {
-            throw std::runtime_error("missing original Cohere fixture");
-        }
-        const auto fixture = knowhere::Json::parse(input);
-        return fixture.at("ids").get<std::vector<int64_t>>();
-    }();
+    static const std::vector<int64_t> ids{
+        0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+        22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
+        44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+    };
     return ids;
 }
 
@@ -185,8 +181,8 @@ TEST_CASE("Candidate callback-only public domain survives backend projection", "
     REQUIRE(description.count() == 0);
     REQUIRE_FALSE(description.empty());
     auto filter = description.bind();
-    const int32_t ids[] = {2, 0, 3, 2, -1, 1024};
-    const int32_t reorder[] = {4, 1, 2, 100, -1};
+    const int32_t ids[] = {2, 0, 3, 2, -1, 64};
+    const int32_t reorder[] = {4, 1, 2, 60, -1};
     const auto before = factory.evaluated.load();
     const auto actual = filter.test_mapped(ids, 6, reorder, 5);
     REQUIRE(factory.evaluated == before + 4);
@@ -373,7 +369,7 @@ TEST_CASE("Candidate all-visible and all-excluded mandatory forms keep their pre
 TEST_CASE("Candidate bitmap-only batch preserves original tests and mapping", "[bitset][candidate][id_map]") {
     auto bits = Mandatory(OriginalIds().size(), {1, 3, 63});
     knowhere::BitsetView bitmap(bits.data(), OriginalIds().size());
-    const int32_t ids[] = {0, 1, 2, 3, -1, 63, 1024, 2};
+    const int32_t ids[] = {0, 1, 2, 3, -1, 63, 64, 2};
     for (const size_t window : {0, 1, 31}) {
         bitmap.set_id_offset(window);
         const auto actual = bitmap.test(ids, 8);
@@ -419,7 +415,7 @@ TEST_CASE("Candidate count projection rejects without collapsing its public doma
     REQUIRE(filter.count() == 0);
     REQUIRE_FALSE(filter.empty());
     REQUIRE(filter.get_first_valid_index() == 0);
-    REQUIRE(filter.previous_valid_index(expected_size).value() == 1022);
+    REQUIRE(filter.previous_valid_index(expected_size).value() == 62);
     REQUIRE_FALSE(filter.range_all_filtered(0, 1));
 }
 
