@@ -19,9 +19,8 @@ namespace diskann {
     const char* CodecName() const override {
       return "RABITQ";
     }
-    bool IsCompatible(knowhere::DataFormatEnum data_type,
-                      bool                     embedding_list) const override {
-      return data_type == knowhere::DataFormatEnum::fp32 && !embedding_list;
+    bool IsCompatible(knowhere::DataFormatEnum data_type, bool) const override {
+      return data_type == knowhere::DataFormatEnum::fp32;
     }
     int  ValidateBuild() const override;
     bool NeedsTrainingSample() const override {

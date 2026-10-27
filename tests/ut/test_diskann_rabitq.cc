@@ -25,6 +25,7 @@
 #include "filemanager/impl/LocalFileManager.h"
 #include "index/diskann/aisaq_config.h"
 #include "index/diskann/rabitq_navigation_config.h"
+#include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/knowhere_check.h"
 #include "knowhere/context.h"
 #include "knowhere/index/index_factory.h"
@@ -75,8 +76,8 @@ struct RaBitQFixture {
 };
 
 auto
-CreateDiskANN(const std::string& type, int version) {
-    auto manager = std::make_shared<milvus::LocalFileManager>();
+CreateDiskANN(const std::string& type, int version,
+              std::shared_ptr<milvus::FileManager> manager = std::make_shared<milvus::LocalFileManager>()) {
     auto pack = knowhere::Pack(std::shared_ptr<milvus::FileManager>(manager));
     return knowhere::IndexFactory::Instance()
         .Create<knowhere::fp32>(type == "DISKANN" ? kNativeDiskANNType : type, version, pack)
@@ -233,6 +234,129 @@ TEST_CASE("DiskANN RaBitQ registration and codec parameters", "[diskann][diskann
     knowhere::AisaqConfig aisaq;
     json.erase("rbq_bits");
     REQUIRE(knowhere::Config::Load(aisaq, json, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::invalid_args);
+}
+
+TEST_CASE("DiskANN navigation validation matches input capabilities", "[diskann][diskann-rabitq]") {
+    RaBitQFixture f;
+    const auto version = GenTestVersionList();
+    auto request = f.BuildConfig(GENERATE("L2", "MAX_SIM_L2"));
+    const auto codec = GENERATE("", "PQ", "RABITQ");
+    if (std::string(codec).empty()) {
+        request.erase("quant_type");
+    } else {
+        request["quant_type"] = codec;
+    }
+    auto check = [&](auto value) {
+        using T = decltype(value);
+        std::string error;
+        const auto expected = std::string(codec) == "RABITQ" && !std::is_same_v<T, knowhere::fp32>
+                                  ? knowhere::Status::invalid_args
+                                  : knowhere::Status::success;
+        REQUIRE(knowhere::IndexStaticFaced<T>::ConfigCheck(kNativeDiskANNType, version, request, error) == expected);
+    };
+    check(knowhere::fp32{});
+    check(knowhere::fp16{});
+    check(knowhere::bf16{});
+    for (const auto* strategy : {knowhere::meta::EMB_LIST_STRATEGY_MUVERA, knowhere::meta::EMB_LIST_STRATEGY_LEMUR}) {
+        request["emb_list_strategy"] = strategy;
+        std::string error;
+        REQUIRE(knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck(kNativeDiskANNType, version, request, error) ==
+                knowhere::Status::invalid_args);
+    }
+}
+
+TEST_CASE("RaBitQ TokenANN preserves document scores and filtering", "[diskann][diskann-rabitq]") {
+    const auto metric = GENERATE("MAX_SIM_L2", "MAX_SIM_IP", "MAX_SIM_COSINE");
+    const bool cache = GENERATE(false, true);
+    RaBitQFixture f;
+    std::vector<size_t> offsets{0};
+    while (offsets.back() < f.rows) {
+        offsets.push_back(std::min(f.rows, offsets.back() + 1 + offsets.size() % 5));
+    }
+    const auto docs = offsets.size() - 1;
+    const std::vector<size_t> query_offsets{0, 1, f.nq};
+    auto base = knowhere::GenDataSet(f.rows, f.dim, f.base.data());
+    base->Set(knowhere::meta::EMB_LIST_OFFSET, static_cast<const size_t*>(offsets.data()));
+    base->Set(knowhere::meta::EMB_LIST_COUNT, int64_t(docs));
+    auto query = knowhere::GenDataSet(f.nq, f.dim, f.query.data());
+    query->Set(knowhere::meta::EMB_LIST_OFFSET, static_cast<const size_t*>(query_offsets.data()));
+    query->Set(knowhere::meta::EMB_LIST_COUNT, int64_t(query_offsets.size() - 1));
+    const auto offset_file = (f.directory / "offsets.bin").string();
+    WriteEmbListOffsetToDisk(offset_file, offsets.data(), offsets.size());
+    auto build = f.BuildConfig(metric);
+    build["emb_list_offset_file_path"] = offset_file;
+    build["rbq_bits"] = cache ? 4 : 1;
+    const double cache_budget = cache ? 0.000001 : 0.0;
+    build["search_cache_budget_gb"] = cache_budget;
+    const auto version = GenTestVersionList();
+    auto manager = std::make_shared<milvus::LocalFileManager>();
+    {
+        auto index = CreateDiskANN("DISKANN", version, manager);
+        REQUIRE(index.Build(nullptr, build) == knowhere::Status::success);
+    }
+    auto index = CreateDiskANN("DISKANN", version, manager);
+    knowhere::Json load = {{"metric_type", metric},
+                           {"index_prefix", f.prefix},
+                           {"search_cache_budget_gb", cache_budget},
+                           {"use_bfs_cache", true}};
+    REQUIRE(index.Deserialize({}, load) == knowhere::Status::success);
+    // A prepared node keeps its effective prefix when asked to load again.
+    load["index_prefix"] = (f.directory / "unused").string();
+    REQUIRE(index.Deserialize({}, load) == knowhere::Status::success);
+    knowhere::Json search = {{"metric_type", metric},
+                             {"k", 5},
+                             {"search_list_size", f.rows},
+                             {"beamwidth", 4},
+                             {"retrieval_ann_ratio", double(f.rows)},
+                             {"rbq_bits_query", cache ? 8 : 4}};
+    for (size_t excluded : {size_t(0), docs / 3}) {
+        std::vector<uint8_t> bits((docs + 7) / 8, 0);
+        for (size_t i = 0; i < excluded; ++i) {
+            bits[i / 8] |= uint8_t(1u << (i % 8));
+        }
+        knowhere::BitsetView filter(bits.data(), docs);
+        auto actual = index.Search(query, search, filter);
+        REQUIRE(actual.has_value());
+        auto reference_config = search;
+        reference_config["k"] = docs;
+        auto reference = knowhere::BruteForce::Search<knowhere::fp32>(base, query, reference_config, filter);
+        REQUIRE(reference.has_value());
+        for (size_t q = 0; q < query_offsets.size() - 1; ++q) {
+            std::unordered_set<int64_t> expected_ids;
+            for (size_t j = 0; j < 5; ++j) {
+                expected_ids.insert(reference.value()->GetIds()[q * docs + j]);
+            }
+            for (size_t j = 0; j < 5; ++j) {
+                const auto id = actual.value()->GetIds()[q * 5 + j];
+                REQUIRE(expected_ids.erase(id) == 1);
+                const auto* begin = reference.value()->GetIds() + q * docs;
+                const auto* found = std::find(begin, begin + docs, id);
+                REQUIRE(found != begin + docs);
+                REQUIRE(actual.value()->GetDistance()[q * 5 + j] ==
+                        Catch::Approx(reference.value()->GetDistance()[q * docs + (found - begin)])
+                            .epsilon(1e-4)
+                            .margin(1e-5));
+            }
+        }
+    }
+    if (std::string(metric) == "MAX_SIM_L2" && !cache) {
+        build["index_prefix"] = f.prefix + "_ssd_pq";
+        build["disk_pq_dims"] = 4;
+        {
+            auto compressed = CreateDiskANN("DISKANN", version, manager);
+            REQUIRE(compressed.Build(nullptr, build) == knowhere::Status::success);
+        }
+        auto compressed = CreateDiskANN("DISKANN", version, manager);
+        load["index_prefix"] = build["index_prefix"];
+        REQUIRE(compressed.Deserialize({}, load) == knowhere::Status::success);
+        auto result = compressed.Search(query, search, nullptr);
+        REQUIRE(result.has_value());
+        for (size_t i = 0; i < (query_offsets.size() - 1) * 5; ++i) {
+            REQUIRE(result.value()->GetIds()[i] >= 0);
+            REQUIRE(size_t(result.value()->GetIds()[i]) < docs);
+            REQUIRE(std::isfinite(result.value()->GetDistance()[i]));
+        }
+    }
 }
 
 TEST_CASE("DiskANN RaBitQ searches independent SSD encodings and metrics", "[diskann][diskann-rabitq]") {
@@ -485,25 +609,42 @@ TEST_CASE("RaBitQ loading rejects wrong metadata and unsupported consumers", "[d
         auto index = CreateDiskANN("AISAQ", version);
         REQUIRE(index.Deserialize({}, load) == knowhere::Status::invalid_serialized_index_type);
     }
-    SECTION("Embedding list build") {
+    SECTION("Embedding list build requires offsets") {
         auto index = CreateDiskANN("DISKANN", version);
         auto request = f.BuildConfig("MAX_SIM_L2");
-        REQUIRE(index.Build(nullptr, request) == knowhere::Status::invalid_args);
+        REQUIRE(index.Build(nullptr, request) == knowhere::Status::emb_list_inner_error);
     }
     SECTION("Embedding list autoload") {
         auto index = CreateDiskANN("DISKANN", version);
         auto request = load;
         request["metric_type"] = "MAX_SIM_L2";
-        REQUIRE(index.Deserialize({}, request) == knowhere::Status::invalid_serialized_index_type);
+        REQUIRE(index.Deserialize({}, request) == knowhere::Status::emb_list_inner_error);
         REQUIRE(index.Deserialize({}, load) == knowhere::Status::success);
     }
-    SECTION("Embedding list on a loaded node") {
-        auto index = CreateDiskANN("DISKANN", version);
+    SECTION("Invalid offsets preserve a loaded ordinary node") {
+        auto manager = std::make_shared<milvus::LocalFileManager>();
+        auto index = CreateDiskANN("DISKANN", version, manager);
         REQUIRE(index.Deserialize({}, load) == knowhere::Status::success);
+        if (GENERATE(false, true)) {
+            const auto path = diskann::get_emb_list_offset_file(f.prefix);
+            const std::vector<size_t> offsets{0, f.rows};
+            WriteEmbListOffsetToDisk(path, offsets.data(), offsets.size());
+            fs::resize_file(path, sizeof(size_t) + 1);
+            REQUIRE(manager->AddFile(path));
+        }
+        auto query = knowhere::GenDataSet(f.nq, f.dim, f.query.data());
+        const knowhere::Json search = {{"metric_type", "L2"}, {"k", 8}, {"search_list_size", 64}};
+        auto before = index.Search(query, search, nullptr);
+        REQUIRE(before.has_value());
         auto request = load;
         request["metric_type"] = "MAX_SIM_L2";
-        REQUIRE(index.Deserialize({}, request) == knowhere::Status::invalid_serialized_index_type);
-        REQUIRE(index.Deserialize({}, load) == knowhere::Status::success);
+        REQUIRE(index.Deserialize({}, request) == knowhere::Status::emb_list_inner_error);
+        auto after = index.Search(query, search, nullptr);
+        REQUIRE(after.has_value());
+        for (size_t i = 0; i < f.nq * 8; ++i) {
+            REQUIRE(before.value()->GetIds()[i] == after.value()->GetIds()[i]);
+            REQUIRE(before.value()->GetDistance()[i] == after.value()->GetDistance()[i]);
+        }
     }
 }
 

@@ -113,10 +113,17 @@ class DiskANNIndexNode : public IndexNode {
 
     static Status
     StaticConfigCheck(const Config& cfg, PARAM_TYPE paramType, std::string& msg) {
-        auto& base_cfg = static_cast<const BaseConfig&>(cfg);
+        const auto& base_cfg = static_cast<const DiskANNConfig&>(cfg);
         auto strategy = base_cfg.emb_list_strategy.value_or("");
         if (strategy == meta::EMB_LIST_STRATEGY_MUVERA || strategy == meta::EMB_LIST_STRATEGY_LEMUR) {
             msg = "DiskANN only supports TokenANN strategy, got '" + strategy + "'";
+            return Status::invalid_args;
+        }
+        auto navigation = base_cfg.navigation->CreateForBuild();
+        if (!navigation->IsCompatible(datatype_v<DataType>,
+                                      get_el_metric_type(base_cfg.metric_type.value()).has_value())) {
+            msg = std::string(navigation->CodecName()) +
+                  " navigation is incompatible with the data format or embedding lists";
             return Status::invalid_args;
         }
         return Status::success;
@@ -833,9 +840,6 @@ DiskANNIndexNode<DataType>::DeserializeEmbListIfNeed(const BinarySet& binset, st
 
     LOG_KNOWHERE_INFO_ << "Deserialize emb_list index and read emb_list offset from file.";
 
-    // Step 1: Split metric_type into el_metric_type and sub_metric_type
-    auto previous_el_metric_type = el_metric_type_;
-    el_metric_type_ = el_metric_type_or.value();
     auto sub_metric_type_or = get_sub_metric_type(config.metric_type.value());
     if (!sub_metric_type_or.has_value()) {
         LOG_KNOWHERE_ERROR_ << "Invalid sub metric type: " << config.metric_type.value();
@@ -843,16 +847,12 @@ DiskANNIndexNode<DataType>::DeserializeEmbListIfNeed(const BinarySet& binset, st
     }
     config.metric_type = sub_metric_type_or.value();
 
-    // Step 2: Deserialize base index with sub_metric_type
-    const auto status = Deserialize(binset, cfg);
-    if (status != Status::success) {
-        el_metric_type_ = std::move(previous_el_metric_type);
-        return status;
+    // Prepare the offsets before loading the graph or changing the node's mode.
+    const auto prefix = is_prepared_.load() ? index_prefix_ : config.index_prefix.value_or("");
+    if (prefix.empty()) {
+        return Status::invalid_param_in_json;
     }
-
-    // Step 3: Deserialize emb_list offset from file
-    // Note: emb_list_offset_file is in optional files list, but for emb_list metric type it should exist
-    const auto emb_list_offset_file = diskann::get_emb_list_offset_file(index_prefix_);
+    const auto emb_list_offset_file = diskann::get_emb_list_offset_file(prefix);
     auto is_exist_op = file_manager_->IsExisted(emb_list_offset_file);
     if (!is_exist_op.has_value()) {
         LOG_KNOWHERE_ERROR_ << "Failed to check existence of emb_list offset file: " << emb_list_offset_file;
@@ -876,16 +876,23 @@ DiskANNIndexNode<DataType>::DeserializeEmbListIfNeed(const BinarySet& binset, st
     LOG_KNOWHERE_INFO_ << "Read emb_list offset from file: " << emb_list_offset_file << ", size: " << offset.size()
                        << ", first offset: " << offset.front() << ", last offset: " << offset.back();
 
-    // Step 4: Create strategy and set offset directly
     auto strategy_or = CreateEmbListStrategy(meta::EMB_LIST_STRATEGY_TOKENANN, config);
     if (!strategy_or.has_value()) {
         LOG_KNOWHERE_ERROR_ << "Failed to create emb_list strategy";
         return strategy_or.error();
     }
-    emb_list_strategy_ = std::move(strategy_or.value());
+    auto prepared_offset = std::make_shared<EmbListOffset>(std::move(offset));
+    RETURN_IF_ERROR(strategy_or.value()->SetEmbListOffset(prepared_offset));
 
-    emb_list_offset_ = std::make_shared<EmbListOffset>(std::move(offset));
-    RETURN_IF_ERROR(emb_list_strategy_->SetEmbListOffset(emb_list_offset_));
+    auto previous_el_metric_type = el_metric_type_;
+    el_metric_type_ = el_metric_type_or.value();
+    const auto status = Deserialize(binset, cfg);
+    if (status != Status::success) {
+        el_metric_type_ = std::move(previous_el_metric_type);
+        return status;
+    }
+    emb_list_strategy_ = std::move(strategy_or.value());
+    emb_list_offset_ = std::move(prepared_offset);
     LOG_KNOWHERE_INFO_ << "Created emb_list strategy: " << emb_list_strategy_->Type()
                        << ", doc_count=" << emb_list_strategy_->GetDocCount();
 
