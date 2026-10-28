@@ -74,8 +74,20 @@ class DaatMaxScoreSearcher : public RankedSearcher {
     sorted(std::vector<Cursor>& cursors) -> std::vector<Cursor> {
         std::vector<size_t> term_positions(cursors.size());
         std::iota(term_positions.begin(), term_positions.end(), 0);
-        std::sort(term_positions.begin(), term_positions.end(),
-                  [&](auto&& lhs, auto&& rhs) { return cursors[lhs].max_score > cursors[rhs].max_score; });
+        if constexpr (requires { cursors[0].index_cursor.posting_count(); }) {
+            // Following Lucene's MaxScore cost heuristic, prefer making
+            // expensive, low-impact lists non-essential in both linear and bulk scoring.
+            std::sort(term_positions.begin(), term_positions.end(), [&](auto lhs, auto rhs) {
+                const double left = static_cast<double>(cursors[lhs].max_score) /
+                                    std::max(1U, cursors[lhs].index_cursor.posting_count());
+                const double right = static_cast<double>(cursors[rhs].max_score) /
+                                     std::max(1U, cursors[rhs].index_cursor.posting_count());
+                return left != right ? left > right : lhs < rhs;
+            });
+        } else {
+            std::sort(term_positions.begin(), term_positions.end(),
+                      [&](auto lhs, auto rhs) { return cursors[lhs].max_score > cursors[rhs].max_score; });
+        }
         std::vector<Cursor> sorted;
         sorted.reserve(cursors.size());
         for (auto pos : term_positions) {
