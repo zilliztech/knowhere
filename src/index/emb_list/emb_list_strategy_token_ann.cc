@@ -36,6 +36,11 @@ class TokenANNEmbListStrategy : public EmbListStrategy {
         return meta::EMB_LIST_STRATEGY_TOKENANN;
     }
 
+    expected<EmbListBuildShape>
+    GetBuildShape(const DataSetPtr dataset, size_t num_docs, const BaseConfig& config) const override {
+        return EmbListBuildShape{.rows = dataset->GetRows(), .dim = dataset->GetDim()};
+    }
+
     expected<std::optional<DataSetPtr>>
     PrepareDataForBuild(const DataSetPtr dataset, const EmbListOffset& doc_offset, const BaseConfig& config) override {
         emb_list_offset_ = std::make_shared<EmbListOffset>(doc_offset.offset);

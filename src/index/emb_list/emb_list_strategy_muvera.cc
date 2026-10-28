@@ -93,22 +93,36 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         return meta::EMB_LIST_STRATEGY_MUVERA;
     }
 
+    expected<EmbListBuildShape>
+    GetBuildShape(const DataSetPtr dataset, size_t num_docs, const BaseConfig& config) const override {
+        if (num_docs > std::numeric_limits<int32_t>::max()) {
+            return expected<EmbListBuildShape>::Err(Status::emb_list_inner_error, "num_docs exceeds int32 limit");
+        }
+        const int64_t encoded_dim = config.muvera_num_repeats.value() *
+                                    (int64_t{1} << config.muvera_num_projections.value()) * dataset->GetDim();
+        if (encoded_dim > std::numeric_limits<int32_t>::max()) {
+            return expected<EmbListBuildShape>::Err(Status::emb_list_inner_error,
+                                                    "encoded dimension exceeds int32 limit");
+        }
+        return EmbListBuildShape{.rows = static_cast<int64_t>(num_docs), .dim = encoded_dim};
+    }
+
     expected<std::optional<DataSetPtr>>
     PrepareDataForBuild(const DataSetPtr dataset, const EmbListOffset& doc_offset, const BaseConfig& config) override {
         if (!dataset) {
             return expected<std::optional<DataSetPtr>>::Err(Status::emb_list_inner_error,
                                                             "MUVERA requires non-null dataset for encoding");
         }
+        auto shape = GetBuildShape(dataset, doc_offset.num_el(), config);
+        if (!shape.has_value()) {
+            return expected<std::optional<DataSetPtr>>::Err(shape.error(), shape.what());
+        }
         // 1. Read config
         num_projections_ = config.muvera_num_projections.value();
         num_repeats_ = config.muvera_num_repeats.value();
         seed_ = config.muvera_seed.value();
         original_dim_ = dataset->GetDim();
-        num_docs_ = doc_offset.num_el();
-        if (num_docs_ > std::numeric_limits<int32_t>::max()) {
-            return expected<std::optional<DataSetPtr>>::Err(Status::emb_list_inner_error,
-                                                            "num_docs exceeds int32 limit");
-        }
+        num_docs_ = shape.value().rows;
 
         // 2. Compute num_buckets = 2^num_projections
         num_buckets_ = 1 << num_projections_;
@@ -121,7 +135,7 @@ class MuveraEmbListStrategy : public EmbListStrategy {
         }
 
         // 4. Compute encoded dimension
-        encoded_dim_ = num_repeats_ * num_buckets_ * original_dim_;
+        encoded_dim_ = shape.value().dim;
 
         LOG_KNOWHERE_INFO_ << "MUVERA PrepareDataForBuild: num_docs=" << num_docs_ << ", original_dim=" << original_dim_
                            << ", num_projections=" << num_projections_ << ", num_buckets=" << num_buckets_

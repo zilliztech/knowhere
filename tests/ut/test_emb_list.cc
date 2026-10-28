@@ -340,6 +340,43 @@ test_emb_list_index(const knowhere::DataSetPtr& default_ds_ptr, const knowhere::
 
 }  // namespace
 
+TEST_CASE("EmbList build shape matches encoding", "[emb-list-build-shape]") {
+    const auto* strategy_type = GENERATE("tokenann", "muvera", "lemur");
+    INFO(strategy_type);
+    constexpr int32_t dim = 4;
+    constexpr int32_t rows = 64;
+    constexpr int32_t list_size = 8;
+    auto dataset = GenEmbListDataSet(rows, dim, 42, list_size);
+    const auto* offsets = dataset->Get<const size_t*>(knowhere::meta::EMB_LIST_OFFSET);
+    knowhere::EmbListOffset lists(std::vector<size_t>(offsets, offsets + rows / list_size + 1));
+
+    knowhere::BaseConfig config;
+    config.metric_type = "MAX_SIM_IP";
+    config.dim = dim;
+    config.muvera_num_projections = 3;
+    config.muvera_num_repeats = 2;
+    config.muvera_seed = 42;
+    config.lemur_hidden_dim = 16;
+    config.lemur_num_train_samples = 32;
+    config.lemur_num_epochs = 2;
+    config.lemur_batch_size = 16;
+    config.lemur_learning_rate = 0.001f;
+    config.lemur_seed = 42;
+    config.lemur_num_layers = 1;
+    auto strategy = knowhere::CreateEmbListStrategy(strategy_type, config);
+    REQUIRE(strategy.has_value());
+
+    // Admission knows the input shape and list count without reading payloads.
+    const auto shape =
+        strategy.value()->GetBuildShape(knowhere::GenDataSet(rows, dim, nullptr), lists.num_el(), config);
+    REQUIRE(shape.has_value());
+    const auto encoded = strategy.value()->PrepareDataForBuild(dataset, lists, config);
+    REQUIRE(encoded.has_value());
+    REQUIRE(encoded.value().has_value());
+    CHECK(shape.value().rows == encoded.value().value()->GetRows());
+    CHECK(shape.value().dim == encoded.value().value()->GetDim());
+}
+
 #ifndef KNOWHERE_WITH_CARDINAL
 
 TEST_CASE("Search for EMBList Indices (Float)", "Benchmark and validation on float vectors") {
