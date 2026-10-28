@@ -75,11 +75,23 @@ class LemurEmbListStrategy : public EmbListStrategy {
         return meta::EMB_LIST_STRATEGY_LEMUR;
     }
 
+    expected<EmbListBuildShape>
+    GetBuildShape(const DataSetPtr dataset, size_t num_docs, const BaseConfig& config) const override {
+        if (num_docs > std::numeric_limits<int32_t>::max()) {
+            return expected<EmbListBuildShape>::Err(Status::emb_list_inner_error, "num_docs exceeds int32 limit");
+        }
+        return EmbListBuildShape{.rows = static_cast<int64_t>(num_docs), .dim = config.lemur_hidden_dim.value()};
+    }
+
     expected<std::optional<DataSetPtr>>
     PrepareDataForBuild(const DataSetPtr dataset, const EmbListOffset& doc_offset, const BaseConfig& config) override {
         if (!dataset) {
             return expected<std::optional<DataSetPtr>>::Err(Status::emb_list_inner_error,
                                                             "LEMUR requires non-null dataset for training");
+        }
+        auto shape = GetBuildShape(dataset, doc_offset.num_el(), config);
+        if (!shape.has_value()) {
+            return expected<std::optional<DataSetPtr>>::Err(shape.error(), shape.what());
         }
         auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -93,11 +105,8 @@ class LemurEmbListStrategy : public EmbListStrategy {
         num_layers_ = config.lemur_num_layers.value();
 
         original_dim_ = dataset->GetDim();
-        num_docs_ = doc_offset.num_el();
-        if (num_docs_ > std::numeric_limits<int32_t>::max()) {
-            return expected<std::optional<DataSetPtr>>::Err(Status::emb_list_inner_error,
-                                                            "num_docs exceeds int32 limit");
-        }
+        num_docs_ = shape.value().rows;
+        final_hidden_dim_ = shape.value().dim;
         size_t total_vectors = doc_offset.offset.back();
 
         // Parse metric for ComputeMaxSimLabels
@@ -188,8 +197,8 @@ class LemurEmbListStrategy : public EmbListStrategy {
         // 7. Train MLP
         // SimpleMLP(input_dim, output_dim, hidden_dim, final_hidden_dim, num_layers, seed)
         auto train_start = std::chrono::high_resolution_clock::now();
-        mlp_ = std::make_unique<SimpleMLP>(original_dim_, static_cast<int32_t>(num_docs_), hidden_dim_, hidden_dim_,
-                                           num_layers_, seed_);
+        mlp_ = std::make_unique<SimpleMLP>(original_dim_, static_cast<int32_t>(num_docs_), hidden_dim_,
+                                           final_hidden_dim_, num_layers_, seed_);
         float final_loss =
             mlp_->Train(X_train.data(), y_train.data(), actual_samples, num_epochs_, batch_size_, learning_rate_);
         mlp_->ReleaseTrainingBuffers();
@@ -202,7 +211,6 @@ class LemurEmbListStrategy : public EmbListStrategy {
         // W = pinv(Z) @ Y, where Z = features of sampled vectors, Y = MaxSim labels
         // This is a least-squares solution: find W such that Z @ W^T ≈ Y
         auto ols_start = std::chrono::high_resolution_clock::now();
-        final_hidden_dim_ = mlp_->FinalHiddenDim();
 
         // Extract features for all training samples: Z [num_samples, hidden_dim]
         std::vector<float> Z(actual_samples * final_hidden_dim_);

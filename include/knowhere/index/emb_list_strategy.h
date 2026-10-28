@@ -130,6 +130,11 @@ DeserializeEmbListOffsetFromBytes(const uint8_t* ptr, std::shared_ptr<EmbListOff
     return sizeof(size_t) + num_offsets * sizeof(size_t);
 }
 
+struct EmbListBuildShape {
+    int64_t rows;
+    int64_t dim;
+};
+
 /**
  * @brief Abstract interface for EmbList encoding/search strategies.
  *
@@ -153,6 +158,11 @@ class EmbListStrategy {
      */
     [[nodiscard]] virtual std::string
     Type() const = 0;
+
+    // Predict the underlying ANN input without reading vectors. Admission and
+    // encoding use this same rule, including strategies that change the shape.
+    virtual expected<EmbListBuildShape>
+    GetBuildShape(const DataSetPtr dataset, size_t num_docs, const BaseConfig& config) const = 0;
 
     /**
      * @brief Prepare data for building the underlying ANN index.
