@@ -52,11 +52,14 @@ enum class Status {
     brute_force_inner_error = 30,
     emb_list_inner_error = 31,
     aisaq_error = 32,
+    cancelled = 34,  // Keep the value aligned with main; 33 is reserved.
 };
 
 inline std::string
 Status2String(knowhere::Status status) {
     switch (status) {
+        case knowhere::Status::cancelled:
+            return "cancelled";
         case knowhere::Status::invalid_args:
             return "invalid args";
         case knowhere::Status::invalid_param_in_json:
