@@ -31,6 +31,14 @@
 #include "knowhere/candidate_evaluator.h"
 #include "knowhere/candidate_evaluator_execution.h"
 
+// SWIG 4.0 cannot parse scoped compiler attributes. Preserve the C++ hot-path
+// layout while omitting only this attribute from the binding parser.
+#if defined(SWIG)
+#define KNOWHERE_BITSET_NOINLINE
+#else
+#define KNOWHERE_BITSET_NOINLINE [[gnu::noinline]]
+#endif
+
 namespace knowhere {
 
 // Non-owning filter view.
@@ -314,7 +322,7 @@ class BitsetView {
     // fast path. Inlining a normal int32 caller proves input_too_wide=false.
     // The unsigned preprojection sum is enough to detect a callback's checked
     // addition overflow; bitmap-only test intentionally keeps its old wrap.
-    [[gnu::noinline]] bool
+    KNOWHERE_BITSET_NOINLINE bool
     test_outside_projected_(size_t row, size_t unprojected, bool input_too_wide) const {
         if (is_bitmap()) {
             return row >= num_bits_ || (bits_[row >> 3] & (0x1 << (row & 0x7)));
@@ -401,7 +409,7 @@ class BitsetView {
         return excluded;
     }
 
-    [[gnu::noinline]] uint64_t
+    KNOWHERE_BITSET_NOINLINE uint64_t
     test_bitmap_large_offset_(const int32_t* ids, uint32_t count) const {
         const auto largest_id = std::numeric_limits<size_t>::max() - id_offset_;
         uint64_t excluded = 0;
@@ -413,7 +421,7 @@ class BitsetView {
         return excluded;
     }
 
-    [[gnu::noinline]] uint64_t
+    KNOWHERE_BITSET_NOINLINE uint64_t
     test_deferred_batch_(const int32_t* ids, uint32_t count) const {
         return test_rows(ids, count, !has_out_ids() && id_offset_ == 0, [&](int32_t id) -> int64_t {
             if (id < 0 || static_cast<size_t>(id) > std::numeric_limits<size_t>::max() - id_offset_) {
@@ -459,7 +467,7 @@ class BitsetView {
     }
 
  private:
-    [[gnu::noinline]] uint64_t
+    KNOWHERE_BITSET_NOINLINE uint64_t
     test_deferred_mapped_(const int32_t* ids, uint32_t count, const int32_t* row_map, size_t id_count) const {
         if (row_map == nullptr) {
             return test_rows(ids, count, true, [=](int32_t id) -> int32_t {
@@ -650,7 +658,7 @@ class BitsetView {
     // Mapped/deferred scans may execute an opaque producer and retain loop
     // state across it. Keep those scans out of the contiguous bitmap kernels
     // without declaring actual mapped/fusing work cold or changing semantics.
-    [[gnu::noinline]] bool
+    KNOWHERE_BITSET_NOINLINE bool
     range_all_filtered_by_id_(size_t begin, size_t end) const {
         for (size_t index = begin; index < end; ++index) {
             if (!test(index))
@@ -659,7 +667,7 @@ class BitsetView {
         return true;
     }
 
-    [[gnu::noinline]] std::optional<size_t>
+    KNOWHERE_BITSET_NOINLINE std::optional<size_t>
     previous_valid_by_id_(size_t upper_bound) const {
         size_t index = std::min(upper_bound, size());
         while (index > 0) {
@@ -669,7 +677,7 @@ class BitsetView {
         return std::nullopt;
     }
 
-    [[gnu::noinline]] size_t
+    KNOWHERE_BITSET_NOINLINE size_t
     first_valid_by_id_() const {
         for (size_t index = 0; index < size(); ++index) {
             if (!test(index))
@@ -869,5 +877,7 @@ class BitsetView {
 };
 
 }  // namespace knowhere
+
+#undef KNOWHERE_BITSET_NOINLINE
 
 #endif /* BITSET_H */
