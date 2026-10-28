@@ -29,6 +29,8 @@ enum class WorkerCursorMode : uint8_t {
 };
 
 struct RowScanResult {
+    bool valid = true;
+    size_t total_postings = 0;
     DimensionSet external_dims;
     WorkerPostingCounts posting_counts_by_worker;
 };
@@ -49,42 +51,85 @@ struct PostingBuildPlan {
     }
 };
 
-template <typename DType>
+struct AcceptAllBuildCoordinates {
+    template <typename DType>
+    bool
+    operator()(const SparseRow<DType>&, size_t) const noexcept {
+        return true;
+    }
+};
+
+template <typename DType, typename Validator = AcceptAllBuildCoordinates>
 RowScanResult
 scan_rows_for_build(const SparseRow<DType>* data, size_t rows, std::vector<uint32_t>* dataset_nnz_stats = nullptr,
-                    std::vector<float>* row_sums = nullptr) {
+                    std::vector<float>* row_sums = nullptr, Validator validate_coordinate = {},
+                    size_t max_postings = std::numeric_limits<size_t>::max()) {
+    // Validation runs concurrently and precedes epsilon filtering. Only valid
+    // results may be used to build a posting plan.
     // Reuse the same contiguous worker partitions during counting and filling. This gives each worker a disjoint
     // posting-list range without atomics and preserves docid order.
     const auto concurrency = GetParallelBuildConcurrency(rows);
     WorkerPostingCounts posting_counts_by_worker(concurrency);
+    std::vector<uint8_t> valid(concurrency, 1);
+    std::vector<size_t> worker_totals(concurrency, 0);
 
     parallel_for_workers(concurrency, [&](size_t worker_id) {
         const auto [begin, end] = get_worker_row_range(rows, worker_id, concurrency);
         auto& posting_counts = posting_counts_by_worker[worker_id];
         posting_counts.reserve(std::min<size_t>(end - begin, 65536));
-        for (size_t i = begin; i < end; ++i) {
-            float row_sum = 0.0f;
-            for (size_t j = 0; j < data[i].size(); ++j) {
-                const auto [dim, val] = data[i][j];
-                if (std::abs(val) < std::numeric_limits<DType>::epsilon()) {
-                    continue;
+        const auto scan = [&]<bool Bounded>() {
+            size_t total = 0;
+            for (size_t i = begin; i < end; ++i) {
+                float row_sum = 0.0f;
+                for (size_t j = 0; j < data[i].size(); ++j) {
+                    if (!validate_coordinate(data[i], j)) {
+                        valid[worker_id] = 0;
+                        return;
+                    }
+                    const auto [dim, val] = data[i][j];
+                    if (std::abs(val) < std::numeric_limits<DType>::epsilon()) {
+                        continue;
+                    }
+                    if constexpr (Bounded) {
+                        if (total == max_postings) {
+                            valid[worker_id] = 0;
+                            return;
+                        }
+                        ++total;
+                    }
+                    row_sum += val;
+                    auto [it, inserted] = posting_counts.try_emplace(dim, 1);
+                    if (!inserted) {
+                        ++it->second;
+                    }
                 }
-                row_sum += val;
-                auto [it, inserted] = posting_counts.try_emplace(dim, 1);
-                if (!inserted) {
-                    ++it->second;
+                if (dataset_nnz_stats != nullptr) {
+                    (*dataset_nnz_stats)[i] = data[i].size();
+                }
+                if (row_sums != nullptr) {
+                    (*row_sums)[i] = row_sum;
                 }
             }
-            if (dataset_nnz_stats != nullptr) {
-                (*dataset_nnz_stats)[i] = data[i].size();
+            if constexpr (!Bounded) {
+                for (const auto& [dim, count] : posting_counts) total += count;
             }
-            if (row_sums != nullptr) {
-                (*row_sums)[i] = row_sum;
-            }
-        }
+            worker_totals[worker_id] = total;
+        };
+        // Ordinary scans need no per-posting limit branch or extra counter.
+        if (max_postings == std::numeric_limits<size_t>::max())
+            scan.template operator()<false>();
+        else
+            scan.template operator()<true>();
     });
 
     RowScanResult result;
+    for (size_t worker = 0; worker < concurrency; ++worker) {
+        if (!valid[worker] || worker_totals[worker] > max_postings - result.total_postings) {
+            result.valid = false;
+            return result;
+        }
+        result.total_postings += worker_totals[worker];
+    }
     result.posting_counts_by_worker = std::move(posting_counts_by_worker);
     size_t external_dim_capacity = 0;
     for (const auto& posting_counts : result.posting_counts_by_worker) {
