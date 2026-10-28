@@ -18,22 +18,14 @@
 
 namespace knowhere {
 
-// Request-only hints; offsets are public (segment) row IDs, not index storage IDs.
+// One query has one hint containing its candidate cluster IDs. Layout, row
+// ranges and graph seeds belong to the index.
 struct SearchHint {
-    int64_t offset = 0;
-    int64_t count = 0;
-    // Finite query-to-centroid distance: smaller values prioritize graph seeds.
-    // This is not the distance to an individual row; BF ignores it.
-    float id_distance = 0.0f;
+    std::vector<int64_t> clusters;
 };
-
-struct QuerySearchHints {
-    std::vector<SearchHint> ranges;
-};
-
-// One optional entry per query: nullopt preserves ordinary search; empty ranges
-// are an explicit hint with no candidates. Searchers interpret ranges internally.
-using BatchSearchHints = std::vector<std::optional<QuerySearchHints>>;
+// Entries align with query rows: nullopt preserves ordinary search, while an
+// explicit SearchHint with empty clusters has no candidates.
+using BatchSearchHints = std::vector<std::optional<SearchHint>>;
 
 // The single DataSet payload is std::shared_ptr<const BatchSearchHints>.
 // Use DataSet::SetSearchHints/GetSearchHints to write/read its immutable snapshot.
