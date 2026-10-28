@@ -70,6 +70,105 @@ varint_decode(const uint8_t* in, uint32_t* out, size_t n) {
     return in;
 }
 
+struct PostingEncodeWorkspace {
+    std::vector<uint8_t> encoded;
+    std::vector<uint32_t> ids;
+    std::vector<uint32_t> bm25_vals;
+};
+
+// Encode a posting list or self-contained fragment using reusable per-worker buffers.
+// Inputs are sorted document IDs and already quantized values of equal, nonzero length.
+template <IndexScorerType MetricType, typename QType>
+void
+EncodePostingList(const BlockCodecPtr& block_codec, std::span<const uint32_t> vec_ids, std::span<const QType> vals,
+                  PostingEncodeWorkspace& workspace) {
+    // Posting list layout:
+    // +----------------+------------------------------------------+
+    // | encoded_count | internal varint; 0 marks a singleton     |
+    // +----------------+------------------------------------------+
+    // | block_maxids  | uint32_t[nr_blocks]: max vector ID/block |
+    // +----------------+------------------------------------------+
+    // | block_ends    | uint32_t[nr_blocks-1]: block end offsets |
+    // +----------------+------------------------------------------+
+    // | blocks        | uint8_t[]: encoded posting data          |
+    // +----------------+------------------------------------------+
+    // block_ends[i] is the end of block i and therefore the start of block i + 1; block 0 starts implicitly at 0.
+    // A codec with the singleton short form stores no doc-ID payload and reuses block_maxids[0] as the sole document
+    // ID.
+    // BM25 follows it with an untagged internal varint containing TF - 1, including zero for TF == 1. IP follows it
+    // with its regular raw value payload.
+    constexpr bool kIsIPMetric = MetricType == IndexScorerType::IP;
+    const uint32_t block_sz = block_codec->block_size();
+    auto& out_buf = workspace.encoded;
+    out_buf.clear();
+
+    const size_t list_sz = vec_ids.size();
+    const bool use_singleton_short_form = list_sz == 1 && block_codec->supports_singleton_short_form();
+    uint32_t singleton_stored_value = 0;
+    uint32_t encoded_list_size = static_cast<uint32_t>(list_sz);
+    if (use_singleton_short_form) {
+        encoded_list_size = kSingletonShortFormSizeMarker;
+        if constexpr (!kIsIPMetric) {
+            singleton_stored_value =
+                static_cast<uint32_t>(get_quant_val<decltype(vals.front() - 1), QType>(vals.front() - 1));
+        }
+    }
+
+    size_t nr_blocks = (list_sz + block_sz - 1) / block_sz;
+    out_buf.reserve(sizeof(size_t) + sizeof(int32_t) * nr_blocks + sizeof(uint32_t) * (nr_blocks - 1) + 64);
+
+    varint_encode(encoded_list_size, out_buf);
+
+    size_t begin_block_maxids = out_buf.size();
+    size_t begin_block_endpoints = begin_block_maxids + sizeof(uint32_t) * nr_blocks;
+    size_t begin_blocks = begin_block_endpoints + sizeof(uint32_t) * (nr_blocks - 1);
+    out_buf.resize(begin_blocks);
+
+    auto* ids_it = vec_ids.data();
+    auto* vals_it = vals.data();
+
+    workspace.ids.resize(block_sz);
+    if constexpr (!kIsIPMetric) {
+        workspace.bm25_vals.resize(block_sz);
+    }
+    uint32_t last_vecid = UINT32_MAX;
+
+    for (size_t b = 0; b < nr_blocks; ++b) {
+        uint32_t cur_block_size = ((b + 1) * block_sz <= list_sz) ? block_sz : (list_sz % block_sz);
+
+        for (size_t i = 0; i < cur_block_size; ++i) {
+            uint32_t vecid(*ids_it++);
+            workspace.ids[i] = vecid - last_vecid - 1;
+            last_vecid = vecid;
+        }
+        std::memcpy(out_buf.data() + begin_block_maxids + sizeof(uint32_t) * b, &last_vecid, sizeof(last_vecid));
+
+        if (!use_singleton_short_form) {
+            block_codec->encode_doc_ids(workspace.ids.data(), cur_block_size, out_buf);
+        }
+
+        if constexpr (kIsIPMetric) {
+            const auto* values_begin = reinterpret_cast<const uint8_t*>(vals_it);
+            out_buf.insert(out_buf.end(), values_begin, values_begin + cur_block_size * sizeof(QType));
+            vals_it += cur_block_size;
+        } else if (use_singleton_short_form) {
+            assert(cur_block_size == 1 && b == 0);
+            varint_encode(singleton_stored_value, out_buf);
+            ++vals_it;
+        } else {
+            for (size_t i = 0; i < cur_block_size; ++i) {
+                workspace.bm25_vals[i] = get_quant_val<decltype(*vals_it - 1), QType>(*vals_it++ - 1);
+            }
+            block_codec->encode(workspace.bm25_vals.data(), cur_block_size, out_buf);
+        }
+
+        if (b != nr_blocks - 1) {
+            const uint32_t endpoint = static_cast<uint32_t>(out_buf.size() - begin_blocks);
+            std::memcpy(out_buf.data() + begin_block_endpoints + sizeof(uint32_t) * b, &endpoint, sizeof(endpoint));
+        }
+    }
+}
+
 template <typename VType>
 class BlockInvertedIndexCursor {
  public:
@@ -690,22 +789,6 @@ class BlockInvertedIndex : public CRTPInvertedIndex<BlockInvertedIndex<DType, QT
     build_block_max_data(std::span<uint32_t> raw_index_ids, std::span<QType> raw_index_vals,
                          std::span<size_t> raw_index_offsets, bool enable_mmap, const std::string& backed_filename);
 
-    struct PostingEncodeWorkspace {
-        std::vector<uint8_t> encoded;
-        std::vector<uint32_t> ids;
-        std::vector<uint32_t> bm25_vals;
-    };
-
-    /**
-     * @brief Encode the posting list into a binary format
-     *
-     * @param workspace Reusable per-worker buffers, including the encoded output
-     * @param vec_ids Inverted lists storing vector IDs
-     * @param vals Inverted lists storing quantized values
-     */
-    void
-    encode_posting_list(PostingEncodeWorkspace& workspace, std::span<uint32_t> vec_ids, std::span<QType> vals);
-
     /**
      * @brief Build the block compressed index from the raw index
      *
@@ -926,95 +1009,6 @@ BlockInvertedIndex<DType, QType, MetricType>::build_block_max_data(std::span<uin
 
 template <typename DType, typename QType, IndexScorerType MetricType>
 void
-BlockInvertedIndex<DType, QType, MetricType>::encode_posting_list(PostingEncodeWorkspace& workspace,
-                                                                  std::span<uint32_t> vec_ids, std::span<QType> vals) {
-    // Posting list layout:
-    // +----------------+------------------------------------------+
-    // | encoded_count | internal varint; 0 marks a singleton     |
-    // +----------------+------------------------------------------+
-    // | block_maxids  | uint32_t[nr_blocks]: max vector ID/block |
-    // +----------------+------------------------------------------+
-    // | block_ends    | uint32_t[nr_blocks-1]: block end offsets |
-    // +----------------+------------------------------------------+
-    // | blocks        | uint8_t[]: encoded posting data          |
-    // +----------------+------------------------------------------+
-    // block_ends[i] is the end of block i and therefore the start of block i + 1; block 0 starts implicitly at 0.
-    // A codec with the singleton short form stores no doc-ID payload and reuses block_maxids[0] as the sole document
-    // ID.
-    // BM25 follows it with an untagged internal varint containing TF - 1, including zero for TF == 1. IP follows it
-    // with its regular raw value payload.
-    const uint32_t block_sz = block_codec_->block_size();
-    auto& out_buf = workspace.encoded;
-    out_buf.clear();
-
-    const size_t list_sz = vec_ids.size();
-    const bool use_singleton_short_form = list_sz == 1 && block_codec_->supports_singleton_short_form();
-    uint32_t singleton_stored_value = 0;
-    uint32_t encoded_list_size = static_cast<uint32_t>(list_sz);
-    if (use_singleton_short_form) {
-        encoded_list_size = kSingletonShortFormSizeMarker;
-        if constexpr (!kIsIPMetric) {
-            singleton_stored_value = static_cast<uint32_t>(get_quant_val<DType, QType>(vals.front() - 1));
-        }
-    }
-
-    size_t nr_blocks = (list_sz + block_sz - 1) / block_sz;
-    out_buf.reserve(sizeof(size_t) + sizeof(int32_t) * nr_blocks + sizeof(uint32_t) * (nr_blocks - 1) + 64);
-
-    varint_encode(encoded_list_size, out_buf);
-
-    size_t begin_block_maxids = out_buf.size();
-    size_t begin_block_endpoints = begin_block_maxids + sizeof(uint32_t) * nr_blocks;
-    size_t begin_blocks = begin_block_endpoints + sizeof(uint32_t) * (nr_blocks - 1);
-    out_buf.resize(begin_blocks);
-
-    auto* ids_it = vec_ids.data();
-    auto* vals_it = vals.data();
-
-    workspace.ids.resize(block_sz);
-    if constexpr (!kIsIPMetric) {
-        workspace.bm25_vals.resize(block_sz);
-    }
-    uint32_t last_vecid = UINT32_MAX;
-
-    for (size_t b = 0; b < nr_blocks; ++b) {
-        uint32_t cur_block_size = ((b + 1) * block_sz <= list_sz) ? block_sz : (list_sz % block_sz);
-
-        for (size_t i = 0; i < cur_block_size; ++i) {
-            uint32_t vecid(*ids_it++);
-            workspace.ids[i] = vecid - last_vecid - 1;
-            last_vecid = vecid;
-        }
-        std::memcpy(out_buf.data() + begin_block_maxids + sizeof(uint32_t) * b, &last_vecid, sizeof(last_vecid));
-
-        if (!use_singleton_short_form) {
-            block_codec_->encode_doc_ids(workspace.ids.data(), cur_block_size, out_buf);
-        }
-
-        if constexpr (kIsIPMetric) {
-            const auto* values_begin = reinterpret_cast<const uint8_t*>(vals_it);
-            out_buf.insert(out_buf.end(), values_begin, values_begin + cur_block_size * sizeof(QType));
-            vals_it += cur_block_size;
-        } else if (use_singleton_short_form) {
-            assert(cur_block_size == 1 && b == 0);
-            varint_encode(singleton_stored_value, out_buf);
-            ++vals_it;
-        } else {
-            for (size_t i = 0; i < cur_block_size; ++i) {
-                workspace.bm25_vals[i] = get_quant_val<DType, QType>(*vals_it++ - 1);
-            }
-            block_codec_->encode(workspace.bm25_vals.data(), cur_block_size, out_buf);
-        }
-
-        if (b != nr_blocks - 1) {
-            const uint32_t endpoint = static_cast<uint32_t>(out_buf.size() - begin_blocks);
-            std::memcpy(out_buf.data() + begin_block_endpoints + sizeof(uint32_t) * b, &endpoint, sizeof(endpoint));
-        }
-    }
-}
-
-template <typename DType, typename QType, IndexScorerType MetricType>
-void
 BlockInvertedIndex<DType, QType, MetricType>::build_block_index(std::span<uint32_t>& raw_index_ids,
                                                                 std::span<QType>& raw_index_vals,
                                                                 std::span<size_t>& raw_index_offsets, bool enable_mmap,
@@ -1044,8 +1038,8 @@ BlockInvertedIndex<DType, QType, MetricType>::build_block_index(std::span<uint32
                 for (size_t i = begin; i < end; ++i) {
                     const auto offset = raw_index_offsets[i];
                     const size_t count = raw_index_offsets[i + 1] - offset;
-                    encode_posting_list(workspace, raw_index_ids.subspan(offset, count),
-                                        raw_index_vals.subspan(offset, count));
+                    EncodePostingList<MetricType, QType>(block_codec_, raw_index_ids.subspan(offset, count),
+                                                         raw_index_vals.subspan(offset, count), workspace);
                     consume_encoded(i, workspace.encoded);
                 }
             }
