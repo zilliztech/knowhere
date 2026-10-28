@@ -449,6 +449,11 @@ class BlockInvertedIndexCursor {
     }
 
     [[nodiscard]] uint32_t
+    posting_count() const {
+        return n_;
+    }
+
+    [[nodiscard]] uint32_t
     block_maxid(uint32_t blk_idx) const {
         return load_u32(block_maxids_ + sizeof(uint32_t) * blk_idx);
     }

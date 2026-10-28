@@ -84,11 +84,26 @@ class BlockMaxMaxScoreSearcher : public RankedSearcher {
           filter_bounds_(GetFilterBounds(bitset, max_vec_id)),
           bm25_context_(index.get_row_sums(), *search_scorer),
           cursors_([&]() {
-              std::sort(query.begin(), query.end(), [&](auto& a, auto& b) {
-                  return index.get_dim_max_score(a.first, a.second) > index.get_dim_max_score(b.first, b.second);
+              auto cursors =
+                  make_cursors(index, query, search_scorer, bm25_context_, bitset, dim_max_score_ratio, filter_bounds_);
+              // Prefer cheaper high-impact lists as essential, just as in DAAT MaxScore.
+              std::vector<size_t> order(cursors.size());
+              for (size_t i = 0; i < order.size(); ++i) {
+                  order[i] = i;
+              }
+              std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+                  const double left = static_cast<double>(cursors[a].max_score) /
+                                      std::max<size_t>(1, cursors[a].index_cursor.posting_count());
+                  const double right = static_cast<double>(cursors[b].max_score) /
+                                       std::max<size_t>(1, cursors[b].index_cursor.posting_count());
+                  return left != right ? left > right : a < b;
               });
-              return make_cursors(index, query, search_scorer, bm25_context_, bitset, dim_max_score_ratio,
-                                  filter_bounds_);
+              std::vector<Cursor> sorted;
+              sorted.reserve(cursors.size());
+              for (const auto i : order) {
+                  sorted.push_back(std::move(cursors[i]));
+              }
+              return sorted;
           }()),
           max_vec_id_(filter_bounds_.upper_bound),
           scorer_type_(search_scorer->config().scorer_type),
