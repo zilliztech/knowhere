@@ -90,6 +90,11 @@ class GrowableInvertedIndexCursor {
         return cur_vec_id_ != universe_;
     }
 
+    [[nodiscard]] size_t
+    posting_count() const {
+        return plist_size_;
+    }
+
  private:
     void
     skip_filtered_ids() {
