@@ -372,6 +372,9 @@ class IdMap {
         in_to_out_ebl_ids_.Append(ids.data(), ids.size());
     }
 
+    // Extent covering all valid public IDs. Sealed reloads may omit trailing
+    // NULL rows, so this is not necessarily the segment's logical row count.
+    // Growing maps consume complete batches and retain the exact append position.
     size_t
     OutCount() const {
         return out_count_.load(std::memory_order_acquire);
@@ -723,9 +726,10 @@ class IdMap {
     IdArray in_to_out_ebl_ids_;
     // Public row/list id -> compact vector/list id for selected-id APIs.
     AdaptiveStore<int32_t> out_to_in_ids_;
-    // Public-id validity over [0, out_count_). Empty means identity/non-nullable.
+    // Public-id validity over [0, out_count_); a nonempty bitmap implies zero
+    // validity beyond that extent. Empty means identity/non-nullable, not all-null.
     BitmapArray valid_bitmap_;
-    // Size of the public id domain.
+    // Published validity extent; exact consumed row count for growing maps.
     std::atomic<size_t> out_count_{0};
     // Number of compact vector/list ids represented by this map.
     std::atomic<size_t> valid_count_{0};

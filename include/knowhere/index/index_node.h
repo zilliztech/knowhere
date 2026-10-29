@@ -72,6 +72,11 @@ struct BuildInputOptions {
     bool use_memory = false;
 };
 
+struct LoadRequirements {
+    // Keep the external bitmap path unless the actual artifact supplies its mapping.
+    bool needs_external_validity = true;
+};
+
 class IndexNode : public Object {
  public:
     IndexNode(const int32_t ver) : version_(ver) {
@@ -327,13 +332,8 @@ class IndexNode : public Object {
     PrepareBitset(BitsetView bitset) const {
         PreparedBitset prepared(bitset);
         const auto& id_map = GetIdMap();
-        const auto count = id_map.OutCount();
-        if (count != 0 && bitset.num_bits() > static_cast<size_t>(count)) {
-            const auto msg = std::string("bitset size should be <= external count, but we get bitset size: ") +
-                             std::to_string(bitset.num_bits()) + ", external count: " + std::to_string(count);
-            LOG_KNOWHERE_ERROR_ << msg;
-            return expected<PreparedBitset>::Err(Status::invalid_args, msg);
-        }
+        // A sealed validity bitmap may omit trailing NULL rows. Keep the caller's
+        // query boundary even when it extends beyond the represented valid IDs.
         if (bitset.num_bits() == 0) {
             return prepared;
         }
@@ -374,6 +374,12 @@ class IndexNode : public Object {
      */
     virtual Status
     Serialize(BinarySet& binset) const = 0;
+
+    // Inspect the actual artifact before restoring optional external validity.
+    virtual expected<LoadRequirements>
+    InspectLoadRequirements(const BinarySet&, std::shared_ptr<Config>) {
+        return LoadRequirements{};
+    }
 
     /**
      * @brief Deserializes the index from a binary set.
@@ -758,7 +764,10 @@ class IndexNode : public Object {
         }
 
         const auto count = Count();
-        const auto total = valid_bitmap.empty() && count > 0 ? static_cast<size_t>(count) : bitset.num_bits();
+        // Missing validity bits are zero, not readable storage. Intersect the
+        // counting range without shortening the query bitset passed to backends.
+        const auto total = valid_bitmap.empty() ? (count > 0 ? static_cast<size_t>(count) : bitset.num_bits())
+                                                : std::min(bitset.num_bits(), valid_bitmap.size());
         const auto scoped_count = count_to_check(total, offset, bitset_count);
         // Vector indexes intersect the public filter with public validity.
         if (valid_bitmap.empty()) {
