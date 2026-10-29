@@ -195,7 +195,7 @@ namespace diskann {
   void IteratorWorkspace<T>::move_last_full_retset_to_backup() {
     while (!full_retset.empty()) {
       auto &nbr = full_retset.top();
-      backup_res.emplace_back(nbr.id, nbr.distance);
+      backup_res.emplace_back(nbr.id, to_backup_dist(nbr.distance));
       full_retset.pop();
     }
   }
