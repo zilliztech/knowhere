@@ -25,6 +25,7 @@
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "index/sparse/inverted_index.h"
+#include "index/sparse/inverted_index_build.h"
 #include "index/sparse/inverted_index_format.h"
 #include "index/sparse/sindi_bm25_u4.h"
 #include "io/memory_io.h"
@@ -3764,6 +3765,45 @@ TEST_CASE("SINDI U12 E5M7 invalid build contracts", "[sparse][sindi][u12]") {
     }
 }
 
+TEST_CASE("SINDI refined coordinate validation preserves build and Add contracts", "[sparse][sindi][refinement]") {
+    using namespace knowhere;
+    const bool growable = GENERATE(false, true);
+    const auto quant = GENERATE(std::string("fp16"), std::string("e5m7"));
+    const auto type = growable ? IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC : IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+    auto build = RefineBuild();
+    build["quant_type"] = quant;
+    const auto create = [&] { return IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value(); };
+    const std::vector<RefineRow> invalid_rows{RefineTestRow({{0, -1e-9f}}),
+                                              RefineTestRow({{0, 0}, {0, 0}}),
+                                              RefineTestRow({{7, 0}, {0, 0}}),
+                                              RefineTestRow({{0, std::numeric_limits<float>::quiet_NaN()}}),
+                                              RefineTestRow({{0, std::numeric_limits<float>::infinity()}}),
+                                              RefineTestRow({{0, 1e10f}})};
+    for (const auto& row : invalid_rows) {
+        auto index = create();
+        std::vector<RefineRow> invalid{row};
+        REQUIRE(index.Build(RefineDataset(invalid), build) != Status::success);
+    }
+    std::vector<RefineRow> negative_zero{RefineTestRow({{0, -0.f}})};
+    auto zero_index = create();
+    REQUIRE((zero_index.Build(RefineDataset(negative_zero), build) == Status::success) == (quant == "fp16"));
+    if (growable) {
+        auto index = create();
+        std::vector<RefineRow> valid{RefineTestRow({{0, 1}})};
+        REQUIRE(index.Build(RefineDataset(valid), build) == Status::success);
+        for (const auto& row : invalid_rows) {
+            std::vector<RefineRow> invalid{row};
+            REQUIRE(index.Add(RefineDataset(invalid), build) != Status::success);
+            REQUIRE(index.Count() == 1);
+        }
+        const bool accepts_negative_zero = quant == "fp16";
+        REQUIRE((index.Add(RefineDataset(negative_zero), build) == Status::success) == accepts_negative_zero);
+        REQUIRE(index.Count() == (accepts_negative_zero ? 2 : 1));
+        REQUIRE(index.Add(RefineDataset(valid), build) == Status::success);
+        REQUIRE(index.Count() == (accepts_negative_zero ? 3 : 2));
+    }
+}
+
 TEST_CASE("SINDI U12 E5M7 sparse windows new dimensions and failure isolation", "[sparse][sindi][u12]") {
     using namespace knowhere;
     for (bool growable : {false, true}) {
@@ -3977,4 +4017,138 @@ TEST_CASE("SINDI growing E5M7 retains compression with append capacity", "[spars
         REQUIRE(packed.Count() == typed.Count());
         REQUIRE(packed.Size() < typed.Size());
     }
+}
+
+TEST_CASE("Sparse parallel build scan validates coordinates and aggregate posting limits", "[sparse][build]") {
+    using namespace knowhere;
+    using namespace sparse::inverted;
+    const bool nested = GENERATE(false, true);
+    KnowhereConfig::SetBuildThreadPoolSize(8);
+    const auto pool = ThreadPool::GetGlobalBuildThreadPool();
+    const auto run = [&](auto&& function) {
+        if (nested)
+            return pool->push([&] { return function(); }).get();
+        return function();
+    };
+    REQUIRE(run([&] { return GetParallelBuildConcurrency(803); }) ==
+            (nested ? size_t{1} : std::min<size_t>(8, pool->size())));
+    std::vector<RefineRow> rows(803, RefineTestRow({{0, 1}, {7, 1e-9f}, {20, 0}}));
+    const auto validate = [](const RefineRow& row, size_t j) {
+        return std::isfinite(row[j].val) && row[j].val >= 0 && (j == 0 || row[j - 1].id < row[j].id);
+    };
+    std::vector<uint32_t> nnzs(rows.size());
+    std::vector<float> sums(rows.size());
+    auto scan = run([&] { return scan_rows_for_build(rows.data(), rows.size(), &nnzs, &sums, validate, rows.size()); });
+    REQUIRE(scan.valid);
+    REQUIRE(scan.total_postings == rows.size());
+    REQUIRE(scan.external_dims == DimensionSet{0});
+    auto unbounded = run([&] { return scan_rows_for_build(rows.data(), rows.size(), nullptr, nullptr, validate); });
+    REQUIRE(unbounded.valid);
+    REQUIRE(unbounded.total_postings == rows.size());
+    auto ordinary = run([&] { return scan_rows_for_build(rows.data(), rows.size()); });
+    REQUIRE(ordinary.valid);
+    REQUIRE(ordinary.total_postings == rows.size());
+    for (size_t i = 0; i < rows.size(); ++i) {
+        REQUIRE(nnzs[i] == 3);
+        REQUIRE(sums[i] == 1);
+    }
+    for (size_t limit : {size_t{1}, rows.size() - 1}) {
+        auto limited =
+            run([&] { return scan_rows_for_build(rows.data(), rows.size(), nullptr, nullptr, validate, limit); });
+        REQUIRE_FALSE(limited.valid);
+        REQUIRE(limited.external_dims.empty());
+    }
+    for (size_t position : {size_t{0}, size_t{100}, rows.size() - 1}) {
+        for (const auto& invalid : {RefineTestRow({{0, 1}, {7, -1e-9f}}), RefineTestRow({{0, 0}, {0, 0}}),
+                                    RefineTestRow({{0, std::numeric_limits<float>::quiet_NaN()}})}) {
+            auto bad = rows;
+            bad[position] = invalid;
+            REQUIRE_FALSE(
+                run([&] { return scan_rows_for_build(bad.data(), bad.size(), nullptr, nullptr, validate); }).valid);
+        }
+    }
+    const auto throwing = [](const RefineRow&, size_t) -> bool { throw std::runtime_error("scan failure"); };
+    REQUIRE_THROWS_AS(run([&] { return scan_rows_for_build(rows.data(), rows.size(), nullptr, nullptr, throwing); }),
+                      std::runtime_error);
+    REQUIRE(run([&] { return scan_rows_for_build(rows.data(), 0, nullptr, nullptr, validate, 0); }).valid);
+    REQUIRE_FALSE(
+        run([&] { return scan_rows_for_build(rows.data(), rows.size(), nullptr, nullptr, validate, 0); }).valid);
+}
+
+TEST_CASE("SINDI sealed E5M7 parallel packing preserves cross-dimension pairs and maxima",
+          "[sparse][sindi][u12][build]") {
+    using namespace knowhere;
+    using namespace sparse::inverted;
+    const bool nested = GENERATE(false, true);
+    const bool refine = GENERATE(false, true);
+    KnowhereConfig::SetBuildThreadPoolSize(8);
+    const auto pool = ThreadPool::GetGlobalBuildThreadPool();
+    constexpr size_t dimensions = 33, row_count = 4113;
+    const auto count_for_dim = [](size_t dim) { return 4097 + 2 * (dim % 9); };
+    const auto value_at = [](size_t row, size_t dim) { return 1.0077999830245972f + float((row + dim) % 31) * .017f; };
+    std::vector<RefineRow> rows;
+    for (size_t row = 0; row < row_count; ++row) {
+        size_t count = 0;
+        for (size_t dim = 0; dim < dimensions; ++dim) count += row < count_for_dim(dim);
+        RefineRow values(count);
+        size_t next = 0;
+        for (size_t dim = 0; dim < dimensions; ++dim)
+            if (row < count_for_dim(dim))
+                values.set_at(next++, dim, value_at(row, dim));
+        rows.push_back(std::move(values));
+    }
+    auto build = RefineBuild(refine);
+    build["quant_type"] = "e5m7";
+    const auto type = IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
+    auto index = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+    const auto construct = [&] { return index.Build(RefineDataset(rows), build); };
+    REQUIRE((nested ? pool->push(construct).get() : construct()) == Status::success);
+    BinarySet bytes;
+    REQUIRE(index.Serialize(bytes) == Status::success);
+    auto blob = bytes.GetByName(type);
+    const auto read32 = [&](size_t offset) {
+        REQUIRE(offset + 4 <= size_t(blob->size));
+        uint32_t value;
+        std::memcpy(&value, blob->data.get() + offset, 4);
+        return value;
+    };
+    const auto sections = ReadSparseIndexSections(blob);
+    const auto* postings = FindSection(sections, InvertedIndexSectionType::POSTING_LISTS);
+    const auto* reverse = FindSection(sections, InvertedIndexSectionType::DIM_MAP_REVERSE);
+    const auto* maxima = FindSection(sections, InvertedIndexSectionType::MAX_SCORES_PER_DIM);
+    REQUIRE(postings != nullptr);
+    REQUIRE(reverse != nullptr);
+    REQUIRE(maxima != nullptr);
+    size_t offset = postings->offset + 24 + (dimensions + 7) / 8;
+    for (size_t dim = 0; dim < dimensions; ++dim) {
+        const size_t length = read32(offset);
+        offset += 4 + length;
+    }
+    std::vector<uint32_t> starts;
+    for (size_t dim = 0; dim <= dimensions; ++dim) starts.push_back(read32(offset + 4 * dim));
+    offset += 4 * (dimensions + 1);
+    const size_t packed_bytes = sindi::packed12_bytes(starts.back());
+    REQUIRE(starts.back() % 2 == 1);
+    REQUIRE(offset + 2 * packed_bytes == postings->offset + postings->size);
+    for (size_t dim = 0; dim < dimensions; ++dim) {
+        const auto external = read32(reverse->offset + 4 * dim);
+        REQUIRE(external < dimensions);
+        REQUIRE(starts[dim + 1] - starts[dim] == count_for_dim(external));
+        float maximum = 0;
+        for (size_t row = 0; row < count_for_dim(external); ++row) {
+            const size_t position = starts[dim] + row;
+            REQUIRE(sindi::unpack12(blob->data.get() + offset, position) == row % 4096);
+            const float represented = E5Represented(value_at(row, external));
+            REQUIRE(sindi::decode_e5m7(sindi::unpack12(blob->data.get() + offset + packed_bytes, position)) ==
+                    represented);
+            maximum = std::max(maximum, represented);
+        }
+        float stored_maximum;
+        std::memcpy(&stored_maximum, blob->data.get() + maxima->offset + 4 * dim, 4);
+        REQUIRE(stored_maximum == maximum);
+    }
+    REQUIRE((blob->data[offset + packed_bytes - 1] & 0xf0) == 0);
+    REQUIRE((blob->data[offset + 2 * packed_bytes - 1] & 0xf0) == 0);
+    auto restored = IndexFactory::Instance().Create<sparse_u32_f32>(type, 11).value();
+    REQUIRE(restored.Deserialize(bytes, Json{{"metric_type", "IP"}}) == Status::success);
 }
