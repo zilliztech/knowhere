@@ -547,6 +547,77 @@ TEST_CASE("Test DiskANN iterator falls back to brute force at high filter ratio"
     }
 }
 
+// When the graph walk runs out of candidates, the DiskANN iterator flushes the remaining full-precision results at
+//   once. Those results must carry the same user-facing distances as the ones emitted one by one, which for IP means
+//   undoing the internal distance transform.
+TEST_CASE("Test DiskANN iterator returns IP distances after the graph walk runs out", "[diskann]") {
+    fs::remove_all(kDir);
+    fs::remove(kDir);
+    REQUIRE_NOTHROW(fs::create_directory(kDir));
+    REQUIRE_NOTHROW(fs::create_directory(kIPIndexDir));
+
+    auto version = GenTestVersionList();
+    knowhere::Json json;
+    json["dim"] = kDim;
+    json["metric_type"] = knowhere::metric::IP;
+    json["k"] = kK;
+    json["index_prefix"] = kIPIndexPrefix;
+    json["data_path"] = kRawDataPath;
+    json["max_degree"] = defaultMaxDegree;
+    json["search_list_size"] = 128;
+    json["pq_code_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+    json["search_cache_budget_gb"] = sizeof(float) * kDim * kNumRows * 0.125 / (1024 * 1024 * 1024);
+    json["build_dram_budget_gb"] = 32.0;
+
+    auto base_ds = GenDataSet(kNumRows, kDim, 30);
+    auto query_ds = GenDataSet(kNumQueries, kDim, 42);
+    WriteRawDataToDisk<knowhere::fp32>(kRawDataPath, static_cast<const knowhere::fp32*>(base_ds->GetTensor()), kNumRows,
+                                       kDim);
+
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+    auto diskann_index_pack = knowhere::Pack(file_manager);
+    knowhere::BinarySet binset;
+    {
+        knowhere::DataSetPtr ds_ptr = nullptr;
+        auto diskann =
+            knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, diskann_index_pack).value();
+        REQUIRE(diskann.Build(ds_ptr, json) == knowhere::Status::success);
+        REQUIRE(diskann.Serialize(binset) == knowhere::Status::success);
+    }
+    auto diskann =
+        knowhere::IndexFactory::Instance().Create<knowhere::fp32>("DISKANN", version, diskann_index_pack).value();
+    REQUIRE(diskann.Deserialize(binset, json) == knowhere::Status::success);
+
+    // Exact IP distance of every base vector, per query.
+    auto all_json = json;
+    all_json["k"] = kNumRows;
+    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(base_ds, query_ds, all_json, nullptr);
+    REQUIRE(gt.has_value());
+    const auto gt_ids = gt.value()->GetIds();
+    const auto gt_dists = gt.value()->GetDistance();
+
+    json["search_list_size"] = 16;
+    auto its = diskann.AnnIterator(query_ds, json, nullptr);
+    REQUIRE(its.has_value());
+    for (uint32_t i = 0; i < kNumQueries; ++i) {
+        std::unordered_map<int64_t, float> exact;
+        for (uint32_t j = 0; j < kNumRows; ++j) {
+            exact[gt_ids[i * kNumRows + j]] = gt_dists[i * kNumRows + j];
+        }
+        auto& it = its.value()[i];
+        size_t n_returned = 0;
+        while (it->HasNext().value()) {
+            auto [id, dist] = it->Next().value();
+            CAPTURE(i, n_returned, id);
+            REQUIRE(dist == Catch::Approx(exact.at(id)).epsilon(0.01).margin(0.01));
+            n_returned++;
+        }
+        REQUIRE(n_returned > 0);
+    }
+    fs::remove_all(kDir);
+    fs::remove(kDir);
+}
+
 TEST_CASE("Test DiskANN CalcDistByIDs with all vectors cached", "[diskann]") {
     fs::remove_all(kDir);
     REQUIRE_NOTHROW(fs::create_directories(kCOSINEIndexDir));
