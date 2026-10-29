@@ -49,6 +49,13 @@ namespace diskann {
     virtual void set_query(const float* query) = 0;
     virtual void compute_distances(const unsigned* ids, uint64_t count,
                                    float* distances) = 0;
+    // A full candidate pool supplies its worst navigation distance (smaller
+    // is better), fixed for this batch. Codecs may skip unlikely candidates
+    // by returning +infinity. Without a finite threshold, score every ID.
+    virtual void compute_distances(const unsigned* ids, uint64_t count,
+                                   float* distances, float threshold) {
+      compute_distances(ids, count, distances);
+    }
   };
 
   using NavigationQuerySetup = std::function<void(NavigationDistanceComputer&)>;

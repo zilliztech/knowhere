@@ -13,6 +13,7 @@
 #include <faiss/impl/RaBitQuantizer.h>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -79,7 +80,8 @@ namespace diskann {
       void set_query(const float* query) override {
         if (!computer_ || active_bits_ != query_bits_) {
           computer_.reset(
-              rabitq_.get_quantized_distance_computer(query_bits_, false));
+              static_cast<faiss::RaBitQDistanceComputer*>(
+                  rabitq_.get_quantized_distance_computer(query_bits_, false)));
           active_bits_ = query_bits_;
         }
         rotation_.apply_noalloc(1, query, transformed_query_.data());
@@ -87,6 +89,35 @@ namespace diskann {
       }
       void compute_distances(const unsigned* ids, uint64_t count,
                              float* distances) override {
+        compute_distances(ids, count, distances,
+                          std::numeric_limits<float>::infinity());
+      }
+      void compute_distances(const unsigned* ids, uint64_t count,
+                             float* distances, float threshold) override {
+        if (computer_->nb_bits > 1 && std::isfinite(threshold)) {
+          const auto evaluate = [&](const uint8_t* code, float estimate) {
+            return computer_->should_refine(code, estimate, threshold, false)
+                       ? computer_->distance_to_code_full(code)
+                       : std::numeric_limits<float>::infinity();
+          };
+          uint64_t i = 0;
+          for (; i + 4 <= count; i += 4) {
+            const uint8_t* codes[4];
+            float estimates[4];
+            for (size_t j = 0; j < 4; ++j)
+              codes[j] =
+                  computer_->codes + size_t(ids[i + j]) * computer_->code_size;
+            computer_->distance_to_code_1bit_batch_4(codes, estimates);
+            for (size_t j = 0; j < 4; ++j)
+              distances[i + j] = evaluate(codes[j], estimates[j]);
+          }
+          for (; i < count; ++i) {
+            const auto* code =
+                computer_->codes + size_t(ids[i]) * computer_->code_size;
+            distances[i] = evaluate(code, computer_->distance_to_code_1bit(code));
+          }
+          return;
+        }
         uint64_t i = 0;
         for (; i + 4 <= count; i += 4)
           computer_->distances_batch_4(
@@ -101,7 +132,7 @@ namespace diskann {
       const faiss::RandomRotationMatrix&                rotation_;
       const faiss::IndexRaBitQ&                         rabitq_;
       std::vector<float>                                transformed_query_;
-      std::unique_ptr<faiss::FlatCodesDistanceComputer> computer_;
+      std::unique_ptr<faiss::RaBitQDistanceComputer> computer_;
       uint8_t                        query_bits_ = 4, active_bits_ = 255;
     };
   }  // namespace

@@ -172,6 +172,63 @@ TEST_CASE("RaBitQ navigation scores match Faiss and retain model ownership", "[d
     REQUIRE_THROWS_AS(diskann::RaBitQNavigationStore::ConfigureQuery(*first, 9), std::invalid_argument);
 }
 
+TEST_CASE("RaBitQ navigation uses bounded one-bit estimates before full scoring", "[diskann][diskann-rabitq]") {
+    const auto bits = GENERATE(1, 4, 9);
+    const auto dim = GENERATE(65, 128);
+    RaBitQFixture f(dim);
+    diskann::RaBitQNavigationStore model({uint8_t(bits)});
+    REQUIRE(model.Build(f.Context()) == 0);
+    REQUIRE(model.Load(f.prefix) == 0);
+    auto computer = model.CreateDistanceComputer(f.dim);
+    std::unique_ptr<faiss::Index> reference(
+        faiss::cppcontrib::knowhere::read_index(diskann::RaBitQNavigationStore::SidecarFilename(f.prefix).c_str()));
+    auto& transform = dynamic_cast<faiss::IndexPreTransform&>(*reference);
+    auto& leaf = dynamic_cast<faiss::IndexRaBitQ&>(*transform.index);
+    std::vector<float> rotated(f.dim);
+    for (uint8_t qb : {0, 4, 8}) {
+        diskann::RaBitQNavigationStore::ConfigureQuery(*computer, qb);
+        for (size_t q = 0; q < f.nq; ++q) {
+            computer->set_query(f.query.data() + q * f.dim);
+            transform.chain[0]->apply_noalloc(1, f.query.data() + q * f.dim, rotated.data());
+            std::unique_ptr<faiss::FlatCodesDistanceComputer> owner(leaf.get_quantized_distance_computer(qb, false));
+            auto& native = dynamic_cast<faiss::RaBitQDistanceComputer&>(*owner);
+            native.set_query(rotated.data());
+            const float middle = native(0);
+            size_t pruned = 0, refined = 0;
+            for (size_t count : {0, 1, 3, 4, 7, 33, 513}) {
+                std::vector<unsigned> ids(count);
+                std::vector<float> scores(count);
+                for (size_t i = 0; i < count; ++i) ids[i] = (i * 97) % f.rows;
+                for (float threshold : {0.0f, middle, std::numeric_limits<float>::infinity()}) {
+                    computer->compute_distances(ids.data(), count, scores.data(), threshold);
+                    for (size_t i = 0; i < count; ++i) {
+                        const auto* code = native.codes + ids[i] * native.code_size;
+                        const bool full =
+                            bits == 1 || !std::isfinite(threshold) ||
+                            native.should_refine(code, native.distance_to_code_1bit(code), threshold, false);
+                        if (full) {
+                            REQUIRE(scores[i] == Catch::Approx(native(ids[i])).margin(1e-5));
+                            ++refined;
+                        } else {
+                            REQUIRE(scores[i] == std::numeric_limits<float>::infinity());
+                            ++pruned;
+                        }
+                        float scalar;
+                        computer->compute_distances(&ids[i], 1, &scalar, threshold);
+                        REQUIRE(scores[i] == scalar);
+                    }
+                }
+                // A bounded call must not leave a threshold on the reused slot:
+                // BF scans and iterators always request every full score.
+                computer->compute_distances(ids.data(), count, scores.data());
+                for (size_t i = 0; i < count; ++i) REQUIRE(scores[i] == Catch::Approx(native(ids[i])).margin(1e-5));
+            }
+            REQUIRE(refined > 0);
+            REQUIRE((bits == 1 ? pruned == 0 : pruned > 0));
+        }
+    }
+}
+
 TEST_CASE("RaBitQ navigation build validates its file and context", "[diskann][diskann-rabitq]") {
     RaBitQFixture f;
     auto context = f.Context();

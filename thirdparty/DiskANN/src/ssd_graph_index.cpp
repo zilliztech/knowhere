@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <random>
 #include <thread>
@@ -1329,9 +1330,14 @@ namespace diskann {
         }
         auto [nnbrs, node_nbrs] = filter_nbrs(n_nbr, nbrs);
 
-        // compute node_nbrs <-> query dists in PQ space
+        // Snapshot the full pool's worst navigation score for this batch.
+        // Iterator and exhaustive scans keep using the unbounded entry.
         cpu_timer.reset();
-        compute_dists(node_nbrs, nnbrs, dist_scratch);
+        navigation->compute_distances(
+            node_nbrs, nnbrs, dist_scratch,
+            cur_list_size == l_search
+                ? retset[cur_list_size - 1].distance
+                : std::numeric_limits<float>::infinity());
         if (stats != nullptr) {
           stats->n_cmps += (double) nnbrs;
           stats->cpu_us += (double) cpu_timer.elapsed();
