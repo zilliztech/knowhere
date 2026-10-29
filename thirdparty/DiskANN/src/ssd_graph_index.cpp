@@ -55,6 +55,10 @@ namespace {
   constexpr _u64  kRefineBeamWidthFactor = 2;
   constexpr _u64  kBruteForceTopkRefineExpansionFactor = 2;
   constexpr float kFilterThreshold = 0.93f;
+  // The iterator walks the graph from scratch for every new iterator, so its
+  // brute-force switch uses a separate default, the same value as the HNSW
+  // iterator (kHnswSearchIteratorBFFilterThreshold).
+  constexpr float kIteratorFilterThreshold = 0.97f;
   constexpr float kAlpha = 0.15f;
 }  // namespace
 
@@ -167,17 +171,21 @@ namespace diskann {
   }
 
   template<typename T>
+  float IteratorWorkspace<T>::to_backup_dist(float dist) const {
+    if (metric == diskann::Metric::INNER_PRODUCT) {
+      dist = dist / 2.0f - 1.0f;
+      if (max_base_norm != 0) {
+        dist *= (max_base_norm * query_norm);
+      }
+    }
+    return dist;
+  }
+
+  template<typename T>
   void IteratorWorkspace<T>::move_full_retset_to_backup() {
     if (is_good_pq_enough() && !full_retset.empty()) {
       auto &nbr = full_retset.top();
-      auto  dist = nbr.distance;
-      if (metric == diskann::Metric::INNER_PRODUCT) {
-        dist = dist / 2.0f - 1.0f;
-        if (max_base_norm != 0) {
-          dist *= (max_base_norm * query_norm);
-        }
-      }
-      backup_res.emplace_back(nbr.id, dist);
+      backup_res.emplace_back(nbr.id, to_backup_dist(nbr.distance));
       full_retset.pop();
       next_count++;
     }
@@ -1794,7 +1802,20 @@ namespace diskann {
     }
     auto ctx = this->reader->get_ctx();
 
-    // todo: switch to quant-bf
+    if (!workspace->initialized && !workspace->bitset.empty()) {
+      const auto filter_threshold = workspace->filter_ratio < 0
+                                        ? kIteratorFilterThreshold
+                                        : workspace->filter_ratio;
+      workspace->bf_mode = workspace->bitset.count() >=
+                           workspace->bitset.size() * filter_threshold;
+    }
+    if (workspace->bf_mode) {
+      iterator_brute_force_next_batch(workspace, data, ctx);
+      this->reader->put_ctx(ctx);
+      this->thread_data.push(data);
+      this->thread_data.push_notify_all();
+      return;
+    }
 
     // sector scratch
     char *sector_scratch = data.scratch.sector_scratch;
@@ -1984,6 +2005,123 @@ namespace diskann {
     this->reader->put_ctx(ctx);
     this->thread_data.push(data);
     this->thread_data.push_notify_all();
+  }
+
+  template<typename T>
+  void SSDGraphIndex<T>::iterator_brute_force_next_batch(
+      IteratorWorkspace<T> *workspace, ThreadData<T> &data, IOContext &ctx) {
+    auto &candidates = workspace->bf_candidates;
+    auto  candidate_cmp = std::greater<std::pair<float, unsigned>>();
+
+    // scan un-marked points and calculate navigation dists; the query is
+    // already set on the navigation computer by getIteratorNextBatch.
+    if (!workspace->initialized) {
+      auto          *navigation = data.scratch.navigation;
+      float         *dist_scratch = data.scratch.aligned_dist_scratch;
+      constexpr _u32 pq_batch_size = diskann::defaults::MAX_GRAPH_DEGREE;
+      std::vector<unsigned> pq_batch_ids;
+      pq_batch_ids.reserve(pq_batch_size);
+      const auto num_filtered = workspace->bitset.count();
+      if (num_filtered < num_points) {
+        candidates.reserve(num_points - num_filtered);
+      }
+      for (_u64 id = 0; id < num_points; ++id) {
+        if (!workspace->bitset.test(id)) {
+          pq_batch_ids.push_back(id);
+        }
+        if (pq_batch_ids.size() == pq_batch_size ||
+            (id == num_points - 1 && !pq_batch_ids.empty())) {
+          const size_t sz = pq_batch_ids.size();
+          navigation->compute_distances(pq_batch_ids.data(), sz, dist_scratch);
+          for (size_t i = 0; i < sz; ++i) {
+            candidates.emplace_back(dist_scratch[i], pq_batch_ids[i]);
+          }
+          pq_batch_ids.clear();
+        }
+      }
+      std::make_heap(candidates.begin(), candidates.end(), candidate_cmp);
+      workspace->initialized = true;
+    }
+
+    // IndexIterator calls next_batch once on initialization and once after
+    // every Next(), so the number of previous calls is the number of consumed
+    // results. Keep at least `lsearch` refined results ahead of them, like the
+    // graph walk does, so that consecutive windows overlap in the iterator's
+    // heap instead of refining a window for every Next().
+    const size_t consumed = workspace->bf_next_batch_calls++;
+    if (candidates.empty() ||
+        (workspace->next_count > consumed &&
+         workspace->next_count - consumed >= workspace->lsearch)) {
+      return;
+    }
+
+    auto full_dist = [&](T *node_fp_coords, unsigned id) {
+      if (!use_disk_index_pq) {
+        return dist_cmp_wrap(workspace->aligned_query_T, node_fp_coords,
+                             (size_t) aligned_dim, id);
+      }
+      if (metric == diskann::Metric::INNER_PRODUCT ||
+          metric == diskann::Metric::COSINE) {
+        return disk_pq_table.inner_product(workspace->aligned_query_float,
+                                           (_u8 *) node_fp_coords);
+      }
+      return disk_pq_table.l2_distance(workspace->aligned_query_float,
+                                       (_u8 *) node_fp_coords);
+    };
+    auto emit = [&](unsigned id, float dist) {
+      workspace->backup_res.emplace_back(id, workspace->to_backup_dist(dist));
+      workspace->next_count++;
+    };
+
+    // pop the next window by pq dist and deduplicate sectors by ids
+    T *node_fp_coords_copy = data.scratch.coord_scratch;
+    const _u64 window = std::max<_u64>(workspace->lsearch, 1) *
+                        kBruteForceTopkRefineExpansionFactor;
+    std::unordered_map<_u64, std::vector<unsigned>> nodes_in_sectors_to_visit;
+    for (_u64 i = 0; i < window && !candidates.empty(); ++i) {
+      std::pop_heap(candidates.begin(), candidates.end(), candidate_cmp);
+      const unsigned id = candidates.back().second;
+      candidates.pop_back();
+      {
+        std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
+        auto iter = coord_cache.find(id);
+        if (iter != coord_cache.end()) {
+          emit(id, full_dist(iter->second, id));
+          continue;
+        }
+      }
+      nodes_in_sectors_to_visit[get_node_sector_offset(id)].push_back(id);
+    }
+
+    // perform I/Os and calculate full-precision dists
+    const _u64 max_reads =
+        std::min<_u64>(workspace->beam_width * kRefineBeamWidthFactor,
+                       defaults::MAX_N_SECTOR_READS);
+    char *sector_scratch = data.scratch.sector_scratch;
+    _u64 &sector_scratch_idx = data.scratch.sector_idx;
+    std::vector<AlignedRead> read_reqs;
+    read_reqs.reserve(max_reads);
+    for (auto it = nodes_in_sectors_to_visit.cbegin();
+         it != nodes_in_sectors_to_visit.cend();) {
+      read_reqs.emplace_back(
+          it->first, read_len_for_node,
+          sector_scratch + sector_scratch_idx * read_len_for_node);
+      ++sector_scratch_idx, ++it;
+      if (read_reqs.size() == max_reads ||
+          it == nodes_in_sectors_to_visit.cend()) {
+        reader->read(read_reqs, ctx);  // synchronous IO linux
+        for (const auto &req : read_reqs) {
+          char *sector_buf = reinterpret_cast<char *>(req.buf);
+          for (const auto id : nodes_in_sectors_to_visit[req.offset]) {
+            memcpy(node_fp_coords_copy, get_offset_to_node(sector_buf, id),
+                   disk_bytes_per_point);
+            emit(id, full_dist(node_fp_coords_copy, id));
+          }
+        }
+        read_reqs.clear();
+        sector_scratch_idx = 0;
+      }
+    }
   }
 
   template<typename T>
