@@ -74,4 +74,15 @@ if(CARDINAL_VERSION_FORCE_CHECKOUT)
     endif()
 endif()
 
+# Compile Cardinal sparse integration alongside ordinary sparse, sharing Knowhere's
+# codecs and searchers. Older Cardinal revisions may have no sparse files.
+knowhere_file_glob(GLOB_RECURSE CARDINAL_SPARSE_SRCS ${CARDINAL_ROOT}/know/sparse/src/*.cc)
+list(APPEND KNOWHERE_SRCS ${CARDINAL_SPARSE_SRCS})
+set(KNOWHERE_SRCS ${KNOWHERE_SRCS} PARENT_SCOPE)
+if(WITH_UT)
+    knowhere_file_glob(GLOB_RECURSE CARDINAL_SPARSE_TESTS ${CARDINAL_ROOT}/know/sparse/tests/*.cc)
+    list(APPEND KNOWHERE_UT_SRCS ${CARDINAL_SPARSE_TESTS})
+    set(KNOWHERE_UT_SRCS ${KNOWHERE_UT_SRCS} PARENT_SCOPE)
+endif()
+
 include(${CARDINAL_ROOT}/know/libcardinal.cmake)
