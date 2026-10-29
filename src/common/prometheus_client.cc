@@ -62,6 +62,7 @@ KnownIndexTypes() {
                                                          IndexEnum::INDEX_AISAQ,
                                                          IndexEnum::INDEX_MINHASH_LSH,
                                                          IndexEnum::INDEX_SPARSE_INVERTED_INDEX,
+                                                         IndexEnum::INDEX_SPARSE_INVERTED_INDEX_TIERED,
                                                          IndexEnum::INDEX_SPARSE_WAND,
                                                          IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC,
                                                          IndexEnum::INDEX_SPARSE_WAND_CC,

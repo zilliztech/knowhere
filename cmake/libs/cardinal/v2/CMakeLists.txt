@@ -74,4 +74,31 @@ if(CARDINAL_VERSION_FORCE_CHECKOUT)
     endif()
 endif()
 
+# Build sparse integration with Knowhere's codecs and searchers. Keep the copied
+# src/tests layout in the build tree so relative includes work without modifying
+# either repository's source tree. Older Cardinal revisions may have no sparse files.
+knowhere_file_glob(GLOB_RECURSE CARDINAL_SPARSE_FILES
+    ${CARDINAL_ROOT}/know/sparse/src/*.cc
+    ${CARDINAL_ROOT}/know/sparse/src/*.h)
+if(WITH_UT)
+    knowhere_file_glob(GLOB_RECURSE CARDINAL_SPARSE_TEST_FILES
+        ${CARDINAL_ROOT}/know/sparse/tests/*.cc
+        ${CARDINAL_ROOT}/know/sparse/tests/*.h)
+    list(APPEND CARDINAL_SPARSE_FILES ${CARDINAL_SPARSE_TEST_FILES})
+endif()
+foreach(source IN LISTS CARDINAL_SPARSE_FILES)
+    file(RELATIVE_PATH relative_path "${CARDINAL_ROOT}/know/sparse" "${source}")
+    set(copied_file "${CMAKE_CURRENT_BINARY_DIR}/sparse/${relative_path}")
+    configure_file("${source}" "${copied_file}" COPYONLY)
+    if(relative_path MATCHES "^src/.*\\.cc$")
+        list(APPEND KNOWHERE_SRCS "${copied_file}")
+    elseif(relative_path MATCHES "^tests/.*\\.cc$")
+        list(APPEND KNOWHERE_UT_SRCS "${copied_file}")
+    endif()
+endforeach()
+set(KNOWHERE_SRCS ${KNOWHERE_SRCS} PARENT_SCOPE)
+if(WITH_UT)
+    set(KNOWHERE_UT_SRCS ${KNOWHERE_UT_SRCS} PARENT_SCOPE)
+endif()
+
 include(${CARDINAL_ROOT}/know/libcardinal.cmake)
