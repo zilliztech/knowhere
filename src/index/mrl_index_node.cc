@@ -23,7 +23,6 @@
 #include <vector>
 
 #include "index/data_view_dense_index/data_view_dense_index.h"
-#include "knowhere/comp/knowhere_config.h"
 #include "knowhere/log.h"
 
 namespace knowhere {
@@ -305,7 +304,7 @@ MRLIndexNode::Search(const DataSetPtr dataset, std::unique_ptr<Config> cfg, cons
     const auto nq = dataset->GetRows();
     const auto topk = base_cfg.k.value();
     if (with_mrl_refine_) {
-        const auto expanded_topk = topk * KnowhereConfig::GetMRLRefineRatio();
+        const auto expanded_topk = topk * base_cfg.mrl_refine_ratio.value();
         if (static_cast<double>(expanded_topk) > std::numeric_limits<int>::max()) {
             return expected<DataSetPtr>::Err(Status::invalid_args,
                                              "MRL refinement candidate count exceeds integer range");

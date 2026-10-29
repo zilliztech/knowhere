@@ -11,8 +11,6 @@
 
 #include "knowhere/comp/knowhere_config.h"
 
-#include <atomic>
-#include <cmath>
 #include <string>
 
 #ifdef KNOWHERE_WITH_DISKANN
@@ -37,7 +35,6 @@ namespace knowhere {
 namespace {
 static KnowhereConfig::ClusteringType g_clustering_type = KnowhereConfig::ClusteringType::K_MEANS;
 static double g_early_stop_threshold = 0.0;
-std::atomic<float> g_mrl_refine_ratio{1.0f};
 }  // namespace
 
 void
@@ -119,20 +116,6 @@ KnowhereConfig::SetBlasThreshold(const int64_t use_blas_threshold) {
 int64_t
 KnowhereConfig::GetBlasThreshold() {
     return faiss::cppcontrib::knowhere::distance_compute_blas_threshold;
-}
-
-bool
-KnowhereConfig::SetMRLRefineRatio(float ratio) {
-    if (!std::isfinite(ratio) || ratio < 1.0f) {
-        return false;
-    }
-    g_mrl_refine_ratio.store(ratio, std::memory_order_relaxed);
-    return true;
-}
-
-float
-KnowhereConfig::GetMRLRefineRatio() {
-    return g_mrl_refine_ratio.load(std::memory_order_relaxed);
 }
 
 void

@@ -244,7 +244,7 @@ struct Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE> {
 template <typename T>
 class EntryAccess {
  public:
-    EntryAccess(Entry<T>* entry) : entry(entry){};
+    EntryAccess(Entry<T>* entry) : entry(entry) {};
 
     EntryAccess&
     set_default(const typename T::value_type dft) {
@@ -610,6 +610,7 @@ class BaseConfig : public Config {
     CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE materialized_view_search_info;
     CFG_STRING opt_fields_path;
     CFG_FLOAT iterator_refine_ratio;
+    CFG_FLOAT mrl_refine_ratio;
     /**
      * k1, b, avgdl are used by BM25 metric only.
      * - k1, b, avgdl must be provided at load time.
@@ -769,6 +770,11 @@ class BaseConfig : public Config {
             .description("refine ratio for iterator")
             .for_iterator()
             .for_range_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(mrl_refine_ratio)
+            .set_default(1.0f)
+            .set_range(1.0f, std::numeric_limits<float>::max())
+            .description("candidate multiplier for full-dimensional MRL refinement")
+            .for_search();
         KNOWHERE_CONFIG_DECLARE_FIELD(retain_iterator_order)
             .set_default(false)
             .description("whether the result of iterator monotonically ordered")

@@ -15,20 +15,12 @@
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "knowhere/comp/index_param.h"
-#include "knowhere/comp/knowhere_config.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/mrl_index_node.h"
 
 namespace {
 constexpr int64_t kSourceDim = 4;
 constexpr int64_t kMRLDim = 2;
-
-struct MRLRefineRatioGuard {
-    float previous = knowhere::KnowhereConfig::GetMRLRefineRatio();
-    ~MRLRefineRatioGuard() {
-        knowhere::KnowhereConfig::SetMRLRefineRatio(previous);
-    }
-};
 
 knowhere::Index<knowhere::IndexNode>
 CreateMRLIndex(const float* base_data, bool with_refine,
@@ -80,8 +72,7 @@ TEST_CASE("MRL index searches the prefix and optionally reranks with source vect
     }
 }
 
-TEST_CASE("MRL expands refinement candidates using the server ratio", "[mrl]") {
-    MRLRefineRatioGuard guard;
+TEST_CASE("MRL expands refinement candidates using search configuration", "[mrl]") {
     float base_data[] = {0.0f, 0.0f, 100.0f, 0.0f, 1.0f, 0.0f, 50.0f, 0.0f, 2.0f, 0.0f, 0.0f, 0.0f};
     float query_data[] = {0.0f, 0.0f, 0.0f, 0.0f};
     auto base = knowhere::GenDataSet(3, kSourceDim, base_data);
@@ -95,16 +86,14 @@ TEST_CASE("MRL expands refinement candidates using the server ratio", "[mrl]") {
     auto index = CreateMRLIndex(base_data, true, index_type);
     REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
 
-    SECTION("ratio one preserves the original candidate set and ignores client ratios") {
-        REQUIRE(knowhere::KnowhereConfig::SetMRLRefineRatio(1.0f));
-        config["mrl_refine_ratio"] = 3.0f;
+    SECTION("default ratio preserves the original candidate set independently of base refinement") {
         config["refine_ratio"] = 3.0f;
         auto result = index.Search(query, config, nullptr);
         REQUIRE(result.has_value());
         REQUIRE(result.value()->GetIds()[0] == 0);
     }
     SECTION("fractional candidate counts truncate rather than round up") {
-        REQUIRE(knowhere::KnowhereConfig::SetMRLRefineRatio(2.9f));
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = 2.9f;
         auto result = index.Search(query, config, nullptr);
         REQUIRE(result.has_value());
         REQUIRE(result.value()->GetDim() == 1);
@@ -116,7 +105,7 @@ TEST_CASE("MRL expands refinement candidates using the server ratio", "[mrl]") {
         REQUIRE(index.Serialize(binary) == knowhere::Status::success);
         auto loaded = CreateMRLIndex(base_data, true, index_type);
         REQUIRE(loaded.Deserialize(binary, config) == knowhere::Status::success);
-        REQUIRE(knowhere::KnowhereConfig::SetMRLRefineRatio(3.0f));
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = 3.0f;
         for (const auto& candidate : {index, loaded}) {
             auto result = candidate.Search(query, config, nullptr);
             REQUIRE(result.has_value());
@@ -125,8 +114,8 @@ TEST_CASE("MRL expands refinement candidates using the server ratio", "[mrl]") {
             REQUIRE(result.value()->GetDistance()[0] == 4.0f);
         }
     }
-    SECTION("refinement disabled ignores the server ratio") {
-        REQUIRE(knowhere::KnowhereConfig::SetMRLRefineRatio(3.0f));
+    SECTION("refinement disabled ignores the MRL ratio") {
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = 3.0f;
         auto prefix_index = CreateMRLIndex(base_data, false);
         REQUIRE(prefix_index.Build(base, config, false) == knowhere::Status::success);
         auto result = prefix_index.Search(query, config, nullptr);
@@ -135,32 +124,43 @@ TEST_CASE("MRL expands refinement candidates using the server ratio", "[mrl]") {
         REQUIRE(result.value()->GetDistance()[0] == 0.0f);
     }
     SECTION("filters and candidates beyond the row count preserve valid ids") {
-        REQUIRE(knowhere::KnowhereConfig::SetMRLRefineRatio(5.0f));
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = 5.0f;
         uint8_t mask = 0x01;
         auto result = index.Search(query, config, knowhere::BitsetView(&mask, 3));
         REQUIRE(result.has_value());
         REQUIRE(result.value()->GetIds()[0] == 2);
     }
     SECTION("candidate count overflow is rejected before allocation") {
-        REQUIRE(knowhere::KnowhereConfig::SetMRLRefineRatio(std::numeric_limits<float>::max()));
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = std::numeric_limits<float>::max();
         auto result = index.Search(query, config, nullptr);
         REQUIRE_FALSE(result.has_value());
         REQUIRE(result.error() == knowhere::Status::invalid_args);
     }
+    SECTION("each search uses its own ratio without retaining the previous value") {
+        for (float ratio : {1.0f, 3.0f, 1.0f}) {
+            config[knowhere::indexparam::MRL_REFINE_RATIO] = ratio;
+            auto result = index.Search(query, config, nullptr);
+            REQUIRE(result.has_value());
+            REQUIRE(result.value()->GetDim() == 1);
+            REQUIRE(result.value()->GetIds()[0] == (ratio == 1.0f ? 0 : 2));
+        }
+    }
 }
 
-TEST_CASE("MRL server refinement ratio rejects invalid values", "[mrl]") {
-    MRLRefineRatioGuard guard;
-    REQUIRE(knowhere::KnowhereConfig::SetMRLRefineRatio(2.0f));
+TEST_CASE("MRL search configuration rejects invalid refinement ratios", "[mrl]") {
+    float values[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    auto dataset = knowhere::GenDataSet(1, kSourceDim, values);
+    auto index = CreateMRLIndex(values, true);
+    knowhere::Json config = {{knowhere::meta::METRIC_TYPE, knowhere::metric::L2}, {knowhere::meta::TOPK, 1}};
+    REQUIRE(index.Build(dataset, config, false) == knowhere::Status::success);
     for (float value :
          {0.0f, 0.5f, -1.0f, std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
-        REQUIRE_FALSE(knowhere::KnowhereConfig::SetMRLRefineRatio(value));
-        REQUIRE(knowhere::KnowhereConfig::GetMRLRefineRatio() == 2.0f);
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = value;
+        REQUIRE_FALSE(index.Search(dataset, config, nullptr).has_value());
     }
 }
 
 TEST_CASE("MRL expansion preserves SCANN's inner refinement", "[mrl]") {
-    MRLRefineRatioGuard guard;
     std::vector<float> values(256 * kSourceDim);
     auto base = knowhere::GenDataSet(256, kSourceDim, values.data());
     auto query = knowhere::GenDataSet(1, kSourceDim, values.data());
@@ -172,7 +172,7 @@ TEST_CASE("MRL expansion preserves SCANN's inner refinement", "[mrl]") {
         SKIP("SCANN is not supported on this CPU");
     }
     REQUIRE(status == knowhere::Status::success);
-    REQUIRE(knowhere::KnowhereConfig::SetMRLRefineRatio(3.0f));
+    config[knowhere::indexparam::MRL_REFINE_RATIO] = 3.0f;
     auto result = index.Search(query, config, nullptr);
     REQUIRE(result.has_value());
     REQUIRE(result.value()->GetDim() == 1);
@@ -242,8 +242,7 @@ TEST_CASE("MRL search maps compact nullable ids after optional refinement", "[mr
     }
 
     SECTION("full-dimensional rerank") {
-        MRLRefineRatioGuard guard;
-        REQUIRE(knowhere::KnowhereConfig::SetMRLRefineRatio(2.0f));
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = 2.0f;
         config[knowhere::meta::TOPK] = 1;
         auto index = CreateMRLIndex(raw_data, true);
         index.Node()->SetIdMapType(knowhere::IdMap::Type::SEALED);

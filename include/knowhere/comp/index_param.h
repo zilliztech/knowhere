@@ -162,6 +162,7 @@ constexpr const char* REFINE = "refine";
 constexpr const char* REFINE_TYPE = "refine_type";
 constexpr const char* REFINE_K = "refine_k";
 constexpr const char* REFINE_WITH_QUANT = "refine_with_quant";
+constexpr const char* MRL_REFINE_RATIO = "mrl_refine_ratio";
 
 // cuVS Params
 constexpr const char* REFINE_RATIO = "refine_ratio";
