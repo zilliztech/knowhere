@@ -108,6 +108,11 @@ class IndexNodeDataMockWrapper : public IndexNode {
         return index_node_->Serialize(binset);
     }
 
+    expected<LoadRequirements>
+    InspectLoadRequirements(const BinarySet& binset, std::shared_ptr<Config> cfg) override {
+        return index_node_->InspectLoadRequirements(binset, std::move(cfg));
+    }
+
     Status
     Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override {
         return index_node_->Deserialize(binset, std::move(cfg));

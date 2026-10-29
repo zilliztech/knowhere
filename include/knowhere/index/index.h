@@ -190,6 +190,8 @@ class Index {
     expected<size_t>
     ValidCount() const noexcept;
 
+    // Represented public-row extent, which may omit trailing NULL rows after
+    // sealed reload. Growing maps retain the exact number of consumed rows.
     expected<size_t>
     LogicalCount() const noexcept;
 
@@ -203,6 +205,9 @@ class Index {
     Status
     IntersectValidityAt(const int64_t* logical_offsets, size_t count, MutableBitmapView target) const noexcept;
 
+    // Exports the represented extent, not an independently known segment count.
+    // Writers requiring the complete row domain must retain its original count
+    // and zero-pad any omitted NULL tail. Build/Add retain complete batch counts.
     expected<std::optional<ValidityData>>
     ExportValidity() const noexcept;
 
@@ -279,6 +284,11 @@ class Index {
 
     Status
     Serialize(BinarySet& binset) const noexcept;
+
+    // Optional preflight for a subsequent Deserialize on this same node and input.
+    // Backends may retain parsed metadata until Deserialize or node destruction.
+    expected<LoadRequirements>
+    InspectLoadRequirements(const BinarySet& binset, const Json& json = {}) noexcept;
 
     // Restore validity alongside the backend payload.
     Status

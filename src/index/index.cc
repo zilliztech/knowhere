@@ -689,6 +689,22 @@ Index<T>::Serialize(BinarySet& binset) const noexcept {
 }
 
 template <typename T>
+expected<LoadRequirements>
+Index<T>::InspectLoadRequirements(const BinarySet& binset, const Json& json) noexcept {
+    return GuardedCall([&]() -> expected<LoadRequirements> {
+        if (node == nullptr) {
+            return expected<LoadRequirements>::Err(Status::empty_index, "index is empty");
+        }
+        auto cfg = node->CreateConfig();
+        auto status = LoadConfig(cfg.get(), json, knowhere::DESERIALIZE, "InspectLoadRequirements");
+        if (status != Status::success) {
+            return expected<LoadRequirements>::Err(status, "invalid load configuration");
+        }
+        return node->InspectLoadRequirements(binset, std::move(cfg));
+    });
+}
+
+template <typename T>
 inline Status
 Index<T>::Deserialize(const BinarySet& binset, const Json& json, const LoadOptions& options) noexcept {
     return GuardedCall([&]() -> Status {
