@@ -330,6 +330,13 @@ class IndexNode : public Object {
     // Projects a public-id bitset to the backend id domain.
     virtual expected<PreparedBitset>
     PrepareBitset(BitsetView bitset) const {
+        // This is a transport foundation release, not a backend rollout.
+        // In particular, the legacy num_bits()==0 early return below is not a
+        // valid callback-only preparation. Reject instead of losing projection.
+        if (!bitset.is_bitmap()) {
+            return expected<PreparedBitset>::Err(Status::not_implemented,
+                                                 "Backend filter preparation is not yet adapted for deferred filters");
+        }
         PreparedBitset prepared(bitset);
         const auto& id_map = GetIdMap();
         // A sealed validity bitmap may omit trailing NULL rows. Keep the caller's

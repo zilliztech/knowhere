@@ -496,6 +496,13 @@ inline expected<DataSetPtr>
 Index<T>::Search(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_,
                  milvus::OpContext* op_context) const noexcept {
     return GuardedCall([&]() -> expected<DataSetPtr> {
+        // Staged rollout: the transport contract is available, but native and
+        // Cardinal consumers are adapted separately. In particular, a backend's
+        // count()==0/raw-bitmap shortcut must not bypass a deferred predicate.
+        if (!bitset_.is_bitmap()) {
+            return expected<DataSetPtr>::Err(Status::not_implemented,
+                                             "Search consumers are not yet adapted for deferred filters");
+        }
         auto cfg = this->node->CreateConfig();
         std::string msg;
         const Status load_status = LoadConfig(cfg.get(), json, knowhere::SEARCH, "Search", &msg);
@@ -543,6 +550,10 @@ inline expected<std::vector<std::shared_ptr<IndexNode::iterator>>>
 Index<T>::AnnIterator(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_,
                       bool use_knowhere_search_pool, milvus::OpContext* op_context) const noexcept {
     return GuardedCall([&]() -> expected<std::vector<std::shared_ptr<IndexNode::iterator>>> {
+        if (!bitset_.is_bitmap()) {
+            return expected<std::vector<std::shared_ptr<IndexNode::iterator>>>::Err(
+                Status::not_implemented, "Iterator consumers are not yet adapted for deferred filters");
+        }
         auto cfg = this->node->CreateConfig();
         std::string msg;
         Status status = LoadConfig(cfg.get(), json, knowhere::ITERATOR, "Iterator", &msg);
@@ -580,6 +591,10 @@ inline expected<DataSetPtr>
 Index<T>::RangeSearch(const DataSetPtr dataset, const Json& json, const BitsetView& bitset_,
                       milvus::OpContext* op_context) const noexcept {
     return GuardedCall([&]() -> expected<DataSetPtr> {
+        if (!bitset_.is_bitmap()) {
+            return expected<DataSetPtr>::Err(Status::not_implemented,
+                                             "RangeSearch consumers are not yet adapted for deferred filters");
+        }
         auto cfg = this->node->CreateConfig();
         std::string msg;
         auto status = LoadConfig(cfg.get(), json, knowhere::RANGE_SEARCH, "RangeSearch", &msg);
@@ -641,6 +656,10 @@ inline expected<DataSetPtr>
 Index<T>::CalcDistByIDs(const DataSetPtr dataset, const BitsetView& bitset, const int64_t* labels,
                         const size_t labels_len, const bool is_cosine, milvus::OpContext* op_context) const noexcept {
     return GuardedCall([&]() -> expected<DataSetPtr> {
+        if (!bitset.is_bitmap()) {
+            return expected<DataSetPtr>::Err(Status::not_implemented,
+                                             "Distance consumers are not yet adapted for deferred filters");
+        }
         auto bitset_or = this->node->PrepareBitset(bitset);
         if (!bitset_or.has_value()) {
             return expected<DataSetPtr>::Err(bitset_or.error(), bitset_or.what());
