@@ -35,6 +35,12 @@ class AisaqConfig : public DiskANNConfig {
     CFG_INT num_entry_points;
 
     KNOWHERE_DECLARE_CONFIG(AisaqConfig) {
+        KNOWHERE_CONFIG_DECLARE_FIELD(search_cache_budget_gb_ratio)
+            .description("the ratio of the size reserved for the search cache to the size of the raw data.")
+            .set_default(0)
+            .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
+            .for_train()
+            .for_deserialize();
         // Block AiSAQ parameters
 
         KNOWHERE_CONFIG_DECLARE_FIELD(beamwidth)
@@ -67,8 +73,9 @@ class AisaqConfig : public DiskANNConfig {
             .for_train()
             .for_deserialize();
 
+        // Search inherits the value established by Deserialize unless the request supplies one.
         KNOWHERE_CONFIG_DECLARE_FIELD(pq_read_page_cache_size)
-            .set_default(diskann::defaults::DEFAULT_PQ_READ_PAGE_CACHE_SIZE)
+            .allow_empty_without_default()
             .set_range(diskann::defaults::MIN_PQ_READ_PAGE_CACHE_SIZE, diskann::defaults::MAX_PQ_READ_PAGE_CACHE_SIZE)
             .description("compressed vectors read-page cache DRAM size per thread")
             .for_train()
@@ -93,6 +100,29 @@ class AisaqConfig : public DiskANNConfig {
             .set_range(diskann::defaults::MIN_NUM_ENTRY_POINTS, diskann::defaults::MAX_NUM_ENTRY_POINTS)
             .description("number of entry points")
             .for_train();
+    }
+
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        auto status = DiskANNConfig::CheckAndAdjust(param_type, err_msg);
+        if (status != Status::success) {
+            return status;
+        }
+        if ((param_type == PARAM_TYPE::TRAIN || param_type == PARAM_TYPE::DESERIALIZE) &&
+            !pq_read_page_cache_size.has_value()) {
+            pq_read_page_cache_size = diskann::defaults::DEFAULT_PQ_READ_PAGE_CACHE_SIZE;
+        }
+        if (param_type == PARAM_TYPE::TRAIN &&
+            (inline_pq.value() > max_degree.value() ||
+             max_degree.value() > static_cast<int>(diskann::defaults::MAX_AISAQ_MAX_DEGREE) ||
+             search_list_size.value() > static_cast<int>(diskann::defaults::MAX_AISAQ_SEARCH_LIST_SIZE))) {
+            return HandleError(err_msg, "AiSAQ graph parameters exceed supported limits", Status::out_of_range_in_json);
+        }
+        // AiSAQ always rejected a disk PQ wider than the vector; DiskANN's builder clamps it instead.
+        if (param_type == PARAM_TYPE::TRAIN && dim.has_value() && disk_pq_dims.value_or(0) > dim.value()) {
+            return HandleError(err_msg, "disk_pq_dims exceeds vector dimension", Status::out_of_range_in_json);
+        }
+        return Status::success;
     }
 };
 }  // namespace knowhere

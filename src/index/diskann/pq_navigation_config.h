@@ -8,9 +8,8 @@
 namespace knowhere {
 class PQNavigationConfig : public NavigationConfig {
  public:
-    // The ratio of the size reserved for the pq code to the size of the raw data (defined with vec_field_size_gb)
-    // This parameter will replace pq_code_budget_gb to avoid calculating the actual size on the Milvus side.
-    // The index can indirectly obtain pq_code_budget_gb by vec_field_size_gb * pq_code_budget_gb_ratio
+    // The ratio of the size reserved for the pq code to the size of the raw data. Build resolves it against the raw
+    // data being indexed, so callers do not have to calculate pq_code_budget_gb.
     CFG_FLOAT pq_code_budget_gb_ratio;
     // Limit the size of the PQ code after the raw vector has been PQ-encoded. PQ code is a (pq_code_budget_gb * 1024 *
     // 1024 * 1024) / row_num)-dimensional uint8 vector. If pq_code_budget_gb is too large, it will be adjusted to the
@@ -20,7 +19,7 @@ class PQNavigationConfig : public NavigationConfig {
     PQNavigationConfig() {
         KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb_ratio)
             .description("the size of PQ compared with vector field data")
-            .set_default(0)
+            .set_default(0.125f)
             .set_range(0, std::numeric_limits<CFG_FLOAT::value_type>::max())
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(pq_code_budget_gb)
@@ -37,6 +36,11 @@ class PQNavigationConfig : public NavigationConfig {
                 std::max(pq_code_budget_gb.value_or(0), pq_code_budget_gb_ratio.value() * vec_field_size_gb);
         }
         return status;
+    }
+    void
+    ResolveBuildBudget(double raw_data_gb) override {
+        pq_code_budget_gb =
+            std::max<double>(pq_code_budget_gb.value_or(0), pq_code_budget_gb_ratio.value() * raw_data_gb);
     }
     std::unique_ptr<diskann::NavigationStore>
     CreateForBuild() const override {
