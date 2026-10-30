@@ -23,8 +23,10 @@
 #include "catch2/generators/catch_generators.hpp"
 #include "diskann/aux_utils.h"
 #include "diskann/diskann_gpu.h"
+#include "diskann/linux_aligned_file_reader.h"
 #include "diskann/partition_and_pq.h"
 #include "diskann/pq_navigation.h"
+#include "diskann/ssd_graph_index.h"
 #include "diskann/utils.h"
 #include "filemanager/FileManager.h"
 #include "filemanager/impl/LocalFileManager.h"
@@ -2251,6 +2253,8 @@ TEST_CASE("PQ navigation matches the original lookup", "[diskann][navigation]") 
             diskann::pq_dist_lookup(gathered.data(), count, chunks, lut.data(), expected.data());
             computer->compute_distances(ids.data(), count, actual.data());
             REQUIRE(actual == expected);
+            computer->compute_distances(ids.data(), count, actual.data(), 0.0f);
+            REQUIRE(actual == expected);
         }
     }
 
@@ -2586,6 +2590,14 @@ class RawBuildNavigation final : public diskann::NavigationStore {
                     distances[i] = distance;
                 }
             }
+            void
+            compute_distances(const unsigned* ids, uint64_t count, float* distances, float threshold) override {
+                if (std::isfinite(threshold))
+                    ++store.bounded_batches;
+                else
+                    ++store.unbounded_batches;
+                compute_distances(ids, count, distances);
+            }
             const RawBuildNavigation& store;
             size_t capacity;
             std::vector<float> query;
@@ -2599,6 +2611,7 @@ class RawBuildNavigation final : public diskann::NavigationStore {
     bool metadata_matches = false, shared_sample_matches = false;
     size_t training_count = 0, loads = 0;
     mutable std::atomic<size_t> computers{0};
+    mutable size_t bounded_batches = 0, unbounded_batches = 0;
 
  private:
     bool sample_;
@@ -2647,6 +2660,60 @@ TEST_CASE("DiskANN build and cache do not require navigation PQ", "[diskann][nav
     std::unordered_set<uint32_t> ids(cached.get(), cached.get() + count);
     REQUIRE(ids.size() == count);
     for (auto id : ids) REQUIRE(id < rows);
+}
+
+TEST_CASE("DiskANN supplies navigation bounds only to bounded graph searches", "[diskann][navigation]") {
+    const bool cached = GENERATE(false, true);
+    PQNavigationTestDirectory directory("navigation_bounds");
+    constexpr size_t rows = 512, dim = 8;
+    auto base = GenDataSet(rows, dim, 173);
+    auto query = GenDataSet(1, dim, 174);
+    diskann::BuildConfig config;
+    config.data_file_path = (directory.path / "base.bin").string();
+    config.index_file_path = (directory.path / "index").string();
+    config.compare_metric = diskann::Metric::L2;
+    config.max_degree = 16;
+    config.search_list_size = 64;
+    config.index_mem_gb = 1;
+    diskann::save_bin<const float>(config.data_file_path, static_cast<const float*>(base->GetTensor()), rows, dim);
+    auto navigation = std::make_unique<RawBuildNavigation>(false, std::nullopt);
+    REQUIRE(diskann::build_disk_index<float>(config, *navigation) == 0);
+    REQUIRE(navigation->Load(config.index_file_path) == 0);
+    auto& observed = *navigation;
+    auto reader = std::make_shared<LinuxAlignedFileReader>();
+    diskann::SSDGraphIndex<float> index(reader, diskann::Metric::L2);
+    REQUIRE(index.load(1, config.index_file_path.c_str(), std::move(navigation)) == 0);
+    if (cached) {
+        std::vector<uint32_t> nodes;
+        index.cache_bfs_levels(rows, nodes);
+        index.load_cache_list(nodes);
+    }
+    const auto* input = static_cast<const float*>(query->GetTensor());
+    int64_t ids[8];
+    float scores[8];
+    // Both disk and cached neighborhoods must receive a finite threshold once
+    // L is full, and no threshold before that. Scores stay unchanged.
+    diskann::QueryStats stats;
+    index.cached_beam_search(input, 8, 16, ids, scores, 4, false, &stats);
+    REQUIRE((cached ? stats.n_cache_hits > 0 : stats.n_cache_hits == 0));
+    REQUIRE(observed.bounded_batches > 0);
+    REQUIRE(observed.unbounded_batches > 0);
+    for (size_t i = 0; i < 8; ++i) {
+        REQUIRE(ids[i] >= 0);
+        float expected = 0;
+        for (size_t d = 0; d < dim; ++d) {
+            const float delta = input[d] - static_cast<const float*>(base->GetTensor())[ids[i] * dim + d];
+            expected += delta * delta;
+        }
+        REQUIRE(scores[i] == Catch::Approx(expected));
+    }
+    const auto bounded = observed.bounded_batches;
+    std::vector<uint8_t> mask(rows / 8, 0x55);
+    index.cached_beam_search(input, 8, 16, ids, scores, 4, false, nullptr, nullptr,
+                             knowhere::BitsetView(mask.data(), rows, rows / 2), 0.0f);
+    auto workspace = index.getIteratorWorkspace(input, 16, 4, -1, nullptr);
+    index.getIteratorNextBatch(workspace.get());
+    REQUIRE(observed.bounded_batches == bounded);
 }
 
 TEST_CASE("PQ build cache accepts nonaligned gather buffer sizes", "[diskann][navigation][pq-build-cache]") {
