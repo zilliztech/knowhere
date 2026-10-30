@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "catch2/catch_test_macros.hpp"
+#include "catch2/generators/catch_generators.hpp"
 #include "knowhere/index/index.h"
 
 namespace {
@@ -52,6 +53,7 @@ class NullableFakeIndexNode : public IndexNode {
     bool throw_on_load = false;
     bool throw_on_count = false;
     bool exact_filter_count = false;
+    bool require_loaded_count = false;
 
     Status
     Train(const DataSetPtr, std::shared_ptr<Config>, bool) override {
@@ -125,7 +127,7 @@ class NullableFakeIndexNode : public IndexNode {
 
     int64_t
     Count() const override {
-        if (throw_on_count) {
+        if (throw_on_count || (require_loaded_count && loads == 0 && file_loads == 0)) {
             throw std::logic_error("backend count is unavailable before load");
         }
         return payload_count;
@@ -418,6 +420,42 @@ TEST_CASE("Nullable Index load preserves backend errors and finalization order",
         REQUIRE(fake_node->loads == 0);
         REQUIRE(fake_node->finalizes == 0);
     }
+}
+
+TEST_CASE("Nullable Index loads element validity from list metadata", "[nullable][api][emblist][element]") {
+    const auto payload_count = GENERATE(int64_t{2}, int64_t{3}, int64_t{5});
+    const auto from_file = GENERATE(false, true);
+    auto index = CreateNullableTestIndex();
+    auto* fake_node = static_cast<NullableFakeIndexNode*>(index.Node());
+    fake_node->payload_count = payload_count;
+    fake_node->require_loaded_count = true;
+    const uint8_t bits = 5;
+    const LoadOptions input{.validity = ValidityView{&bits, 1, 3}, .embedding_list = true};
+
+    const auto status = from_file ? index.DeserializeFromFile("unused-index-path", config, input)
+                                  : index.Deserialize(BinarySet{}, config, input);
+    REQUIRE(status == Status::success);
+    REQUIRE(fake_node->finalizes == 1);
+    REQUIRE(index.LogicalCount().value() == payload_count);
+    REQUIRE(index.ValidCount().value() == payload_count);
+    const auto exported = index.ExportValidity().value().value();
+    REQUIRE(exported.logical_row_count == payload_count);
+    REQUIRE(exported.packed_bits == std::vector<uint8_t>{static_cast<uint8_t>((1U << payload_count) - 1)});
+}
+
+TEST_CASE("Nullable element load preserves backend failure", "[nullable][api][emblist][element]") {
+    const auto from_file = GENERATE(false, true);
+    auto index = CreateNullableTestIndex();
+    auto* fake_node = static_cast<NullableFakeIndexNode*>(index.Node());
+    fake_node->load_status = Status::faiss_inner_error;
+    fake_node->throw_on_count = true;
+    const uint8_t bits = 5;
+    const LoadOptions input{.validity = ValidityView{&bits, 1, 3}, .embedding_list = true};
+
+    const auto status = from_file ? index.DeserializeFromFile("unused-index-path", config, input)
+                                  : index.Deserialize(BinarySet{}, config, input);
+    REQUIRE(status == Status::faiss_inner_error);
+    REQUIRE(fake_node->finalizes == 0);
 }
 
 TEST_CASE("Nullable Index validity queries do not inspect an unloaded backend", "[nullable][api]") {
