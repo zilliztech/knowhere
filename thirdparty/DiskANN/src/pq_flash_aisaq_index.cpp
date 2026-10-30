@@ -1598,17 +1598,8 @@ void PQFlashAisaqIndex<T>::aisaq_cached_beam_search(
                     this->dist_cmp_wrap(aligned_query_T, node_fp_coords,
                                         (size_t)this->aligned_dim, id);
             } else {
-                if (this->metric == diskann::Metric::INNER_PRODUCT ||
-                        this->metric == diskann::Metric::COSINE) {
-                    cur_expanded_dist = this->disk_pq_table.inner_product(
-                        query_float, (uint8_t *)node_fp_coords);
-                } else {
-                    cur_expanded_dist =
-                        this->disk_pq_table.l2_distance( // disk_pq does not
-                                                         // support OPQ yet
-                            query_float, (uint8_t *)node_fp_coords);
-                }
- 
+                cur_expanded_dist = this->disk_pq_candidate_distance(
+                    query_float, (uint8_t *)node_fp_coords);
             }
             if (stats != nullptr) {
                  stats->n_cmps++;
