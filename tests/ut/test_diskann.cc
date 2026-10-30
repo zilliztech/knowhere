@@ -967,10 +967,10 @@ TEST_CASE("Test DiskANN GetVectorByIds", "[diskann]") {
                 auto ret = index.Deserialize(binset, deserialize_json);
                 REQUIRE(ret == knowhere::Status::success);
 
-                REQUIRE(diskann.HasRawData(knowhere::metric::L2) ==
+                REQUIRE(index.HasRawData(knowhere::metric::L2) ==
                         knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData("DISKANN", version, json));
 
-                if (!diskann.HasRawData(knowhere::metric::L2)) {
+                if (!index.HasRawData(knowhere::metric::L2)) {
                     continue;
                 }
 
@@ -1199,7 +1199,7 @@ TEST_CASE("Test_AiSAQ_GetVectorByIds", "[diskann]") {
                 auto ret = index.Deserialize(binset, deserialize_json);
                 REQUIRE(ret == knowhere::Status::success);
 
-                REQUIRE(diskann.HasRawData(knowhere::metric::L2) ==
+                REQUIRE(index.HasRawData(knowhere::metric::L2) ==
                         knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData("AISAQ", version, json));
 
                 std::vector<double> ids_sizes = {1, kNumRows * 0.2, kNumRows * 0.7, kNumRows};
@@ -1395,26 +1395,26 @@ base_AiSAQ_param_test() {
             test_json = build_gen();
             test_json["disk_pq_dims"] = -2;
             test_stat = diskann.Build(ds_ptr, test_json);
-            REQUIRE(test_stat == knowhere::Status::aisaq_error);
+            REQUIRE(test_stat == knowhere::Status::out_of_range_in_json);
             LOG_KNOWHERE_INFO_ << "Test disk_pq_dims parameter value more than maximum";
             test_json = build_gen();
             test_json["disk_pq_dims"] = kDim + 2;
             test_stat = diskann.Build(ds_ptr, test_json);
-            REQUIRE(test_stat == knowhere::Status::aisaq_error);
+            REQUIRE(test_stat == knowhere::Status::out_of_range_in_json);
             LOG_KNOWHERE_INFO_ << "Test inline_pq parameter value more than max_degree";
             test_json = build_gen();
             test_json["inline_pq"] = 68;
             test_stat = diskann.Build(ds_ptr, test_json);
-            REQUIRE(test_stat == knowhere::Status::aisaq_error);
+            REQUIRE(test_stat == knowhere::Status::out_of_range_in_json);
             LOG_KNOWHERE_INFO_ << "Test max_degree parameter value more than maximum";
             test_json = build_gen();
             test_json["max_degree"] = diskann::defaults::MAX_AISAQ_MAX_DEGREE + 1;
             test_stat = diskann.Build(ds_ptr, test_json);
-            REQUIRE(test_stat == knowhere::Status::aisaq_error);
+            REQUIRE(test_stat == knowhere::Status::out_of_range_in_json);
             test_json = build_gen();
             test_json["search_list_size"] = diskann::defaults::MAX_AISAQ_SEARCH_LIST_SIZE + 1;
             test_stat = diskann.Build(ds_ptr, test_json);
-            REQUIRE(test_stat == knowhere::Status::aisaq_error);
+            REQUIRE(test_stat == knowhere::Status::out_of_range_in_json);
 
             test_stat = diskann.Train(ds_ptr, json);
             REQUIRE(test_stat == knowhere::Status::not_implemented);

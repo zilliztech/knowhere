@@ -922,6 +922,14 @@ namespace diskann {
     const float *query_float = data.scratch.aligned_query_float;
     if (!query_initialized)
       navigation.set_query(query_float);
+    // Disk-PQ payloads contain codes, not T vectors. Match graph search's
+    // distance semantics for both cached and freshly read candidates.
+    auto candidate_distance = [&](T *coords, _u64 id) {
+      if (!use_disk_index_pq) {
+        return dist_cmp_wrap(query, coords, (size_t) aligned_dim, id);
+      }
+      return disk_pq_candidate_distance(query_float, (_u8 *) coords);
+    };
     float         *dist_scratch = query_scratch->aligned_dist_scratch;
     constexpr _u32 pq_batch_size = diskann::defaults::MAX_GRAPH_DEGREE;
     std::vector<unsigned> pq_batch_ids;
@@ -961,8 +969,7 @@ namespace diskann {
       {
         std::shared_lock<std::shared_mutex> lock(this->cache_mtx);
         if (coord_cache.find(id) != coord_cache.end()) {
-          float dist = dist_cmp_wrap(query, coord_cache.at(id),
-                                     (size_t) aligned_dim, id);
+          float dist = candidate_distance(coord_cache.at(id), id);
           max_heap.Push(dist, id);
           continue;
         }
@@ -1002,8 +1009,7 @@ namespace diskann {
             char *node_buf = get_offset_to_node(sector_buf, cur_id);
             memcpy(node_fp_coords_copy, node_buf,
                    disk_bytes_per_point);  // Do we really need memcpy here?
-            float dist = dist_cmp_wrap(query, node_fp_coords_copy,
-                                       (size_t) aligned_dim, cur_id);
+            float dist = candidate_distance(node_fp_coords_copy, cur_id);
             max_heap.Push(dist, cur_id);
             if (feder != nullptr) {
               feder->visit_info_.AddTopCandidateInfo(cur_id, dist);
@@ -1310,13 +1316,8 @@ namespace diskann {
             cur_expanded_dist = dist_cmp_wrap(query, node_fp_coords_copy,
                                               (size_t) aligned_dim, node_id);
           } else {
-            if (metric == diskann::Metric::INNER_PRODUCT ||
-                metric == diskann::Metric::COSINE)
-              cur_expanded_dist = disk_pq_table.inner_product(
-                  query_float, (_u8 *) node_fp_coords_copy);
-            else
-              cur_expanded_dist = disk_pq_table.l2_distance(
-                  query_float, (_u8 *) node_fp_coords_copy);
+            cur_expanded_dist = disk_pq_candidate_distance(
+                query_float, (_u8 *) node_fp_coords_copy);
           }
           full_retset.push_back(
               Neighbor((unsigned) node_id, cur_expanded_dist, true));
@@ -1890,13 +1891,8 @@ namespace diskann {
               dist_cmp_wrap(workspace->aligned_query_T, node_fp_coords_copy,
                             (size_t) aligned_dim, node_id);
         } else {
-          if (metric == diskann::Metric::INNER_PRODUCT ||
-              metric == diskann::Metric::COSINE)
-            cur_expanded_dist = disk_pq_table.inner_product(
-                workspace->aligned_query_float, (_u8 *) node_fp_coords_copy);
-          else
-            cur_expanded_dist = disk_pq_table.l2_distance(
-                workspace->aligned_query_float, (_u8 *) node_fp_coords_copy);
+          cur_expanded_dist = disk_pq_candidate_distance(
+              workspace->aligned_query_float, (_u8 *) node_fp_coords_copy);
         }
         workspace->insert_to_full((unsigned) node_id, cur_expanded_dist);
       }
@@ -2060,13 +2056,8 @@ namespace diskann {
         return dist_cmp_wrap(workspace->aligned_query_T, node_fp_coords,
                              (size_t) aligned_dim, id);
       }
-      if (metric == diskann::Metric::INNER_PRODUCT ||
-          metric == diskann::Metric::COSINE) {
-        return disk_pq_table.inner_product(workspace->aligned_query_float,
-                                           (_u8 *) node_fp_coords);
-      }
-      return disk_pq_table.l2_distance(workspace->aligned_query_float,
-                                       (_u8 *) node_fp_coords);
+      return disk_pq_candidate_distance(workspace->aligned_query_float,
+                                        (_u8 *) node_fp_coords);
     };
     auto emit = [&](unsigned id, float dist) {
       workspace->backup_res.emplace_back(id, workspace->to_backup_dist(dist));
