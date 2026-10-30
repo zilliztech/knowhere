@@ -116,6 +116,31 @@ PrepareNullableLoad(IndexNode* node, const LoadOptions& input) {
     return Status::success;
 }
 
+bool
+NeedsElementValidity(const LoadOptions& input, const std::string& metric_type) {
+    return input.embedding_list && input.validity.has_value() && !get_el_metric_type(metric_type).has_value();
+}
+
+Status
+FinalizeNullableLoad(IndexNode* node, const LoadOptions& input, const std::string& metric_type) {
+    if (NeedsElementValidity(input, metric_type)) {
+        // Null/empty lists contribute no vectors; individual elements cannot be null.
+        const auto count = node->Count();
+        if (count < 0 ||
+            static_cast<uint64_t>(count) > static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) + 1) {
+            return Status::invalid_args;
+        }
+        std::vector<uint8_t> bitmap((count + 7) / 8, 0xff);
+        if (count % 8 != 0) {
+            bitmap.back() &= static_cast<uint8_t>((1U << (count % 8)) - 1);
+        }
+        const LoadOptions normalized{
+            .validity = ValidityView{bitmap.data(), bitmap.size(), static_cast<uint64_t>(count)}, .mmap = input.mmap};
+        RETURN_IF_ERROR(PrepareNullableLoad(node, normalized));
+    }
+    return node->FinalizeIdMap();
+}
+
 Status
 PrepareBuildMapping(IndexNode* node, const DataSetPtr& dataset, const BuildOptions& options) {
     if (dataset != nullptr && dataset->HasIdMapData()) {
@@ -729,7 +754,6 @@ Index<T>::Deserialize(const BinarySet& binset, const Json& json, const LoadOptio
     return GuardedCall([&]() -> Status {
         RETURN_IF_ERROR(ValidateValidityInput(options));
         RETURN_IF_ERROR(ValidateMappingMmapOptions(options.mmap));
-        RETURN_IF_ERROR(PrepareNullableLoad(node, options));
         Json json_(json);
         auto cfg = this->node->CreateConfig();
         {
@@ -744,11 +768,16 @@ Index<T>::Deserialize(const BinarySet& binset, const Json& json, const LoadOptio
             return res;
         }
 
+        const auto metric_type = static_cast<const BaseConfig&>(*cfg).metric_type.value();
+        if (!NeedsElementValidity(options, metric_type)) {
+            RETURN_IF_ERROR(PrepareNullableLoad(node, options));
+        }
+
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         TimeRecorder rc("Load index", 2);
         res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
         if (res == Status::success) {
-            res = this->node->FinalizeIdMap();
+            res = FinalizeNullableLoad(node, options, metric_type);
         }
         auto time = rc.ElapseFromBegin("done");
         time *= 0.001;  // convert to ms
@@ -756,7 +785,7 @@ Index<T>::Deserialize(const BinarySet& binset, const Json& json, const LoadOptio
 #else
         res = this->node->DeserializeEmbListIfNeed(binset, std::move(cfg));
         if (res == Status::success) {
-            res = this->node->FinalizeIdMap();
+            res = FinalizeNullableLoad(node, options, metric_type);
         }
 #endif
         return res;
@@ -769,7 +798,6 @@ Index<T>::DeserializeFromFile(const std::string& filename, const Json& json, con
     return GuardedCall([&]() -> Status {
         RETURN_IF_ERROR(ValidateValidityInput(options));
         RETURN_IF_ERROR(ValidateMappingMmapOptions(options.mmap));
-        RETURN_IF_ERROR(PrepareNullableLoad(node, options));
         Json json_(json);
         auto cfg = this->node->CreateConfig();
         {
@@ -784,11 +812,16 @@ Index<T>::DeserializeFromFile(const std::string& filename, const Json& json, con
             return res;
         }
 
+        const auto metric_type = static_cast<const BaseConfig&>(*cfg).metric_type.value();
+        if (!NeedsElementValidity(options, metric_type)) {
+            RETURN_IF_ERROR(PrepareNullableLoad(node, options));
+        }
+
 #if defined(NOT_COMPILE_FOR_SWIG) && !defined(KNOWHERE_WITH_LIGHT)
         TimeRecorder rc("Load index from file", 2);
         res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
         if (res == Status::success) {
-            res = this->node->FinalizeIdMap();
+            res = FinalizeNullableLoad(node, options, metric_type);
         }
         auto time = rc.ElapseFromBegin("done");
         time *= 0.001;  // convert to ms
@@ -796,7 +829,7 @@ Index<T>::DeserializeFromFile(const std::string& filename, const Json& json, con
 #else
         res = this->node->DeserializeFromFileIfNeed(filename, std::move(cfg));
         if (res == Status::success) {
-            res = this->node->FinalizeIdMap();
+            res = FinalizeNullableLoad(node, options, metric_type);
         }
 #endif
         return res;

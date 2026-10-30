@@ -56,6 +56,9 @@ struct ValidityView {
 struct LoadOptions {
     std::optional<ValidityView> validity;
     MappingMmapOptions mmap;
+    // The source field is an embedding list. Ordinary metrics index its
+    // flattened vectors, while persisted validity may still describe lists.
+    bool embedding_list = false;
 };
 
 struct ValidityData {
