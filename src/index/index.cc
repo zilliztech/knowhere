@@ -134,8 +134,10 @@ FinalizeNullableLoad(IndexNode* node, const LoadOptions& input, const std::strin
         if (count % 8 != 0) {
             bitmap.back() &= static_cast<uint8_t>((1U << (count % 8)) - 1);
         }
-        const LoadOptions normalized{
-            .validity = ValidityView{bitmap.data(), bitmap.size(), static_cast<uint64_t>(count)}, .mmap = input.mmap};
+        const LoadOptions normalized{.validity = ValidityView{.data = bitmap.data(),
+                                                              .size_bytes = bitmap.size(),
+                                                              .logical_row_count = static_cast<uint64_t>(count)},
+                                     .mmap = input.mmap};
         RETURN_IF_ERROR(PrepareNullableLoad(node, normalized));
     }
     return node->FinalizeIdMap();
