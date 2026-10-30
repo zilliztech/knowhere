@@ -13,6 +13,9 @@
 
 #include <string>
 
+#ifdef KNOWHERE_WITH_CARDINAL
+#include "cardinal/thread/fetch_thread_pool.h"
+#endif
 #ifdef KNOWHERE_WITH_DISKANN
 #include "diskann/aio_context_pool.h"
 #endif
@@ -173,7 +176,12 @@ KnowhereConfig::GetSearchThreadPoolSize() {
 
 void
 KnowhereConfig::SetFetchThreadPoolSize(size_t num_threads) {
+#ifdef KNOWHERE_WITH_CARDINAL
+    // Keep Cardinal's shared loading-overhead policies in sync with the pool.
+    cardinalv2::SetFetchThreadPoolSize(num_threads);
+#else
     knowhere::ThreadPool::SetGlobalFetchThreadPoolSize(num_threads);
+#endif
 }
 
 size_t
