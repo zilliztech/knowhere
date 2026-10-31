@@ -200,6 +200,7 @@ constexpr const char* ADAPT_FOR_CPU = "adapt_for_cpu";
 
 // HNSW Params
 constexpr const char* EFCONSTRUCTION = "efConstruction";
+constexpr const char* PARTITION_KEY_ISOLATION_MIN_ROWS = "partition_key_isolation_min_rows";
 constexpr const char* HNSW_M = "M";
 constexpr const char* EF = "ef";
 constexpr const char* OVERVIEW_LEVELS = "overview_levels";
