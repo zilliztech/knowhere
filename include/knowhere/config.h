@@ -244,7 +244,7 @@ struct Entry<CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE> {
 template <typename T>
 class EntryAccess {
  public:
-    EntryAccess(Entry<T>* entry) : entry(entry) {};
+    EntryAccess(Entry<T>* entry) : entry(entry){};
 
     EntryAccess&
     set_default(const typename T::value_type dft) {
