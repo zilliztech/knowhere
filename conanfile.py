@@ -33,7 +33,7 @@ class KnowhereConan(ConanFile):
         "with_diskann": [True, False],
         "with_svs": [True, False],
         "with_cardinal": [True, False],
-        "with_gpu": [True, False],
+        "with_gpu": [True, False, None],
         "cardinal_version_force_checkout": [True, False],
         "with_profiler": [True, False],
         "with_ut": [True, False],
@@ -54,7 +54,7 @@ class KnowhereConan(ConanFile):
         "with_diskann": False,
         "with_svs": False,
         "with_cardinal": False,
-        "with_gpu": False,
+        "with_gpu": None,
         "metis/*:with_64bit_types": True,
         "cardinal_version_force_checkout": False,
         "with_profiler": False,
@@ -136,6 +136,8 @@ class KnowhereConan(ConanFile):
         return bool(self.options.with_c_api) or bool(self.options.with_jni)
 
     def configure(self):
+        if self.options.with_gpu == None:
+            self.options.with_gpu = bool(self.options.with_cardinal)
         if self.options.shared:
             self.options.rm_safe("fPIC")
         if self.settings.os == "Linux" and str(self.settings.arch) in self._openblas_dynamic_arches:
@@ -242,10 +244,10 @@ class KnowhereConan(ConanFile):
         tc.variables["WITH_ASAN"] = self.options.with_asan
         tc.variables["WITH_DISKANN"] = self.options.with_diskann
         tc.variables["WITH_SVS"] = self.options.with_svs
-        tc.variables["WITH_CARDINAL"] = self.options.with_cardinal
-        tc.variables["WITH_GPU"] = self.options.with_gpu
+        tc.cache_variables["WITH_CARDINAL"] = bool(self.options.with_cardinal)
+        tc.cache_variables["WITH_GPU"] = bool(self.options.with_gpu)
         tc.variables["CARDINAL_VERSION_FORCE_CHECKOUT"] = self.options.cardinal_version_force_checkout
-        tc.variables["WITH_CUVS"] = self.options.with_cuvs
+        tc.cache_variables["WITH_CUVS"] = bool(self.options.with_cuvs)
         tc.variables["WITH_PROFILER"] = self.options.with_profiler
         tc.variables["WITH_UT"] = self.options.with_ut
         tc.variables["WITH_C_API"] = self._with_c_api

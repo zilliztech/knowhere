@@ -63,6 +63,9 @@ target_link_libraries(knowhere_tests PRIVATE
         knowhere
         knowhere_utils
         milvus-common::milvus-common)
+if(WITH_CUVS)
+  target_link_libraries(knowhere_tests PRIVATE raft::raft cuvs::cuvs)
+endif()
 if(WITH_SVS)
   target_link_libraries(knowhere_tests PRIVATE faiss_svs)
 endif()

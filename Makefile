@@ -22,6 +22,7 @@ CONAN_INSTALL_FLAGS := --update --build=missing
 # ---------- User-facing build flags ----------
 # Usage: make WITH_GPU=True WITH_UT=True WITH_ASAN=True WITH_DEBUG=True
 WITH_GPU ?=
+WITH_CUVS ?=
 WITH_UT ?=
 WITH_BENCHMARK ?=
 WITH_ASAN ?=
@@ -44,7 +45,7 @@ export CMAKE_POLICY_VERSION_MINIMUM ?= 3.5
 # variables such as WITH_ASAN to every sub-process, which causes the custom
 # folly recipe to pick up $ENV{WITH_ASAN} and compile folly itself with
 # -fsanitize=address — breaking the build on GCC.
-unexport WITH_GPU WITH_UT WITH_BENCHMARK WITH_ASAN WITH_DISKANN WITH_CARDINAL CARDINAL_VERSION_FORCE_CHECKOUT WITH_DEBUG \
+unexport WITH_GPU WITH_CUVS WITH_UT WITH_BENCHMARK WITH_ASAN WITH_DISKANN WITH_CARDINAL CARDINAL_VERSION_FORCE_CHECKOUT WITH_DEBUG \
 	WITH_C_API WITH_JNI WITH_C_API_TESTS
 
 # ---------- Derived settings ----------
@@ -73,7 +74,9 @@ CONAN_SETTINGS := -s compiler.libcxx=$(LIBCXX) -s build_type=$(BUILD_TYPE) -s co
 ifneq ($(UNAME_S),Darwin)
     ifneq ($(filter True true ON on 1,$(WITH_DISKANN)),)
         CONAN_SETTINGS += -o \&:with_diskann=True
-        ifndef WITH_GPU
+        ifneq ($(filter False false OFF off 0,$(WITH_GPU)),)
+            CONAN_INSTALL_FLAGS += --build=liburing
+        else ifeq ($(filter True true ON on 1,$(WITH_GPU) $(WITH_CARDINAL)),)
             CONAN_INSTALL_FLAGS += --build=liburing
         endif
     else ifneq ($(filter False false OFF off 0,$(WITH_DISKANN)),)
@@ -83,9 +86,25 @@ ifneq ($(UNAME_S),Darwin)
     endif
 endif
 
-# CMake selects the GPU backend through WITH_CARDINAL.
-ifdef WITH_GPU
-    CONAN_SETTINGS += -o \&:with_gpu=True
+# Preserve an omitted GPU option so Conan can select its backend-specific default.
+ifneq ($(WITH_GPU),)
+    ifneq ($(filter True true ON on 1,$(WITH_GPU)),)
+        CONAN_SETTINGS += -o \&:with_gpu=True
+    else ifneq ($(filter False false OFF off 0,$(WITH_GPU)),)
+        CONAN_SETTINGS += -o \&:with_gpu=False
+    else
+        $(error WITH_GPU must be True/False, ON/OFF, or 1/0)
+    endif
+endif
+
+ifneq ($(WITH_CUVS),)
+    ifneq ($(filter True true ON on 1,$(WITH_CUVS)),)
+        CONAN_SETTINGS += -o \&:with_cuvs=True
+    else ifneq ($(filter False false OFF off 0,$(WITH_CUVS)),)
+        CONAN_SETTINGS += -o \&:with_cuvs=False
+    else
+        $(error WITH_CUVS must be True/False, ON/OFF, or 1/0)
+    endif
 endif
 
 ifdef WITH_UT
@@ -104,8 +123,14 @@ ifdef WITH_SVS
     CONAN_SETTINGS += -o \&:with_svs=True
 endif
 
-ifdef WITH_CARDINAL
-    CONAN_SETTINGS += -o \&:with_cardinal=True
+ifneq ($(WITH_CARDINAL),)
+    ifneq ($(filter True true ON on 1,$(WITH_CARDINAL)),)
+        CONAN_SETTINGS += -o \&:with_cardinal=True
+    else ifneq ($(filter False false OFF off 0,$(WITH_CARDINAL)),)
+        CONAN_SETTINGS += -o \&:with_cardinal=False
+    else
+        $(error WITH_CARDINAL must be True/False, ON/OFF, or 1/0)
+    endif
 endif
 
 # C ABI and Java JNI bindings (WITH_JNI implies WITH_C_API). Tests need a C compiler only.
@@ -193,7 +218,8 @@ help: ## Show available targets
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Build flags:"
-	@echo "  WITH_GPU=True      Enable cuVS, or Cardinal GPU with WITH_CARDINAL=True"
+	@echo "  WITH_GPU=True/False Explicit GPU override (default: enabled with WITH_CARDINAL=True)"
+	@echo "  WITH_CUVS=True/False Explicit cuVS selection (also enabled by WITH_GPU=True without Cardinal)"
 	@echo "  WITH_UT=True       Enable unit tests"
 	@echo "  WITH_BENCHMARK=True Enable benchmarks build"
 	@echo "  WITH_ASAN=True     Enable AddressSanitizer"
@@ -212,6 +238,7 @@ help: ## Show available targets
 	@echo "  make                              # CPU release"
 	@echo "  make WITH_GPU=True                # GPU release"
 	@echo "  make WITH_CARDINAL=True WITH_GPU=True # Cardinal GPU release"
+	@echo "  make WITH_CARDINAL=True WITH_CUVS=True # Cardinal GPU + cuVS release"
 	@echo "  make WITH_UT=True WITH_ASAN=True  # CPU UT + ASAN"
 	@echo "  make WITH_GPU=True WITH_UT=True   # GPU UT"
 	@echo "  make WITH_DEBUG=True WITH_UT=True # CPU debug + UT"
