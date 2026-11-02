@@ -73,6 +73,26 @@ TEST_CASE("MRL index searches the prefix and optionally reranks with source vect
     }
 }
 
+TEST_CASE("MRL HNSW builds small batches without dividing by zero", "[mrl]") {
+    const int64_t rows = GENERATE(1, 2, 3, 9, 10);
+    std::vector<float> values(rows * kSourceDim, 0.0f);
+    for (int64_t row = 0; row < rows; ++row) {
+        values[row * kSourceDim] = static_cast<float>(row);
+    }
+    auto base = knowhere::GenDataSet(rows, kSourceDim, values.data());
+    auto query = knowhere::GenDataSet(1, kSourceDim, values.data());
+    auto index = CreateMRLIndex(values.data(), true, knowhere::IndexEnum::INDEX_HNSW);
+    knowhere::Json config = {{knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
+                             {knowhere::meta::TOPK, 1},
+                             {"M", 4},
+                             {"efConstruction", 8},
+                             {"ef", 1}};
+    REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
+    auto result = index.Search(query, config, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == 0);
+}
+
 TEST_CASE("MRL expands refinement candidates using search configuration", "[mrl]") {
     float base_data[] = {0.0f, 0.0f, 100.0f, 0.0f, 1.0f, 0.0f, 50.0f, 0.0f, 2.0f, 0.0f, 0.0f, 0.0f};
     float query_data[] = {0.0f, 0.0f, 0.0f, 0.0f};
