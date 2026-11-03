@@ -9,7 +9,11 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+#include <limits>
+#include <vector>
+
 #include "catch2/catch_test_macros.hpp"
+#include "catch2/generators/catch_generators.hpp"
 #include "knowhere/comp/index_param.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/index/mrl_index_node.h"
@@ -67,6 +71,133 @@ TEST_CASE("MRL index searches the prefix and optionally reranks with source vect
         REQUIRE(loaded_result.has_value());
         REQUIRE(loaded_result.value()->GetIds()[0] == 1);
     }
+}
+
+TEST_CASE("MRL HNSW builds small batches without dividing by zero", "[mrl]") {
+    const int64_t rows = GENERATE(1, 2, 3, 9, 10);
+    std::vector<float> values(rows * kSourceDim, 0.0f);
+    for (int64_t row = 0; row < rows; ++row) {
+        values[row * kSourceDim] = static_cast<float>(row);
+    }
+    auto base = knowhere::GenDataSet(rows, kSourceDim, values.data());
+    auto query = knowhere::GenDataSet(1, kSourceDim, values.data());
+    auto index = CreateMRLIndex(values.data(), true, knowhere::IndexEnum::INDEX_HNSW);
+    knowhere::Json config = {{knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
+                             {knowhere::meta::TOPK, 1},
+                             {"M", 4},
+                             {"efConstruction", 8},
+                             {"ef", 1}};
+    REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
+    auto result = index.Search(query, config, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == 0);
+}
+
+TEST_CASE("MRL expands refinement candidates using search configuration", "[mrl]") {
+    float base_data[] = {0.0f, 0.0f, 100.0f, 0.0f, 1.0f, 0.0f, 50.0f, 0.0f, 2.0f, 0.0f, 0.0f, 0.0f};
+    float query_data[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    auto base = knowhere::GenDataSet(3, kSourceDim, base_data);
+    auto query = knowhere::GenDataSet(1, kSourceDim, query_data);
+    knowhere::Json config = {{knowhere::meta::METRIC_TYPE, knowhere::metric::L2}, {knowhere::meta::TOPK, 1}};
+    const std::string index_type =
+        GENERATE(std::string(knowhere::IndexEnum::INDEX_FAISS_IDMAP), std::string(knowhere::IndexEnum::INDEX_HNSW));
+    config["M"] = 4;
+    config["efConstruction"] = 8;
+    config["ef"] = 1;
+    auto index = CreateMRLIndex(base_data, true, index_type);
+    REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
+
+    SECTION("default ratio preserves the original candidate set independently of base refinement") {
+        config["refine_ratio"] = 3.0f;
+        auto result = index.Search(query, config, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] == 0);
+    }
+    SECTION("fractional candidate counts truncate rather than round up") {
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = 2.9f;
+        auto result = index.Search(query, config, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetDim() == 1);
+        REQUIRE(result.value()->GetIds()[0] == 1);
+        REQUIRE(result.value()->GetDistance()[0] == 2501.0f);
+    }
+    SECTION("expanded candidates recover a full-dimensional neighbor after reload") {
+        knowhere::BinarySet binary;
+        REQUIRE(index.Serialize(binary) == knowhere::Status::success);
+        auto loaded = CreateMRLIndex(base_data, true, index_type);
+        REQUIRE(loaded.Deserialize(binary, config) == knowhere::Status::success);
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = 3.0f;
+        for (const auto& candidate : {index, loaded}) {
+            auto result = candidate.Search(query, config, nullptr);
+            REQUIRE(result.has_value());
+            REQUIRE(result.value()->GetDim() == 1);
+            REQUIRE(result.value()->GetIds()[0] == 2);
+            REQUIRE(result.value()->GetDistance()[0] == 4.0f);
+        }
+    }
+    SECTION("refinement disabled ignores the MRL ratio") {
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = 3.0f;
+        auto prefix_index = CreateMRLIndex(base_data, false);
+        REQUIRE(prefix_index.Build(base, config, false) == knowhere::Status::success);
+        auto result = prefix_index.Search(query, config, nullptr);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] == 0);
+        REQUIRE(result.value()->GetDistance()[0] == 0.0f);
+    }
+    SECTION("filters and candidates beyond the row count preserve valid ids") {
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = 5.0f;
+        uint8_t mask = 0x01;
+        auto result = index.Search(query, config, knowhere::BitsetView(&mask, 3));
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] == 2);
+    }
+    SECTION("candidate count overflow is rejected before allocation") {
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = std::numeric_limits<float>::max();
+        auto result = index.Search(query, config, nullptr);
+        REQUIRE_FALSE(result.has_value());
+        REQUIRE(result.error() == knowhere::Status::invalid_args);
+    }
+    SECTION("each search uses its own ratio without retaining the previous value") {
+        for (float ratio : {1.0f, 3.0f, 1.0f}) {
+            config[knowhere::indexparam::MRL_REFINE_RATIO] = ratio;
+            auto result = index.Search(query, config, nullptr);
+            REQUIRE(result.has_value());
+            REQUIRE(result.value()->GetDim() == 1);
+            REQUIRE(result.value()->GetIds()[0] == (ratio == 1.0f ? 0 : 2));
+        }
+    }
+}
+
+TEST_CASE("MRL search configuration rejects invalid refinement ratios", "[mrl]") {
+    float values[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    auto dataset = knowhere::GenDataSet(1, kSourceDim, values);
+    auto index = CreateMRLIndex(values, true);
+    knowhere::Json config = {{knowhere::meta::METRIC_TYPE, knowhere::metric::L2}, {knowhere::meta::TOPK, 1}};
+    REQUIRE(index.Build(dataset, config, false) == knowhere::Status::success);
+    for (float value :
+         {0.0f, 0.5f, -1.0f, std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = value;
+        REQUIRE_FALSE(index.Search(dataset, config, nullptr).has_value());
+    }
+}
+
+TEST_CASE("MRL expansion preserves SCANN's inner refinement", "[mrl]") {
+    std::vector<float> values(256 * kSourceDim);
+    auto base = knowhere::GenDataSet(256, kSourceDim, values.data());
+    auto query = knowhere::GenDataSet(1, kSourceDim, values.data());
+    knowhere::Json config = {
+        {knowhere::meta::METRIC_TYPE, knowhere::metric::L2}, {knowhere::meta::TOPK, 1}, {"nlist", 1}, {"nprobe", 1}};
+    auto index = CreateMRLIndex(values.data(), true, knowhere::IndexEnum::INDEX_FAISS_SCANN);
+    const auto status = index.Build(base, config, false);
+    if (status == knowhere::Status::invalid_instruction_set) {
+        SKIP("SCANN is not supported on this CPU");
+    }
+    REQUIRE(status == knowhere::Status::success);
+    config[knowhere::indexparam::MRL_REFINE_RATIO] = 3.0f;
+    auto result = index.Search(query, config, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetDim() == 1);
+    REQUIRE(result.value()->GetIds()[0] >= 0);
 }
 
 TEST_CASE("MRL reports unsupported iterator-based search features", "[mrl]") {
@@ -131,6 +262,8 @@ TEST_CASE("MRL search maps compact nullable ids after optional refinement", "[mr
     }
 
     SECTION("full-dimensional rerank") {
+        config[knowhere::indexparam::MRL_REFINE_RATIO] = 2.0f;
+        config[knowhere::meta::TOPK] = 1;
         auto index = CreateMRLIndex(raw_data, true);
         REQUIRE(index.Build(base, config, false) == knowhere::Status::success);
         auto result = index.Search(query, config, nullptr);
