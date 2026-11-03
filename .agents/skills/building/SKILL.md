@@ -23,7 +23,9 @@ Build options and output paths are defined in [Makefile](../../../Makefile) and
 | CPU Debug | `make WITH_DEBUG=True` |
 | CPU + UT | `make WITH_UT=True` |
 | CPU + UT + ASAN | `make WITH_UT=True WITH_ASAN=True` |
-| Cardinal GPU | `make WITH_CARDINAL=True WITH_GPU=True` |
+| Cardinal GPU | `make WITH_CARDINAL=True` |
+| Cardinal CPU only | `make WITH_CARDINAL=True WITH_GPU=False` |
+| Cardinal GPU + cuVS | `make WITH_CARDINAL=True WITH_CUVS=True` |
 | GPU (cuVS) | `make WITH_GPU=True` |
 | GPU (cuVS) + UT | `make WITH_GPU=True WITH_UT=True` |
 | macOS | `make` (auto-detects libc++) |
@@ -42,7 +44,8 @@ make test BUILD_DIR=/path/to/build
 
 | Flag | Description |
 |------|-------------|
-| `WITH_GPU=True` | Enable cuVS, or Cardinal GPU when `WITH_CARDINAL=True` |
+| `WITH_GPU=True/False` | Enable Cardinal GPU with Cardinal, otherwise enable cuVS; omitted defaults on with `WITH_CARDINAL=True`, off otherwise |
+| `WITH_CUVS=True/False` | Explicit cuVS selection, including alongside Cardinal |
 | `WITH_CARDINAL=True` | Enable Cardinal |
 | `WITH_UT=True` | Enable unit tests |
 | `WITH_BENCHMARK=True` | Enable benchmarks |
@@ -54,8 +57,11 @@ make test BUILD_DIR=/path/to/build
 | `CONAN_PROFILE=<p>` | Use one custom Conan profile for host and build |
 | `LIBCXX=<lib>` | Override compiler.libcxx (auto-detected from OS) |
 
-Most enable flags use Make's `ifdef`: leave them unset to disable them; `WITH_UT=False`, for example, still
-enables tests. `WITH_DISKANN` explicitly accepts true/false values.
+GPU, cuVS and Cardinal flags accept True/False, ON/OFF and 1/0. Other enable flags use Make's `ifdef`:
+leave them unset to disable them; `WITH_UT=False`, for example, still enables tests. `WITH_DISKANN` explicitly accepts true/false values.
+
+`WITH_CUVS=True` enables cuVS independently of `WITH_GPU`. Without Cardinal, `WITH_GPU=True`
+still enables cuVS even when `WITH_CUVS=False`.
 
 ## Common Issues
 
