@@ -23,9 +23,9 @@ Build options and output paths are defined in [Makefile](../../../Makefile) and
 | CPU Debug | `make WITH_DEBUG=True` |
 | CPU + UT | `make WITH_UT=True` |
 | CPU + UT + ASAN | `make WITH_UT=True WITH_ASAN=True` |
-| Cardinal GPU | `make WITH_CARDINAL=True` |
-| Cardinal CPU only | `make WITH_CARDINAL=True WITH_GPU=False` |
-| Cardinal GPU + cuVS | `make WITH_CARDINAL=True WITH_CUVS=True` |
+| Cardinal GPU | `make WITH_CARDINAL=True WITH_GPU=True` |
+| Cardinal CPU only | `make WITH_CARDINAL=True` |
+| Cardinal GPU + cuVS | `make WITH_CARDINAL=True WITH_GPU=True WITH_CUVS=True` |
 | GPU (cuVS) | `make WITH_GPU=True` |
 | GPU (cuVS) + UT | `make WITH_GPU=True WITH_UT=True` |
 | macOS | `make` (auto-detects libc++) |
@@ -44,7 +44,7 @@ make test BUILD_DIR=/path/to/build
 
 | Flag | Description |
 |------|-------------|
-| `WITH_GPU=True/False` | Enable Cardinal GPU with Cardinal, otherwise enable cuVS; omitted defaults on with `WITH_CARDINAL=True`, off otherwise |
+| `WITH_GPU=True/False` | Enable Cardinal GPU with Cardinal, otherwise enable cuVS; defaults to False |
 | `WITH_CUVS=True/False` | Explicit cuVS selection, including alongside Cardinal |
 | `WITH_CARDINAL=True` | Enable Cardinal |
 | `WITH_UT=True` | Enable unit tests |

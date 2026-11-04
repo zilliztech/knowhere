@@ -21,7 +21,7 @@ CONAN_INSTALL_FLAGS := --update --build=missing
 
 # ---------- User-facing build flags ----------
 # Usage: make WITH_GPU=True WITH_UT=True WITH_ASAN=True WITH_DEBUG=True
-WITH_GPU ?=
+WITH_GPU ?= False
 WITH_CUVS ?=
 WITH_UT ?=
 WITH_BENCHMARK ?=
@@ -74,9 +74,7 @@ CONAN_SETTINGS := -s compiler.libcxx=$(LIBCXX) -s build_type=$(BUILD_TYPE) -s co
 ifneq ($(UNAME_S),Darwin)
     ifneq ($(filter True true ON on 1,$(WITH_DISKANN)),)
         CONAN_SETTINGS += -o \&:with_diskann=True
-        ifneq ($(filter False false OFF off 0,$(WITH_GPU)),)
-            CONAN_INSTALL_FLAGS += --build=liburing
-        else ifeq ($(filter True true ON on 1,$(WITH_GPU) $(WITH_CARDINAL)),)
+        ifeq ($(filter True true ON on 1,$(WITH_GPU)),)
             CONAN_INSTALL_FLAGS += --build=liburing
         endif
     else ifneq ($(filter False false OFF off 0,$(WITH_DISKANN)),)
@@ -86,7 +84,7 @@ ifneq ($(UNAME_S),Darwin)
     endif
 endif
 
-# Preserve an omitted GPU option so Conan can select its backend-specific default.
+# Pass the GPU selection to Conan.
 ifneq ($(WITH_GPU),)
     ifneq ($(filter True true ON on 1,$(WITH_GPU)),)
         CONAN_SETTINGS += -o \&:with_gpu=True
@@ -218,7 +216,7 @@ help: ## Show available targets
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Build flags:"
-	@echo "  WITH_GPU=True/False Explicit GPU override (default: enabled with WITH_CARDINAL=True)"
+	@echo "  WITH_GPU=True/False Enable GPU support (default: False)"
 	@echo "  WITH_CUVS=True/False Explicit cuVS selection (also enabled by WITH_GPU=True without Cardinal)"
 	@echo "  WITH_UT=True       Enable unit tests"
 	@echo "  WITH_BENCHMARK=True Enable benchmarks build"
@@ -238,7 +236,7 @@ help: ## Show available targets
 	@echo "  make                              # CPU release"
 	@echo "  make WITH_GPU=True                # GPU release"
 	@echo "  make WITH_CARDINAL=True WITH_GPU=True # Cardinal GPU release"
-	@echo "  make WITH_CARDINAL=True WITH_CUVS=True # Cardinal GPU + cuVS release"
+	@echo "  make WITH_CARDINAL=True WITH_GPU=True WITH_CUVS=True # Cardinal GPU + cuVS release"
 	@echo "  make WITH_UT=True WITH_ASAN=True  # CPU UT + ASAN"
 	@echo "  make WITH_GPU=True WITH_UT=True   # GPU UT"
 	@echo "  make WITH_DEBUG=True WITH_UT=True # CPU debug + UT"
