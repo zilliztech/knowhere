@@ -131,7 +131,6 @@ class SimpleMLP {
             int32_t out_dim = layer_dims_[layer];
             linear_out.resize(batch_size * out_dim);
             ln_out.resize(batch_size * out_dim);
-            act_out.resize(batch_size * out_dim);
 
             LinearForward(current, fc_weights_[layer].data(), fc_biases_[layer].data(), batch_size, current_dim,
                           out_dim, linear_out.data());
@@ -139,6 +138,10 @@ class SimpleMLP {
             LayerNormForward(linear_out.data(), ln_gammas_[layer].data(), ln_betas_[layer].data(), batch_size, out_dim,
                              ln_out.data());
 
+            // `act_out` is not safe to `resize()`, because
+            //   `current` points to `act_out.data()` and
+            //   `.data()` may change during the `resize()`.
+            act_out.resize(batch_size * out_dim);
             GELUForward(ln_out.data(), batch_size * out_dim, act_out.data());
 
             current = act_out.data();
