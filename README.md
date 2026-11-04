@@ -38,8 +38,8 @@ $ bash scripts/install_deps.sh
 
 A top-level `Makefile` provides a unified build interface. Run `make help` to see all targets and flags.
 
-`WITH_CARDINAL=True` enables Cardinal GPU support by default; set `WITH_GPU=False` to disable it.
-Without Cardinal, `WITH_GPU` defaults to false; setting it to true enables cuVS.
+GPU support is disabled by default, including with `WITH_CARDINAL=True`.
+Set `WITH_GPU=True` to enable Cardinal GPU support with Cardinal, or cuVS otherwise.
 `WITH_CUVS=True` explicitly enables cuVS, including alongside Cardinal, independently of `WITH_GPU`.
 
 ```bash

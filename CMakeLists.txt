@@ -25,7 +25,7 @@ include(cmake/utils/platform_check.cmake)
 # cardinal is an enterprise vector search engine and can only be enabled for
 # cloud environment
 knowhere_option(WITH_CARDINAL "Build with cardinal" OFF)
-knowhere_option(WITH_GPU "Build with GPU support (cuVS or Cardinal)" ${WITH_CARDINAL})
+knowhere_option(WITH_GPU "Build with GPU support (cuVS or Cardinal)" OFF)
 knowhere_option(WITH_CUVS "Build with CUVS indexes" OFF)
 # Select the GPU backend through WITH_CARDINAL.
 # Keep this as a local value so an implicit cuVS selection is not cached when

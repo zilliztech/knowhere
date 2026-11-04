@@ -33,7 +33,7 @@ class KnowhereConan(ConanFile):
         "with_diskann": [True, False],
         "with_svs": [True, False],
         "with_cardinal": [True, False],
-        "with_gpu": [True, False, None],
+        "with_gpu": [True, False],
         "cardinal_version_force_checkout": [True, False],
         "with_profiler": [True, False],
         "with_ut": [True, False],
@@ -54,7 +54,7 @@ class KnowhereConan(ConanFile):
         "with_diskann": False,
         "with_svs": False,
         "with_cardinal": False,
-        "with_gpu": None,
+        "with_gpu": False,
         "metis/*:with_64bit_types": True,
         "cardinal_version_force_checkout": False,
         "with_profiler": False,
@@ -136,8 +136,6 @@ class KnowhereConan(ConanFile):
         return bool(self.options.with_c_api) or bool(self.options.with_jni)
 
     def configure(self):
-        if self.options.with_gpu == None:
-            self.options.with_gpu = bool(self.options.with_cardinal)
         if self.options.shared:
             self.options.rm_safe("fPIC")
         if self.settings.os == "Linux" and str(self.settings.arch) in self._openblas_dynamic_arches:
