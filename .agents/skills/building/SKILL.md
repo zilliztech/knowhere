@@ -12,6 +12,11 @@ For initial setup, [scripts/install_deps.sh](../../../scripts/install_deps.sh) i
 platform dependencies and tool versions, including CMake, ccache, and Conan. The script also configures the
 default Conan profile and remote; review it before using it in an existing environment.
 
+Both GPU backends use CUDA 13.2. Before enabling CUDA, CMake calls `scripts/install_cuda.sh` to reuse
+`/usr/local/cuda-13.2` or install it on supported Ubuntu builders. This also covers `add_subdirectory`
+consumers. Installation requires root or passwordless sudo. Reconfigure the build when switching
+CUDA versions. CPU builds skip this step.
+
 Build options and output paths are defined in [Makefile](../../../Makefile) and
 [conanfile.py](../../../conanfile.py). Use `make help` to inspect the available targets and flags.
 
