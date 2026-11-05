@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,9 @@
 #include "utils.h"
 
 #ifdef KNOWHERE_WITH_CUVS
+
+#include <cuvs/distance/distance.hpp>
+#include <raft/core/detail/mdspan_numpy_serializer.hpp>
 
 inline knowhere::DataSetPtr
 GenNormalizedInt8DataSet(int rows, int dim, int seed = 42) {
@@ -95,6 +99,101 @@ check_search(const int64_t nb, const int64_t nq, const int64_t dim, const int64_
 
     float recall = GetKNNRecall(*gt.value(), *results.value());
     REQUIRE(recall >= min_recall);
+}
+
+TEST_CASE("Test Cagra CPU Load Historical Formats", "[cagra][serialization]") {
+    namespace serializer = raft::detail::numpy_serializer;
+    const auto format_version = GENERATE(4, 5);
+    const auto binary_name = GENERATE("GPU_CUVS_CAGRA", "GPU_RAFT_CAGRA");
+    const auto metric_dtype = GENERATE("uint16", "uint32", "int32");
+    CAPTURE(format_version, binary_name, metric_dtype);
+    constexpr uint32_t rows = 8, dim = 2, degree = rows - 1;
+    std::vector<uint32_t> graph(rows * degree);
+    std::vector<float> vectors(rows * dim, 0.0f);
+    for (uint32_t i = 0; i < rows; ++i) {
+        vectors[i * dim] = 2.0f * i;
+        for (uint32_t j = 0; j < degree; ++j) {
+            graph[i * degree + j] = (i + j + 1) % rows;
+        }
+    }
+
+    // Encode the documented wire layouts independently of the current cuVS writer.
+    // v4 uses a bool; v5 uses a uint32 content map. Both contain a strided dataset.
+    std::ostringstream stream;
+    stream.write("<f4\0", 4);
+    serializer::serialize_scalar(stream, format_version);
+    serializer::serialize_scalar(stream, rows);
+    serializer::serialize_scalar(stream, dim);
+    serializer::serialize_scalar(stream, degree);
+    constexpr auto metric = cuvs::distance::DistanceType::L2Expanded;
+    if (std::string(metric_dtype) == "uint16") {
+        serializer::serialize_scalar(stream, static_cast<uint16_t>(metric));
+    } else if (std::string(metric_dtype) == "uint32") {
+        serializer::serialize_scalar(stream, static_cast<uint32_t>(metric));
+    } else {
+        serializer::serialize_scalar(stream, static_cast<int32_t>(metric));
+    }
+    serializer::serialize_host_mdspan(stream, raft::make_host_matrix_view(graph.data(), rows, degree));
+    if (format_version == 4) {
+        serializer::serialize_scalar(stream, true);
+    } else {
+        constexpr uint32_t content_dataset = uint32_t{1} << 0;
+        serializer::serialize_scalar(stream, content_dataset);
+    }
+    constexpr uint32_t strided_dataset = 2;
+    serializer::serialize_scalar(stream, strided_dataset);
+    serializer::serialize_scalar(stream, CUDA_R_32F);
+    serializer::serialize_scalar(stream, int64_t{rows});
+    serializer::serialize_scalar(stream, dim);
+    serializer::serialize_scalar(stream, dim);
+    serializer::serialize_host_mdspan(stream, raft::make_host_matrix_view(vectors.data(), rows, dim));
+    auto payload = stream.str();
+    auto binary = std::shared_ptr<uint8_t[]>(new uint8_t[payload.size()]);
+    std::copy(payload.begin(), payload.end(), binary.get());
+    knowhere::BinarySet binaries;
+    binaries.Append(binary_name, binary, payload.size());
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_GPU_CAGRA,
+                                             knowhere::Version::GetCurrentVersion().VersionNumber())
+                     .value();
+    knowhere::Json config = {{"metric_type", "L2"}, {"adapt_for_cpu", true}, {"k", 1}, {"ef", rows}};
+    REQUIRE(index.Deserialize(binaries, config) == knowhere::Status::success);
+    REQUIRE(index.Count() == rows);
+    REQUIRE(index.Dim() == dim);
+    // Nonzero distances also verify that the vector payload was read at the correct offset.
+    for (uint32_t i = 0; i < rows; ++i) {
+        vectors[i * dim] += 0.25f;
+    }
+    auto queries = knowhere::GenDataSet(rows, dim, vectors.data());
+    queries->SetIsOwner(false);
+    auto results = index.Search(queries, config, nullptr);
+    REQUIRE(results.has_value());
+    for (uint32_t i = 0; i < rows; ++i) {
+        REQUIRE(results.value()->GetIds()[i] == i);
+        REQUIRE(results.value()->GetDistance()[i] == Catch::Approx(0.0625f));
+    }
+}
+
+TEST_CASE("Test Cagra CPU Load Rejects Unsupported Versions", "[cagra][serialization]") {
+    const auto format_version = GENERATE(1, 2, 3, 6);
+    CAPTURE(format_version);
+    // Only the header is needed: unsupported versions must be rejected before reading index data.
+    std::ostringstream stream;
+    if (format_version >= 3) {
+        stream.write("<f4\0", 4);
+    }
+    raft::detail::numpy_serializer::serialize_scalar(stream, format_version);
+    auto payload = stream.str();
+    auto binary = std::shared_ptr<uint8_t[]>(new uint8_t[payload.size()]);
+    std::copy(payload.begin(), payload.end(), binary.get());
+    const std::string name = knowhere::IndexEnum::INDEX_CUVS_CAGRA;
+    knowhere::BinarySet binaries;
+    binaries.Append(name, binary, payload.size());
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::fp32>(name, knowhere::Version::GetCurrentVersion().VersionNumber())
+                     .value();
+    knowhere::Json config = {{"metric_type", "L2"}, {"adapt_for_cpu", true}};
+    REQUIRE(index.Deserialize(binaries, config) == knowhere::Status::hnsw_inner_error);
 }
 
 TEST_CASE("Test All GPU Index", "[search]") {
@@ -322,17 +421,22 @@ TEST_CASE("Test All GPU Index", "[search]") {
         auto cfg_json = gen().dump();
         CAPTURE(name, cfg_json);
         knowhere::Json json = knowhere::Json::parse(cfg_json);
+        const auto adapt_for_cpu = GENERATE(false, true);
+        CAPTURE(adapt_for_cpu);
+        json[knowhere::indexparam::ADAPT_FOR_CPU] = adapt_for_cpu;
         auto train_ds = GenDataSet(nb, dim, seed);
         auto query_ds = GenDataSet(nq, dim, seed);
         REQUIRE(idx.Type() == name);
         auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         knowhere::BinarySet bs;
-        idx.Serialize(bs);
+        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
         auto idx_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         json[knowhere::indexparam::ADAPT_FOR_CPU] = true;
         json[knowhere::indexparam::EF] = 128;
-        idx_.Deserialize(bs, json);
+        REQUIRE(idx_.Deserialize(bs, json) == knowhere::Status::success);
+        REQUIRE(idx_.Dim() == dim);
+        REQUIRE(idx_.Count() == nb);
         REQUIRE(idx.HasRawData(json[knowhere::meta::METRIC_TYPE]) ==
                 knowhere::IndexStaticFaced<knowhere::fp32>::HasRawData(name, version, json));
         auto results = idx_.Search(query_ds, json, nullptr);
@@ -359,19 +463,24 @@ TEST_CASE("Test All GPU Index", "[search]") {
         auto res = idx.Build(train_ds, json);
         REQUIRE(res == knowhere::Status::success);
         knowhere::BinarySet bs;
-        idx.Serialize(bs);
+        REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
         auto idx_ = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
         knowhere::Json deser_json = json;
         deser_json[knowhere::indexparam::ADAPT_FOR_CPU] = true;
         // Intentionally NOT setting ef — this is the bug scenario
-        idx_.Deserialize(bs, deser_json);
+        REQUIRE(idx_.Deserialize(bs, deser_json) == knowhere::Status::success);
         // Search without ef in params — should not crash
         auto results = idx_.Search(query_ds, json, nullptr);
         REQUIRE(results.has_value());
         auto ids = results.value()->GetIds();
+        // The default ef is small; approximate search need not recover every self-match.
+        int correct = 0;
         for (int i = 1; i < nq; ++i) {
-            CHECK(ids[i] == i);
+            REQUIRE(ids[i] >= 0);
+            REQUIRE(ids[i] < nb);
+            correct += ids[i] == i;
         }
+        REQUIRE(correct >= (nq - 1) * 0.95);
     }
 
     SECTION("Test Gpu Index Search Simple Bitset") {

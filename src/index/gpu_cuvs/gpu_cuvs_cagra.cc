@@ -113,6 +113,14 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
     }
 
     int64_t
+    Dim() const override {
+        if (!adapt_for_cpu || !hnsw_index_) {
+            return GpuCuvsCagraIndexNode<DataType>::Dim();
+        }
+        return hnsw_index_->space_->get_data_size() / sizeof(DataType);
+    }
+
+    int64_t
     Count() const override {
         if (!adapt_for_cpu)
             return GpuCuvsCagraIndexNode<DataType>::Count();
@@ -139,7 +147,7 @@ class GpuCuvsCagraHybridIndexNode : public GpuCuvsCagraIndexNode<DataType> {
                     if ((binary = binset.GetByName(std::string(this->Type()) + "_cpu")) != nullptr) {
                         MemoryIOReader reader(binary->data.get(), binary->size);
                         hnsw_index_->loadIndex(reader);
-                    } else if ((binary = binset.GetByName(std::string(this->Type()))) != nullptr) {
+                    } else if ((binary = binset.GetByNames({this->Type(), "GPU_RAFT_CAGRA"})) != nullptr) {
                         std::stringbuf buf;
                         buf.sputn((char*)binary->data.get(), binary->size);
                         std::istream stream(&buf);
