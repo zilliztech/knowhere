@@ -11,6 +11,7 @@
 
 #include "distances_sve.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "faiss/impl/platform_macros.h"
@@ -835,7 +836,9 @@ bf16_vec_L2sqr_sve(const ::knowhere::bf16* x, const ::knowhere::bf16* y, size_t 
     float norm_y_sq = svaddv_f32(svptrue_b32(), acc_squared_norm_y);
     float dot_xy = svaddv_f32(svptrue_b32(), acc_dot_product);
 
-    return norm_x_sq + norm_y_sq - 2.0f * dot_xy;
+    // |x|^2 + |y|^2 - 2<x,y> can round to a tiny negative value for (almost)
+    // identical vectors; an L2 distance must never be negative.
+    return std::max(0.0f, norm_x_sq + norm_y_sq - 2.0f * dot_xy);
 }
 
 float
@@ -912,10 +915,11 @@ bf16_vec_L2sqr_batch_4_sve(const ::knowhere::bf16* x, const ::knowhere::bf16* y0
     float ip2 = svaddv_f32(svptrue_b32(), acc_ip2);
     float ip3 = svaddv_f32(svptrue_b32(), acc_ip3);
 
-    dis0 = norm_x + norm_y0 - 2.0f * ip0;
-    dis1 = norm_x + norm_y1 - 2.0f * ip1;
-    dis2 = norm_x + norm_y2 - 2.0f * ip2;
-    dis3 = norm_x + norm_y3 - 2.0f * ip3;
+    // see bf16_vec_L2sqr_sve: clamp rounding error below zero
+    dis0 = std::max(0.0f, norm_x + norm_y0 - 2.0f * ip0);
+    dis1 = std::max(0.0f, norm_x + norm_y1 - 2.0f * ip1);
+    dis2 = std::max(0.0f, norm_x + norm_y2 - 2.0f * ip2);
+    dis3 = std::max(0.0f, norm_x + norm_y3 - 2.0f * ip3);
 }
 
 float

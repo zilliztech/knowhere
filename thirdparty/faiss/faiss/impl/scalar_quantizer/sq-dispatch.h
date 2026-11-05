@@ -541,7 +541,15 @@ SQDistanceComputer* select_distance_computer_body(
             return new DCTemplate<QuantizerFP16<SL2>, Sim, SL2>(d, trained);
 
         case ScalarQuantizer::QT_bf16:
+#if defined(__aarch64__)
+            // Knowhere BF16 kernels (SVE BFDOT when the CPU has it, else NEON);
+            // the regular computer stays as the exact path for non-BF16 queries
+            return new DistanceComputerBF16Native<Sim>(
+                    d,
+                    new DCTemplate<QuantizerBF16<SL2>, Sim, SL2>(d, trained));
+#else
             return new DCTemplate<QuantizerBF16<SL2>, Sim, SL2>(d, trained);
+#endif
 
         case ScalarQuantizer::QT_8bit_direct:
             if constexpr (is_avx512_family<SL2>) {
