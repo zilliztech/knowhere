@@ -96,6 +96,7 @@ class KnowhereConan(ConanFile):
         "java/pom.xml",
         "java/README.md",
         "cmake/*",
+        "scripts/install_cuda.sh",
         "include/*",
         "CMakeLists.txt",
         "LICENSE",

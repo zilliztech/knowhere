@@ -3,18 +3,15 @@ project(knowhere CXX C)
 
 # Use short SHA1 as version
 # currenly checkout a commit for cardinal v2. TODO: need a tag here
-set(CARDINAL_VERSION cf129ba1fcb430609aa63f367dc1a08b23fb0431)
+set(CARDINAL_VERSION bd6fa5023aeb2cf80c060ac6ba77abc3db6183c2)
 set(CARDINAL_REPO_URL "https://github.com/zilliztech/cardinal.git")
-set(CARDINAL_PR_REF "refs/pull/1023/head")
 
 set(CARDINAL_ROOT  "${KNOWHERE_THRID_ROOT}/cardinalv2")
 message(STATUS "Build Cardinal-${CARDINAL_VERSION}")
 
 # Clone and checkout cardinal with given repo url and version
 if (NOT EXISTS "${CARDINAL_ROOT}/.git")
-    execute_process(COMMAND git clone
-            --config remote.origin.fetch=+${CARDINAL_PR_REF}:refs/remotes/origin/cardinal-pr
-            ${CARDINAL_REPO_URL} ${CARDINAL_ROOT}
+    execute_process(COMMAND git clone ${CARDINAL_REPO_URL} ${CARDINAL_ROOT}
             RESULT_VARIABLE CARDINAL_CLONE_RESULT
             OUTPUT_VARIABLE CARDINAL_CLONE_OUTPUT
             ERROR_VARIABLE CARDINAL_CLONE_ERROR
@@ -51,7 +48,7 @@ if(CARDINAL_VERSION_FORCE_CHECKOUT)
     message(STATUS "Checking out cardinal version ${CARDINAL_VERSION}")
 
     execute_process(
-            COMMAND git -C ${CARDINAL_ROOT} fetch ${CARDINAL_REPO_URL} ${CARDINAL_PR_REF}
+            COMMAND git -C ${CARDINAL_ROOT} fetch
             RESULT_VARIABLE CARDINAL_FETCH_RESULT
             OUTPUT_VARIABLE CARDINAL_FETCH_OUTPUT
             ERROR_VARIABLE CARDINAL_FETCH_ERROR
