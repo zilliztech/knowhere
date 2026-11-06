@@ -28,6 +28,7 @@
 #include <faiss/IndexPQ.h>
 #include <faiss/IndexPreTransform.h>
 #include <faiss/IndexRaBitQ.h>
+#include <faiss/IndexSQFP16Gemm.h>
 #include <faiss/IndexScalarQuantizer.h>
 #include <faiss/VectorTransform.h>
 #include <faiss/cppcontrib/knowhere/IndexBinaryScalarQuantizer.h>
@@ -733,6 +734,23 @@ void write_index(const Index* idx, IOWriter* f, int io_flags) {
         WRITE1(legacy_code_size);
         WRITEVECTOR(legacy_trained);
         WRITEVECTOR(bsq->codes);
+    } else if (
+            const ::faiss::IndexSQFP16Gemm* idxsg =
+                    dynamic_cast<const ::faiss::IndexSQFP16Gemm*>(idx)) {
+        // IxSQ fields followed by kernel, blocking and rescoring settings.
+        uint32_t h = fourcc("IxSG");
+        WRITE1(h);
+        write_index_header(idx, f);
+        write_ScalarQuantizer(&idxsg->sq, f);
+        WRITEVECTOR(idxsg->codes);
+        int32_t kernel = static_cast<int32_t>(idxsg->kernel);
+        WRITE1(kernel);
+        WRITE1(idxsg->use_gemm);
+        uint64_t bs_x = idxsg->bs_x;
+        uint64_t bs_y = idxsg->bs_y;
+        WRITE1(bs_x);
+        WRITE1(bs_y);
+        WRITE1(idxsg->rescore_native);
     } else if (
             const ::faiss::IndexScalarQuantizer* idxs =
                     dynamic_cast<const ::faiss::IndexScalarQuantizer*>(idx)) {

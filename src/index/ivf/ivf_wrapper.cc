@@ -14,7 +14,9 @@
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 
 #include <memory>
+#include <type_traits>
 
+#include "faiss/IndexSQFP16Gemm.h"
 #include "faiss/cppcontrib/knowhere/IndexFlat.h"
 #include "faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h"
 #include "faiss/cppcontrib/knowhere/index_io.h"
@@ -40,6 +42,15 @@ IndexIVFWrapper<IndexIVFType>::from_deserialized(std::unique_ptr<faiss::Index>&&
     auto index_base = index->get_base_ivf_index();
     if (index_base == nullptr) {
         return nullptr;
+    }
+
+    if constexpr (std::is_same_v<IndexIVFType, faiss::cppcontrib::knowhere::IndexIVFPQ>) {
+        if (const auto* coarse = dynamic_cast<const faiss::IndexSQFP16Gemm*>(index_base->quantizer)) {
+            // The kernel was already re-resolved against this host on load; log it to expose host changes.
+            LOG_KNOWHERE_INFO_ << "IVF_PQ coarse quantizer kernel loaded="
+                               << faiss::fp16_gemm::kernel_name(coarse->kernel)
+                               << " effective=" << faiss::fp16_gemm::kernel_name(coarse->effective_kernel());
+        }
     }
 
     index_base->make_direct_map(true);
@@ -154,9 +165,9 @@ template struct IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFPQ>;
 template struct IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>;
 
 expected<std::unique_ptr<IndexIVFPQWrapper>>
-IndexIvfFactory::create_for_pq(faiss::cppcontrib::knowhere::IndexFlat* qzr_raw_ptr, const faiss::idx_t d,
-                               const size_t nlist, const size_t nbits, const IvfPqConfig& ivf_pq_cfg,
-                               const DataFormatEnum raw_data_format, const faiss::MetricType metric) {
+IndexIvfFactory::create_for_pq(faiss::Index* qzr_raw_ptr, const faiss::idx_t d, const size_t nlist, const size_t nbits,
+                               const IvfPqConfig& ivf_pq_cfg, const DataFormatEnum raw_data_format,
+                               const faiss::MetricType metric) {
     // the index factory string is either `IVFx,PQ,Refine(y)` or `IVFx,PQ`,
     //   depends on the refine parameters
 

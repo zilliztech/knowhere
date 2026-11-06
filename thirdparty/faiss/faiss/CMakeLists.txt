@@ -142,6 +142,7 @@ set(FAISS_SRC
   IndexSQFastScan.cpp
   IndexIVFSQFastScan.cpp
   IndexScalarQuantizer.cpp
+  IndexSQFP16Gemm.cpp
   IndexShards.cpp
   IndexShardsIVF.cpp
   IndexNeuralNetCodec.cpp
@@ -178,6 +179,7 @@ set(FAISS_SRC
   impl/ProductAdditiveQuantizer.cpp
   impl/ScalarQuantizer.cpp
   impl/scalar_quantizer/training.cpp
+  impl/scalar_quantizer/sq-fp16-gemm-common.cpp
   impl/index_read.cpp
   impl/index_write.cpp
   impl/io.cpp
@@ -277,6 +279,7 @@ set(FAISS_HEADERS
   IndexSQFastScan.h
   IndexIVFSQFastScan.h
   IndexScalarQuantizer.h
+  IndexSQFP16Gemm.h
   IndexShards.h
   IndexShardsIVF.h
   MatrixStats.h
@@ -332,6 +335,7 @@ set(FAISS_HEADERS
   impl/scalar_quantizer/scanners.h
   impl/scalar_quantizer/similarities.h
   impl/scalar_quantizer/sq-dispatch.h
+  impl/scalar_quantizer/sq-fp16-gemm.h
   impl/scalar_quantizer/training.h
   impl/ThreadedIndex-inl.h
   impl/ThreadedIndex.h
@@ -452,6 +456,11 @@ if(COMPILER_SUPPORTS_BMI2)
 else()
   set(FAISS_BMI2_FLAGS "")
 endif()
+
+# Shared with the Knowhere build; ISA flags apply only to the kernel source files.
+include("${CMAKE_CURRENT_SOURCE_DIR}/impl/scalar_quantizer/sq-fp16-gemm.cmake")
+faiss_configure_fp16_gemm(FAISS_FP16_GEMM_SRC "${CMAKE_CURRENT_SOURCE_DIR}")
+list(APPEND FAISS_SRC ${FAISS_FP16_GEMM_SRC})
 
 add_library(faiss ${FAISS_SRC})
 

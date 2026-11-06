@@ -19,6 +19,7 @@
 #include "faiss/IndexIVFRaBitQ.h"
 #include "faiss/IndexIVFRaBitQFastScan.h"
 #include "faiss/IndexRefine.h"
+#include "faiss/IndexSQFP16Gemm.h"
 #include "faiss/SuperKMeans.h"
 #include "faiss/VectorTransform.h"
 #include "faiss/cppcontrib/knowhere/IndexBinaryFlat.h"
@@ -649,7 +650,23 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         auto nbits = MatchNbits(rows, ivf_pq_cfg.nbits.value());
 
         // create quantizer for the training
-        auto qzr = std::make_unique<faiss::cppcontrib::knowhere::IndexFlat>(dim, metric.value());
+        std::unique_ptr<faiss::Index> qzr;
+        if (ivf_pq_cfg.coarse_quantizer.value_or("flat") == "sq_fp16_gemm") {
+            auto gemm_qzr = std::make_unique<faiss::IndexSQFP16Gemm>(dim, metric.value());
+            const auto kernel = ivf_pq_cfg.coarse_kernel.value_or("auto");
+            if (kernel == "amx") {
+                gemm_qzr->kernel = faiss::fp16_gemm::GemmKernel::AMX;
+            } else if (kernel == "fma") {
+                gemm_qzr->kernel = faiss::fp16_gemm::GemmKernel::FMA;
+            } else if (kernel == "scalar") {
+                gemm_qzr->kernel = faiss::fp16_gemm::GemmKernel::SCALAR;
+            }
+            // An explicitly requested kernel that is unavailable throws here instead of silently falling back.
+            gemm_qzr->effective_kernel();
+            qzr = std::move(gemm_qzr);
+        } else {
+            qzr = std::make_unique<faiss::cppcontrib::knowhere::IndexFlat>(dim, metric.value());
+        }
 
         DataFormatEnum data_format = DataType2EnumHelper<DataType>::value;
 
