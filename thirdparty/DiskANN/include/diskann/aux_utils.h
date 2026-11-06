@@ -117,7 +117,7 @@ namespace diskann {
     // large dimensional data)
     uint32_t disk_pq_dims = 0;
     // reorder (set true to include full precision in data file:
-    // optional paramter, use only when using disk PQ
+    // optional parameter, use only when using disk PQ
     bool reorder = false;
     // accelerate the index build ~30% and lose ~1% recall
     bool accelerate_build = false;
