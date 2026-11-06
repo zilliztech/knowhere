@@ -22,6 +22,16 @@ knowhere_file_glob(
   thirdparty/faiss/faiss/cppcontrib/knowhere/utils/*.cpp
 )
 
+# Remove the ISA-specific FP16 GEMM kernels picked up by the glob above and add
+# them back only when the compiler and target architecture support them.
+set(FAISS_FP16_GEMM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/faiss/faiss")
+list(REMOVE_ITEM FAISS_SRCS
+  "${FAISS_FP16_GEMM_ROOT}/impl/scalar_quantizer/sq-fp16-gemm-fma.cpp"
+  "${FAISS_FP16_GEMM_ROOT}/impl/scalar_quantizer/sq-fp16-gemm-amx.cpp")
+include("${FAISS_FP16_GEMM_ROOT}/impl/scalar_quantizer/sq-fp16-gemm.cmake")
+faiss_configure_fp16_gemm(FAISS_FP16_GEMM_SRC "${FAISS_FP16_GEMM_ROOT}")
+list(APPEND FAISS_SRCS ${FAISS_FP16_GEMM_SRC})
+
 if(WITH_SVS)
   knowhere_file_glob(
     GLOB
