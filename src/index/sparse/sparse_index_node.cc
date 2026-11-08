@@ -1270,39 +1270,28 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
 
     Status
     Add(const DataSetPtr dataset, std::shared_ptr<Config> config, bool use_knowhere_build_pool) override {
-        std::unique_lock<std::mutex> lock(mutex_);
-        uint64_t task_id = next_task_id_++;
-        add_tasks_.push(task_id);
+        AddPermission permission(*this);
 
-        // add task is allowed to run only after all search tasks that come before it have finished.
-        cv_.wait(lock, [this, task_id]() { return current_task_id_ == task_id && active_readers_ == 0; });
-
-        std::exception_ptr ex;
-        Status res = Status::success;
         try {
-            res = SparseInvertedIndexNode<T, use_wand>::Add(dataset, config, use_knowhere_build_pool);
-            if (res == Status::success) {
-                const auto& cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
-                if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
-                    // insert dataset to raw data if metric type is IP
-                    auto data = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
-                    auto rows = dataset->GetRows();
-                    raw_data_.insert(raw_data_.end(), data, data + rows);
-                }
+            auto res = SparseInvertedIndexNode<T, use_wand>::Add(dataset, config, use_knowhere_build_pool);
+            if (res != Status::success) {
+                return res;
             }
+            const auto& cfg = static_cast<const SparseInvertedIndexConfig&>(*config);
+            if (IsMetricType(cfg.metric_type.value(), metric::IP)) {
+                // insert dataset to raw data if metric type is IP
+                auto data = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
+                auto rows = dataset->GetRows();
+                raw_data_.insert(raw_data_.end(), data, data + rows);
+            }
+            return Status::success;
+        } catch (const std::exception& e) {
+            LOG_KNOWHERE_ERROR_ << "SparseInvertedIndexNodeCC::Add failed: " << e.what();
+            return Status::sparse_inner_error;
         } catch (...) {
-            ex = std::current_exception();
+            LOG_KNOWHERE_ERROR_ << "SparseInvertedIndexNodeCC::Add failed with unknown exception";
+            return Status::sparse_inner_error;
         }
-
-        add_tasks_.pop();
-        current_task_id_++;
-        lock.unlock();
-        cv_.notify_all();
-
-        if (ex) {
-            std::rethrow_exception(ex);
-        }
-        return res;
     }
 
     expected<DataSetPtr>
@@ -1427,6 +1416,27 @@ class SparseInvertedIndexNodeCC : public SparseInvertedIndexNode<T, use_wand> {
     }
 
  private:
+    struct AddPermission {
+        AddPermission(SparseInvertedIndexNodeCC& node) : node_(node) {
+            std::unique_lock<std::mutex> lock(node_.mutex_);
+            uint64_t task_id = node_.next_task_id_++;
+            node_.add_tasks_.push(task_id);
+            // add task is allowed to run only after all search tasks that come before it have finished.
+            node_.cv_.wait(lock, [&node, task_id]() {
+                return node.current_task_id_ == task_id && node.active_readers_ == 0;
+            });
+        }
+
+        ~AddPermission() {
+            std::unique_lock<std::mutex> lock(node_.mutex_);
+            node_.add_tasks_.pop();
+            node_.current_task_id_++;
+            node_.cv_.notify_all();
+        }
+
+        SparseInvertedIndexNodeCC& node_;
+    };
+
     struct ReadPermission {
         ReadPermission(const SparseInvertedIndexNodeCC& node) : node_(node) {
             std::unique_lock<std::mutex> lock(node_.mutex_);
