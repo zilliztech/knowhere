@@ -42,12 +42,22 @@ GPU support is disabled by default, including with `WITH_CARDINAL=True`.
 Set `WITH_GPU=True` to enable Cardinal GPU support with Cardinal, or cuVS otherwise.
 `WITH_CUVS=True` explicitly enables cuVS, including alongside Cardinal, independently of `WITH_GPU`.
 
+GPU builds use CUDA 13.2 for both cuVS and Cardinal. CMake prepares the toolkit before enabling CUDA,
+including when Knowhere is built through `add_subdirectory`. An existing toolkit at `/usr/local/cuda-13.2`
+is reused; otherwise, `scripts/install_cuda.sh` installs it on Ubuntu 22.04/24.04 (x86_64 or aarch64),
+requiring root or passwordless sudo. Other systems must prepare the toolkit at that path beforehand.
+No GPU device or driver is needed to compile. Reconfigure the build when switching CUDA versions.
+CPU builds do not invoke the CUDA installer.
+
 ```bash
 # CPU release (default)
 $ make
 
 # GPU release (cuVS)
 $ make WITH_GPU=True
+
+# GPU release (Cardinal)
+$ make WITH_CARDINAL=True WITH_GPU=True
 
 # CPU with unit tests
 $ make WITH_UT=True

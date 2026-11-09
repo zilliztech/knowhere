@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.9.1-devel-ubuntu22.04
+FROM nvidia/cuda:13.2.0-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CMAKE_VERSION="v3.30.5"
