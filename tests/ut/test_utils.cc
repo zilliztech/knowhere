@@ -378,15 +378,17 @@ TEST_CASE("Test Version") {
 }
 
 TEST_CASE("Test DiskLoad") {
-    REQUIRE(knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_DISKANN,
-                                  knowhere::Version::GetCurrentVersion().VersionNumber()));
+    const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    REQUIRE(knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_DISKANN, version));
 #ifdef KNOWHERE_WITH_CARDINAL
-    REQUIRE(
-        knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_HNSW, knowhere::Version::GetCurrentVersion().VersionNumber()));
+    REQUIRE(knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_HNSW, version));
+    REQUIRE(knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_TIERED, version));
 #else
-    REQUIRE(!knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_HNSW,
-                                   knowhere::Version::GetCurrentVersion().VersionNumber()));
+    REQUIRE_FALSE(knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_HNSW, version));
+    REQUIRE_FALSE(knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_TIERED, version));
 #endif
+    REQUIRE_FALSE(knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_TIERED, 0));
+    REQUIRE_FALSE(knowhere::UseDiskLoad(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, version));
 }
 
 TEST_CASE("Test ThreadPool") {
