@@ -44,8 +44,9 @@ Set `WITH_GPU=True` to enable Cardinal GPU support with Cardinal, or cuVS otherw
 
 GPU builds use CUDA 13.2 for both cuVS and Cardinal. CMake prepares the toolkit before enabling CUDA,
 including when Knowhere is built through `add_subdirectory`. An existing toolkit at `/usr/local/cuda-13.2`
-is reused; otherwise, `scripts/install_cuda.sh` installs it on Ubuntu 22.04/24.04 (x86_64 or aarch64),
-requiring root or passwordless sudo. Other systems must prepare the toolkit at that path beforehand.
+is reused; otherwise, `scripts/install_cuda.sh` installs it on Ubuntu 22.04/24.04/26.04 (x86_64 or aarch64),
+requiring root or passwordless sudo. Ubuntu 26.04 reuses NVIDIA's Ubuntu 24.04 packages because CUDA 13.2
+has no native Ubuntu 26.04 repository. Other systems must prepare the toolkit at that path beforehand.
 No GPU device or driver is needed to compile. Reconfigure the build when switching CUDA versions.
 CPU builds do not invoke the CUDA installer.
 

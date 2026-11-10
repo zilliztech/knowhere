@@ -36,9 +36,11 @@ if cuda_installed; then
 fi
 
 source /etc/os-release
+# Map each Ubuntu release to a compatible CUDA package repository.
 case "${ID}:${VERSION_ID}" in
     ubuntu:22.04) distribution=ubuntu2204 ;;
     ubuntu:24.04) distribution=ubuntu2404 ;;
+    ubuntu:26.04) distribution=ubuntu2404 ;;
     *) echo "Install CUDA Toolkit 13.2 at ${CUDA_ROOT} on ${ID} ${VERSION_ID}." >&2; exit 1 ;;
 esac
 case "$(uname -m)" in
