@@ -27,6 +27,7 @@
 #include <numeric>
 #include <thread>
 #include <tuple>
+#include <type_traits>
 #include <vector>
 
 #include "common/cuvs/integration/cuvs_knowhere_config.hpp"
@@ -254,7 +255,11 @@ struct GpuCuvsIndexNode : public IndexNode {
 
     static std::unique_ptr<BaseConfig>
     StaticCreateConfig() {
-        return std::make_unique<knowhere_config_type>();
+        if constexpr (index_kind == cuvs_proto::cuvs_index_kind::cagra && std::is_same_v<DataType, knowhere::int8>) {
+            return std::make_unique<GpuCuvsCagraInt8Config>();
+        } else {
+            return std::make_unique<knowhere_config_type>();
+        }
     }
 
     std::unique_ptr<BaseConfig>

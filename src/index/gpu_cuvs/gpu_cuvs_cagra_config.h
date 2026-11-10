@@ -121,7 +121,8 @@ struct GpuCuvsCagraConfig : public BaseConfig {
             .description("train on GPU search on CPU")
             .set_default(false)
             .for_train()
-            .for_deserialize();
+            .for_deserialize()
+            .for_static();
         KNOWHERE_CONFIG_DECLARE_FIELD(ef)
             .description("hnsw ef")
             .allow_empty_without_default()
@@ -167,6 +168,22 @@ struct GpuCuvsCagraConfig : public BaseConfig {
                     "ef(" + std::to_string(ef.value()) + ") should be larger than k(" + std::to_string(k.value()) + ")";
                 return HandleError(err_msg, msg, Status::out_of_range_in_json);
             }
+        }
+        return Status::success;
+    }
+};
+
+struct GpuCuvsCagraInt8Config : public GpuCuvsCagraConfig {
+    Status
+    CheckAndAdjust(PARAM_TYPE param_type, std::string* err_msg) override {
+        const auto status = GpuCuvsCagraConfig::CheckAndAdjust(param_type, err_msg);
+        if (status != Status::success) {
+            return status;
+        }
+        if ((param_type == PARAM_TYPE::TRAIN || param_type == PARAM_TYPE::DESERIALIZE ||
+             param_type == PARAM_TYPE::STATIC) &&
+            adapt_for_cpu.value_or(false)) {
+            return HandleError(err_msg, "INT8 CAGRA does not support adapt_for_cpu=true", Status::invalid_args);
         }
         return Status::success;
     }
