@@ -3,7 +3,7 @@ project(knowhere CXX C)
 
 # Use short SHA1 as version
 # currenly checkout a commit for cardinal v2. TODO: need a tag here
-set(CARDINAL_VERSION 1f07a41364d0f8a4b3b05dbec8f41642169f61d5)
+set(CARDINAL_VERSION f2cf77ec5bfdc328f8e723e832c2ab45594bb6ef)
 set(CARDINAL_REPO_URL "https://github.com/zilliztech/cardinal.git")
 set(CARDINAL_VERSION_FORCE_CHECKOUT ON CACHE BOOL "Use the frozen SAQ experiment revision" FORCE)
 
