@@ -212,8 +212,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .set_default(4096)
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(sindi_bm25_filter_threshold)
-            .description(
-                "maximum window-local pass fraction for unpacked SINDI BM25 posting prefiltering; 0 disables it")
+            .description("maximum window-local pass fraction for SINDI BM25 posting prefiltering; 0 disables it")
             .set_default(1.0f / 64)
             .set_range(0.0f, 1.0f)
             .for_search();

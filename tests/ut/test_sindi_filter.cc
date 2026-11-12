@@ -15,7 +15,9 @@
 
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
+#include "index/sparse/sindi_bm25_u4.h"
 #include "index/sparse/sindi_filter.h"
+#include "index/sparse/sindi_packed12.h"
 #include "index/sparse/sindi_simd.h"
 #include "index/sparse/sparse_index_config.h"
 #include "knowhere/index/index_factory.h"
@@ -23,62 +25,271 @@
 
 namespace sindi = knowhere::sparse::inverted::sindi;
 
-TEST_CASE("SINDI packed BM25 retains filtered search with prefilter configuration", "[sparse][sindi][prefilter]") {
-    const auto quant = GENERATE("u4_lut_u12", "u4_lut_u16");
-    constexpr size_t window = 1024;
-    constexpr size_t rows = 2 * window + 19;
+TEST_CASE("SINDI packed prefilter preserves search across windows and persistence", "[sparse][sindi][prefilter]") {
+    const auto quant = GENERATE(std::string("u4_lut_u12"), std::string("u4_lut_u16"), std::string("e5m7"));
+    const bool ip = quant == "e5m7";
+    const bool growable = ip ? GENERATE(false, true) : false;
+    const bool refine = ip ? GENERATE(false, true) : false;
+    const size_t window = quant == "u4_lut_u16" ? 8192 : 4096;
+    const size_t rows = 2 * window + 19;
     std::vector<std::map<int32_t, float>> documents(rows);
     for (size_t id = 0; id < rows; ++id) {
-        documents[id] = {{0, float(1 + id % 199)}, {1, float(1 + id % 97)}};
+        documents[id] = {{0, 1.003f + float(id % 199) / 17}};
+        if (id % 3 == 0) {
+            documents[id][1] = 1.007f + float(id % 97) / 7;
+        }
+        if (id % 997 == 5) {
+            documents[id][2] = 17.125f;
+        }
     }
+    // Odd posting counts and a term absent from the second window exercise
+    // cross-term packed offsets, sparse window cursors, and partial tails.
+    documents[3][3] = 23.75f;
+    documents[rows - 1][3] = 31.5f;
+    if (!ip) {
+        for (auto& document : documents) {
+            for (auto& [dim, value] : document) {
+                value = std::round(value * 8);
+            }
+        }
+    }
+    auto data = GenSparseDataSet(documents, 4);
+    auto query =
+        GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.25f}, {1, 0.875f}, {2, 0.5f}, {3, 0.25f}}}, 4);
+    knowhere::Json config = {{"metric_type", ip ? "IP" : "BM25"},
+                             {"inverted_index_algo", "SINDI"},
+                             {"quant_type", quant},
+                             {"sindi_window_size", window},
+                             {"dim_max_score_ratio", 1.0f},
+                             {"refine", refine},
+                             {"bm25_k1", 1.2},
+                             {"bm25_b", 0.75},
+                             {"bm25_avgdl", 100.0}};
+    if (refine) {
+        config["refine_k"] = 2.0f;
+        config["refine_query_mass_percentage"] = 0.7f;
+    }
+    auto index = knowhere::IndexFactory::Instance()
+                     .Create<knowhere::sparse_u32_f32>(growable ? knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX_CC
+                                                                : knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX,
+                                                       11)
+                     .value();
+    if (growable) {
+        const auto split = documents.begin() + window - 1;
+        auto initial = GenSparseDataSet(std::vector<std::map<int32_t, float>>(documents.begin(), split), 4);
+        auto added = GenSparseDataSet(std::vector<std::map<int32_t, float>>(split, documents.end()), 4);
+        REQUIRE(index.Build(initial, config) == knowhere::Status::success);
+        REQUIRE(index.Add(added, config) == knowhere::Status::success);
+    } else {
+        REQUIRE(index.Build(data, config) == knowhere::Status::success);
+    }
+    knowhere::BinarySet serialized;
+    if (!growable) {
+        REQUIRE(index.Serialize(serialized) == knowhere::Status::success);
+    }
+    const auto field = ip ? "sindi_ip_filter_threshold" : "sindi_bm25_filter_threshold";
+    const float default_threshold = ip ? 1.0f / 512 : 1.0f / 64;
+    for (bool restored : {false, true}) {
+        if (restored) {
+            if (growable) {
+                break;
+            }
+            REQUIRE(index.Deserialize(serialized, config) == knowhere::Status::success);
+        }
+        // Empty/all-pass/all-rejected masks, sparse survivors, exact dispatch
+        // boundaries, offset/mapped IDs, and out-of-range exclusions.
+        for (int pattern = 0; pattern < 9; ++pattern) {
+            const size_t bit_count = pattern == 6 ? rows + 11 : (pattern == 8 ? rows - 7 : rows);
+            std::vector<uint8_t> bits((bit_count + 7) / 8, 0);
+            for (size_t id = 0; id < bit_count; ++id) {
+                bool excluded = pattern == 2;
+                if (pattern >= 3) {
+                    excluded = id < window || (id % 997 != 5 && id != rows - 1);
+                    if (pattern == 4 || pattern == 5) {
+                        // One window at the default limit, then one above it.
+                        excluded = id % window >= size_t(window * default_threshold) + (pattern == 5);
+                    }
+                }
+                if (excluded) {
+                    bits[id / 8] |= 1u << (id % 8);
+                }
+            }
+            auto bitset = pattern == 0 ? knowhere::BitsetView{} : knowhere::BitsetView(bits.data(), bit_count);
+            std::vector<int32_t> mapped_ids(rows);
+            knowhere::IdArray mapping;
+            if (pattern == 6) {
+                bitset.set_id_offset(11);
+            } else if (pattern == 7) {
+                for (size_t i = 0; i < rows; ++i) {
+                    mapped_ids[i] = i % 101 == 0 ? -1 : static_cast<int32_t>(rows - i - 1);
+                }
+                mapping.Set(mapped_ids.data(), mapped_ids.size());
+                bitset.set_out_ids(mapping, mapped_ids.size());
+            }
+            bitset.set_vector_count(rows);
+            // Full scoring without prefiltering supplies a per-ID oracle even
+            // when the top-k boundary falls inside a group of quantized ties.
+            config[field] = 0.0f;
+            config["k"] = rows;
+            auto reference = index.Search(query, config, bitset);
+            REQUIRE(reference.has_value());
+            std::vector<float> reference_scores(rows, std::numeric_limits<float>::quiet_NaN());
+            for (size_t i = 0; i < rows; ++i) {
+                const auto id = reference.value()->GetIds()[i];
+                if (id >= 0) {
+                    REQUIRE(static_cast<size_t>(id) < rows);
+                    reference_scores[id] = reference.value()->GetDistance()[i];
+                }
+            }
+            for (size_t k : {size_t{1}, size_t{10}, size_t{100}}) {
+                config["k"] = k;
+                config[field] = 0.0f;
+                auto baseline = index.Search(query, config, bitset);
+                REQUIRE(baseline.has_value());
+                for (float threshold : {default_threshold, 1.0f / 96, 1.0f}) {
+                    CAPTURE(quant, growable, refine, restored, pattern, k, threshold);
+                    config[field] = threshold;
+                    auto result = index.Search(query, config, bitset);
+                    REQUIRE(result.has_value());
+                    std::set<int64_t> seen;
+                    for (size_t i = 0; i < k; ++i) {
+                        const auto id = result.value()->GetIds()[i];
+                        if (baseline.value()->GetIds()[i] >= 0) {
+                            REQUIRE(id >= 0);
+                            REQUIRE(static_cast<size_t>(id) < rows);
+                            REQUIRE(seen.insert(id).second);
+                            REQUIRE((bitset.empty() || !bitset.test(id)));
+                            const auto score = result.value()->GetDistance()[i];
+                            const auto expected = baseline.value()->GetDistance()[i];
+                            // Compaction changes which postings use x86 SIMD
+                            // versus scalar tails. Their rounding can reorder
+                            // near ties; check rank scores and each ID's score.
+                            REQUIRE(std::abs(score - expected) <= 1e-5f * std::max(1.0f, expected));
+                            REQUIRE(std::isfinite(reference_scores[id]));
+                            REQUIRE(std::abs(score - reference_scores[id]) <=
+                                    1e-5f * std::max(1.0f, reference_scores[id]));
+                        } else {
+                            REQUIRE(id == -1);
+                            REQUIRE(std::isnan(result.value()->GetDistance()[i]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("SINDI U4 prefilter preserves ties between filtered and unfiltered windows", "[sparse][sindi][prefilter]") {
+    const auto quant = GENERATE("u4_lut_u12", "u4_lut_u16");
+    constexpr size_t window = 4096;
+    std::vector<std::map<int32_t, float>> documents(2 * window, {{1, 1.0f}});
+    documents[3][0] = documents[window + 3][0] = 1.0f;
     auto data = GenSparseDataSet(documents, 2);
-    auto query = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.25f}, {1, 0.875f}}}, 2);
+    auto query = GenSparseDataSet(std::vector<std::map<int32_t, float>>{{{0, 1.0f}}}, 2);
     knowhere::Json config = {{"metric_type", "BM25"},
                              {"inverted_index_algo", "SINDI"},
                              {"quant_type", quant},
                              {"sindi_window_size", window},
-                             {"k", 10},
-                             {"bm25_k1", 1.2},
-                             {"bm25_b", 0.75},
-                             {"bm25_avgdl", 100.0}};
+                             {"k", 1},
+                             {"bm25_k1", 1.2f},
+                             {"bm25_b", 0.75f},
+                             {"bm25_avgdl", 100.0f}};
     auto index = knowhere::IndexFactory::Instance()
                      .Create<knowhere::sparse_u32_f32>(knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX, 11)
                      .value();
     REQUIRE(index.Build(data, config) == knowhere::Status::success);
-    knowhere::BinarySet serialized;
-    REQUIRE(index.Serialize(serialized) == knowhere::Status::success);
+    std::vector<uint8_t> bits(2 * window / 8, 0);
+    std::fill_n(bits.begin(), window / 8, 0xff);
+    bits[0] &= ~(1u << 3);
+    knowhere::BitsetView bitset(bits.data(), 2 * window);
+    config["sindi_bm25_filter_threshold"] = 0.0f;
+    auto baseline = index.Search(query, config, bitset);
+    REQUIRE(baseline.has_value());
+    // TF=1 and length=2 expose the denominator grouping difference between
+    // SVE's packed U4 and unpacked U8 kernels. Only the first window is sparse.
+    for (float threshold : {1.0f / 64, 1.0f}) {
+        config["sindi_bm25_filter_threshold"] = threshold;
+        auto result = index.Search(query, config, bitset);
+        REQUIRE(result.has_value());
+        REQUIRE(result.value()->GetIds()[0] == baseline.value()->GetIds()[0]);
+        REQUIRE(result.value()->GetDistance()[0] == baseline.value()->GetDistance()[0]);
+    }
+}
 
-    // Skip the first window, retain two documents in the next and one in the tail.
-    std::vector<uint8_t> bits((rows + 7) / 8, 0xff);
-    for (size_t id : {window + 3, window + 17, rows - 1}) {
+TEST_CASE("SINDI encoded selection decodes only surviving values", "[sparse][sindi][prefilter]") {
+    const bool u16_ids = GENERATE(false, true);
+    const size_t window = u16_ids ? 65535 : 4096;
+    const size_t start = GENERATE(0, 1, 7);
+    const size_t byte_offset = GENERATE(0, 1);
+    std::vector<uint8_t> bits((window + 7) / 8, 0xff);
+    for (size_t id = 5; id < window; id += 997) {
         bits[id / 8] &= ~(1u << (id % 8));
     }
-    knowhere::BitsetView bitset(bits.data(), rows);
-    for (bool restored : {false, true}) {
-        if (restored) {
-            REQUIRE(index.Deserialize(serialized, config) == knowhere::Status::success);
-        }
-        config["sindi_bm25_filter_threshold"] = 0.0f;
-        auto baseline = index.Search(query, config, bitset);
-        REQUIRE(baseline.has_value());
-        for (float threshold : {1.0f / 64, 1.0f}) {
-            CAPTURE(quant, restored, threshold);
-            config["sindi_bm25_filter_threshold"] = threshold;
-            auto result = index.Search(query, config, bitset);
-            REQUIRE(result.has_value());
-            for (size_t i = 0; i < 10; ++i) {
-                const auto id = result.value()->GetIds()[i];
-                REQUIRE(id == baseline.value()->GetIds()[i]);
-                if (i < 3) {
-                    REQUIRE(id >= 0);
-                    REQUIRE_FALSE(bitset.test(id));
-                    REQUIRE(result.value()->GetDistance()[i] == baseline.value()->GetDistance()[i]);
+    knowhere::BitsetView bitset(bits.data(), window);
+    const auto check = [&]<typename Value>() {
+        sindi::PostingFilter<Value> filter;
+        REQUIRE(filter.prepare(bitset, 0, window, window / 64));
+        // Exercise binary seeking, scanning, scratch reuse, odd packed phases,
+        // unaligned serialized data, and the last partial byte without padding.
+        for (size_t count : {window, size_t{0}, size_t{1}, size_t{7}, size_t{16}, size_t{31}, size_t{128}}) {
+            CAPTURE(u16_ids, start, byte_offset, count);
+            std::vector<uint8_t> id_bytes(byte_offset +
+                                          (u16_ids ? 2 * (start + count) : sindi::packed12_bytes(start + count)));
+            std::vector<uint8_t> value_bytes(byte_offset + (std::is_same_v<Value, knowhere::fp16>
+                                                                ? sindi::packed12_bytes(start + count)
+                                                                : (start + count + 1) / 2));
+            auto* ids = id_bytes.data() + byte_offset;
+            auto* values = value_bytes.data() + byte_offset;
+            std::vector<uint16_t> expected_ids;
+            std::vector<Value> expected_values;
+            const uint8_t lut[16] = {0, 1, 3, 7, 11, 17, 23, 31, 41, 53, 67, 89, 113, 149, 191, 255};
+            for (size_t i = 0; i < count; ++i) {
+                const uint16_t id = i * window / count;
+                if (u16_ids) {
+                    std::memcpy(ids + 2 * (start + i), &id, sizeof(id));
                 } else {
-                    REQUIRE(id == -1);
-                    REQUIRE(std::isnan(result.value()->GetDistance()[i]));
+                    sindi::pack12(ids, start + i, id);
+                }
+                Value value;
+                if constexpr (std::is_same_v<Value, knowhere::fp16>) {
+                    // Multiples of 1/16 in this range are exactly representable.
+                    value = knowhere::fp16(float(1 + i % 127) / 16);
+                    sindi::pack12(values, start + i, sindi::encode_e5m7(value));
+                } else {
+                    const uint8_t code = i % 16;
+                    values[(start + i) / 2] |= code << (4 * ((start + i) & 1));
+                    value = lut[code];
+                }
+                if (!bitset.test(id)) {
+                    expected_ids.push_back(id);
+                    expected_values.push_back(value);
                 }
             }
+            const auto load_id = [&](size_t i) {
+                REQUIRE(i < count);
+                return u16_ids ? sindi::unpack_bm25_u16_id(ids, start + i) : sindi::unpack12(ids, start + i);
+            };
+            size_t decoded = 0;
+            const auto selected = filter.select_decoded(bitset, count, load_id, [&](size_t i) -> Value {
+                REQUIRE_FALSE(bitset.test(load_id(i)));
+                ++decoded;
+                if constexpr (std::is_same_v<Value, knowhere::fp16>) {
+                    return sindi::decode_e5m7_half(sindi::unpack12(values, start + i));
+                } else {
+                    return lut[sindi::unpack_bm25_u4(values, start + i)];
+                }
+            });
+            REQUIRE(decoded == expected_ids.size());
+            REQUIRE(selected.count == expected_ids.size());
+            for (size_t i = 0; i < selected.count; ++i) {
+                REQUIRE(selected.ids[i] == expected_ids[i]);
+                REQUIRE(selected.values[i] == expected_values[i]);
+            }
         }
+    };
+    check.template operator()<uint8_t>();
+    if (!u16_ids) {
+        check.template operator()<knowhere::fp16>();
     }
 }
 
