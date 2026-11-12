@@ -1724,6 +1724,79 @@ TEST_CASE("Test_AiSAQ_IndexNode", "[diskann]") {
     base_AiSAQ_search<knowhere::fp32>();
 }
 
+// AiSAQ reranks each expanded node at full precision over aligned_dim values. Under IP data_dim is
+// dim + 1 (257 here, aligned_dim 264), so a node read in place from its sector would add the
+// neighbour count and ids that follow its coordinates on disk to the distance. As float those are
+// denormals; as fp16 or bf16 they are values of order 0.1 and recall collapses (milvus-io/milvus#55279).
+// disk_pq_dims = 0, as Milvus builds AiSAQ, so the rerank reads the full coordinates.
+template <typename DataType>
+inline float
+AiSAQ_ip_knn_recall() {
+    fs::remove_all(kDir);
+    fs::remove(kDir);
+    REQUIRE_NOTHROW(fs::create_directory(kDir));
+    REQUIRE_NOTHROW(fs::create_directory(kIPIndexDir));
+    auto version = GenTestVersionList();
+
+    knowhere::Json base_json;
+    base_json["dim"] = kLargeDim;
+    base_json["metric_type"] = knowhere::metric::IP;
+    base_json["k"] = kK;
+
+    auto base_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(GenDataSet(kNumRows, kLargeDim, 30));
+    auto query_ds = knowhere::ConvertToDataTypeIfNeeded<DataType>(GenDataSet(kNumQueries, kLargeDim, 42));
+    WriteRawDataToDisk<DataType>(kRawDataPath, static_cast<const DataType*>(base_ds->GetTensor()), kNumRows, kLargeDim);
+    auto gt = knowhere::BruteForce::Search<DataType>(base_ds, query_ds, base_json, nullptr);
+    REQUIRE(gt.has_value());
+
+    knowhere::Json build_json = base_json;
+    build_json["index_prefix"] = kIPIndexPrefix;
+    build_json["data_path"] = kRawDataPath;
+    build_json["max_degree"] = 64;
+    build_json["search_list_size"] = 128;
+    build_json["pq_code_budget_gb"] = sizeof(float) * kLargeDim * kNumRows * 0.5 / (1024 * 1024 * 1024);
+    build_json["search_cache_budget_gb"] = 0;
+    build_json["disk_pq_dims"] = 0;
+    build_json["build_dram_budget_gb"] = 16.0;
+    build_json["inline_pq"] = 64;
+
+    knowhere::Json deserialize_json = base_json;
+    deserialize_json["index_prefix"] = kIPIndexPrefix;
+    deserialize_json["search_cache_budget_gb"] = 0;
+
+    knowhere::Json search_json = base_json;
+    search_json["index_prefix"] = kIPIndexPrefix;
+    search_json["search_list_size"] = 128;
+    search_json["beamwidth"] = 4;
+    search_json["vectors_beamwidth"] = 1;
+
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+    auto pack = knowhere::Pack(file_manager);
+    auto index = knowhere::IndexFactory::Instance().Create<DataType>("AISAQ", version, pack).value();
+    knowhere::DataSetPtr no_data = nullptr;
+    REQUIRE(index.Build(no_data, build_json) == knowhere::Status::success);
+    knowhere::BinarySet binset;
+    REQUIRE(index.Serialize(binset) == knowhere::Status::success);
+    REQUIRE(index.Deserialize(binset, deserialize_json) == knowhere::Status::success);
+    auto res = index.Search(query_ds, search_json, nullptr);
+    REQUIRE(res.has_value());
+    return GetKNNRecall(*gt.value(), *res.value());
+}
+
+TEST_CASE("Test_AiSAQ_IP_rerank_reads_only_the_stored_coordinates", "[diskann]") {
+    // Without the fix fp16 and bf16 score about 0.1-0.25 here; the bar leaves room for the graph.
+    constexpr float kAiSAQIpRecall = 0.7;
+    SECTION("fp32") {
+        REQUIRE(AiSAQ_ip_knn_recall<knowhere::fp32>() >= kAiSAQIpRecall);
+    }
+    SECTION("fp16") {
+        REQUIRE(AiSAQ_ip_knn_recall<knowhere::fp16>() >= kAiSAQIpRecall);
+    }
+    SECTION("bf16") {
+        REQUIRE(AiSAQ_ip_knn_recall<knowhere::bf16>() >= kAiSAQIpRecall);
+    }
+}
+
 template <typename DataType>
 inline void
 cached_node_AiSAQ_search() {
