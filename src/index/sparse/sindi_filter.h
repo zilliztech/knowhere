@@ -109,32 +109,39 @@ class PostingFilter {
         if (!enabled) {
             return postings;
         }
-        const auto count = compact(bitset, postings.ids, postings.values, postings.count);
-        return {ids_.data(), values_.data(), count};
-    }
-
- private:
-    size_t
-    compact(const BitsetView& bitset, const uint16_t* ids, const Value* values, size_t count) {
-        const size_t capacity = std::min(count, eligible_ids_.size());
-        ids_.resize(capacity);
-        values_.resize(capacity);
-        size_t selected = 0;
-        if (capacity == 0) {
-            return 0;
-        }
         // Serialized posting sections can start at odd byte offsets. Avoid
         // typed loads (including std::lower_bound's dereference) on those views.
-        const auto* id_bytes = reinterpret_cast<const uint8_t*>(ids);
-        const auto* value_bytes = reinterpret_cast<const uint8_t*>(values);
+        const auto* id_bytes = reinterpret_cast<const uint8_t*>(postings.ids);
+        const auto* value_bytes = reinterpret_cast<const uint8_t*>(postings.values);
         const auto load_id = [&](size_t offset) {
             uint16_t id;
             std::memcpy(&id, id_bytes + offset * sizeof(uint16_t), sizeof(id));
             return id;
         };
+        const auto load_value = [&](size_t offset) {
+            Value value;
+            std::memcpy(&value, value_bytes + offset * sizeof(Value), sizeof(Value));
+            return value;
+        };
+        return select_decoded(bitset, postings.count, load_id, load_value);
+    }
+
+    // Select from an encoded posting stream without decoding rejected values.
+    // Readers take offsets relative to this window's sorted posting list. The
+    // returned view borrows scratch until the next enabled selection.
+    template <typename LoadId, typename LoadValue>
+    PostingView<Value>
+    select_decoded(const BitsetView& bitset, size_t count, LoadId load_id, LoadValue load_value) {
+        const size_t capacity = std::min(count, eligible_ids_.size());
+        ids_.resize(capacity);
+        values_.resize(capacity);
+        size_t selected = 0;
+        if (capacity == 0) {
+            return {ids_.data(), values_.data(), 0};
+        }
         const auto append = [&](uint16_t id, size_t offset) {
             ids_[selected] = id;
-            std::memcpy(&values_[selected++], value_bytes + offset * sizeof(Value), sizeof(Value));
+            values_[selected++] = load_value(offset);
         };
 
         if (count >= 16 * eligible_ids_.size()) {
@@ -177,9 +184,10 @@ class PostingFilter {
                 scan.template operator()<false>();
             }
         }
-        return selected;
+        return {ids_.data(), values_.data(), selected};
     }
 
+ private:
     size_t docid_start_ = 0;
     bool direct_ = false;
     std::vector<uint16_t> eligible_ids_;

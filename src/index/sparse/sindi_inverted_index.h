@@ -1569,13 +1569,33 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         };
         sindi::PostingFilter<QuantType> posting_filter;
         // The metric-specific search config bounds the actual window-local
-        // survivor fraction. Zero disables posting prefiltering. Packed formats
-        // retain their dedicated kernels; their byte streams cannot be compacted
-        // as ordinary posting IDs and values.
+        // survivor fraction. Zero disables posting prefiltering. Packed streams
+        // read only surviving values into scratch.
         const double filter_threshold = search_params.sindi_filter_threshold;
         const auto prepare_filter = [&](size_t start, size_t count) {
-            return !packed_ && filter_threshold > 0 &&
+            return filter_threshold > 0 &&
                    posting_filter.prepare(bitset, start, count, static_cast<size_t>(count * filter_threshold));
+        };
+
+        const auto select_postings = [&](const PostingCursor& cur, size_t soff, size_t count, bool enabled) {
+            if (!packed_) {
+                return posting_filter.select(bitset, {cur.ids_base + soff, cur.vals_base + soff, count}, enabled);
+            }
+            const auto* ids = packed_ids_data(cur.dim_id);
+            const auto* vals = packed_vals_data(cur.dim_id);
+            const size_t start = packed_posting_offset(cur.dim_id, soff);
+            const auto load_id = [&](size_t offset) {
+                return packed_u16_ids_ ? sindi::unpack_bm25_u16_id(ids, start + offset)
+                                       : sindi::unpack12(ids, start + offset);
+            };
+            const auto load_value = [&](size_t offset) -> QuantType {
+                if constexpr (is_ip) {
+                    return sindi::decode_e5m7_half(sindi::unpack12(vals, start + offset));
+                } else {
+                    return sindi::unpack_bm25_u4(vals, start + offset);
+                }
+            };
+            return posting_filter.select_decoded(bitset, count, load_id, load_value);
         };
 
         auto [cursors, overflow_cursors] = make_query_cursors(sorted_q_vec);
@@ -1625,12 +1645,11 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                     }
 
                     float dispatch_max;
-                    if (packed_) {
+                    if (packed_ && !filter_postings) {
                         dispatch_max = packed_fn(cur.qval, packed_vals_data(cur.dim_id), packed_ids_data(cur.dim_id),
                                                  packed_posting_offset(cur.dim_id, soff), wnnz, wscores_final);
                     } else {
-                        const auto postings = posting_filter.select(
-                            bitset, {cur.ids_base + soff, cur.vals_base + soff, wnnz}, filter_postings);
+                        const auto postings = select_postings(cur, soff, wnnz, filter_postings);
                         if (postings.empty()) {
                             continue;
                         }
@@ -1663,6 +1682,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             }();
 
             const auto packed_bm25_fn = packed_ ? sindi::get_packed_bm25_kernel(packed_u16_ids_) : nullptr;
+            const auto filtered_bm25_fn = packed_ ? sindi::get_packed_bm25_kernel(true) : nullptr;
+            std::vector<uint8_t> filtered_u4_values;
             const float bm25_k1 = search_params.scorer_config.scorer_params.bm25.k1;
             const float bm25_b = search_params.scorer_config.scorer_params.bm25.b;
             const float bm25_avgdl = search_params.scorer_config.scorer_params.bm25.avgdl;
@@ -1724,21 +1745,37 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                         }
 
                         const uint16_t* plist_ids = packed_ ? nullptr : cur.ids_base + soff;
-                        const QuantType* plist_vals = packed_ ? nullptr : cur.vals_base + soff;
-                        const auto postings =
-                            posting_filter.select(bitset, {plist_ids, plist_vals, wnnz}, filter_postings);
-                        if (postings.empty()) {
-                            continue;
+                        float dispatch_max;
+                        if (packed_ && !filter_postings) {
+                            dispatch_max = packed_bm25_fn(cur.qval, packed_vals_span_.data(), packed_ids_span_.data(),
+                                                          size_t(plists_dim_offsets_span_[cur.dim_id]) + soff, wnnz,
+                                                          wscores_final, bm25_k1, bm25_b, bm25_avgdl,
+                                                          row_sums_ptr + docid_start, lut_.decode.data());
+                        } else {
+                            const auto postings = select_postings(cur, soff, wnnz, filter_postings);
+                            if (postings.empty()) {
+                                continue;
+                            }
+                            if (packed_) {
+                                // Keep U4's scoring arithmetic; U8 can group the denominator differently.
+                                // Selected IDs are already U16; only the U4 codes need repacking.
+                                filtered_u4_values.resize((postings.count + 1) / 2);
+                                for (size_t i = 0; i < postings.count; i += 2) {
+                                    filtered_u4_values[i / 2] = postings.values[i];
+                                    if (i + 1 < postings.count) {
+                                        filtered_u4_values[i / 2] |= postings.values[i + 1] << 4;
+                                    }
+                                }
+                                dispatch_max = filtered_bm25_fn(
+                                    cur.qval, filtered_u4_values.data(), reinterpret_cast<const uint8_t*>(postings.ids),
+                                    0, postings.count, wscores_final, bm25_k1, bm25_b, bm25_avgdl,
+                                    row_sums_ptr + docid_start, lut_.decode.data());
+                            } else {
+                                dispatch_max = accumulate_fn(cur.qval, postings.values, postings.ids, postings.count,
+                                                             wscores_final, bm25_k1, bm25_b, bm25_avgdl,
+                                                             row_sums_ptr + docid_start);
+                            }
                         }
-
-                        float dispatch_max =
-                            packed_
-                                ? packed_bm25_fn(cur.qval, packed_vals_span_.data(), packed_ids_span_.data(),
-                                                 size_t(plists_dim_offsets_span_[cur.dim_id]) + soff, wnnz,
-                                                 wscores_final, bm25_k1, bm25_b, bm25_avgdl, row_sums_ptr + docid_start,
-                                                 lut_.decode.data())
-                                : accumulate_fn(cur.qval, postings.values, postings.ids, postings.count, wscores_final,
-                                                bm25_k1, bm25_b, bm25_avgdl, row_sums_ptr + docid_start);
                         if constexpr (RestoreOverflow) {
                             if (overflow_cur != nullptr && overflow_cur->window_begin != overflow_cur->window_end) {
                                 dispatch_max = apply_bm25_u8_overflow_corrections(
