@@ -38,6 +38,8 @@
 #include "knowhere/index/index_factory.h"
 #include "knowhere/sparse_utils.h"
 #include "knowhere/version.h"
+#include "src/index/sparse/inverted_index_format.h"
+#include "src/index/sparse/sindi_packed12.h"
 #include "src/index/sparse/sindi_refinement.h"
 #include "src/index/sparse/sindi_simd.h"
 
@@ -199,6 +201,10 @@ struct Options {
     std::string base_path, query_path, truth_path, quant = "fp16", simd = "auto";
     uint64_t queries = 100, offset = 0, base_limit = 0;
     bool refine = false;
+    bool h2 = false, brute = false, reload = false;
+    std::string metric = "IP", save, load;
+    double ratio = 1.05;
+    int window = 4096, warmup = 1;
     float mass = 1, factor = 1, drop = 0;
     std::string sweep;
     int threads = std::max(2u, std::thread::hardware_concurrency()), repeats = 3, k = 10;
@@ -221,6 +227,10 @@ Parse(int argc, char** argv) {
                    "  [--threads N] [--repeats 3] [--k 10] [--output sparse_results.csv]\n"
                    "  [--base FILE] [--query-file FILE] [--truth FILE] [--quant-type fp16|e5m7]\n"
                    "  [--simd auto|avx2|avx512|scalar]\n"
+                   "  [--h2 0|1] [--metric IP|BM25] [--window 4096] [--ratio 1.05] [--warmup 1]\n"
+                   "  BM25: --method SINDI --quant-type u8|u16|auto; scorer from gt/metadata.json.\n"
+                   "  [--index-save FILE | --index-load FILE] [--reload-check 0|1] [--brute-force 0|1]\n"
+                   "  --queries 0 selects all remaining queries; --base-file aliases --base.\n"
                    "  [--refine 0|1] [--mass 1] [--factor 1] [--drop 0]\n"
                    "  [--sweep mass|drop|pareto]\n"
                    "  Pareto: [--scheme mass] [--samples 100] [--pareto-seed 42]\n"
@@ -236,7 +246,7 @@ Parse(int argc, char** argv) {
         supplied.insert(key);
         if (key == "--data-dir")
             o.data = value;
-        else if (key == "--base")
+        else if (key == "--base" || key == "--base-file")
             o.base_path = value;
         else if (key == "--query-file")
             o.query_path = value;
@@ -248,7 +258,26 @@ Parse(int argc, char** argv) {
             o.quant = value;
         else if (key == "--output")
             o.output = value;
-        else if (key == "--refine")
+        else if (key == "--h2" || key == "--reload-check" || key == "--brute-force") {
+            Check(value == "0" || value == "1", "Expected 0 or 1 for " + key);
+            if (key == "--h2")
+                o.h2 = value == "1";
+            else if (key == "--reload-check")
+                o.reload = value == "1";
+            else
+                o.brute = value == "1";
+        } else if (key == "--metric")
+            o.metric = value;
+        else if (key == "--index-save")
+            o.save = value;
+        else if (key == "--index-load")
+            o.load = value;
+        else if (key == "--ratio") {
+            size_t end = 0;
+            o.ratio = std::stod(value, &end);
+            Check(end == value.size() && std::isfinite(o.ratio) && o.ratio >= .5 && o.ratio <= 1.3,
+                  "Invalid bound ratio");
+        } else if (key == "--refine")
             o.refine = std::stoi(value) != 0;
         else if (key == "--mass")
             o.mass = std::stof(value);
@@ -296,6 +325,10 @@ Parse(int argc, char** argv) {
                     o.repeats = n;
                 else if (key == "--k")
                     o.k = n;
+                else if (key == "--window")
+                    o.window = n;
+                else if (key == "--warmup")
+                    o.warmup = n;
                 else
                     throw std::runtime_error("Unknown option: " + key);
             }
@@ -327,9 +360,21 @@ Parse(int argc, char** argv) {
                   o.factor_min <= o.factor_max,
               "Pareto bounds require finite 1 <= factor-min <= factor-max");
     }
-    Check(!o.data.empty() && o.queries > 0 && o.threads >= 2, "Provide --data-dir, positive queries, and >=2 threads");
-    Check(o.quant == "fp16" || (o.quant == "e5m7" && o.method == "SINDI"),
-          "E5M7 requires --method SINDI; quant type must be fp16/e5m7");
+    Check(!o.data.empty() && o.threads >= 2, "Provide --data-dir and >=2 threads");
+    Check(o.metric == "IP" || o.metric == "BM25", "Metric must be IP or BM25");
+    const bool bm = o.metric == "BM25";
+    if (bm && !supplied.contains("--quant-type"))
+        o.quant = "auto";
+    Check(bm ? (o.method == "SINDI" && !o.refine && (o.quant == "u8" || o.quant == "u16" || o.quant == "auto"))
+             : (o.quant == "fp16" || (o.quant == "e5m7" && o.method == "SINDI")),
+          "BM25 requires --method SINDI, u8/u16/auto and no refinement; IP supports fp16 or SINDI e5m7");
+    Check(!o.h2 || ((o.method == "SINDI" || o.method == "all") && o.quant != "e5m7"),
+          "H2 requires SINDI with unpacked FP16 IP or u8/u16/auto BM25");
+    Check(o.window >= 1024 && o.window <= 65535, "Window must be 1024..65535");
+    Check(o.quant != "e5m7" || o.window == 4096, "E5M7 requires window 4096");
+    Check(o.save.empty() || o.load.empty(), "Choose index-save or index-load");
+    Check((o.save.empty() && o.load.empty()) || o.method != "all", "Index save/load requires a single method");
+    Check(!o.brute || o.truth_path.empty(), "Choose --truth or --brute-force, not both");
     return o;
 }
 
@@ -464,12 +509,114 @@ RecallMismatches(const knowhere::DataSetPtr& result, const Truth& truth, const s
     }
     return mismatches;
 }
+Truth
+Capture(const knowhere::DataSetPtr& r, size_t n) {
+    Truth out{{r->GetIds(), r->GetIds() + n}, {r->GetDistance(), r->GetDistance() + n}};
+    // Scores for missing neighbors are NaN/unspecified; compare only meaningful
+    // scores.
+    for (size_t i = 0; i < n; ++i)
+        if (out.ids[i] < 0)
+            out.scores[i] = 0;
+    return out;
+}
+Json
+ReadJson(const std::string& path) {
+    std::ifstream f(path);
+    Check(f.good(), "Cannot open " + path);
+    Json j;
+    f >> j;
+    return j;
+}
+
+void
+CheckHitScores(const Truth& hits, const SparseData& base, const SparseData& queries, int k, const Json& search,
+               const std::string& quant = "fp16") {
+    const bool bm = search["metric_type"] == "BM25";
+    const double k1 = bm ? search["bm25_k1"].get<double>() : 0;
+    const double b = bm ? search["bm25_b"].get<double>() : 0;
+    const double avgdl = bm ? search["bm25_avgdl"].get<double>() : 1;
+    for (size_t p = 0; p < hits.ids.size(); ++p) {
+        if (hits.ids[p] < 0)
+            continue;
+        const auto& doc = base.rows.at(hits.ids[p]);
+        const auto& query = queries.rows.at(p / k);
+        // Document lengths follow the index's original FP32 row-sum contract.
+        float dl = 0;
+        for (size_t i = 0; i < doc.size(); ++i) dl += doc[i].val;
+        size_t x = 0, y = 0;
+        double score = 0;
+        while (x < doc.size() && y < query.size()) {
+            auto dv = doc[x], qv = query[y];
+            if (dv.id < qv.id)
+                ++x;
+            else if (qv.id < dv.id)
+                ++y;
+            else {
+                const double value = bm ? std::min(65535.0, std::floor(double(dv.val)))
+                                     : quant == "e5m7"
+                                         ? knowhere::sparse::inverted::sindi::decode_e5m7(
+                                               knowhere::sparse::inverted::sindi::encode_e5m7(knowhere::fp16(dv.val)))
+                                         : float(knowhere::fp16(dv.val));
+                score += bm ? qv.val * value * (k1 + 1) / (value + k1 * (1 - b + b * dl / avgdl)) : qv.val * value;
+                ++x;
+                ++y;
+            }
+        }
+        Check(std::isfinite(score) && std::abs(hits.scores[p] - score) <= 1e-4 + 1e-5 * std::abs(score),
+              "Independent represented-score check failed at hit " + std::to_string(p));
+    }
+}
+// Independent prefix oracle: rank float64 scores, then round only for storage.
+Truth
+ExhaustiveTruth(const SparseData& base, const SparseData& queries, int k, const Json& search) {
+    const bool bm = search.at("metric_type") == "BM25";
+    const double k1 = bm ? search.at("bm25_k1").get<double>() : 0;
+    const double b = bm ? search.at("bm25_b").get<double>() : 0;
+    const double avgdl = bm ? search.at("bm25_avgdl").get<double>() : 1;
+    std::vector<float> lengths(base.rows.size(), 0);
+    if (bm)
+        for (size_t d = 0; d < base.rows.size(); ++d)
+            for (size_t i = 0; i < base.rows[d].size(); ++i) lengths[d] += base.rows[d][i].val;
+    Truth truth;
+    for (const auto& query : queries.rows) {
+        std::vector<std::pair<double, uint32_t>> ranked;
+        ranked.reserve(base.rows.size());
+        for (size_t d = 0; d < base.rows.size(); ++d) {
+            const auto& doc = base.rows[d];
+            size_t x = 0, y = 0;
+            double score = 0;
+            while (x < doc.size() && y < query.size()) {
+                if (doc[x].id < query[y].id)
+                    ++x;
+                else if (query[y].id < doc[x].id)
+                    ++y;
+                else {
+                    const double tf = doc[x].val, weight = query[y].val;
+                    score += bm ? weight * tf * (k1 + 1) / (tf + k1 * (1 - b + b * lengths[d] / avgdl)) : weight * tf;
+                    ++x;
+                    ++y;
+                }
+            }
+            ranked.emplace_back(score, d);
+        }
+        const auto count = std::min<size_t>(k, ranked.size());
+        std::partial_sort(ranked.begin(), ranked.begin() + count, ranked.end(), [](const auto& a, const auto& b) {
+            return a.first != b.first ? a.first > b.first : a.second < b.second;
+        });
+        for (int j = 0; j < k; ++j) {
+            truth.ids.push_back(size_t(j) < count ? int64_t(ranked[j].second) : -1);
+            truth.scores.push_back(size_t(j) < count ? float(ranked[j].first) : 0);
+        }
+    }
+    return truth;
+}
 }  // namespace
 
 int
 main(int argc, char** argv) {
     try {
-        const auto o = Parse(argc, argv);
+        auto o = Parse(argc, argv);
+        const bool bm = o.metric == "BM25";
         auto simd_type = knowhere::KnowhereConfig::SimdType::AUTO;
         if (o.simd == "avx2")
             simd_type = knowhere::KnowhereConfig::SimdType::AVX2;
@@ -519,11 +666,11 @@ main(int argc, char** argv) {
                                           std::to_string(o.k) + ".gt"
                                     : o.truth_path;
         Json truth_metadata;
-        if (!o.base_limit) {
+        if (!o.base_limit || bm) {
             std::ifstream metadata_file(std::filesystem::path(truth_path).parent_path() / "metadata.json");
             Check(metadata_file.good(), "Cannot read ground-truth metadata.json");
             metadata_file >> truth_metadata;
-            Check(truth_metadata.at("metric") == "ip", "Ground-truth metric must be ip");
+            Check(truth_metadata.at("metric") == (bm ? "bm25" : "ip"), "Ground-truth metric mismatch");
         }
         uint64_t file_queries;
         {
@@ -531,7 +678,10 @@ main(int argc, char** argv) {
             file_queries = query_file.Read<uint64_t>(0);
             Check(file_queries <= query_file.size / 8, "Invalid query count");
         }
-        Check(o.offset < file_queries && o.queries <= file_queries - o.offset, "Query selection outside dataset");
+        Check(o.offset < file_queries, "Query selection outside dataset");
+        if (!o.queries)
+            o.queries = file_queries - o.offset;
+        Check(o.queries <= file_queries - o.offset, "Query selection outside dataset");
         std::vector<uint64_t> selected(file_queries - o.offset);
         std::iota(selected.begin(), selected.end(), o.offset);
         if (o.seed) {
@@ -544,6 +694,10 @@ main(int argc, char** argv) {
         std::cerr << "Loading base vectors..." << std::endl;
         auto base = LoadCsr(base_path, nullptr, o.base_limit);
         Check(!base.rows.empty(), "Empty base");
+        if (bm)
+            for (const auto& row : base.rows)
+                for (size_t j = 0; j < row.size(); ++j)
+                    Check(row[j].val <= 65535 && row[j].val == std::floor(row[j].val), "BM25 expects integer u16 TF");
         auto load_seconds = Seconds(load_start);
         // Allow a query file with a smaller declared vocabulary; use a shared dimension.
         base.dim = queries.dim = std::max(base.dim, queries.dim);
@@ -555,10 +709,22 @@ main(int argc, char** argv) {
                         indexed_dimensions.insert(row[i].id);
         }
         auto base_ds = base.Dataset(), query_ds = queries.Dataset();
-        Json search = {{"metric_type", "IP"},         {"k", o.k},           {"drop_ratio_search", 0.0},
-                       {"dim_max_score_ratio", 1.05}, {"refine_factor", 1}, {"search_algo", "INHERIT"}};
+        Json search = {{"metric_type", o.metric},        {"k", o.k},           {"drop_ratio_search", 0.0},
+                       {"dim_max_score_ratio", o.ratio}, {"refine_factor", 1}, {"search_algo", "INHERIT"}};
+        if (bm) {
+            const auto& params = truth_metadata.at("bm25");
+            const double k1 = params.at("k1"), b = params.at("b"), avgdl = params.at("avgdl");
+            Check(std::isfinite(k1) && k1 >= 0 && std::isfinite(b) && b >= 0 && b <= 1 && std::isfinite(avgdl) &&
+                      avgdl > 0,
+                  "Invalid BM25 parameters");
+            search["bm25_k1"] = k1;
+            search["bm25_b"] = b;
+            search["bm25_avgdl"] = avgdl;
+        }
         Truth truth;
-        if (o.base_limit) {
+        if (o.brute || (bm && o.base_limit)) {
+            truth = ExhaustiveTruth(base, queries, o.k, search);
+        } else if (o.base_limit) {
             std::cerr << "Computing reduced-base FP32 brute-force ground truth..." << std::endl;
             auto gt = knowhere::BruteForce::SearchSparse(base_ds, query_ds, search, nullptr);
             Check(gt.has_value(), "Brute force failed: " + gt.what());
@@ -586,8 +752,12 @@ main(int argc, char** argv) {
                          {"kernel", host.release},
                          {"compiler", __VERSION__},
                          {"source_revision", KNOWHERE_SPARSE_BENCHMARK_REVISION},
-                         {"ground_truth", o.base_limit ? "reduced-base FP32 brute force" : truth_path},
-                         {"warmup_batches", 1},
+                         {"ground_truth", o.brute || (bm && o.base_limit) ? "float64 exhaustive"
+                                          : o.base_limit                  ? "reduced-base FP32 brute force"
+                                                                          : truth_path},
+                         {"warmup_batches", o.warmup},
+                         {"h2", o.h2},
+                         {"metric", o.metric},
                          {"runs", Json::array()}};
         metadata["ground_truth_metadata"] = truth_metadata;
         metadata["recall_denominator"] = "valid ground-truth IDs; exclude padding; empty truth has recall 1";
@@ -619,13 +789,17 @@ main(int argc, char** argv) {
                 alias ? knowhere::IndexEnum::INDEX_SPARSE_WAND : knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
             const std::string algo = alias ? "DAAT_WAND" : method;
             Json build = {
-                {"dim", base.dim}, {"metric_type", "IP"}, {"inverted_index_algo", algo}, {"quant_type", o.quant}};
+                {"dim", base.dim}, {"metric_type", o.metric}, {"inverted_index_algo", algo}, {"quant_type", o.quant}};
+            if (bm)
+                for (auto key : {"bm25_k1", "bm25_b", "bm25_avgdl"}) build[key] = search[key];
             const std::string codec = algo == "SINDI"
                                           ? (o.quant == "e5m7" ? "fixed_docid_windows_u12_e5m7" : "fixed_docid_windows")
                                           : "block_streamvbyte";
             if (algo == "SINDI") {
-                build["sindi_window_size"] = 4096;
+                build["sindi_window_size"] = o.window;
                 build["refine"] = o.refine;
+                if (o.h2)
+                    build["sindi_h2"] = true;
             }
             if (algo != "SINDI")
                 build["inverted_index_codec"] = codec;
@@ -634,10 +808,63 @@ main(int argc, char** argv) {
             Check(created.has_value(), "Create failed: " + created.what());
             auto index = std::move(created.value());
             auto start = Clock::now();
-            auto status = index.Build(base_ds, build);
-            Check(status == knowhere::Status::success, method + " Build failed, status=" + std::to_string(int(status)));
+            Json contract = {{"base_rows", base.rows.size()},
+                             {"index_version", version},
+                             {"method", method},
+                             {"metric", o.metric},
+                             {"window", o.window},
+                             {"quant", o.quant},
+                             {"refine", o.refine}};
+            if (bm)
+                for (auto key : {"bm25_k1", "bm25_b", "bm25_avgdl"}) contract[key] = search[key];
+            if (o.load.empty()) {
+                const auto status = index.Build(base_ds, build);
+                Check(status == knowhere::Status::success,
+                      method + " Build failed, status=" + std::to_string(int(status)));
+            } else {
+                Check(ReadJson(o.load + ".json") == contract, "Index dataset/configuration mismatch");
+                Check(index.DeserializeFromFile(o.load, build) == knowhere::Status::success, "mmap load failed");
+            }
             const double build_seconds = Seconds(start);
             const auto bytes = index.Size();
+            Json storage;
+            if (!o.save.empty() || o.reload || bm) {
+                knowhere::BinarySet bs;
+                Check(index.Serialize(bs) == knowhere::Status::success, "Serialize failed");
+                const auto binary = bs.GetByName(index.Type());
+                Check(binary != nullptr, "Missing serialized index");
+                storage["serialized_bytes"] = binary->size;
+                if (bm) {
+                    const auto quant =
+                        knowhere::sparse::inverted::peek_quant_type_from_index_data(binary->data.get(), binary->size);
+                    storage["resolved_quant_type"] =
+                        quant == knowhere::sparse::inverted::InvertedIndexQuantType::BM25_U8 ? "u8" : "u16";
+                }
+                if (!o.save.empty()) {
+                    Check(!std::filesystem::exists(o.save) && !std::filesystem::exists(o.save + ".json"),
+                          "Index output already exists");
+                    std::ofstream payload(o.save, std::ios::binary), sidecar(o.save + ".json");
+                    payload.write(reinterpret_cast<const char*>(binary->data.get()), binary->size);
+                    sidecar << contract.dump(2) << '\n';
+                    payload.close();
+                    sidecar.close();
+                    Check(payload.good() && sidecar.good(), "Index save failed");
+                }
+                if (o.reload) {
+                    auto restored = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(type, version);
+                    Check(restored.has_value(), "Reload index creation failed");
+                    Check(restored.value().Deserialize(bs, build) == knowhere::Status::success,
+                          "BinarySet reload failed");
+                    auto a = index.Search(query_ds, search, nullptr);
+                    auto b = restored.value().Search(query_ds, search, nullptr);
+                    Check(a.has_value() && b.has_value(), "Reload search failed");
+                    const auto original = Capture(a.value(), o.queries * o.k),
+                               loaded = Capture(b.value(), o.queries * o.k);
+                    Check(original.ids == loaded.ids && original.scores == loaded.scores,
+                          "BinarySet reload changed results");
+                    storage["binaryset_reload_passed"] = true;
+                }
+            }
             std::vector<Json> settings;
             auto add_setting = [&](float mass, float factor, float drop) {
                 auto cfg = search;
@@ -679,7 +906,7 @@ main(int argc, char** argv) {
                 search = setting;
                 const size_t sample_id = setting_id;
                 const std::string hit_path = o.output + ".case" + std::to_string(setting_id++) + ".hits.csv";
-                {
+                for (int batch = 0; batch < o.warmup; ++batch) {
                     auto warmup = index.Search(query_ds, search, nullptr);
                     Check(warmup.has_value(), "Warmup failed: " + warmup.what());
                 }
@@ -688,6 +915,9 @@ main(int argc, char** argv) {
                             {"search_config", search}, {"build_seconds", build_seconds},
                             {"index_bytes", bytes},    {"measurements", Json::array()}};
                 run["sample_id"] = sample_id;
+                run["storage"] = storage;
+                run["h2"] = algo == "SINDI" && o.h2;
+                run["index_operation"] = o.load.empty() ? "build" : "mmap_load";
                 double qps_sum = 0, recall_sum = 0;
                 std::vector<int64_t> first_ids;
                 std::vector<float> first_scores;
@@ -792,6 +1022,11 @@ main(int argc, char** argv) {
                             truth.ids[q * o.k + j] >= 0 &&
                             std::find(coarse.value()->GetIds() + q * pool, coarse.value()->GetIds() + (q + 1) * pool,
                                       truth.ids[q * o.k + j]) != coarse.value()->GetIds() + (q + 1) * pool;
+                if (o.h2 || o.reload || o.brute || bm) {
+                    CheckHitScores({first_ids, first_scores}, base, o.refine ? queries : selected_data, o.k, search,
+                                   o.quant);
+                    run["independent_hit_scores_passed"] = true;
+                }
                 run["mean_qps"] = qps_sum / o.repeats;
                 run["mean_recall"] = recall_sum / o.repeats;
                 if (o.sweep == "pareto") {
