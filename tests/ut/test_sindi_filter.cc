@@ -127,6 +127,20 @@ TEST_CASE("SINDI packed prefilter preserves search across windows and persistenc
                 bitset.set_out_ids(mapping, mapped_ids.size());
             }
             bitset.set_vector_count(rows);
+            // Full scoring without prefiltering supplies a per-ID oracle even
+            // when the top-k boundary falls inside a group of quantized ties.
+            config[field] = 0.0f;
+            config["k"] = rows;
+            auto reference = index.Search(query, config, bitset);
+            REQUIRE(reference.has_value());
+            std::vector<float> reference_scores(rows, std::numeric_limits<float>::quiet_NaN());
+            for (size_t i = 0; i < rows; ++i) {
+                const auto id = reference.value()->GetIds()[i];
+                if (id >= 0) {
+                    REQUIRE(static_cast<size_t>(id) < rows);
+                    reference_scores[id] = reference.value()->GetDistance()[i];
+                }
+            }
             for (size_t k : {size_t{1}, size_t{10}, size_t{100}}) {
                 config["k"] = k;
                 config[field] = 0.0f;
@@ -137,15 +151,25 @@ TEST_CASE("SINDI packed prefilter preserves search across windows and persistenc
                     config[field] = threshold;
                     auto result = index.Search(query, config, bitset);
                     REQUIRE(result.has_value());
+                    std::set<int64_t> seen;
                     for (size_t i = 0; i < k; ++i) {
                         const auto id = result.value()->GetIds()[i];
-                        REQUIRE(id == baseline.value()->GetIds()[i]);
-                        if (id >= 0) {
+                        if (baseline.value()->GetIds()[i] >= 0) {
+                            REQUIRE(id >= 0);
+                            REQUIRE(static_cast<size_t>(id) < rows);
+                            REQUIRE(seen.insert(id).second);
                             REQUIRE((bitset.empty() || !bitset.test(id)));
+                            const auto score = result.value()->GetDistance()[i];
                             const auto expected = baseline.value()->GetDistance()[i];
-                            REQUIRE(std::abs(result.value()->GetDistance()[i] - expected) <=
-                                    1e-5f * std::max(1.0f, expected));
+                            // Compaction changes which postings use x86 SIMD
+                            // versus scalar tails. Their rounding can reorder
+                            // near ties; check rank scores and each ID's score.
+                            REQUIRE(std::abs(score - expected) <= 1e-5f * std::max(1.0f, expected));
+                            REQUIRE(std::isfinite(reference_scores[id]));
+                            REQUIRE(std::abs(score - reference_scores[id]) <=
+                                    1e-5f * std::max(1.0f, reference_scores[id]));
                         } else {
+                            REQUIRE(id == -1);
                             REQUIRE(std::isnan(result.value()->GetDistance()[i]));
                         }
                     }
