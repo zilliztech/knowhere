@@ -14,6 +14,10 @@ class NavigationConfig : public Config {
         auto status = Config::FormatAndCheck(*this, parameters, error);
         return status == Status::success ? Config::Load(*this, parameters, type, error) : status;
     }
+    // Called by Build once the raw data size is known, before CreateForBuild.
+    virtual void
+    ResolveBuildBudget(double /*raw_data_gb*/) {
+    }
     virtual std::unique_ptr<diskann::NavigationStore>
     CreateForBuild() const = 0;
     virtual std::optional<uint64_t>
