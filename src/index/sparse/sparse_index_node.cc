@@ -847,6 +847,7 @@ class SparseInvertedIndexNode : public IndexNode {
                         window_size, cfg.refine.value_or(false), cfg.quant_type.value_or("") == "e5m7");
                 }
                 ConfigureSindiSerialization(index.get());
+                ConfigureSindiDocReorder(index.get(), cfg);
                 index->set_build_algo(algo);
                 index->set_build_scorer(sparse::inverted::IndexScorerConfig{
                     .scorer_type = sparse::inverted::IndexScorerType::IP,
@@ -880,6 +881,7 @@ class SparseInvertedIndexNode : public IndexNode {
                     }
                 }
                 ConfigureSindiSerialization(index.get());
+                ConfigureSindiDocReorder(index.get(), cfg);
                 index->set_build_algo(algo);
                 index->set_build_scorer(sparse::inverted::IndexScorerConfig{
                     .scorer_type = sparse::inverted::IndexScorerType::BM25,
@@ -927,6 +929,20 @@ class SparseInvertedIndexNode : public IndexNode {
                 (loading && *encoding != sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS_U12_E5M7)) {
                 return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
                     Status::invalid_args, "e5m7 requires SINDI IP, window=4096, version>=11, and no block codec");
+            }
+        }
+        // Growing indexes keep insertion order and ignore the option; ConfigureSindiDocReorder
+        // applies it to sealed SINDI types only.
+        if (const auto reorder = cfg.sindi_doc_reorder.value_or("none"); reorder != "none") {
+            const bool ip = IsMetricType(cfg.metric_type.value(), metric::IP);
+            // IP defaults to SINDI from version 10; BM25 defaults to DAAT_MAXSCORE.
+            if (reorder != "bp_kmeans" || index_version_ < 11 ||
+                NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or(ip ? "SINDI" : "DAAT_MAXSCORE")) !=
+                    "SINDI") {
+                return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
+                    Status::invalid_args,
+                    "sindi_doc_reorder must be none or bp_kmeans; bp_kmeans requires SINDI "
+                    "with index version >= 11");
             }
         }
         if (cfg.refine.value_or(false)) {
@@ -1024,6 +1040,22 @@ class SparseInvertedIndexNode : public IndexNode {
             sindi_bm25_u8->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
         } else if (auto* growable_sindi_bm25 = dynamic_cast<sparse::inverted::GrowableSindiInvertedIndexBM25*>(index)) {
             growable_sindi_bm25->set_legacy_dim_map_mphf_trailer_workaround(use_legacy_trailer);
+        }
+    }
+
+    // Applies to sealed SINDI types only; growable indexes keep insertion order. Loaded indexes
+    // take the order from their SINDI_DOC_ORDER section instead.
+    static void
+    ConfigureSindiDocReorder(sparse::inverted::InvertedIndex<value_type>* index, const SparseInvertedIndexConfig& cfg) {
+        if (index == nullptr || cfg.sindi_doc_reorder.value_or("none") != "bp_kmeans") {
+            return;
+        }
+        if (auto* sindi_ip = dynamic_cast<sparse::inverted::SindiInvertedIndexIP*>(index)) {
+            sindi_ip->set_doc_reorder(true);
+        } else if (auto* sindi_bm25 = dynamic_cast<sparse::inverted::SindiInvertedIndexBM25*>(index)) {
+            sindi_bm25->set_doc_reorder(true);
+        } else if (auto* sindi_bm25_u8 = dynamic_cast<sparse::inverted::SindiInvertedIndexBM25U8*>(index)) {
+            sindi_bm25_u8->set_doc_reorder(true);
         }
     }
 
