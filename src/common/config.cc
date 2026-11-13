@@ -63,6 +63,12 @@ static const std::unordered_set<std::string> ext_legal_json_keys = {"metric_type
 
 Status
 Config::FormatAndCheck(const Config& cfg, Json& json, std::string* const err_msg) {
+    const auto isolation_min_rows = indexparam::PARTITION_KEY_ISOLATION_MIN_ROWS;
+    if (json.contains(isolation_min_rows) && cfg.__DICT__.find(isolation_min_rows) == cfg.__DICT__.end()) {
+        return HandleError(err_msg, std::string(isolation_min_rows) + " is only supported by Faiss HNSW",
+                           Status::invalid_args);
+    }
+
     // Deprecated invalid json key check for now
     // try {
     //     for (auto& it : json.items()) {
