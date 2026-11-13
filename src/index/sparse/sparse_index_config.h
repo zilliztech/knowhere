@@ -86,6 +86,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_INT sindi_window_size;
     CFG_FLOAT sindi_bm25_filter_threshold;
     CFG_FLOAT sindi_ip_filter_threshold;
+    CFG_STRING sindi_doc_reorder;
 
     KNOWHERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(refine)
@@ -221,6 +222,12 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .set_default(1.0f / 512)
             .set_range(0.0f, 1.0f)
             .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(sindi_doc_reorder)
+            .description(
+                "document order of a sealed SINDI index: none, or bp_kmeans (recursive bisection with BP and "
+                "k-means gains); results keep the original row ids; requires index version >= 11")
+            .set_default("none")
+            .for_train();
     }
 
     Status
