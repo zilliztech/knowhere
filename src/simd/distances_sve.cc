@@ -167,117 +167,186 @@ fvec_L2sqr_ny_dim4_sve(float* dis, const float* x, const float* y, size_t d, siz
 
 float
 fvec_L2sqr_sve(const float* x, const float* y, size_t d) {
-    svfloat32_t sum = svdup_f32(0.0f);
+    const size_t vl = svcntw();
+    const svbool_t pg = svptrue_b32();
+
+    svfloat32_t sum0 = svdup_f32(0.0f);
+    svfloat32_t sum1 = svdup_f32(0.0f);
+    svfloat32_t sum2 = svdup_f32(0.0f);
+    svfloat32_t sum3 = svdup_f32(0.0f);
+
     size_t i = 0;
-
-    svbool_t pg = svptrue_b32();
-
-    while (i < d) {
-        if (d - i < svcntw())
-            pg = svwhilelt_b32(i, d);
-
-        // prefetch one vector
-        size_t prefetch_offset = i + svcntw();
-        if (prefetch_offset < d) {
-            __builtin_prefetch(x + prefetch_offset);
-            __builtin_prefetch(y + prefetch_offset);
-        }
-
-        svfloat32_t a = svld1_f32(pg, x + i);
-        svfloat32_t b = svld1_f32(pg, y + i);
-        svfloat32_t diff = svsub_f32_m(pg, a, b);
-        sum = svmla_f32_m(pg, sum, diff, diff);
-        i += svcntw();
+    for (; i + 4 * vl <= d; i += 4 * vl) {
+        svfloat32_t d0 = svsub_f32_x(pg, svld1_f32(pg, x + i), svld1_f32(pg, y + i));
+        svfloat32_t d1 = svsub_f32_x(pg, svld1_f32(pg, x + i + vl), svld1_f32(pg, y + i + vl));
+        svfloat32_t d2 = svsub_f32_x(pg, svld1_f32(pg, x + i + 2 * vl), svld1_f32(pg, y + i + 2 * vl));
+        svfloat32_t d3 = svsub_f32_x(pg, svld1_f32(pg, x + i + 3 * vl), svld1_f32(pg, y + i + 3 * vl));
+        sum0 = svmla_f32_x(pg, sum0, d0, d0);
+        sum1 = svmla_f32_x(pg, sum1, d1, d1);
+        sum2 = svmla_f32_x(pg, sum2, d2, d2);
+        sum3 = svmla_f32_x(pg, sum3, d3, d3);
     }
 
-    return svaddv_f32(svptrue_b32(), sum);
+    for (; i + vl <= d; i += vl) {
+        svfloat32_t d0 = svsub_f32_x(pg, svld1_f32(pg, x + i), svld1_f32(pg, y + i));
+        sum0 = svmla_f32_x(pg, sum0, d0, d0);
+    }
+
+    if (i < d) {
+        svbool_t pg_tail = svwhilelt_b32(i, d);
+        svfloat32_t d0 = svsub_f32_z(pg_tail, svld1_f32(pg_tail, x + i), svld1_f32(pg_tail, y + i));
+        sum0 = svmla_f32_m(pg_tail, sum0, d0, d0);
+    }
+
+    sum0 = svadd_f32_x(pg, sum0, sum1);
+    sum2 = svadd_f32_x(pg, sum2, sum3);
+    sum0 = svadd_f32_x(pg, sum0, sum2);
+    return svaddv_f32(pg, sum0);
 }
 
 float
 fvec_inner_product_sve(const float* x, const float* y, size_t d) {
-    svfloat32_t sum = svdup_f32(0.0f);
+    const size_t vl = svcntw();
+    const svbool_t pg = svptrue_b32();
+
+    svfloat32_t sum0 = svdup_f32(0.0f);
+    svfloat32_t sum1 = svdup_f32(0.0f);
+    svfloat32_t sum2 = svdup_f32(0.0f);
+    svfloat32_t sum3 = svdup_f32(0.0f);
+
     size_t i = 0;
-
-    svbool_t pg = svptrue_b32();
-
-    while (i < d) {
-        if (d - i < svcntw())
-            pg = svwhilelt_b32(i, d);
-
-        svfloat32_t a = svld1_f32(pg, x + i);
-        svfloat32_t b = svld1_f32(pg, y + i);
-        sum = svmla_f32_m(pg, sum, a, b);
-        i += svcntw();
+    for (; i + 4 * vl <= d; i += 4 * vl) {
+        sum0 = svmla_f32_x(pg, sum0, svld1_f32(pg, x + i), svld1_f32(pg, y + i));
+        sum1 = svmla_f32_x(pg, sum1, svld1_f32(pg, x + i + vl), svld1_f32(pg, y + i + vl));
+        sum2 = svmla_f32_x(pg, sum2, svld1_f32(pg, x + i + 2 * vl), svld1_f32(pg, y + i + 2 * vl));
+        sum3 = svmla_f32_x(pg, sum3, svld1_f32(pg, x + i + 3 * vl), svld1_f32(pg, y + i + 3 * vl));
     }
 
-    float result = svaddv_f32(svptrue_b32(), sum);
+    for (; i + vl <= d; i += vl) {
+        sum0 = svmla_f32_x(pg, sum0, svld1_f32(pg, x + i), svld1_f32(pg, y + i));
+    }
 
-    return result;
+    if (i < d) {
+        svbool_t pg_tail = svwhilelt_b32(i, d);
+        sum0 = svmla_f32_m(pg_tail, sum0, svld1_f32(pg_tail, x + i), svld1_f32(pg_tail, y + i));
+    }
+
+    sum0 = svadd_f32_x(pg, sum0, sum1);
+    sum2 = svadd_f32_x(pg, sum2, sum3);
+    sum0 = svadd_f32_x(pg, sum0, sum2);
+    return svaddv_f32(pg, sum0);
 }
 
 float
 fp16_vec_L2sqr_sve(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d) {
+    const size_t vl16 = svcnth();
+    const svbool_t pg_16 = svptrue_b16();
+    const svbool_t pg_32 = svptrue_b32();
+
+    svfloat32_t sum0 = svdup_f32(0.0f);
     svfloat32_t sum1 = svdup_f32(0.0f);
     svfloat32_t sum2 = svdup_f32(0.0f);
+    svfloat32_t sum3 = svdup_f32(0.0f);
+
+    const auto* px = reinterpret_cast<const __fp16*>(x);
+    const auto* py = reinterpret_cast<const __fp16*>(y);
+
     size_t i = 0;
+    for (; i + 2 * vl16 <= d; i += 2 * vl16) {
+        svfloat16_t a0 = svld1_f16(pg_16, px + i);
+        svfloat16_t b0 = svld1_f16(pg_16, py + i);
+        svfloat32_t d0_lo = svsub_f32_x(pg_32, svcvt_f32_f16_x(pg_32, a0), svcvt_f32_f16_x(pg_32, b0));
+        svfloat32_t d0_hi =
+            svsub_f32_x(pg_32, svcvt_f32_f16_x(pg_32, svtrn2_f16(a0, a0)), svcvt_f32_f16_x(pg_32, svtrn2_f16(b0, b0)));
+        sum0 = svmla_f32_x(pg_32, sum0, d0_lo, d0_lo);
+        sum1 = svmla_f32_x(pg_32, sum1, d0_hi, d0_hi);
 
-    svbool_t pg_16 = svptrue_b16();
-    svbool_t pg_32 = svptrue_b32();
-
-    while (i < d) {
-        if (d - i < svcnth())
-            pg_16 = svwhilelt_b16(i, d);
-
-        svfloat16_t a_fp16 = svld1_f16(pg_16, reinterpret_cast<const __fp16*>(x + i));
-        svfloat16_t b_fp16 = svld1_f16(pg_16, reinterpret_cast<const __fp16*>(y + i));
-
-        svfloat32_t a_fp32_low = svcvt_f32_f16_z(pg_32, svtrn1_f16(a_fp16, a_fp16));
-        svfloat32_t a_fp32_high = svcvt_f32_f16_z(pg_32, svtrn2_f16(a_fp16, a_fp16));
-        svfloat32_t b_fp32_low = svcvt_f32_f16_z(pg_32, svtrn1_f16(b_fp16, b_fp16));
-        svfloat32_t b_fp32_high = svcvt_f32_f16_z(pg_32, svtrn2_f16(b_fp16, b_fp16));
-
-        svfloat32_t diff_fp32_low = svsub_f32_m(pg_32, a_fp32_low, b_fp32_low);
-        svfloat32_t diff_fp32_high = svsub_f32_m(pg_32, a_fp32_high, b_fp32_high);
-
-        sum1 = svmla_f32_m(pg_32, sum1, diff_fp32_low, diff_fp32_low);
-        sum2 = svmla_f32_m(pg_32, sum2, diff_fp32_high, diff_fp32_high);
-
-        i += svcnth();
+        svfloat16_t a1 = svld1_f16(pg_16, px + i + vl16);
+        svfloat16_t b1 = svld1_f16(pg_16, py + i + vl16);
+        svfloat32_t d1_lo = svsub_f32_x(pg_32, svcvt_f32_f16_x(pg_32, a1), svcvt_f32_f16_x(pg_32, b1));
+        svfloat32_t d1_hi =
+            svsub_f32_x(pg_32, svcvt_f32_f16_x(pg_32, svtrn2_f16(a1, a1)), svcvt_f32_f16_x(pg_32, svtrn2_f16(b1, b1)));
+        sum2 = svmla_f32_x(pg_32, sum2, d1_lo, d1_lo);
+        sum3 = svmla_f32_x(pg_32, sum3, d1_hi, d1_hi);
     }
 
-    svfloat32_t total_sum = svadd_f32_m(pg_32, sum1, sum2);
-    return svaddv_f32(pg_32, total_sum);
+    for (; i + vl16 <= d; i += vl16) {
+        svfloat16_t a0 = svld1_f16(pg_16, px + i);
+        svfloat16_t b0 = svld1_f16(pg_16, py + i);
+        svfloat32_t d0_lo = svsub_f32_x(pg_32, svcvt_f32_f16_x(pg_32, a0), svcvt_f32_f16_x(pg_32, b0));
+        svfloat32_t d0_hi =
+            svsub_f32_x(pg_32, svcvt_f32_f16_x(pg_32, svtrn2_f16(a0, a0)), svcvt_f32_f16_x(pg_32, svtrn2_f16(b0, b0)));
+        sum0 = svmla_f32_x(pg_32, sum0, d0_lo, d0_lo);
+        sum1 = svmla_f32_x(pg_32, sum1, d0_hi, d0_hi);
+    }
+
+    if (i < d) {
+        svbool_t pg_tail = svwhilelt_b16(i, d);
+        svfloat16_t a0 = svld1_f16(pg_tail, px + i);
+        svfloat16_t b0 = svld1_f16(pg_tail, py + i);
+        svfloat32_t d0_lo = svsub_f32_x(pg_32, svcvt_f32_f16_x(pg_32, a0), svcvt_f32_f16_x(pg_32, b0));
+        svfloat32_t d0_hi =
+            svsub_f32_x(pg_32, svcvt_f32_f16_x(pg_32, svtrn2_f16(a0, a0)), svcvt_f32_f16_x(pg_32, svtrn2_f16(b0, b0)));
+        sum0 = svmla_f32_x(pg_32, sum0, d0_lo, d0_lo);
+        sum1 = svmla_f32_x(pg_32, sum1, d0_hi, d0_hi);
+    }
+
+    sum0 = svadd_f32_x(pg_32, sum0, sum1);
+    sum2 = svadd_f32_x(pg_32, sum2, sum3);
+    sum0 = svadd_f32_x(pg_32, sum0, sum2);
+    return svaddv_f32(pg_32, sum0);
 }
 
 float
 fp16_vec_inner_product_sve(const ::knowhere::fp16* x, const ::knowhere::fp16* y, size_t d) {
+    const size_t vl16 = svcnth();
+    const svbool_t pg_16 = svptrue_b16();
+    const svbool_t pg_32 = svptrue_b32();
+
+    svfloat32_t sum0 = svdup_f32(0.0f);
     svfloat32_t sum1 = svdup_f32(0.0f);
     svfloat32_t sum2 = svdup_f32(0.0f);
+    svfloat32_t sum3 = svdup_f32(0.0f);
+
+    const auto* px = reinterpret_cast<const __fp16*>(x);
+    const auto* py = reinterpret_cast<const __fp16*>(y);
+
     size_t i = 0;
+    for (; i + 2 * vl16 <= d; i += 2 * vl16) {
+        svfloat16_t a0 = svld1_f16(pg_16, px + i);
+        svfloat16_t b0 = svld1_f16(pg_16, py + i);
+        sum0 = svmla_f32_x(pg_32, sum0, svcvt_f32_f16_x(pg_32, a0), svcvt_f32_f16_x(pg_32, b0));
+        sum1 = svmla_f32_x(pg_32, sum1, svcvt_f32_f16_x(pg_32, svtrn2_f16(a0, a0)),
+                           svcvt_f32_f16_x(pg_32, svtrn2_f16(b0, b0)));
 
-    svbool_t pg_16 = svptrue_b16();
-    svbool_t pg_32 = svptrue_b32();
-
-    while (i < d) {
-        if (d - i < svcnth())
-            pg_16 = svwhilelt_b16(i, d);
-
-        svfloat16_t a_fp16 = svld1_f16(pg_16, reinterpret_cast<const __fp16*>(x + i));
-        svfloat16_t b_fp16 = svld1_f16(pg_16, reinterpret_cast<const __fp16*>(y + i));
-
-        svfloat32_t a_fp32_low = svcvt_f32_f16_z(pg_32, svtrn1_f16(a_fp16, a_fp16));
-        svfloat32_t a_fp32_high = svcvt_f32_f16_z(pg_32, svtrn2_f16(a_fp16, a_fp16));
-        svfloat32_t b_fp32_low = svcvt_f32_f16_z(pg_32, svtrn1_f16(b_fp16, b_fp16));
-        svfloat32_t b_fp32_high = svcvt_f32_f16_z(pg_32, svtrn2_f16(b_fp16, b_fp16));
-
-        sum1 = svmla_f32_m(pg_32, sum1, a_fp32_low, b_fp32_low);
-        sum2 = svmla_f32_m(pg_32, sum2, a_fp32_high, b_fp32_high);
-
-        i += svcnth();
+        svfloat16_t a1 = svld1_f16(pg_16, px + i + vl16);
+        svfloat16_t b1 = svld1_f16(pg_16, py + i + vl16);
+        sum2 = svmla_f32_x(pg_32, sum2, svcvt_f32_f16_x(pg_32, a1), svcvt_f32_f16_x(pg_32, b1));
+        sum3 = svmla_f32_x(pg_32, sum3, svcvt_f32_f16_x(pg_32, svtrn2_f16(a1, a1)),
+                           svcvt_f32_f16_x(pg_32, svtrn2_f16(b1, b1)));
     }
 
-    svfloat32_t total_sum = svadd_f32_m(pg_32, sum1, sum2);
-    return svaddv_f32(pg_32, total_sum);
+    for (; i + vl16 <= d; i += vl16) {
+        svfloat16_t a0 = svld1_f16(pg_16, px + i);
+        svfloat16_t b0 = svld1_f16(pg_16, py + i);
+        sum0 = svmla_f32_x(pg_32, sum0, svcvt_f32_f16_x(pg_32, a0), svcvt_f32_f16_x(pg_32, b0));
+        sum1 = svmla_f32_x(pg_32, sum1, svcvt_f32_f16_x(pg_32, svtrn2_f16(a0, a0)),
+                           svcvt_f32_f16_x(pg_32, svtrn2_f16(b0, b0)));
+    }
+
+    if (i < d) {
+        svbool_t pg_tail = svwhilelt_b16(i, d);
+        svfloat16_t a0 = svld1_f16(pg_tail, px + i);
+        svfloat16_t b0 = svld1_f16(pg_tail, py + i);
+        sum0 = svmla_f32_x(pg_32, sum0, svcvt_f32_f16_x(pg_32, a0), svcvt_f32_f16_x(pg_32, b0));
+        sum1 = svmla_f32_x(pg_32, sum1, svcvt_f32_f16_x(pg_32, svtrn2_f16(a0, a0)),
+                           svcvt_f32_f16_x(pg_32, svtrn2_f16(b0, b0)));
+    }
+
+    sum0 = svadd_f32_x(pg_32, sum0, sum1);
+    sum2 = svadd_f32_x(pg_32, sum2, sum3);
+    sum0 = svadd_f32_x(pg_32, sum0, sum2);
+    return svaddv_f32(pg_32, sum0);
 }
 
 float
@@ -324,51 +393,92 @@ fvec_Linf_sve(const float* x, const float* y, size_t d) {
 
 float
 fvec_norm_L2sqr_sve(const float* x, size_t d) {
-    svfloat32_t sum = svdup_f32(0.0f);
+    const size_t vl = svcntw();
+    const svbool_t pg = svptrue_b32();
+
+    svfloat32_t sum0 = svdup_f32(0.0f);
+    svfloat32_t sum1 = svdup_f32(0.0f);
+    svfloat32_t sum2 = svdup_f32(0.0f);
+    svfloat32_t sum3 = svdup_f32(0.0f);
+
     size_t i = 0;
-
-    svbool_t pg = svptrue_b32();
-
-    while (i < d) {
-        if (d - i < svcntw())
-            pg = svwhilelt_b32(i, d);
-
-        svfloat32_t a = svld1_f32(pg, x + i);
-        sum = svmla_f32_m(pg, sum, a, a);
-        i += svcntw();
+    for (; i + 4 * vl <= d; i += 4 * vl) {
+        svfloat32_t x0 = svld1_f32(pg, x + i);
+        svfloat32_t x1 = svld1_f32(pg, x + i + vl);
+        svfloat32_t x2 = svld1_f32(pg, x + i + 2 * vl);
+        svfloat32_t x3 = svld1_f32(pg, x + i + 3 * vl);
+        sum0 = svmla_f32_x(pg, sum0, x0, x0);
+        sum1 = svmla_f32_x(pg, sum1, x1, x1);
+        sum2 = svmla_f32_x(pg, sum2, x2, x2);
+        sum3 = svmla_f32_x(pg, sum3, x3, x3);
     }
 
-    return svaddv_f32(svptrue_b32(), sum);
+    for (; i + vl <= d; i += vl) {
+        svfloat32_t x0 = svld1_f32(pg, x + i);
+        sum0 = svmla_f32_x(pg, sum0, x0, x0);
+    }
+
+    if (i < d) {
+        svbool_t pg_tail = svwhilelt_b32(i, d);
+        svfloat32_t x0 = svld1_f32(pg_tail, x + i);
+        sum0 = svmla_f32_m(pg_tail, sum0, x0, x0);
+    }
+
+    sum0 = svadd_f32_x(pg, sum0, sum1);
+    sum2 = svadd_f32_x(pg, sum2, sum3);
+    sum0 = svadd_f32_x(pg, sum0, sum2);
+    return svaddv_f32(pg, sum0);
 }
 
 float
 fp16_vec_norm_L2sqr_sve(const ::knowhere::fp16* x, size_t d) {
+    const size_t vl16 = svcnth();
+    const svbool_t pg_16 = svptrue_b16();
+    const svbool_t pg_32 = svptrue_b32();
+
+    svfloat32_t sum0 = svdup_f32(0.0f);
     svfloat32_t sum1 = svdup_f32(0.0f);
     svfloat32_t sum2 = svdup_f32(0.0f);
+    svfloat32_t sum3 = svdup_f32(0.0f);
+
+    const auto* px = reinterpret_cast<const __fp16*>(x);
+
     size_t i = 0;
+    for (; i + 2 * vl16 <= d; i += 2 * vl16) {
+        svfloat16_t a0 = svld1_f16(pg_16, px + i);
+        svfloat32_t a0_lo = svcvt_f32_f16_x(pg_32, a0);
+        svfloat32_t a0_hi = svcvt_f32_f16_x(pg_32, svtrn2_f16(a0, a0));
+        sum0 = svmla_f32_x(pg_32, sum0, a0_lo, a0_lo);
+        sum1 = svmla_f32_x(pg_32, sum1, a0_hi, a0_hi);
 
-    svbool_t pg_16 = svptrue_b16();
-    svbool_t pg_32 = svptrue_b32();
-
-    while (i < d) {
-        if (d - i < svcnth())
-            pg_16 = svwhilelt_b16(i, d);
-
-        svfloat16_t a_fp16 = svld1_f16(pg_16, reinterpret_cast<const __fp16*>(x + i));
-
-        svfloat32_t a_fp32_low = svcvt_f32_f16_z(pg_32, svtrn1_f16(a_fp16, a_fp16));
-        svfloat32_t a_fp32_high = svcvt_f32_f16_z(pg_32, svtrn2_f16(a_fp16, a_fp16));
-
-        svfloat32_t square_fp32_low = svmul_f32_m(pg_32, a_fp32_low, a_fp32_low);
-        svfloat32_t square_fp32_high = svmul_f32_m(pg_32, a_fp32_high, a_fp32_high);
-
-        sum1 = svadd_f32_m(pg_32, sum1, square_fp32_low);
-        sum2 = svadd_f32_m(pg_32, sum2, square_fp32_high);
-
-        i += svcnth();
+        svfloat16_t a1 = svld1_f16(pg_16, px + i + vl16);
+        svfloat32_t a1_lo = svcvt_f32_f16_x(pg_32, a1);
+        svfloat32_t a1_hi = svcvt_f32_f16_x(pg_32, svtrn2_f16(a1, a1));
+        sum2 = svmla_f32_x(pg_32, sum2, a1_lo, a1_lo);
+        sum3 = svmla_f32_x(pg_32, sum3, a1_hi, a1_hi);
     }
 
-    return svaddv_f32(pg_32, sum1) + svaddv_f32(pg_32, sum2);
+    for (; i + vl16 <= d; i += vl16) {
+        svfloat16_t a0 = svld1_f16(pg_16, px + i);
+        svfloat32_t a0_lo = svcvt_f32_f16_x(pg_32, a0);
+        svfloat32_t a0_hi = svcvt_f32_f16_x(pg_32, svtrn2_f16(a0, a0));
+        sum0 = svmla_f32_x(pg_32, sum0, a0_lo, a0_lo);
+        sum1 = svmla_f32_x(pg_32, sum1, a0_hi, a0_hi);
+    }
+
+    if (i < d) {
+        svbool_t pg_tail = svwhilelt_b16(i, d);
+        svfloat16_t a0 = svld1_f16(pg_tail, px + i);
+        svfloat32_t a0_lo = svcvt_f32_f16_x(pg_32, a0);
+        svfloat32_t a0_hi = svcvt_f32_f16_x(pg_32, svtrn2_f16(a0, a0));
+        sum0 = svmla_f32_x(pg_32, sum0, a0_lo, a0_lo);
+        sum1 = svmla_f32_x(pg_32, sum1, a0_hi, a0_hi);
+    }
+
+    sum0 = svadd_f32_x(pg_32, sum0, sum1);
+    sum2 = svadd_f32_x(pg_32, sum2, sum3);
+    sum0 = svadd_f32_x(pg_32, sum0, sum2);
+    return svaddv_f32(pg_32, sum0);
 }
 
 void
@@ -427,76 +537,157 @@ fvec_madd_and_argmin_sve(size_t n, const float* a, float bf, const float* b, flo
 void
 fvec_inner_product_batch_4_sve(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                                const size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
-    svfloat32_t acc0 = svdup_f32(0.0f);
-    svfloat32_t acc1 = svdup_f32(0.0f);
-    svfloat32_t acc2 = svdup_f32(0.0f);
-    svfloat32_t acc3 = svdup_f32(0.0f);
+    const size_t vl = svcntw();
+    const svbool_t pg = svptrue_b32();
+
+    svfloat32_t acc0_0 = svdup_f32(0.0f), acc0_1 = svdup_f32(0.0f), acc0_2 = svdup_f32(0.0f), acc0_3 = svdup_f32(0.0f);
+    svfloat32_t acc1_0 = svdup_f32(0.0f), acc1_1 = svdup_f32(0.0f), acc1_2 = svdup_f32(0.0f), acc1_3 = svdup_f32(0.0f);
+    svfloat32_t acc2_0 = svdup_f32(0.0f), acc2_1 = svdup_f32(0.0f), acc2_2 = svdup_f32(0.0f), acc2_3 = svdup_f32(0.0f);
+    svfloat32_t acc3_0 = svdup_f32(0.0f), acc3_1 = svdup_f32(0.0f), acc3_2 = svdup_f32(0.0f), acc3_3 = svdup_f32(0.0f);
 
     size_t i = 0;
-    svbool_t pg = svptrue_b32();
+    for (; i + 4 * vl <= d; i += 4 * vl) {
+        svfloat32_t vx0 = svld1_f32(pg, x + i);
+        acc0_0 = svmla_f32_x(pg, acc0_0, vx0, svld1_f32(pg, y0 + i));
+        acc1_0 = svmla_f32_x(pg, acc1_0, vx0, svld1_f32(pg, y1 + i));
+        acc2_0 = svmla_f32_x(pg, acc2_0, vx0, svld1_f32(pg, y2 + i));
+        acc3_0 = svmla_f32_x(pg, acc3_0, vx0, svld1_f32(pg, y3 + i));
 
-    while (i < d) {
-        if (d - i < svcntw())
-            pg = svwhilelt_b32(i, d);
+        svfloat32_t vx1 = svld1_f32(pg, x + i + vl);
+        acc0_1 = svmla_f32_x(pg, acc0_1, vx1, svld1_f32(pg, y0 + i + vl));
+        acc1_1 = svmla_f32_x(pg, acc1_1, vx1, svld1_f32(pg, y1 + i + vl));
+        acc2_1 = svmla_f32_x(pg, acc2_1, vx1, svld1_f32(pg, y2 + i + vl));
+        acc3_1 = svmla_f32_x(pg, acc3_1, vx1, svld1_f32(pg, y3 + i + vl));
 
-        svfloat32_t vx = svld1(pg, &x[i]);
-        svfloat32_t vy0 = svld1(pg, &y0[i]);
-        svfloat32_t vy1 = svld1(pg, &y1[i]);
-        svfloat32_t vy2 = svld1(pg, &y2[i]);
-        svfloat32_t vy3 = svld1(pg, &y3[i]);
+        svfloat32_t vx2 = svld1_f32(pg, x + i + 2 * vl);
+        acc0_2 = svmla_f32_x(pg, acc0_2, vx2, svld1_f32(pg, y0 + i + 2 * vl));
+        acc1_2 = svmla_f32_x(pg, acc1_2, vx2, svld1_f32(pg, y1 + i + 2 * vl));
+        acc2_2 = svmla_f32_x(pg, acc2_2, vx2, svld1_f32(pg, y2 + i + 2 * vl));
+        acc3_2 = svmla_f32_x(pg, acc3_2, vx2, svld1_f32(pg, y3 + i + 2 * vl));
 
-        acc0 = svmla_f32_m(pg, acc0, vx, vy0);
-        acc1 = svmla_f32_m(pg, acc1, vx, vy1);
-        acc2 = svmla_f32_m(pg, acc2, vx, vy2);
-        acc3 = svmla_f32_m(pg, acc3, vx, vy3);
-
-        i += svcntw();
+        svfloat32_t vx3 = svld1_f32(pg, x + i + 3 * vl);
+        acc0_3 = svmla_f32_x(pg, acc0_3, vx3, svld1_f32(pg, y0 + i + 3 * vl));
+        acc1_3 = svmla_f32_x(pg, acc1_3, vx3, svld1_f32(pg, y1 + i + 3 * vl));
+        acc2_3 = svmla_f32_x(pg, acc2_3, vx3, svld1_f32(pg, y2 + i + 3 * vl));
+        acc3_3 = svmla_f32_x(pg, acc3_3, vx3, svld1_f32(pg, y3 + i + 3 * vl));
     }
 
-    dis0 = svaddv_f32(svptrue_b32(), acc0);
-    dis1 = svaddv_f32(svptrue_b32(), acc1);
-    dis2 = svaddv_f32(svptrue_b32(), acc2);
-    dis3 = svaddv_f32(svptrue_b32(), acc3);
+    for (; i + vl <= d; i += vl) {
+        svfloat32_t vx0 = svld1_f32(pg, x + i);
+        acc0_0 = svmla_f32_x(pg, acc0_0, vx0, svld1_f32(pg, y0 + i));
+        acc1_0 = svmla_f32_x(pg, acc1_0, vx0, svld1_f32(pg, y1 + i));
+        acc2_0 = svmla_f32_x(pg, acc2_0, vx0, svld1_f32(pg, y2 + i));
+        acc3_0 = svmla_f32_x(pg, acc3_0, vx0, svld1_f32(pg, y3 + i));
+    }
+
+    if (i < d) {
+        svbool_t pg_tail = svwhilelt_b32(i, d);
+        svfloat32_t vx = svld1_f32(pg_tail, x + i);
+        acc0_0 = svmla_f32_m(pg_tail, acc0_0, vx, svld1_f32(pg_tail, y0 + i));
+        acc1_0 = svmla_f32_m(pg_tail, acc1_0, vx, svld1_f32(pg_tail, y1 + i));
+        acc2_0 = svmla_f32_m(pg_tail, acc2_0, vx, svld1_f32(pg_tail, y2 + i));
+        acc3_0 = svmla_f32_m(pg_tail, acc3_0, vx, svld1_f32(pg_tail, y3 + i));
+    }
+
+    acc0_0 = svadd_f32_x(pg, svadd_f32_x(pg, acc0_0, acc0_1), svadd_f32_x(pg, acc0_2, acc0_3));
+    acc1_0 = svadd_f32_x(pg, svadd_f32_x(pg, acc1_0, acc1_1), svadd_f32_x(pg, acc1_2, acc1_3));
+    acc2_0 = svadd_f32_x(pg, svadd_f32_x(pg, acc2_0, acc2_1), svadd_f32_x(pg, acc2_2, acc2_3));
+    acc3_0 = svadd_f32_x(pg, svadd_f32_x(pg, acc3_0, acc3_1), svadd_f32_x(pg, acc3_2, acc3_3));
+
+    dis0 = svaddv_f32(pg, acc0_0);
+    dis1 = svaddv_f32(pg, acc1_0);
+    dis2 = svaddv_f32(pg, acc2_0);
+    dis3 = svaddv_f32(pg, acc3_0);
 }
 
 void
 fvec_L2sqr_batch_4_sve(const float* x, const float* y0, const float* y1, const float* y2, const float* y3,
                        const size_t d, float& dis0, float& dis1, float& dis2, float& dis3) {
-    svfloat32_t acc0 = svdup_f32(0.0f);
-    svfloat32_t acc1 = svdup_f32(0.0f);
-    svfloat32_t acc2 = svdup_f32(0.0f);
-    svfloat32_t acc3 = svdup_f32(0.0f);
+    const size_t vl = svcntw();
+    const svbool_t pg = svptrue_b32();
+
+    svfloat32_t acc0_0 = svdup_f32(0.0f), acc0_1 = svdup_f32(0.0f), acc0_2 = svdup_f32(0.0f), acc0_3 = svdup_f32(0.0f);
+    svfloat32_t acc1_0 = svdup_f32(0.0f), acc1_1 = svdup_f32(0.0f), acc1_2 = svdup_f32(0.0f), acc1_3 = svdup_f32(0.0f);
+    svfloat32_t acc2_0 = svdup_f32(0.0f), acc2_1 = svdup_f32(0.0f), acc2_2 = svdup_f32(0.0f), acc2_3 = svdup_f32(0.0f);
+    svfloat32_t acc3_0 = svdup_f32(0.0f), acc3_1 = svdup_f32(0.0f), acc3_2 = svdup_f32(0.0f), acc3_3 = svdup_f32(0.0f);
 
     size_t i = 0;
-    svbool_t pg = svptrue_b32();
+    for (; i + 4 * vl <= d; i += 4 * vl) {
+        svfloat32_t vx0 = svld1_f32(pg, x + i);
+        svfloat32_t d00 = svsub_f32_x(pg, vx0, svld1_f32(pg, y0 + i));
+        svfloat32_t d10 = svsub_f32_x(pg, vx0, svld1_f32(pg, y1 + i));
+        svfloat32_t d20 = svsub_f32_x(pg, vx0, svld1_f32(pg, y2 + i));
+        svfloat32_t d30 = svsub_f32_x(pg, vx0, svld1_f32(pg, y3 + i));
+        acc0_0 = svmla_f32_x(pg, acc0_0, d00, d00);
+        acc1_0 = svmla_f32_x(pg, acc1_0, d10, d10);
+        acc2_0 = svmla_f32_x(pg, acc2_0, d20, d20);
+        acc3_0 = svmla_f32_x(pg, acc3_0, d30, d30);
 
-    while (i < d) {
-        if (d - i < svcntw())
-            pg = svwhilelt_b32(i, d);
+        svfloat32_t vx1 = svld1_f32(pg, x + i + vl);
+        svfloat32_t d01 = svsub_f32_x(pg, vx1, svld1_f32(pg, y0 + i + vl));
+        svfloat32_t d11 = svsub_f32_x(pg, vx1, svld1_f32(pg, y1 + i + vl));
+        svfloat32_t d21 = svsub_f32_x(pg, vx1, svld1_f32(pg, y2 + i + vl));
+        svfloat32_t d31 = svsub_f32_x(pg, vx1, svld1_f32(pg, y3 + i + vl));
+        acc0_1 = svmla_f32_x(pg, acc0_1, d01, d01);
+        acc1_1 = svmla_f32_x(pg, acc1_1, d11, d11);
+        acc2_1 = svmla_f32_x(pg, acc2_1, d21, d21);
+        acc3_1 = svmla_f32_x(pg, acc3_1, d31, d31);
 
-        svfloat32_t vx = svld1_f32(pg, &x[i]);
-        svfloat32_t vy0 = svld1_f32(pg, &y0[i]);
-        svfloat32_t vy1 = svld1_f32(pg, &y1[i]);
-        svfloat32_t vy2 = svld1_f32(pg, &y2[i]);
-        svfloat32_t vy3 = svld1_f32(pg, &y3[i]);
+        svfloat32_t vx2 = svld1_f32(pg, x + i + 2 * vl);
+        svfloat32_t d02 = svsub_f32_x(pg, vx2, svld1_f32(pg, y0 + i + 2 * vl));
+        svfloat32_t d12 = svsub_f32_x(pg, vx2, svld1_f32(pg, y1 + i + 2 * vl));
+        svfloat32_t d22 = svsub_f32_x(pg, vx2, svld1_f32(pg, y2 + i + 2 * vl));
+        svfloat32_t d32 = svsub_f32_x(pg, vx2, svld1_f32(pg, y3 + i + 2 * vl));
+        acc0_2 = svmla_f32_x(pg, acc0_2, d02, d02);
+        acc1_2 = svmla_f32_x(pg, acc1_2, d12, d12);
+        acc2_2 = svmla_f32_x(pg, acc2_2, d22, d22);
+        acc3_2 = svmla_f32_x(pg, acc3_2, d32, d32);
 
-        vy0 = svsub_f32_m(pg, vx, vy0);
-        vy1 = svsub_f32_m(pg, vx, vy1);
-        vy2 = svsub_f32_m(pg, vx, vy2);
-        vy3 = svsub_f32_m(pg, vx, vy3);
-
-        acc0 = svmla_f32_m(pg, acc0, vy0, vy0);
-        acc1 = svmla_f32_m(pg, acc1, vy1, vy1);
-        acc2 = svmla_f32_m(pg, acc2, vy2, vy2);
-        acc3 = svmla_f32_m(pg, acc3, vy3, vy3);
-
-        i += svcntw();
+        svfloat32_t vx3 = svld1_f32(pg, x + i + 3 * vl);
+        svfloat32_t d03 = svsub_f32_x(pg, vx3, svld1_f32(pg, y0 + i + 3 * vl));
+        svfloat32_t d13 = svsub_f32_x(pg, vx3, svld1_f32(pg, y1 + i + 3 * vl));
+        svfloat32_t d23 = svsub_f32_x(pg, vx3, svld1_f32(pg, y2 + i + 3 * vl));
+        svfloat32_t d33 = svsub_f32_x(pg, vx3, svld1_f32(pg, y3 + i + 3 * vl));
+        acc0_3 = svmla_f32_x(pg, acc0_3, d03, d03);
+        acc1_3 = svmla_f32_x(pg, acc1_3, d13, d13);
+        acc2_3 = svmla_f32_x(pg, acc2_3, d23, d23);
+        acc3_3 = svmla_f32_x(pg, acc3_3, d33, d33);
     }
 
-    dis0 = svaddv_f32(svptrue_b32(), acc0);
-    dis1 = svaddv_f32(svptrue_b32(), acc1);
-    dis2 = svaddv_f32(svptrue_b32(), acc2);
-    dis3 = svaddv_f32(svptrue_b32(), acc3);
+    for (; i + vl <= d; i += vl) {
+        svfloat32_t vx0 = svld1_f32(pg, x + i);
+        svfloat32_t d00 = svsub_f32_x(pg, vx0, svld1_f32(pg, y0 + i));
+        svfloat32_t d10 = svsub_f32_x(pg, vx0, svld1_f32(pg, y1 + i));
+        svfloat32_t d20 = svsub_f32_x(pg, vx0, svld1_f32(pg, y2 + i));
+        svfloat32_t d30 = svsub_f32_x(pg, vx0, svld1_f32(pg, y3 + i));
+        acc0_0 = svmla_f32_x(pg, acc0_0, d00, d00);
+        acc1_0 = svmla_f32_x(pg, acc1_0, d10, d10);
+        acc2_0 = svmla_f32_x(pg, acc2_0, d20, d20);
+        acc3_0 = svmla_f32_x(pg, acc3_0, d30, d30);
+    }
+
+    if (i < d) {
+        svbool_t pg_tail = svwhilelt_b32(i, d);
+        svfloat32_t vx = svld1_f32(pg_tail, x + i);
+        svfloat32_t d0 = svsub_f32_z(pg_tail, vx, svld1_f32(pg_tail, y0 + i));
+        svfloat32_t d1 = svsub_f32_z(pg_tail, vx, svld1_f32(pg_tail, y1 + i));
+        svfloat32_t d2 = svsub_f32_z(pg_tail, vx, svld1_f32(pg_tail, y2 + i));
+        svfloat32_t d3 = svsub_f32_z(pg_tail, vx, svld1_f32(pg_tail, y3 + i));
+        acc0_0 = svmla_f32_m(pg_tail, acc0_0, d0, d0);
+        acc1_0 = svmla_f32_m(pg_tail, acc1_0, d1, d1);
+        acc2_0 = svmla_f32_m(pg_tail, acc2_0, d2, d2);
+        acc3_0 = svmla_f32_m(pg_tail, acc3_0, d3, d3);
+    }
+
+    acc0_0 = svadd_f32_x(pg, svadd_f32_x(pg, acc0_0, acc0_1), svadd_f32_x(pg, acc0_2, acc0_3));
+    acc1_0 = svadd_f32_x(pg, svadd_f32_x(pg, acc1_0, acc1_1), svadd_f32_x(pg, acc1_2, acc1_3));
+    acc2_0 = svadd_f32_x(pg, svadd_f32_x(pg, acc2_0, acc2_1), svadd_f32_x(pg, acc2_2, acc2_3));
+    acc3_0 = svadd_f32_x(pg, svadd_f32_x(pg, acc3_0, acc3_1), svadd_f32_x(pg, acc3_2, acc3_3));
+
+    dis0 = svaddv_f32(pg, acc0_0);
+    dis1 = svaddv_f32(pg, acc1_0);
+    dis2 = svaddv_f32(pg, acc2_0);
+    dis3 = svaddv_f32(pg, acc3_0);
 }
 
 void
@@ -543,7 +734,12 @@ fvec_L2sqr_ny_nearest_sve(float* __restrict distances_tmp_buffer, const float* _
 
 void
 fvec_inner_products_ny_sve(float* ip, const float* x, const float* y, size_t d, size_t ny) {
-    for (size_t i = 0; i < ny; ++i) {
+    size_t i = 0;
+    for (; i + 4 <= ny; i += 4) {
+        fvec_inner_product_batch_4_sve(x, y, y + d, y + 2 * d, y + 3 * d, d, ip[i], ip[i + 1], ip[i + 2], ip[i + 3]);
+        y += 4 * d;
+    }
+    for (; i < ny; ++i) {
         ip[i] = fvec_inner_product_sve(x, y, d);
         y += d;
     }
