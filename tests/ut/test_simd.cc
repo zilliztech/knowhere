@@ -431,6 +431,12 @@ TEST_CASE("Test distance") {
 
         // fp16
         {
+#if defined(__aarch64__) && defined(__ARM_NEON)
+            REQUIRE(faiss::cppcontrib::knowhere::fp16_vec_inner_product_batch_4 !=
+                    faiss::cppcontrib::knowhere::fp16_vec_inner_product_batch_4_ref);
+            REQUIRE(faiss::cppcontrib::knowhere::fp16_vec_L2sqr_batch_4 !=
+                    faiss::cppcontrib::knowhere::fp16_vec_L2sqr_batch_4_ref);
+#endif
             const knowhere::fp16* x_data = x_fp16.get();
             std::vector<const knowhere::fp16*> y_data{y_fp16.get(), y_fp16.get() + dim, y_fp16.get() + 2 * dim,
                                                       y_fp16.get() + 3 * dim};
