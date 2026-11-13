@@ -125,8 +125,8 @@ using IVFSQIteratorWorkspace = IVFWrapperIteratorWorkspace<faiss::cppcontrib::kn
 class IndexIvfFactory {
  public:
     static expected<std::unique_ptr<IndexIVFPQWrapper>>
-    create_for_pq(faiss::cppcontrib::knowhere::IndexFlat* qzr_raw_ptr, const faiss::idx_t d, const size_t nlist,
-                  const size_t nbits, const IvfPqConfig& ivf_pq_cfg,
+    create_for_pq(faiss::Index* qzr_raw_ptr, const faiss::idx_t d, const size_t nlist, const size_t nbits,
+                  const IvfPqConfig& ivf_pq_cfg,
                   // this is the data format of the raw data (if the refine is used)
                   const DataFormatEnum raw_data_format, const faiss::MetricType metric = faiss::METRIC_L2);
 
