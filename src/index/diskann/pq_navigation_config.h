@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <cmath>
+
 #include "diskann/pq_navigation.h"
 #include "navigation_config.h"
 
@@ -33,8 +35,18 @@ class PQNavigationConfig : public NavigationConfig {
     Load(const Json& json, PARAM_TYPE type, float vec_field_size_gb, std::string* error) override {
         auto status = NavigationConfig::Load(json, type, vec_field_size_gb, error);
         if (status == Status::success && type == PARAM_TYPE::TRAIN) {
+            // A positive ratio remains valid before the vector field size is known.
+            if ((json.contains("pq_code_budget_gb") || json.contains("pq_code_budget_gb_ratio")) &&
+                pq_code_budget_gb.value_or(0) <= 0 && pq_code_budget_gb_ratio.value() <= 0) {
+                return HandleError(error,
+                                   "PQ navigation requires positive pq_code_budget_gb or pq_code_budget_gb_ratio",
+                                   Status::invalid_args);
+            }
             pq_code_budget_gb =
                 std::max(pq_code_budget_gb.value_or(0), pq_code_budget_gb_ratio.value() * vec_field_size_gb);
+            if (!std::isfinite(pq_code_budget_gb.value())) {
+                return HandleError(error, "Derived pq_code_budget_gb must be finite", Status::invalid_args);
+            }
         }
         return status;
     }
