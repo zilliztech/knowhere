@@ -86,6 +86,7 @@ class SparseInvertedIndexConfig : public BaseConfig {
     CFG_INT sindi_window_size;
     CFG_FLOAT sindi_bm25_filter_threshold;
     CFG_FLOAT sindi_ip_filter_threshold;
+    CFG_BOOL sindi_h2;
 
     KNOWHERE_DECLARE_CONFIG(SparseInvertedIndexConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(refine)
@@ -206,6 +207,12 @@ class SparseInvertedIndexConfig : public BaseConfig {
             .set_default(0.0001f)
             .set_range(0.0f, 1.0f)
             .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(sindi_h2)
+            .description("opt-in sealed SINDI window-local bounds; derived again on load using the supplied scorer")
+            .set_default(false)
+            .for_train()
+            .for_deserialize()
+            .for_deserialize_from_file();
         KNOWHERE_CONFIG_DECLARE_FIELD(sindi_window_size)
             .description("window size for sindi inverted index")
             .set_range(1024, 65535)

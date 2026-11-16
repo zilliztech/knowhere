@@ -190,9 +190,9 @@ int
 main(int argc, char** argv) {
     try {
         std::map<std::string, std::string> args;
-        const std::set<std::string> supported{"--data-dir",   "--split",   "--quant-type", "--output", "--k",
-                                              "--queries",    "--threads", "--repeats",    "--simd",   "--truth",
-                                              "--index-save", "--base",    "--query-file"};
+        const std::set<std::string> supported{"--data-dir",   "--split",   "--quant-type", "--output",   "--k",
+                                              "--queries",    "--threads", "--repeats",    "--simd",     "--truth",
+                                              "--index-save", "--base",    "--query-file", "--base-file"};
         for (int i = 1; i < argc; i += 2) {
             const std::string key = argv[i];
             if (key == "--help") {
@@ -229,7 +229,7 @@ main(int argc, char** argv) {
         const auto selected_simd = knowhere::KnowhereConfig::SetSimdType(simd_type);
         knowhere::KnowhereConfig::SetBuildThreadPoolSize(threads);
         knowhere::KnowhereConfig::SetSearchThreadPoolSize(threads);
-        const auto base_path = get("--base", data + "/corpus.csr");
+        const auto base_path = get("--base-file", get("--base", data + "/corpus.csr"));
         auto default_query = data + "/queries_" + split + ".csr";
         if (!std::filesystem::exists(default_query))
             default_query = data + "/queries.csr";

@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -14,6 +16,7 @@
 #include <numeric>
 #include <queue>
 #include <span>
+#include <stdexcept>
 #include <type_traits>
 #include <unordered_set>
 #include <vector>
@@ -61,9 +64,11 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     static constexpr uint32_t min_window_size = 1024;
     static constexpr uint32_t max_window_size = 65535;
 
-    SindiInvertedIndex(uint32_t window_size, bool refine = false, bool packed = false, bool u16_ids = false)
+    SindiInvertedIndex(uint32_t window_size, bool refine = false, bool packed = false, bool u16_ids = false,
+                       bool h2 = false)
         : packed_(packed),
           packed_u16_ids_(u16_ids),
+          h2_(h2),
           refine_(refine),
           window_size_(std::clamp(window_size, min_window_size, max_window_size)) {
         if (packed_u16_ids_ && (!packed_ || !is_bm25_u8))
@@ -72,6 +77,83 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                               : (!is_bm25_u8 || AllowIncremental || refine || window_size < min_window_size ||
                                  window_size > (packed_u16_ids_ ? max_window_size : 4096))))
             throw std::invalid_argument("Invalid packed SINDI representation/window/refinement");
+        if (h2 && (AllowIncremental || packed_)) {
+            throw std::invalid_argument("H2 requires sealed, unpacked SINDI postings");
+        }
+    }
+
+    bool
+    h2_enabled() const noexcept override {
+        return h2_;
+    }
+
+    bool
+    accepts_search_scorer(const IndexScorerConfig& scorer) const noexcept override {
+        if (!h2_)
+            return true;
+        if (!h2_ready_ || scorer.scorer_type != h2_scorer_.scorer_type)
+            return false;
+        if constexpr (is_bm25) {
+            const auto& a = scorer.scorer_params.bm25;
+            const auto& b = h2_scorer_.scorer_params.bm25;
+            return a.k1 == b.k1 && a.b == b.b && a.avgdl == b.avgdl;
+        }
+        return true;
+    }
+
+    size_t
+    h2_summary_bytes() const noexcept {
+        return h2_offsets_.capacity() * sizeof(size_t) + h2_maxima_.capacity() * sizeof(float);
+    }
+
+    size_t
+    h2_summary_count() const noexcept {
+        return h2_maxima_.size();
+    }
+
+    double
+    h2_rebuild_seconds() const noexcept {
+        return h2_rebuild_seconds_;
+    }
+
+    // Read-only diagnostic lookup by external term and document window. Search
+    // will use the aligned arrays directly, rather than this sparse lookup.
+    float
+    h2_window_maximum(uint32_t term, uint32_t window) const {
+        if (!h2_ready_) {
+            throw std::logic_error("H2 summaries are unavailable");
+        }
+
+        const auto dim = this->dim_map_.lookup(term);
+        if (!dim || window >= nr_windows_) {
+            return 0;
+        }
+
+        const auto counts = encoded_window_nnzs(*dim);
+        if (!h2_sparse_dimension(*dim)) {
+            return h2_maxima_[h2_offsets_[*dim] + window];
+        }
+
+        const uint32_t bits = 32 - __builtin_clz(window_size_);
+        size_t lo = 0, hi = counts.size() / sizeof(uint32_t);
+        while (lo < hi) {
+            const size_t mid = lo + (hi - lo) / 2;
+            uint32_t entry;
+            std::memcpy(&entry, counts.data() + mid * sizeof(entry), sizeof(entry));
+
+            const auto wid = entry >> bits;
+            if (wid == window) {
+                return h2_maxima_[h2_offsets_[*dim] + mid];
+            }
+
+            if (wid < window) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+
+        return 0;
     }
 
     SindiInvertedIndex(const SindiInvertedIndex& rhs) = delete;
@@ -93,7 +175,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
     [[nodiscard]] size_t
     size() const noexcept override {
-        size_t res = sizeof(*this);
+        size_t res = sizeof(*this) + h2_summary_bytes();
 
         res += refinement_seek_.capacity() * sizeof(sindi::RefinementSeek);
         for (const auto& seek : refinement_seek_) {
@@ -733,6 +815,14 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             if (refine_)
                 return Status::invalid_args;
         }
+
+        if (h2_) {
+            clear_h2();
+            if (!valid_h2_scorer()) {
+                return Status::invalid_args;
+            }
+        }
+
         const auto validate_coordinate = [&](const SparseRow<DataType>& row, size_t j) {
             const auto [dimension, value] = row[j];
             if (!std::isfinite(value) || value < 0 || (j != 0 && row[j - 1].id >= dimension))
@@ -754,7 +844,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         if constexpr (!AllowIncremental) {
             // Validate even zero/tiny coordinates before skipping them. A failed
             // worker or an excessive total must not mutate the index's dimension map.
-            if (refine_ || packed_) {
+            if (refine_ || packed_ || h2_) {
                 row_scan = scan_rows_for_build(
                     data, rows, nullptr, nullptr, validate_coordinate,
                     packed_ ? std::numeric_limits<uint32_t>::max() : std::numeric_limits<size_t>::max());
@@ -831,6 +921,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 rebuild_refinement_seek();
             }
 
+            if (h2_)
+                rebuild_h2();
             LOG_KNOWHERE_INFO_ << "SindiInvertedIndex build completed: rows=" << this->nr_rows_
                                << ", inner_dims=" << this->nr_inner_dims_ << ", windows=" << nr_windows_
                                << ", index_bytes=" << size();
@@ -1136,6 +1228,13 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
     [[nodiscard]] Status
     deserialize(MemoryIOReader& reader) override {
+        if (h2_) {
+            clear_h2();
+            // Empty payloads omit ROW_SUMS; do not reuse a previous payload's lengths.
+            row_sums_.clear();
+            row_sums_span_ = {};
+        }
+
         if constexpr (AllowIncremental) {
             LOG_KNOWHERE_ERROR_ << "SindiInvertedIndex incremental mode does not support deserialize";
             return Status::not_implemented;
@@ -1481,6 +1580,17 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                     return Status::invalid_serialized_index_type;
                 }
             }
+
+            if (h2_) {
+                try {
+                    rebuild_h2();
+                } catch (const std::exception& e) {
+                    clear_h2();
+                    LOG_KNOWHERE_ERROR_ << "Invalid H2 source index: " << e.what();
+                    return Status::invalid_serialized_index_type;
+                }
+            }
+
             LOG_KNOWHERE_INFO_ << "SindiInvertedIndex::deserialize stats: rows=" << this->nr_rows_
                                << " max_dim=" << this->max_dim_ << " inner_dims=" << this->nr_inner_dims_
                                << " sections=" << nr_sections << " window_size=" << this->window_size_
@@ -1497,6 +1607,10 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     void
     search(const SparseRow<DataType>& query, size_t k, float* distances, label_t* labels, const BitsetView& bitset,
            const InvertedIndexSearchParams& search_params) const override {
+        if (h2_) {
+            check_h2_query(query, search_params.scorer_config);
+        }
+
         std::fill(distances, distances + k, std::numeric_limits<float>::quiet_NaN());
         std::fill(labels, labels + k, -1);
 
@@ -1600,70 +1714,117 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
         auto [cursors, overflow_cursors] = make_query_cursors(sorted_q_vec);
 
+        // Inspect the existing cursor before advance_window(), without changing
+        // any posting/overflow position. Sparse summaries share its entry index;
+        // gaps contribute zero. Fully filtered windows do not need a suffix.
+        const auto prepare_local_suffix = [&](size_t widx) {
+            for (size_t ci = 0; ci < cursors.size(); ++ci) {
+                const auto& cur = cursors[ci];
+                float maximum = 0;
+                if (cur.is_sparse) {
+                    if (cur.cursor + sizeof(uint32_t) <= cur.wnnz_buf_sz) {
+                        uint32_t entry;
+                        std::memcpy(&entry, cur.wnnz_buf + cur.cursor, sizeof(entry));
+                        if ((entry >> cur.wnnz_bits) == widx) {
+                            maximum = h2_maxima_[h2_offsets_[cur.dim_id] + cur.cursor / sizeof(entry)];
+                        }
+                    }
+                } else {
+                    maximum = h2_maxima_[h2_offsets_[cur.dim_id] + widx];
+                }
+
+                // Materialize FP32 products before the suffix, matching the
+                // global-bound arithmetic and preserving the global term order.
+                sorted_max_contributions[ci] = cur.qval * maximum;
+            }
+
+            for (size_t ci = cursors.size(); ci-- > 0;) {
+                suffix_sum[ci] = suffix_sum[ci + 1] + sorted_max_contributions[ci];
+            }
+        };
+
         // Main search loop: iterate over windows and process each window
         if constexpr (is_ip) {
             const auto scatter_fn = sindi::get_ip_kernels().accumulate;
             const auto packed_fn = packed_ ? sindi::get_packed_ip_kernel() : nullptr;
             const auto batch_insert_fn = sindi::get_ip_kernels().batch_insert;
 
-            for (size_t widx = 0; widx < nr_windows_; ++widx) {
-                const size_t docid_start = window_size_ * widx;
-                const uint32_t curr_window_size =
-                    std::min(window_size_, static_cast<uint32_t>(this->nr_rows_ - docid_start));
-                if (window_all_filtered(docid_start, curr_window_size)) {
-                    // Keep posting cursors in sync even when the window is skipped, so the
-                    // cumulative posting offsets stay correct for subsequent windows.
-                    for (auto& cur : cursors) {
+            const auto search_ip_windows = [&]<bool LocalBounds>() {
+                for (size_t widx = 0; widx < nr_windows_; ++widx) {
+                    const size_t docid_start = window_size_ * widx;
+                    const uint32_t curr_window_size =
+                        std::min(window_size_, static_cast<uint32_t>(this->nr_rows_ - docid_start));
+                    if (window_all_filtered(docid_start, curr_window_size)) {
+                        // Keep posting cursors in sync even when the window is skipped, so the
+                        // cumulative posting offsets stay correct for subsequent windows.
+                        for (auto& cur : cursors) {
+                            if (cur.wnnz_buf == nullptr || cur.wnnz_buf_sz == 0) {
+                                continue;
+                            }
+
+                            cur.advance_window(widx);
+                        }
+
+                        continue;
+                    }
+
+                    if constexpr (LocalBounds) {
+                        prepare_local_suffix(widx);
+                    }
+
+                    std::fill_n(wscores_final, curr_window_size, 0);
+                    const bool filter_postings = prepare_filter(docid_start, curr_window_size);
+
+                    float curr_max_score = 0.0f;
+                    bool skip_window_calc = false;
+                    for (size_t ci = 0; ci < cursors.size(); ++ci) {
+                        auto& cur = cursors[ci];
                         if (cur.wnnz_buf == nullptr || cur.wnnz_buf_sz == 0) {
                             continue;
                         }
-                        cur.advance_window(widx);
-                    }
-                    continue;
-                }
-                std::fill_n(wscores_final, curr_window_size, 0);
-                const bool filter_postings = prepare_filter(docid_start, curr_window_size);
 
-                float curr_max_score = 0.0f;
-                bool skip_window_calc = false;
-                for (size_t ci = 0; ci < cursors.size(); ++ci) {
-                    auto& cur = cursors[ci];
-                    if (cur.wnnz_buf == nullptr || cur.wnnz_buf_sz == 0) {
-                        continue;
-                    }
+                        auto [soff, wnnz] = cur.advance_window(widx);
 
-                    auto [soff, wnnz] = cur.advance_window(widx);
-
-                    if (skip_window_calc || wnnz == 0) {
-                        continue;
-                    }
-
-                    // Skip window calculation if current max + remaining max contributions <= threshold
-                    if (curr_max_score + search_params.approx.dim_max_score_ratio * suffix_sum[ci] <= threshold) {
-                        skip_window_calc = true;
-                        continue;
-                    }
-
-                    float dispatch_max;
-                    if (packed_ && !filter_postings) {
-                        dispatch_max = packed_fn(cur.qval, packed_vals_data(cur.dim_id), packed_ids_data(cur.dim_id),
-                                                 packed_posting_offset(cur.dim_id, soff), wnnz, wscores_final);
-                    } else {
-                        const auto postings = select_postings(cur, soff, wnnz, filter_postings);
-                        if (postings.empty()) {
+                        if (skip_window_calc || wnnz == 0) {
                             continue;
                         }
-                        dispatch_max =
-                            scatter_fn(cur.qval, postings.values, postings.ids, postings.count, wscores_final);
-                    }
-                    if (dispatch_max > curr_max_score) {
-                        curr_max_score = dispatch_max;
-                    }
-                }
 
-                if (curr_max_score > threshold) {
-                    batch_insert_fn(wscores_final, docid_start, curr_window_size, topk_q, threshold, bitset);
+                        // Skip window calculation if current max + remaining max contributions <= threshold
+                        if (curr_max_score + search_params.approx.dim_max_score_ratio * suffix_sum[ci] <= threshold) {
+                            skip_window_calc = true;
+                            continue;
+                        }
+
+                        float dispatch_max;
+                        if (packed_ && !filter_postings) {
+                            dispatch_max =
+                                packed_fn(cur.qval, packed_vals_data(cur.dim_id), packed_ids_data(cur.dim_id),
+                                          packed_posting_offset(cur.dim_id, soff), wnnz, wscores_final);
+                        } else {
+                            const auto postings = select_postings(cur, soff, wnnz, filter_postings);
+                            if (postings.empty()) {
+                                continue;
+                            }
+
+                            dispatch_max =
+                                scatter_fn(cur.qval, postings.values, postings.ids, postings.count, wscores_final);
+                        }
+
+                        if (dispatch_max > curr_max_score) {
+                            curr_max_score = dispatch_max;
+                        }
+                    }
+
+                    if (curr_max_score > threshold) {
+                        batch_insert_fn(wscores_final, docid_start, curr_window_size, topk_q, threshold, bitset);
+                    }
                 }
+            };
+
+            if (h2_) {
+                search_ip_windows.template operator()<true>();
+            } else {
+                search_ip_windows.template operator()<false>();
             }
         } else {
             const auto accumulate_fn = []() {
@@ -1691,7 +1852,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
             // Compile a correction-free loop for the overwhelmingly common case where the index has no
             // overflowing TFs. This keeps BM25 U8's hot loop identical to clamp-only U8 on those datasets.
-            const auto search_bm25_windows = [&]<bool RestoreOverflow>() {
+            const auto search_bm25_windows = [&]<bool RestoreOverflow, bool LocalBounds>() {
                 for (size_t widx = 0; widx < nr_windows_; ++widx) {
                     const size_t docid_start = window_size_ * widx;
                     const uint32_t curr_window_size =
@@ -1712,6 +1873,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                         }
                         continue;
                     }
+                    if constexpr (LocalBounds)
+                        prepare_local_suffix(widx);
                     std::fill_n(wscores_final, curr_window_size, 0);
                     const bool filter_postings = prepare_filter(docid_start, curr_window_size);
 
@@ -1796,14 +1959,22 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 }
             };
 
-            if constexpr (is_bm25_u8) {
-                if (overflow_cursors.empty()) {
-                    search_bm25_windows.template operator()<false>();
+            const auto dispatch_bm25 = [&]<bool LocalBounds>() {
+                if constexpr (is_bm25_u8) {
+                    if (overflow_cursors.empty()) {
+                        search_bm25_windows.template operator()<false, LocalBounds>();
+                    } else {
+                        search_bm25_windows.template operator()<true, LocalBounds>();
+                    }
                 } else {
-                    search_bm25_windows.template operator()<true>();
+                    search_bm25_windows.template operator()<false, LocalBounds>();
                 }
+            };
+
+            if (h2_) {
+                dispatch_bm25.template operator()<true>();
             } else {
-                search_bm25_windows.template operator()<false>();
+                dispatch_bm25.template operator()<false>();
             }
         }
 
@@ -1819,6 +1990,10 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     [[nodiscard]] std::vector<float>
     get_all_distances(const SparseRow<DataType>& query, const BitsetView& bitset,
                       const InvertedIndexSearchParams& search_params) const override {
+        if (h2_) {
+            check_h2_query(query, search_params.scorer_config);
+        }
+
         if (query.size() == 0) {
             return {};
         }
@@ -1952,6 +2127,207 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     }
 
  private:
+    bool
+    valid_h2_scorer() const noexcept {
+        if (!this->build_scorer_) {
+            return false;
+        }
+
+        const auto& config = this->get_scorer_config();
+        if constexpr (is_ip) {
+            return config.scorer_type == IndexScorerType::IP;
+        }
+
+        if (config.scorer_type != IndexScorerType::BM25) {
+            return false;
+        }
+
+        const auto& bm = config.scorer_params.bm25;
+        return std::isfinite(bm.k1) && bm.k1 >= 0 && std::isfinite(bm.b) && bm.b >= 0 && bm.b <= 1 &&
+               std::isfinite(bm.avgdl) && bm.avgdl > 0;
+    }
+
+    void
+    clear_h2() noexcept {
+        h2_ready_ = false;
+        h2_rebuild_seconds_ = 0;
+        std::vector<size_t>{}.swap(h2_offsets_);
+        std::vector<float>{}.swap(h2_maxima_);
+    }
+
+    void
+    check_h2_query(const SparseRow<DataType>& query, const IndexScorerConfig& scorer) const {
+        if (!accepts_search_scorer(scorer)) {
+            throw std::invalid_argument("Invalid H2 search scorer/state");
+        }
+
+        for (size_t i = 0; i < query.size(); ++i) {
+            if (!std::isfinite(query[i].val) || query[i].val < 0) {
+                throw std::invalid_argument("H2 requires finite nonnegative query weights");
+            }
+        }
+    }
+
+    bool
+    h2_sparse_dimension(size_t dim) const {
+        return (plists_wnnzs_fmts_msk_span_[dim >> 3] & (1u << (dim & 7))) != 0;
+    }
+
+    static void
+    h2_require(bool condition, const char* message) {
+        if (!condition) {
+            throw std::invalid_argument(message);
+        }
+    }
+
+    // Unit-query bounds cover the actual fused SVE denominator and scalar
+    // association orders. U8 also covers clamp-then-correct arithmetic. The
+    // margin is an empirical FP32 guard, not a proof for arbitrary queries,
+    // long FP32 suffix sums, or the existing approximate ratio policy.
+    static float
+    h2_bm25_maximum(float tf, float dl, float p1, float p2, float p3) {
+        if (tf == 0) {
+            return 0;
+        }
+
+        const volatile float product = p3 * dl;
+        const float fused_norm = std::fma(p3, dl, p2);
+        const float norm = p2 + product;
+        const float denominator = std::min({tf + fused_norm, tf + norm, (tf + p2) + product});
+        float maximum = p1 * tf / denominator;
+        if constexpr (is_bm25_u8) {
+            if (tf > 255) {
+                const float capped = p1 * 255 / std::min({255 + fused_norm, 255 + norm, (255 + p2) + product});
+                for (float n : {norm, fused_norm}) {
+                    const float correction = p1 * (tf / (tf + n) - 255.0f / (255.0f + n));
+                    maximum = std::max(maximum, capped + correction);
+                }
+            }
+        }
+
+        h2_require(denominator > 0 && std::isfinite(maximum), "Nonfinite H2 BM25 scoring arithmetic");
+
+        return maximum;
+    }
+
+    void
+    rebuild_h2() {
+        const auto started = std::chrono::steady_clock::now();
+        h2_require(valid_h2_scorer(), "Invalid H2 scorer parameters");
+
+        const auto config = this->get_scorer_config();
+        float p1 = 0;
+        float p2 = 0;
+        float p3 = 0;
+
+        if constexpr (is_bm25) {
+            const auto& bm = config.scorer_params.bm25;
+            p1 = bm.k1 + 1;
+            p2 = bm.k1 * (1 - bm.b);
+            p3 = bm.k1 * bm.b / bm.avgdl;
+            h2_require(std::isfinite(p1) && std::isfinite(p2) && std::isfinite(p3), "Invalid H2 BM25 coefficients");
+            h2_require(row_sums_span_.size() == this->nr_rows_, "Missing H2 BM25 document lengths");
+            for (float dl : row_sums_span_) {
+                h2_require(std::isfinite(dl) && dl >= 0, "Invalid H2 document length");
+            }
+        }
+
+        h2_require(plists_wnnzs_fmts_msk_span_.size() >= (this->nr_inner_dims_ + 7ull) / 8,
+                   "Missing H2 window format mask");
+
+        std::vector<size_t> offsets(this->nr_inner_dims_ + 1ull, 0);
+        for (size_t dim = 0; dim < this->nr_inner_dims_; ++dim) {
+            const bool sparse = h2_sparse_dimension(dim);
+            const auto bytes = encoded_window_nnzs(dim).size();
+
+            const size_t width = sparse ? sizeof(uint32_t) : sizeof(uint16_t);
+            h2_require(bytes % width == 0 && (sparse || bytes / width == nr_windows_), "Invalid H2 window metadata");
+
+            const size_t count = bytes / width;
+            h2_require(count <= nr_windows_ && count <= std::numeric_limits<size_t>::max() - offsets[dim],
+                       "Invalid H2 summary count");
+            offsets[dim + 1] = offsets[dim] + count;
+        }
+
+        std::vector<float> maxima(offsets.back(), 0);
+        const uint32_t bits = 32 - __builtin_clz(window_size_), mask = (1u << bits) - 1;
+
+        parallel_for(this->nr_inner_dims_, [&](size_t dim) {
+            const auto counts = encoded_window_nnzs(dim);
+            const bool sparse = h2_sparse_dimension(dim);
+            const auto ids = posting_ids(dim);
+            const auto vals = posting_vals(dim);
+            h2_require(ids.size() == vals.size(), "Mismatched H2 postings");
+
+            const size_t begin = plists_dim_offsets_span_[dim];
+            auto [overflow, overflow_end] = bm25_u8_overflow_range(begin, plists_dim_offsets_span_[dim + 1]);
+            size_t offset = 0;
+            uint32_t previous_window = 0;
+
+            for (size_t i = 0; i < offsets[dim + 1] - offsets[dim]; ++i) {
+                uint32_t wid = i;
+                uint32_t count = 0;
+                if (sparse) {
+                    uint32_t entry;
+                    std::memcpy(&entry, counts.data() + i * sizeof(entry), sizeof(entry));
+                    wid = entry >> bits;
+                    count = entry & mask;
+                    h2_require(count > 0 && (i == 0 || wid > previous_window), "Invalid sparse H2 window order");
+                } else {
+                    uint16_t entry;
+                    std::memcpy(&entry, counts.data() + i * sizeof(entry), sizeof(entry));
+                    count = entry;
+                }
+
+                h2_require(wid < nr_windows_ && count <= window_size_ && count <= vals.size() - offset,
+                           "Invalid H2 window posting count");
+
+                const size_t doc_start = size_t(wid) * window_size_;
+                float maximum = 0;
+                for (size_t j = offset; j < offset + count; ++j) {
+                    h2_require(ids[j] < window_size_ && doc_start + ids[j] < this->nr_rows_ &&
+                                   (j == offset || ids[j] > ids[j - 1]),
+                               "Invalid H2 posting ID");
+
+                    float value;
+                    if constexpr (is_ip) {
+                        value = static_cast<float>(vals[j]);
+                        h2_require(std::isfinite(value) && value >= 0, "Invalid H2 represented IP value");
+                    } else {
+                        const float tf = bm25_posting_value(begin + j, vals[j], overflow, overflow_end);
+                        value = h2_bm25_maximum(tf, row_sums_span_[doc_start + ids[j]], p1, p2, p3);
+                    }
+
+                    maximum = std::max(maximum, value);
+                }
+
+                if constexpr (is_bm25) {
+                    if (maximum > 0) {
+                        maximum = std::nextafter(maximum * (1 + 16 * std::numeric_limits<float>::epsilon()),
+                                                 std::numeric_limits<float>::infinity());
+                    }
+
+                    h2_require(std::isfinite(maximum), "Nonfinite H2 maximum");
+                }
+
+                maxima[offsets[dim] + i] = maximum;
+                offset += count;
+                previous_window = wid;
+            }
+
+            h2_require(offset == vals.size() && overflow == overflow_end, "Incomplete H2 posting coverage");
+        });
+
+        // Commit only a complete cache. Nothing partially built becomes visible.
+        h2_offsets_ = std::move(offsets);
+        h2_maxima_ = std::move(maxima);
+        h2_scorer_ = config;
+        h2_ready_ = true;
+        h2_rebuild_seconds_ = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        LOG_KNOWHERE_INFO_ << "SINDI H2 summaries built: entries=" << h2_maxima_.size()
+                           << ", bytes=" << h2_summary_bytes() << ", seconds=" << h2_rebuild_seconds_;
+    }
+
     void
     store_sealed_value(size_t offset, DataType value) noexcept {
         total_plists_vals_flat_[offset] = quantize_value(value);
@@ -2486,6 +2862,13 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             total_plists_vals_flat_span_ = {};
         }
     }
+
+    bool h2_ = false;
+    bool h2_ready_ = false;
+    IndexScorerConfig h2_scorer_{};
+    std::vector<size_t> h2_offsets_;
+    std::vector<float> h2_maxima_;
+    double h2_rebuild_seconds_ = 0;
 
     bool legacy_dim_map_mphf_trailer_workaround_{true};
     bool refine_ = false;
