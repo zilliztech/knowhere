@@ -12,6 +12,7 @@
 #include <sys/resource.h>
 
 #include <atomic>
+#include <limits>
 #include <random>
 #include <string>
 #include <thread>
@@ -95,6 +96,55 @@ constexpr float kL2RangeAp = 0.9;
 constexpr float kIpRangeAp = 0.9;
 constexpr float kCosineRangeAp = 0.9;
 }  // namespace
+TEST_CASE("DiskANN PQ navigation budget validation", "[diskann][navigation][pq-budget]") {
+    const auto version = GenTestVersionList();
+    const auto codec = GENERATE("", "PQ", "RABITQ");
+    const bool string_values = GENERATE(false, true);
+    const struct {
+        const char* name;
+        knowhere::Json parameters;
+        bool valid;
+    } cases[] = {
+        {"unspecified", knowhere::Json::object(), true},
+        {"zero ratio", {{"pq_code_budget_gb_ratio", 0}}, false},
+        {"zero absolute budget", {{"pq_code_budget_gb", 0}}, false},
+        {"both zero", {{"pq_code_budget_gb_ratio", 0}, {"pq_code_budget_gb", 0}}, false},
+        {"ratio only", {{"pq_code_budget_gb_ratio", 0.125}}, true},
+        {"absolute only", {{"pq_code_budget_gb", 0.25}}, true},
+        {"absolute with zero ratio", {{"pq_code_budget_gb_ratio", 0}, {"pq_code_budget_gb", 0.25}}, true},
+        {"ratio with zero absolute", {{"pq_code_budget_gb_ratio", 0.125}, {"pq_code_budget_gb", 0}}, true},
+        {"negative ratio", {{"pq_code_budget_gb_ratio", -1}}, false},
+        {"derived overflow",
+         {{"pq_code_budget_gb_ratio", std::numeric_limits<float>::max()}, {"vec_field_size_gb", 2}},
+         false},
+    };
+    for (const auto& test : cases) {
+        CAPTURE(codec, string_values, test.name);
+        knowhere::Json request = {{"metric_type", "L2"},
+                                  {"dim", 8},
+                                  {"index_prefix", "unused_index"},
+                                  {"data_path", "unused_data"},
+                                  {"rbq_bits", 4}};
+        request.update(test.parameters);
+        if (std::string(codec) != "") {
+            request["quant_type"] = codec;
+        }
+        if (string_values) {
+            for (const auto& [key, value] : test.parameters.items()) {
+                request[key] = value.dump();
+            }
+        }
+        std::string error;
+        const auto status =
+            knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck(kNativeDiskANNType, version, request, error);
+        const bool valid = test.valid || std::string(codec) == "RABITQ";
+        REQUIRE((status == knowhere::Status::success) == valid);
+        if (!valid) {
+            REQUIRE(error.find("pq_code_budget_gb") != std::string::npos);
+        }
+    }
+}
+
 TEST_CASE("Valid diskann build params test", "[diskann]") {
     int rows_num = 1000000;
     auto version = GenTestVersionList();
