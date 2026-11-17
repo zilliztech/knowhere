@@ -195,8 +195,10 @@ class BpKmeans {
             local_of[f] = -1;
         }
 
-        std::vector<int32_t> left_deg(vocab, 0), right_deg(vocab, 0);
-        std::vector<double> left_sum(vocab, 0.0), right_sum(vocab, 0.0);
+        std::vector<int32_t> left_deg(vocab, 0);
+        std::vector<int32_t> right_deg(vocab, 0);
+        std::vector<double> left_sum(vocab, 0.0);
+        std::vector<double> right_sum(vocab, 0.0);
         const auto add_row = [&](const Item& item, std::vector<int32_t>& deg, std::vector<double>& sum, int sign) {
             for (auto p = row_offsets[item.row]; p < row_offsets[item.row + 1]; ++p) {
                 deg[row_terms[p]] += sign;
@@ -213,11 +215,13 @@ class BpKmeans {
 
         const double n_left = static_cast<double>(split);
         const double n_right = static_cast<double>(n - split);
-        std::vector<double> left_mu(vocab), right_mu(vocab);
+        std::vector<double> left_mu(vocab);
+        std::vector<double> right_mu(vocab);
         size_t total_swaps = 0;
         for (uint32_t iter = 0; iter < opt_.iterations; ++iter) {
             // Double precision keeps the k-means term finite for any finite float weights.
-            double left_norm2 = 0.0, right_norm2 = 0.0;
+            double left_norm2 = 0.0;
+            double right_norm2 = 0.0;
             for (size_t t = 0; t < vocab; ++t) {
                 left_mu[t] = left_sum[t] / n_left;
                 right_mu[t] = right_sum[t] / n_right;
@@ -234,7 +238,8 @@ class BpKmeans {
                 const auto& from_mu = on_left ? left_mu : right_mu;
                 const auto& to_mu = on_left ? right_mu : left_mu;
                 float bp = 0.0f;
-                double dot_from = 0.0, dot_to = 0.0;
+                double dot_from = 0.0;
+                double dot_to = 0.0;
                 for (auto p = row_offsets[item.row]; p < row_offsets[item.row + 1]; ++p) {
                     const auto t = row_terms[p];
                     const double w = row_weights[p];
@@ -269,7 +274,8 @@ class BpKmeans {
                       [](const Item& a, const Item& b) { return a.gain != b.gain ? a.gain < b.gain : a.doc < b.doc; });
 
             size_t swaps = 0;
-            for (size_t l = 0, r = split; l < split && r < n; ++l, ++r) {
+            size_t r = split;
+            for (size_t l = 0; l < split && r < n; ++l, ++r) {
                 if (!(items[l].gain - items[r].gain > 0.0)) {
                     break;
                 }
@@ -343,7 +349,8 @@ bp_kmeans_order(const SparseRow<DType>* rows, size_t n, const BpKmeansOptions& o
     const detail::BpKmeans bp(fwd, opt);
     const size_t workers = std::max<size_t>(1, GetBuildThreadPoolSize());
     const size_t leaf = std::max<size_t>(opt.leaf_size, 1);
-    std::vector<std::pair<size_t, size_t>> ranges, next;
+    std::vector<std::pair<size_t, size_t>> ranges;
+    std::vector<std::pair<size_t, size_t>> next;
     if (docs.size() > leaf) {
         ranges.emplace_back(0, docs.size());
     }

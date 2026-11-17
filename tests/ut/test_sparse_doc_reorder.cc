@@ -47,9 +47,14 @@ HasSection(const knowhere::BinaryPtr& binary, InvertedIndexSectionType type) {
 // also carries two rare noise terms that fall below the feature document-frequency cut.
 knowhere::DataSetPtr
 GenTopicDataSet(int32_t docs_per_topic, std::vector<int>& topic_of) {
-    constexpr int kTopics = 4, kTopicTerms = 64, kTermsPerDoc = 12, kNoiseTerms = 100;
+    constexpr int kTopics = 4;
+    constexpr int kTopicTerms = 64;
+    constexpr int kTermsPerDoc = 12;
+    constexpr int kNoiseTerms = 100;
     std::mt19937 rng(7);
-    std::uniform_int_distribution<int> topic_term(0, kTopicTerms - 1), noise_term(0, kNoiseTerms - 1), tf(1, 5);
+    std::uniform_int_distribution<int> topic_term(0, kTopicTerms - 1);
+    std::uniform_int_distribution<int> noise_term(0, kNoiseTerms - 1);
+    std::uniform_int_distribution<int> tf(1, 5);
     const int32_t rows = kTopics * docs_per_topic;
     std::vector<std::map<int32_t, float>> data(rows);
     topic_of.resize(rows);
@@ -200,7 +205,9 @@ TEST_CASE("BP_kmeans document order", "[sparse][sindi][reorder]") {
 }
 
 TEST_CASE("SINDI doc reorder keeps results and row ids", "[sparse][sindi][reorder]") {
-    const int32_t nb = 5000, dim = 400, nq = 20;
+    const int32_t nb = 5000;
+    const int32_t dim = 400;
+    const int32_t nq = 20;
     auto [metric, quant] = GENERATE(table<std::string, std::string>({
         {knowhere::metric::IP, ""},
         {knowhere::metric::BM25, ""},
@@ -237,7 +244,8 @@ TEST_CASE("SINDI doc reorder keeps results and row ids", "[sparse][sindi][reorde
     REQUIRE(idx.Build(train_ds, reordered_build) == knowhere::Status::success);
     REQUIRE(idx.Count() == nb);
 
-    knowhere::BinarySet base_bs, bs;
+    knowhere::BinarySet base_bs;
+    knowhere::BinarySet bs;
     REQUIRE(base.Serialize(base_bs) == knowhere::Status::success);
     REQUIRE(idx.Serialize(bs) == knowhere::Status::success);
     REQUIRE_FALSE(HasSection(base_bs.GetByName(type), InvertedIndexSectionType::SINDI_DOC_ORDER));
@@ -321,7 +329,8 @@ TEST_CASE("SINDI doc reorder keeps results and row ids", "[sparse][sindi][reorde
         REQUIRE(base_its.has_value());
         REQUIRE(its.has_value());
         for (int32_t q = 0; q < nq; ++q) {
-            std::map<int64_t, float> base_scores, scores;
+            std::map<int64_t, float> base_scores;
+            std::map<int64_t, float> scores;
             auto& base_it = base_its.value()[q];
             auto& it = its.value()[q];
             while (base_it->HasNext().value()) {
@@ -343,7 +352,8 @@ TEST_CASE("SINDI doc reorder keeps results and row ids", "[sparse][sindi][reorde
 }
 
 TEST_CASE("SINDI doc reorder corrupt order section is rejected", "[sparse][sindi][reorder]") {
-    const int32_t nb = 3000, dim = 300;
+    const int32_t nb = 3000;
+    const int32_t dim = 300;
     auto train_ds = GenSparseDataSetWithMaxVal(nb, dim, 0.95, 20, true);
     knowhere::Json build{{knowhere::meta::DIM, dim},
                          {knowhere::meta::METRIC_TYPE, knowhere::metric::BM25},
@@ -387,7 +397,8 @@ TEST_CASE("SINDI doc reorder corrupt order section is rejected", "[sparse][sindi
 }
 
 TEST_CASE("SINDI doc reorder parameter validation", "[sparse][sindi][reorder]") {
-    const int32_t nb = 1000, dim = 100;
+    const int32_t nb = 1000;
+    const int32_t dim = 100;
     auto train_ds = GenSparseDataSet(nb, dim, 0.9);
     knowhere::Json build{{knowhere::meta::DIM, dim},
                          {knowhere::meta::METRIC_TYPE, knowhere::metric::IP},
