@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -19,6 +20,7 @@
 #include <vector>
 
 #include "index/sparse/aligned_allocator.h"
+#include "index/sparse/doc_reorder.h"
 #include "index/sparse/inverted_index.h"
 #include "index/sparse/inverted_index_build.h"
 #include "index/sparse/inverted_index_format.h"
@@ -59,6 +61,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     };
 
     static constexpr uint32_t min_window_size = 1024;
+    static constexpr size_t kDocOrderHeaderBytes = 2 * sizeof(uint32_t);
     static constexpr uint32_t max_window_size = 65535;
 
     SindiInvertedIndex(uint32_t window_size, bool refine = false, bool packed = false, bool u16_ids = false)
@@ -89,6 +92,19 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     bool
     refinement_enabled() const noexcept override {
         return refine_;
+    }
+
+    // Opt-in document reordering of a sealed index; takes effect in the next add().
+    void
+    set_doc_reorder(bool enabled, const reorder::BpKmeansOptions& options = {}) {
+        doc_reorder_ = enabled;
+        doc_reorder_options_ = options;
+    }
+
+    // doc_order()[internal_id] is the row id the document had in add(). Empty unless reordered.
+    [[nodiscard]] std::span<const int32_t>
+    doc_order() const noexcept {
+        return doc_order_span_;
     }
 
     [[nodiscard]] size_t
@@ -144,6 +160,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         // Global score bounds are retained by ordinary and packed indexes alike.
         res += (max_scores_per_dim_.empty() ? max_scores_per_dim_span_.size() : max_scores_per_dim_.capacity()) *
                sizeof(float);
+        res += doc_order_span_.size() * sizeof(int32_t);
         return res;
     }
 
@@ -721,6 +738,55 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     Status
     add(const SparseRow<DataType>* data, size_t rows, int64_t dim) override {
         if constexpr (!AllowIncremental) {
+            if (doc_reorder_ && this->nr_rows_ == 0 && rows > 0) {
+                return add_reordered(data, rows, dim);
+            }
+        }
+        return add_rows(data, rows, dim);
+    }
+
+    // Builds the sealed index over a document permutation. Postings, values and row sums are
+    // those of the permuted rows; doc_order_ maps internal ids back to the caller's row ids.
+    Status
+    add_reordered(const SparseRow<DataType>* data, size_t rows, int64_t dim) {
+        if (rows > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+            return Status::invalid_args;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        reorder::BpKmeansStats stats;
+        const auto order = reorder::bp_kmeans_order(data, rows, doc_reorder_options_, &stats);
+        LOG_KNOWHERE_INFO_ << "SindiInvertedIndex BP_kmeans order: rows=" << rows << ", features=" << stats.features
+                           << ", feature_postings=" << stats.feature_postings
+                           << ", reordered_docs=" << stats.reordered_docs << ", swaps=" << stats.swaps << ", seconds="
+                           << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        bool identity = true;
+        for (size_t i = 0; i < rows && identity; ++i) {
+            identity = order[i] == i;
+        }
+        if (identity) {
+            return add_rows(data, rows, dim);
+        }
+
+        // Non-owning views of the caller's rows in the new order.
+        std::vector<SparseRow<DataType>> views;
+        views.reserve(rows);
+        for (const auto old_id : order) {
+            auto* row_data = static_cast<uint8_t*>(const_cast<void*>(data[old_id].data()));
+            views.emplace_back(data[old_id].size(), row_data, false);
+        }
+        const auto status = add_rows(views.data(), rows, dim);
+        if (status != Status::success) {
+            return status;
+        }
+        doc_order_.assign(order.begin(), order.end());
+        doc_order_span_ = std::span<const int32_t>(doc_order_.data(), doc_order_.size());
+        doc_order_ids_.SetView(doc_order_.data(), doc_order_.size());
+        return status;
+    }
+
+    Status
+    add_rows(const SparseRow<DataType>* data, size_t rows, int64_t dim) {
+        if constexpr (!AllowIncremental) {
             if (this->nr_rows_ != 0) {
                 return Status::not_implemented;
             }
@@ -939,7 +1005,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         }
 
         if constexpr (!AllowIncremental) {
-            const uint32_t index_format_version = kInvertedIndexFileFormatVersion;
+            const uint32_t index_format_version =
+                doc_order_span_.empty() ? kInvertedIndexFileFormatVersion : kInvertedIndexFileFormatVersionDocOrder;
             writer.write(&index_format_version, sizeof(uint32_t));
             writer.write(&this->nr_rows_, sizeof(uint32_t));
             writer.write(&this->max_dim_, sizeof(uint32_t));
@@ -965,6 +1032,10 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 nr_sections += 1;
             }
             if (refine_) {
+                nr_sections += 1;
+            }
+            const bool has_doc_order = !doc_order_span_.empty();
+            if (has_doc_order) {
                 nr_sections += 1;
             }
 
@@ -1037,6 +1108,13 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 auto& section = section_headers[curr_section_idx++];
                 section.type = InvertedIndexSectionType::SINDI_REFINEMENT;
                 section.size = 3 * sizeof(uint32_t);
+                assign_section_offset(section, used_offset);
+            }
+
+            if (has_doc_order) {
+                auto& section = section_headers[curr_section_idx++];
+                section.type = InvertedIndexSectionType::SINDI_DOC_ORDER;
+                section.size = kDocOrderHeaderBytes + sizeof(int32_t) * doc_order_span_.size();
                 assign_section_offset(section, used_offset);
             }
 
@@ -1128,6 +1206,16 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                     1, packed_ ? 2u : 1u,
                     static_cast<uint32_t>(packed_ ? InvertedIndexQuantType::IP_E5M7 : InvertedIndexQuantType::IP_FP16)};
                 writer.write(metadata, sizeof(metadata));
+                curr_section_idx++;
+            }
+
+            if (has_doc_order) {
+                write_padding_until(writer, section_headers[curr_section_idx].offset);
+                // Section version 1, ordering method 1 (BP_kmeans), then int32 row id per internal id.
+                const uint32_t metadata[] = {1, 1};
+                writer.write(metadata, sizeof(metadata));
+                writer.write(doc_order_span_.data(), sizeof(int32_t), doc_order_span_.size());
+                curr_section_idx++;
             }
 
             return Status::success;
@@ -1144,16 +1232,22 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
         if constexpr (!AllowIncremental) {
             refine_ = false;
             refinement_seek_.clear();
+            doc_order_.clear();
+            doc_order_span_ = {};
+            doc_order_ids_.Clear();
             if (packed_ && !validate_packed_file(reader)) {
                 return Status::invalid_serialized_index_type;
             }
 
+            bool expect_doc_order = false;
             auto file_header_handler = [&, this]() {
                 uint32_t index_format_version = 0;
                 reader.read(&index_format_version, sizeof(uint32_t));
-                if (index_format_version != kInvertedIndexFileFormatVersion) {
+                if (index_format_version != kInvertedIndexFileFormatVersion &&
+                    index_format_version != kInvertedIndexFileFormatVersionDocOrder) {
                     return Status::invalid_serialized_index_type;
                 }
+                expect_doc_order = index_format_version == kInvertedIndexFileFormatVersionDocOrder;
 
                 reader.read(&this->nr_rows_, sizeof(uint32_t));
                 reader.read(&this->max_dim_, sizeof(uint32_t));
@@ -1442,6 +1536,37 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                             refine_ = true;
                             break;
                         }
+                        case InvertedIndexSectionType::SINDI_DOC_ORDER: {
+                            const uint64_t rows = this->nr_rows_;
+                            if (section_header.size != kDocOrderHeaderBytes + sizeof(int32_t) * rows ||
+                                section_header.offset > reader.total_ ||
+                                section_header.size > reader.total_ - section_header.offset ||
+                                section_header.offset % alignof(int32_t) != 0) {
+                                return Status::invalid_serialized_index_type;
+                            }
+                            reader.seekg(section_header.offset);
+                            uint32_t metadata[2];
+                            reader.read(metadata, sizeof(metadata));
+                            if (metadata[0] != 1 || metadata[1] != 1) {
+                                return Status::invalid_serialized_index_type;
+                            }
+                            const auto* order = reinterpret_cast<const int32_t*>(reader.data() + section_header.offset +
+                                                                                 kDocOrderHeaderBytes);
+                            // Must be a permutation of [0, rows): results and filters index by it.
+                            std::vector<bool> seen(rows, false);
+                            for (uint64_t i = 0; i < rows; ++i) {
+                                if (order[i] < 0 || static_cast<uint64_t>(order[i]) >= rows || seen[order[i]]) {
+                                    return Status::invalid_serialized_index_type;
+                                }
+                                seen[order[i]] = true;
+                            }
+                            if (rows != 0) {
+                                doc_order_span_ = std::span<const int32_t>(order, rows);
+                                doc_order_ids_.SetView(order, rows);
+                            }
+                            reader.advance(sizeof(int32_t) * rows);
+                            break;
+                        }
                         default:
                             // skip unknown sections
                             break;
@@ -1457,6 +1582,9 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
 
             if (auto status = sections_handler(); status != Status::success) {
                 return status;
+            }
+            if (expect_doc_order == doc_order_span_.empty()) {
+                return Status::invalid_serialized_index_type;
             }
 
             if (packed_ && is_bm25) {
@@ -1504,13 +1632,50 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             return;
         }
 
+        // A reordered index searches internal ids; filters and results use the caller's row ids.
+        std::vector<uint8_t> internal_bits;
+        const BitsetView internal_bitset = to_internal_bitset(bitset, internal_bits);
+
         if (refine_) {
-            search_with_refinement(query, k, distances, labels, bitset, search_params);
-            return;
+            search_with_refinement(query, k, distances, labels, internal_bitset, search_params);
+        } else {
+            auto q_vec = parse_query_with_dim_map(query, this->dim_map_, search_params.approx.drop_ratio_search);
+            search_coarse(std::move(q_vec), k, distances, labels, internal_bitset, search_params);
         }
 
-        auto q_vec = parse_query_with_dim_map(query, this->dim_map_, search_params.approx.drop_ratio_search);
-        search_coarse(std::move(q_vec), k, distances, labels, bitset, search_params);
+        if (!doc_order_span_.empty()) {
+            for (size_t i = 0; i < k; ++i) {
+                if (labels[i] >= 0) {
+                    labels[i] = doc_order_span_[labels[i]];
+                }
+            }
+        }
+    }
+
+    // Projects a filter over the caller's row ids onto internal ids. A plain bitmap gets the
+    // permutation as its id mapping; other forms are materialized into `storage`.
+    BitsetView
+    to_internal_bitset(const BitsetView& bitset, std::vector<uint8_t>& storage) const {
+        if (doc_order_span_.empty() || bitset.empty()) {
+            return bitset;
+        }
+        const size_t rows = doc_order_span_.size();
+        // A bitmap shorter than the index also filters the rows past its end; the id mapping
+        // would hide that boundary, so such bitmaps are materialized below.
+        if (bitset.is_bitmap() && !bitset.has_out_ids() && bitset.id_offset() == 0 && bitset.num_bits() >= rows) {
+            BitsetView mapped = bitset;
+            mapped.set_out_ids(doc_order_ids_, doc_order_ids_.size());
+            return mapped;
+        }
+        storage.assign((rows + 7) / 8, 0);
+        size_t filtered = 0;
+        for (size_t i = 0; i < rows; ++i) {
+            if (bitset.test(doc_order_span_[i])) {
+                storage[i >> 3] |= static_cast<uint8_t>(1u << (i & 7));
+                ++filtered;
+            }
+        }
+        return BitsetView(storage.data(), rows, filtered);
     }
 
     void
@@ -1924,6 +2089,15 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
             }
         }
 
+        // Scores of a reordered index are computed by internal id; return them by row id.
+        if (!doc_order_span_.empty()) {
+            std::vector<float> by_row(distances.size(), 0.0f);
+            for (size_t i = 0; i < doc_order_span_.size(); ++i) {
+                by_row[doc_order_span_[i]] = distances[i];
+            }
+            distances.swap(by_row);
+        }
+
         // Apply bitset filter: zero out scores for filtered documents
         if (!bitset.empty()) {
             for (size_t i = 0; i < distances.size(); ++i) {
@@ -2137,6 +2311,14 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
     std::vector<float> row_sums_;
     std::span<const float> row_sums_span_;
 
+    // Document reordering (sealed only). doc_order_span_[internal_id] is the row id given to add();
+    // doc_order_ids_ views the same array as a BitsetView id mapping.
+    bool doc_reorder_{false};
+    reorder::BpKmeansOptions doc_reorder_options_;
+    std::vector<int32_t> doc_order_;
+    std::span<const int32_t> doc_order_span_;
+    IdArray doc_order_ids_;
+
     bool
     validate_packed_file(const MemoryIOReader& reader) {
         try {
@@ -2150,7 +2332,8 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                 return value;
             };
 
-            if (size < 36 || u32(0) != kInvertedIndexFileFormatVersion ||
+            if (size < 36 ||
+                (u32(0) != kInvertedIndexFileFormatVersion && u32(0) != kInvertedIndexFileFormatVersionDocOrder) ||
                 u32(16) != static_cast<uint32_t>(packed_quant_type())) {
                 return false;
             }
@@ -2171,6 +2354,7 @@ class SindiInvertedIndex : public DimMapInvertedIndex<DataType, AllowIncremental
                     case InvertedIndexSectionType::DIM_MAP_MPHF:
                     case InvertedIndexSectionType::MAX_SCORES_PER_DIM:
                     case InvertedIndexSectionType::SINDI_REFINEMENT:
+                    case InvertedIndexSectionType::SINDI_DOC_ORDER:
                         break;
                     case InvertedIndexSectionType::ROW_SUMS:
                         if constexpr (is_bm25)

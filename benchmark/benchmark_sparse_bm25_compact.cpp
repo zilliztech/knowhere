@@ -190,16 +190,17 @@ int
 main(int argc, char** argv) {
     try {
         std::map<std::string, std::string> args;
-        const std::set<std::string> supported{"--data-dir",   "--split",   "--quant-type", "--output", "--k",
-                                              "--queries",    "--threads", "--repeats",    "--simd",   "--truth",
-                                              "--index-save", "--base",    "--query-file"};
+        const std::set<std::string> supported{"--data-dir",   "--split",   "--quant-type", "--output",     "--k",
+                                              "--queries",    "--threads", "--repeats",    "--simd",       "--truth",
+                                              "--index-save", "--base",    "--query-file", "--doc-reorder"};
         for (int i = 1; i < argc; i += 2) {
             const std::string key = argv[i];
             if (key == "--help") {
                 std::cout << "benchmark_sparse_bm25_compact --data-dir DIR [--split dev]\n"
                              "  [--quant-type u8|u16|u4_lut|u4_lut_u12|u4_lut_u16] [--k 10|100]\n"
                              "  [--queries 0] [--threads 8] [--repeats 3] [--simd auto|scalar|avx2]\n"
-                             "  [--base FILE] [--query-file FILE] [--truth FILE] [--index-save FILE] [--output FILE]\n";
+                             "  [--base FILE] [--query-file FILE] [--truth FILE] [--index-save FILE] [--output FILE]\n"
+                             "  [--doc-reorder none|bp_kmeans]\n";
                 return 0;
             }
             Check(supported.count(key), "Unknown option: " + key);
@@ -213,6 +214,8 @@ main(int argc, char** argv) {
         const bool u4 = quant == "u4_lut" || quant == "u4_lut_u12" || quant == "u4_lut_u16";
         const bool u16_ids = quant == "u4_lut_u16";
         Check(u4 || quant == "u8" || quant == "u16", "Unsupported BM25 quant type");
+        const std::string doc_reorder = get("--doc-reorder", "none");
+        Check(doc_reorder == "none" || doc_reorder == "bp_kmeans", "Unsupported --doc-reorder");
 
         Check(!std::filesystem::exists(output), "Refuse to overwrite output");
         const size_t k = std::stoul(get("--k", "10")), limit = std::stoul(get("--queries", "0"));
@@ -281,10 +284,15 @@ main(int argc, char** argv) {
         }
         const auto type = knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
         auto index = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(type, 11).value();
-        Json build{{"metric_type", "BM25"}, {"inverted_index_algo", "SINDI"},
-                   {"quant_type", quant},   {"sindi_window_size", 4096},
-                   {"refine", false},       {"bm25_k1", k1},
-                   {"bm25_b", b},           {"bm25_avgdl", avgdl}};
+        Json build{{"metric_type", "BM25"},
+                   {"inverted_index_algo", "SINDI"},
+                   {"quant_type", quant},
+                   {"sindi_window_size", 4096},
+                   {"refine", false},
+                   {"bm25_k1", k1},
+                   {"bm25_b", b},
+                   {"bm25_avgdl", avgdl},
+                   {"sindi_doc_reorder", doc_reorder}};
         auto t = Clock::now();
         Check(index.Build(base.Dataset(), build) == knowhere::Status::success, "Build failed");
         const auto build_seconds = Seconds(t);
@@ -430,6 +438,7 @@ main(int argc, char** argv) {
         auto load = build;
         load.erase("quant_type");
         load.erase("sindi_window_size");
+        load.erase("sindi_doc_reorder");
         auto restored = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(type, 11).value();
         t = Clock::now();
         Check(restored.Deserialize(bytes, load) == knowhere::Status::success, "Reload failed");

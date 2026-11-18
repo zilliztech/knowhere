@@ -18,6 +18,9 @@
 namespace knowhere::sparse::inverted {
 
 inline constexpr uint32_t kInvertedIndexFileFormatVersion = 1;
+// SINDI files that carry a SINDI_DOC_ORDER section use this version, so readers without
+// document-order support reject them instead of returning internal ids.
+inline constexpr uint32_t kInvertedIndexFileFormatVersionDocOrder = 2;
 inline constexpr size_t kInvertedIndexHeaderReservedBytes = 12;
 inline constexpr size_t kInvertedIndexFileHeaderSize = sizeof(uint32_t) * 5 + kInvertedIndexHeaderReservedBytes;
 inline constexpr size_t kInvertedIndexSectionCountSize = sizeof(uint32_t);
@@ -85,6 +88,7 @@ enum class InvertedIndexSectionType : uint32_t {
     DIM_MAP_MPHF = 7,
     BM25_U8_OVERFLOWS = 8,
     SINDI_REFINEMENT = 9,
+    SINDI_DOC_ORDER = 10,
 };
 
 struct InvertedIndexSectionHeader {
@@ -115,6 +119,7 @@ align_section_offset(uint64_t offset, InvertedIndexSectionType type) {
             return align_offset(offset + sizeof(uint32_t), alignof(size_t)) - sizeof(uint32_t);
         case InvertedIndexSectionType::DIM_MAP_REVERSE:
         case InvertedIndexSectionType::BM25_U8_OVERFLOWS:
+        case InvertedIndexSectionType::SINDI_DOC_ORDER:
             return align_offset(offset, alignof(uint32_t));
         case InvertedIndexSectionType::ROW_SUMS:
         case InvertedIndexSectionType::MAX_SCORES_PER_DIM:
