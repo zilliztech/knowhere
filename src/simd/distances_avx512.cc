@@ -863,6 +863,7 @@ u64_binary_search_eq_avx512(const uint64_t* arr, const size_t size, const uint64
 
     intptr_t left = 0;
     intptr_t right = static_cast<intptr_t>(size) - 1;
+    int result = -1;
 
     if (size > 128) {
         while (right - left + 1 >= CHUNK_SIZE * 2) {
@@ -876,7 +877,8 @@ u64_binary_search_eq_avx512(const uint64_t* arr, const size_t size, const uint64
 
                 __mmask8 eq_mask = _mm512_cmpeq_epu64_mask(vdata, vtarget);
                 if (eq_mask != 0) {
-                    return static_cast<int>(chunk_start + __builtin_ctz(eq_mask));
+                    result = static_cast<int>(chunk_start + __builtin_ctz(eq_mask));
+                    break;
                 }
 
                 uint64_t chunk_mid_value = arr[chunk_start + CHUNK_SIZE / 2];
@@ -888,7 +890,8 @@ u64_binary_search_eq_avx512(const uint64_t* arr, const size_t size, const uint64
                 }
             } else {
                 if (arr[mid] == key) {
-                    return static_cast<int>(mid);
+                    result = static_cast<int>(mid);
+                    break;
                 } else if (arr[mid] < key) {
                     left = mid + 1;
                 } else {
@@ -898,18 +901,38 @@ u64_binary_search_eq_avx512(const uint64_t* arr, const size_t size, const uint64
         }
     }
 
-    while (left <= right) {
-        intptr_t mid = left + (right - left) / 2;
-        if (arr[mid] == key) {
-            return static_cast<int>(mid);
-        } else if (arr[mid] < key) {
-            left = mid + 1;
-        } else {
-            right = mid - 1;
+    if (result == -1) {
+        while (left <= right) {
+            intptr_t mid = left + (right - left) / 2;
+            if (arr[mid] == key) {
+                result = static_cast<int>(mid);
+                break;
+            } else if (arr[mid] < key) {
+                left = mid + 1;
+            } else {
+                right = mid - 1;
+            }
         }
     }
 
-    return -1;
+    // Scan backward in blocks of eight keys to find the first match.
+    if (result != -1) {
+        while (result > 0) {
+            const int count = result < CHUNK_SIZE ? result : CHUNK_SIZE;
+            const int chunk_start = result - count;
+            const __mmask8 valid_mask = static_cast<__mmask8>((1u << count) - 1);
+            const __m512i previous = _mm512_maskz_loadu_epi64(valid_mask, arr + chunk_start);
+            const __mmask8 eq_mask = _mm512_cmpeq_epu64_mask(previous, vtarget) & valid_mask;
+            if (eq_mask == 0) {
+                break;
+            }
+            result = chunk_start + __builtin_ctz(eq_mask);
+            if (eq_mask != valid_mask) {
+                break;
+            }
+        }
+    }
+    return result;
 }
 int
 u64_binary_search_ge_avx512(const uint64_t* data, const size_t size, const uint64_t target) {

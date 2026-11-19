@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
 #include <string>
+#include <vector>
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
@@ -17,6 +18,7 @@
 #include "filemanager/impl/LocalFileManager.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/knowhere_check.h"
+#include "knowhere/comp/knowhere_config.h"
 #include "knowhere/expected.h"
 #include "knowhere/index/index_factory.h"
 #include "knowhere/utils.h"
@@ -155,4 +157,74 @@ TEST_CASE("Test MinHashLSHIndexNode with MinHashLSH hit", "[minhash_lsh_index]")
     }
     fs::remove_all(kDir);
     fs::remove(kDir);
+}
+
+TEST_CASE("MinHashLSH filtered self-search with duplicate signatures", "[minhash_lsh_index]") {
+    const auto use_mmap = GENERATE(false, true);
+    const auto batch_search = GENERATE(false, true);
+    CAPTURE(use_mmap, batch_search);
+    knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX512);
+
+    constexpr uint32_t rows = 256;
+    constexpr uint32_t hash_dim = 128;
+    constexpr uint32_t hash_bits = 32;
+    constexpr uint32_t dim = hash_dim * hash_bits;
+    const auto dir = kDir + "_filtered_duplicates";
+    const auto raw_path = dir + "/raw_data";
+    const auto index_dir = dir + "/index";
+    fs::remove_all(dir);
+    REQUIRE(fs::create_directories(index_dir));
+
+    // Identical signatures put all 256 IDs in the same band-key run in one block.
+    std::vector<uint32_t> signatures(rows * hash_dim, 7);
+    WriteRawDataToDisk<knowhere::bin1>(raw_path, reinterpret_cast<const knowhere::bin1*>(signatures.data()), rows, dim);
+    auto query = knowhere::GenDataSet(1, dim, signatures.data());
+    knowhere::Json config = {{"dim", dim},
+                             {"metric_type", knowhere::metric::MHJACCARD},
+                             {"k", 1},
+                             {"refine_k", 1},
+                             {"mh_lsh_band", 1},
+                             {"mh_element_bit_width", hash_bits},
+                             {"mh_search_with_jaccard", false},
+                             {"mh_lsh_batch_search", batch_search},
+                             {"mh_lsh_code_in_mem", !use_mmap},
+                             {"mh_lsh_aligned_block_size", 4096},
+                             {"with_raw_data", true},
+                             {"data_path", raw_path},
+                             {"index_prefix", index_dir}};
+    const auto version = GenTestVersionList();
+    std::shared_ptr<milvus::FileManager> file_manager = std::make_shared<milvus::LocalFileManager>();
+    auto pack = knowhere::Pack(file_manager);
+    knowhere::BinarySet binary_set;
+    {
+        auto index = knowhere::IndexFactory::Instance().Create<knowhere::bin1>("MINHASH_LSH", version, pack).value();
+        REQUIRE(index.Build(nullptr, config) == knowhere::Status::success);
+        REQUIRE(index.Serialize(binary_set) == knowhere::Status::success);
+    }
+    {
+        auto index = knowhere::IndexFactory::Instance().Create<knowhere::bin1>("MINHASH_LSH", version, pack).value();
+        REQUIRE(index.Deserialize(binary_set, config) == knowhere::Status::success);
+        auto unfiltered = index.Search(query, config, nullptr);
+        REQUIRE(unfiltered.has_value());
+        REQUIRE(unfiltered.value()->GetIds()[0] >= 0);
+        REQUIRE(unfiltered.value()->GetDistance()[0] == 1.0f);
+
+        // Simulate an exact scalar filter: only the queried document's ID is allowed.
+        // Check every ID because sorting equal keys does not preserve their ID order.
+        std::vector<uint8_t> bitset_data((rows + 7) / 8, 0xff);
+        for (uint32_t id = 0; id < rows; ++id) {
+            CAPTURE(id);
+            bitset_data[id / 8] &= static_cast<uint8_t>(~(1u << (id % 8)));
+            knowhere::BitsetView bitset(bitset_data.data(), rows);
+            auto filtered = index.Search(query, config, bitset);
+            REQUIRE(filtered.has_value());
+            REQUIRE(filtered.value()->GetIds()[0] == id);
+            REQUIRE(filtered.value()->GetDistance()[0] == 1.0f);
+            bitset_data[id / 8] |= static_cast<uint8_t>(1u << (id % 8));
+        }
+        auto excluded = index.Search(query, config, knowhere::BitsetView(bitset_data.data(), rows));
+        REQUIRE(excluded.has_value());
+        REQUIRE(excluded.value()->GetIds()[0] == -1);
+    }
+    fs::remove_all(dir);
 }

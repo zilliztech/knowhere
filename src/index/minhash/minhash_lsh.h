@@ -101,7 +101,8 @@ class MinHashBandIndex {
 /* all index meta and codes will maintain as blocks in file*/
 class MinHashLSH {
  public:
-    MinHashLSH(){};
+    MinHashLSH() {
+    }
     static Status
     BuildAndSave(MinHashLSHBuildParams* params);
     Status
@@ -243,7 +244,7 @@ MinHashBandIndex::Search(KeyType key, MinHashLSHResultHandler* res, faiss::IDSel
         ValueType* blk_v = reinterpret_cast<ValueType*>(data_ + block_size_ * block_id + rows * sizeof(KeyType));
         int inner_id = faiss::cppcontrib::knowhere::u64_binary_search_eq(blk_k, rows, key);
         if (inner_id != -1) {
-            for (; key == blk_k[inner_id] && (size_t)inner_id < rows; inner_id++) {
+            for (; (size_t)inner_id < rows && key == blk_k[inner_id]; inner_id++) {
                 if (id_selector == nullptr || id_selector->is_member(blk_v[inner_id])) {
                     res->push(blk_v[inner_id], 1.0);
                 }

@@ -9,6 +9,9 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under the License.
 
+#include <algorithm>
+#include <vector>
+
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -256,6 +259,34 @@ TEST_CASE("Test minhash function") {
         CHECK_EQ(res_dis[3], gt_ids[3]);
     }
 }
+TEST_CASE("MinHash binary search returns the first matching position", "[simd]") {
+    namespace simd = faiss::cppcontrib::knowhere;
+    knowhere::KnowhereConfig::SetSimdType(knowhere::KnowhereConfig::SimdType::AVX512);
+
+    auto check_search = [](auto eq, auto ge) {
+        CHECK_EQ(eq(nullptr, 0, 7), -1);
+        CHECK_EQ(ge(nullptr, 0, 7), -1);
+
+        std::vector<uint64_t> all_equal(256, 7);
+        CHECK_EQ(eq(all_equal.data(), all_equal.size(), 7), 0);
+        CHECK_EQ(ge(all_equal.data(), all_equal.size(), 7), 0);
+        CHECK_EQ(eq(all_equal.data(), all_equal.size(), 8), -1);
+        CHECK_EQ(ge(all_equal.data(), all_equal.size(), 8), -1);
+
+        std::vector<uint64_t> keys(300, 9);
+        std::fill(keys.begin(), keys.begin() + 100, 3);
+        std::fill(keys.begin() + 100, keys.begin() + 220, 7);
+        CHECK_EQ(eq(keys.data(), keys.size(), 3), 0);
+        CHECK_EQ(eq(keys.data(), keys.size(), 7), 100);
+        CHECK_EQ(eq(keys.data(), keys.size(), 9), 220);
+        CHECK_EQ(eq(keys.data(), keys.size(), 8), -1);
+        CHECK_EQ(ge(keys.data(), keys.size(), 8), 220);
+        CHECK_EQ(ge(keys.data(), keys.size(), 10), -1);
+    };
+
+    check_search(simd::u64_binary_search_eq, simd::u64_binary_search_ge);
+}
+
 TEST_CASE("Test distance") {
     using Catch::Approx;
     auto simd_type = GENERATE(as<knowhere::KnowhereConfig::SimdType>{}, knowhere::KnowhereConfig::SimdType::AVX512,
