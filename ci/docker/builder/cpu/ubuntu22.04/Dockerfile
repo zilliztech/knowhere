@@ -42,8 +42,15 @@ RUN apt update \
     && pip3 install conan==2.28.1 \
     && conan profile detect --force \
     && conan remote add default-conan-local2 https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local2
+
+ENV WITH_SVS=True
+
 # clone knowhere repo and build to update .conan2
 RUN git clone https://github.com/zilliztech/knowhere.git \
     && cd knowhere \
     && make WITH_UT=True \
+    && mv build/Release/_deps/svs-src /opt/svs \
     && cd .. && rm -rf knowhere
+
+# Reuse the SVS package fetched by Knowhere in subsequent builds.
+ENV svs_runtime_ROOT=/opt/svs

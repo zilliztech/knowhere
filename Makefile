@@ -117,8 +117,14 @@ ifdef WITH_ASAN
     CONAN_SETTINGS += -o \&:with_asan=True
 endif
 
-ifdef WITH_SVS
-    CONAN_SETTINGS += -o \&:with_svs=True
+ifneq ($(WITH_SVS),)
+    ifneq ($(filter True true ON on 1,$(WITH_SVS)),)
+        CONAN_SETTINGS += -o \&:with_svs=True
+    else ifneq ($(filter False false OFF off 0,$(WITH_SVS)),)
+        CONAN_SETTINGS += -o \&:with_svs=False
+    else
+        $(error WITH_SVS must be True/False, ON/OFF, or 1/0)
+    endif
 endif
 
 ifneq ($(WITH_CARDINAL),)
@@ -222,7 +228,7 @@ help: ## Show available targets
 	@echo "  WITH_BENCHMARK=True Enable benchmarks build"
 	@echo "  WITH_ASAN=True     Enable AddressSanitizer"
 	@echo "  WITH_DISKANN=False Disable DiskANN (enabled by default on Linux)"
-	@echo "  WITH_SVS=True      Enable SVS (Intel Scalable Vector Search, x86 only)"
+	@echo "  WITH_SVS=True/False Enable or disable SVS (Intel Scalable Vector Search, x86-64 only)"
 	@echo "  WITH_CARDINAL=True Enable Cardinal build"
 	@echo "  CARDINAL_VERSION_FORCE_CHECKOUT=True Force Cardinal checkout to configured version"
 	@echo "  WITH_C_API=True    Build the C ABI library (libknowhere_c)"
