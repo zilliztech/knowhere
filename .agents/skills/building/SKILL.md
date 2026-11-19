@@ -56,11 +56,14 @@ make test BUILD_DIR=/path/to/build
 | `WITH_BENCHMARK=True` | Enable benchmarks |
 | `WITH_ASAN=True` | Enable AddressSanitizer |
 | `WITH_DISKANN=False` | Disable DiskANN (enabled by default by Makefile on Linux) |
-| `WITH_SVS=True` | Enable SVS on x86 |
+| `WITH_SVS=True/False` | Enable or disable SVS on x86-64 |
 | `WITH_DEBUG=True` | Debug build (default: Release) |
 | `BUILD_DIR=<path>` | Set the output root; binaries remain under its Release/Debug subdirectory |
 | `CONAN_PROFILE=<p>` | Use one custom Conan profile for host and build |
 | `LIBCXX=<lib>` | Override compiler.libcxx (auto-detected from OS) |
+
+The Ubuntu 22.04 x86-64 CPU builder image enables SVS by default. SVS accepts True/False, ON/OFF and 1/0,
+and defaults to False outside that image.
 
 GPU, cuVS and Cardinal flags accept True/False, ON/OFF and 1/0. Other enable flags use Make's `ifdef`:
 leave them unset to disable them; `WITH_UT=False`, for example, still enables tests. `WITH_DISKANN` explicitly accepts true/false values.
