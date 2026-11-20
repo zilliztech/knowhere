@@ -620,6 +620,34 @@ TEST_CASE("Test IVF SuperKMeans opt-out and low-dimensional fallback", "[float m
     REQUIRE(results.value()->GetDim() == topk);
 }
 
+TEST_CASE("IVF e-means training preserves search and serialization", "[float metrics][e-means]") {
+    const auto metric = GENERATE(as<std::string>{}, knowhere::metric::L2, knowhere::metric::COSINE);
+    const auto name =
+        GENERATE(as<std::string>{}, knowhere::IndexEnum::INDEX_FAISS_IVFFLAT, knowhere::IndexEnum::INDEX_FAISS_IVFSQ8);
+    const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    constexpr int64_t nb = 256, nq = 8, dim = 16, topk = 10;
+    knowhere::Json config{
+        {knowhere::meta::METRIC_TYPE, metric},      {knowhere::meta::TOPK, topk},     {knowhere::meta::DIM, dim},
+        {knowhere::meta::NUM_BUILD_THREAD, 1},      {knowhere::indexparam::NLIST, 4}, {knowhere::indexparam::NPROBE, 4},
+        {knowhere::indexparam::E_MEANS_EPOCHS, 2.5}};
+    const auto data = GenDataSet(nb, dim, kSeed);
+    const auto queries = GenDataSet(nq, dim, kSeed + 1);
+    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(data, queries, config, nullptr);
+    REQUIRE(gt.has_value());
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+    REQUIRE(index.Build(data, config) == knowhere::Status::success);
+    auto result = index.Search(queries, config, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(GetKNNRecall(*gt.value(), *result.value()) >= 0.9f);
+    knowhere::BinarySet binary;
+    REQUIRE(index.Serialize(binary) == knowhere::Status::success);
+    auto restored = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(name, version).value();
+    REQUIRE(restored.Deserialize(binary, config) == knowhere::Status::success);
+    auto reloaded_result = restored.Search(queries, config, nullptr);
+    REQUIRE(reloaded_result.has_value());
+    REQUIRE(GetKNNRecall(*result.value(), *reloaded_result.value()) == 1.0f);
+}
+
 TEST_CASE("Test IVFPQFastScan early termination dispatch", "[ivfpq_fastscan][early_termination]") {
     constexpr int64_t nb = 1000;
     constexpr int64_t nq = 2;
