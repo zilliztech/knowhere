@@ -28,6 +28,7 @@ class IvfConfig : public BaseConfig {
     CFG_INT nprobe;
     CFG_BOOL use_elkan;
     CFG_BOOL use_super_kmeans;
+    CFG_FLOAT e_means_epochs;
     CFG_BOOL ensure_topk_full;  // internal config, used for temp index
     CFG_INT max_empty_result_buckets;
     KNOWHERE_DECLARE_CONFIG(IvfConfig) {
@@ -52,6 +53,13 @@ class IvfConfig : public BaseConfig {
             .description(
                 "use SuperKMeans for coarse quantizer training; fall back to Clustering below its minimum "
                 "dimension (32 by default)")
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(e_means_epochs)
+            .set_default(0.0)
+            .description(
+                "positive values select native CPU e-means for L2/cosine coarse training; zero preserves the default "
+                "trainer")
+            .set_range(0, std::numeric_limits<int>::max())
             .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(ensure_topk_full)
             .set_default(true)

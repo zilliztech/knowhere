@@ -556,6 +556,14 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
     }
 
     bool is_cosine = IsMetricType(base_cfg.metric_type.value(), knowhere::metric::COSINE);
+    const auto e_means_epochs = base_cfg.e_means_epochs.value();
+    if (!std::isfinite(e_means_epochs) || e_means_epochs < 0 ||
+        (e_means_epochs > 0 && (std::is_same_v<DataType, bin1> ||
+                                (!is_cosine && !IsMetricType(base_cfg.metric_type.value(), knowhere::metric::L2))))) {
+        LOG_KNOWHERE_ERROR_
+            << "e_means_epochs must be finite and nonnegative; e-means supports numeric L2/cosine IVF only";
+        return Status::invalid_args;
+    }
 
     // do normalize for COSINE metric type
     if constexpr (std::is_same_v<IndexIVFPQWrapper, IndexType> || std::is_same_v<IndexIVFSQWrapper, IndexType> ||
@@ -609,6 +617,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         // apply clustering config
         ApplyClusteringConfig(index->cp);
         index->cp.use_super_kmeans = use_super_kmeans;
+        index->cp.e_means_epochs = base_cfg.e_means_epochs.value();
         // train
         index->train(rows, static_cast<const float*>(data));
         // transfer ownership of qzr to index
@@ -632,6 +641,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         // apply clustering config
         ApplyClusteringConfig(index->cp);
         index->cp.use_super_kmeans = use_super_kmeans;
+        index->cp.e_means_epochs = base_cfg.e_means_epochs.value();
         // train
         index->train(rows, static_cast<const float*>(data));
         // transfer ownership of qzr to index
@@ -664,6 +674,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         // apply clustering config
         ApplyClusteringConfig(index->get_base_ivf_index()->cp);
         index->get_base_ivf_index()->cp.use_super_kmeans = use_super_kmeans;
+        index->get_base_ivf_index()->cp.e_means_epochs = base_cfg.e_means_epochs.value();
         // train
         index->train(rows, static_cast<const float*>(data));
         // transfer ownership of qzr to index
@@ -691,6 +702,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         // apply clustering config
         ApplyClusteringConfig(base_index->cp);
         base_index->cp.use_super_kmeans = use_super_kmeans;
+        base_index->cp.e_means_epochs = base_cfg.e_means_epochs.value();
         // create scann index, which does not base_index by default,
         //    but owns the refine index by default omg
         if (scann_cfg.with_raw_data.value()) {
@@ -727,6 +739,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         // apply clustering config
         ApplyClusteringConfig(index->get_base_ivf_index()->cp);
         index->get_base_ivf_index()->cp.use_super_kmeans = use_super_kmeans;
+        index->get_base_ivf_index()->cp.e_means_epochs = base_cfg.e_means_epochs.value();
         // train
         index->train(rows, static_cast<const float*>(data));
         // transfer ownership of qzr to index
@@ -775,6 +788,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         // apply clustering config
         ApplyClusteringConfig(index->cp);
         index->cp.use_super_kmeans = use_super_kmeans;
+        index->cp.e_means_epochs = base_cfg.e_means_epochs.value();
         // train
         index->train(rows, static_cast<const float*>(data));
         // transfer ownership of qzr to index
@@ -798,6 +812,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         // apply clustering config
         ApplyClusteringConfig(index->get_ivfrabitq_index()->cp);
         index->get_ivfrabitq_index()->cp.use_super_kmeans = use_super_kmeans;
+        index->get_ivfrabitq_index()->cp.e_means_epochs = base_cfg.e_means_epochs.value();
         // train
         index->train(rows, static_cast<const float*>(data));
     }
@@ -815,6 +830,7 @@ IvfIndexNode<DataType, IndexType>::TrainInternal(const DataSetPtr dataset, std::
         if (fs_idx) {
             ApplyClusteringConfig(fs_idx->cp);
             fs_idx->cp.use_super_kmeans = use_super_kmeans;
+            fs_idx->cp.e_means_epochs = base_cfg.e_means_epochs.value();
         }
         index->train(rows, static_cast<const float*>(data));
     }
