@@ -32,6 +32,12 @@ class DiskANNConfig : public DiskANNSSDConfig {
 
     Status
     LoadSubConfig(const Json& json, PARAM_TYPE type, std::string* error) override {
+        if (type == PARAM_TYPE::TRAIN && max_degree.value() > diskann::defaults::MAX_GRAPH_DEGREE) {
+            return HandleError(error,
+                               "max_degree must not exceed the native DiskANN limit of " +
+                                   std::to_string(diskann::defaults::MAX_GRAPH_DEGREE),
+                               Status::invalid_args);
+        }
         if (quant_type && (quant_type->empty() || ((type == PARAM_TYPE::TRAIN || type == PARAM_TYPE::STATIC) &&
                                                    !diskann::IsSupportedNavigationCodec(*quant_type))))
             return HandleError(error, "Unsupported DiskANN navigation codec: " + *quant_type, Status::invalid_args);

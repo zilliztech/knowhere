@@ -145,6 +145,32 @@ TEST_CASE("DiskANN PQ navigation budget validation", "[diskann][navigation][pq-b
     }
 }
 
+TEST_CASE("DiskANN native graph degree respects the backend limit", "[diskann][navigation][degree-limit]") {
+    const auto codec = GENERATE("PQ", "RABITQ");
+    const auto degree = GENERATE(1, 512, 513, 2048);
+    CAPTURE(codec, degree);
+    knowhere::Json request = {{"metric_type", "L2"},
+                              {"dim", 8},
+                              {"data_path", "unused"},
+                              {"index_prefix", "unused"},
+                              {"quant_type", codec},
+                              {"max_degree", degree},
+                              {"pq_code_budget_gb_ratio", 0.125}};
+    std::string error;
+    const auto expected =
+        degree <= diskann::defaults::MAX_GRAPH_DEGREE ? knowhere::Status::success : knowhere::Status::invalid_args;
+    REQUIRE(knowhere::IndexStaticFaced<knowhere::fp32>::ConfigCheck(kNativeDiskANNType, GenTestVersionList(), request,
+                                                                    error) == expected);
+    knowhere::DiskANNConfig native;
+    REQUIRE(knowhere::Config::Load(native, request, knowhere::PARAM_TYPE::TRAIN, &error) == expected);
+    if (expected != knowhere::Status::success) {
+        REQUIRE(error.find("max_degree") != std::string::npos);
+    }
+    // The shared SSD configuration retains its own limits for other backends.
+    knowhere::DiskANNSSDConfig shared;
+    REQUIRE(knowhere::Config::Load(shared, request, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::success);
+}
+
 TEST_CASE("Valid diskann build params test", "[diskann]") {
     int rows_num = 1000000;
     auto version = GenTestVersionList();
