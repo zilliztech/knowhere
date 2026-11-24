@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -626,6 +627,68 @@ TEST_CASE("Test All GPU Index", "[search]") {
             CHECK(GetRelativeLoss(gt_dist[i], dist[i]) < 0.1f);
         }
     }
+}
+
+TEST_CASE("Test INT8 CAGRA rejects CPU adaptation before GPU allocation", "[cagra][cpu-adaptation]") {
+    const auto name = GENERATE(knowhere::IndexEnum::INDEX_GPU_CAGRA, knowhere::IndexEnum::INDEX_CUVS_CAGRA);
+    const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    CAPTURE(name);
+    std::vector<knowhere::int8> vectors(32);
+    auto dataset = knowhere::GenDataSet(1, 32, vectors.data());
+    dataset->SetIsOwner(false);
+    knowhere::Json config{{knowhere::meta::DIM, 32},
+                          {knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
+                          {knowhere::indexparam::ADAPT_FOR_CPU, true}};
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::int8>(name, version).value();
+    REQUIRE(index.Train(dataset, config) == knowhere::Status::invalid_args);
+    REQUIRE(index.Build(dataset, config) == knowhere::Status::invalid_args);
+    // Reject the load option before reading the artifact or allocating GPU memory.
+    REQUIRE(index.Deserialize(knowhere::BinarySet{}, config) == knowhere::Status::invalid_args);
+}
+
+TEST_CASE("Test INT8 CAGRA rejects CPU build and load", "[gpu][cagra]") {
+    const auto name = GENERATE(knowhere::IndexEnum::INDEX_GPU_CAGRA, knowhere::IndexEnum::INDEX_CUVS_CAGRA);
+    const auto explicit_false = GENERATE(false, true);
+    CAPTURE(name, explicit_false);
+    const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    constexpr int64_t rows = 512;
+    constexpr int64_t dim = 32;
+    std::mt19937 generator(42);
+    std::uniform_int_distribution<int> distribution(-16, 16);
+    std::vector<knowhere::int8> vectors(rows * dim);
+    for (auto& value : vectors) {
+        value = static_cast<knowhere::int8>(distribution(generator));
+    }
+    auto dataset = knowhere::GenDataSet(rows, dim, vectors.data());
+    dataset->SetIsOwner(false);
+    knowhere::Json config{{knowhere::meta::DIM, dim},
+                          {knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
+                          {knowhere::meta::TOPK, 1},
+                          {knowhere::indexparam::INTERMEDIATE_GRAPH_DEGREE, 64},
+                          {knowhere::indexparam::GRAPH_DEGREE, 32},
+                          {knowhere::indexparam::CACHE_DATASET_ON_DEVICE, true}};
+    if (explicit_false) {
+        config[knowhere::indexparam::ADAPT_FOR_CPU] = false;
+    }
+    auto cpu_config = config;
+    cpu_config[knowhere::indexparam::ADAPT_FOR_CPU] = true;
+    auto index = knowhere::IndexFactory::Instance().Create<knowhere::int8>(name, version).value();
+    REQUIRE(index.Train(dataset, cpu_config) == knowhere::Status::invalid_args);
+    REQUIRE(index.Build(dataset, cpu_config) == knowhere::Status::invalid_args);
+    REQUIRE(index.Build(dataset, config) == knowhere::Status::success);
+    knowhere::BinarySet binary;
+    REQUIRE(index.Serialize(binary) == knowhere::Status::success);
+
+    auto loaded = knowhere::IndexFactory::Instance().Create<knowhere::int8>(name, version).value();
+    REQUIRE(loaded.Deserialize(binary, cpu_config) == knowhere::Status::invalid_args);
+    REQUIRE(loaded.Deserialize(binary, config) == knowhere::Status::success);
+    REQUIRE(loaded.Count() == rows);
+    auto query = knowhere::GenDataSet(1, dim, vectors.data());
+    query->SetIsOwner(false);
+    auto result = loaded.Search(query, config, nullptr);
+    REQUIRE(result.has_value());
+    REQUIRE(result.value()->GetIds()[0] == 0);
+    REQUIRE(result.value()->GetDistance()[0] == 0.0f);
 }
 
 TEST_CASE("Test GPU cuVS indexes pad filtered results", "[search][gpu][cuvs]") {

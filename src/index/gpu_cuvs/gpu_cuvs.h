@@ -27,6 +27,7 @@
 #include <numeric>
 #include <thread>
 #include <tuple>
+#include <type_traits>
 #include <vector>
 
 #include "common/cuvs/integration/cuvs_knowhere_config.hpp"
@@ -86,6 +87,7 @@ struct GpuCuvsIndexNode : public IndexNode {
 
     Status
     Train(const DataSetPtr dataset, std::shared_ptr<Config> cfg, bool use_knowhere_build_pool) override {
+        RETURN_IF_ERROR(CheckCpuAdaptation(static_cast<const knowhere_config_type&>(*cfg)));
         auto result = Status::success;
         auto cuvs_cfg = cuvs_knowhere::cuvs_knowhere_config{};
         try {
@@ -232,7 +234,8 @@ struct GpuCuvsIndexNode : public IndexNode {
     }
 
     Status
-    Deserialize(const BinarySet& binset, std::shared_ptr<Config>) override {
+    Deserialize(const BinarySet& binset, std::shared_ptr<Config> cfg) override {
+        RETURN_IF_ERROR(CheckCpuAdaptation(static_cast<const knowhere_config_type&>(*cfg)));
         auto result = Status::success;
         std::stringbuf buf;
         auto binary = binset.GetByName(this->Type());
@@ -299,6 +302,17 @@ struct GpuCuvsIndexNode : public IndexNode {
 
  protected:
     std::unique_ptr<cuvs_knowhere_index_type> index_;
+
+    static Status
+    CheckCpuAdaptation(const knowhere_config_type& cfg) {
+        if constexpr (index_kind == cuvs_proto::cuvs_index_kind::cagra && std::is_same_v<DataType, knowhere::int8>) {
+            if (cfg.adapt_for_cpu.value_or(false)) {
+                LOG_KNOWHERE_ERROR_ << "INT8 CAGRA does not support adapt_for_cpu=true";
+                return Status::invalid_args;
+            }
+        }
+        return Status::success;
+    }
 
     cuvs_knowhere_index_type&
     GetOrCreateIndex() {
