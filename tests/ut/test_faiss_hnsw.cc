@@ -17,7 +17,10 @@
 #include <cstdio>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <memory>
+#include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -31,6 +34,7 @@
 #include "catch2/generators/catch_generators.hpp"
 #include "faiss/cppcontrib/knowhere/IndexHNSW.h"
 #include "faiss/cppcontrib/knowhere/index_io.h"
+#include "index/hnsw/faiss_hnsw_config.h"
 #include "io/memory_io.h"
 #include "knowhere/comp/brute_force.h"
 #include "knowhere/comp/index_param.h"
@@ -2616,5 +2620,233 @@ TEST_CASE("HNSW top-k fallback with an empty bitset", "[faiss_hnsw][fallback][re
         // An explicit zero bitmap and an absent bitmap both mean no filtering.
         std::vector<uint8_t> bits((nb + 7) / 8, 0);
         REQUIRE(count_hits(knowhere::BitsetView(bits.data(), nb)) == k);
+    }
+}
+
+TEST_CASE("HNSW partition-key grouping preserves large groups", "[faiss_hnsw][scalar_info][grouping]") {
+    struct GroupingCase {
+        std::vector<uint32_t> sizes;
+        std::optional<int64_t> threshold;
+        std::vector<std::vector<size_t>> expected;
+    };
+    const std::vector<GroupingCase> cases = {
+        {{50, 70, 300}, 128, {{0, 1}, {2}}},
+        {{127, 128}, 128, {{0}, {1}}},
+        {{128, 128}, 128, {{0}, {1}}},
+        {{20, 30, 40}, 128, {{0, 1, 2}}},
+        {{60, 70, 80, 300}, 128, {{0, 1, 2}, {3}}},
+        {{300, 400}, 128, {{0}, {1}}},
+        {{50, 70, 300}, 1, {{0}, {1}, {2}}},
+        {{1, 2, 3}, 1, {{0}, {1}, {2}}},
+        {{50, 70, 300}, 64, {{0}, {1}, {2}}},
+        {{50, 70, 300}, 512, {{0, 1, 2}}},
+        {{50, 70, 300}, std::nullopt, {{0, 1, 2}}},
+        {{60, 70, 80, 300}, std::nullopt, {{0, 1}, {2, 3}}},
+        {{50}, 128, {{0}}},
+        {{300}, 128, {{0}}},
+        {{0, 50, 70, 300}, 1, {{1}, {2}, {3}}},
+    };
+    const std::string type = knowhere::IndexEnum::INDEX_HNSW;
+#ifdef KNOWHERE_WITH_CARDINAL
+    const std::string factory_type = "HNSW_DEPRECATED";
+#else
+    const std::string factory_type = type;
+#endif
+    const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    for (const auto& test : cases) {
+        CAPTURE(test.sizes, test.threshold.value_or(0));
+        std::vector<std::vector<uint32_t>> groups(test.sizes.size());
+        uint32_t rows = 0;
+        for (size_t i = 0; i < groups.size(); ++i) {
+            groups[i].resize(test.sizes[i]);
+            std::iota(groups[i].begin(), groups[i].end(), rows);
+            rows += test.sizes[i];
+        }
+        std::vector<std::vector<uint32_t>> expected;
+        for (const auto& bucket : test.expected) {
+            std::vector<uint32_t> ids;
+            for (auto group : bucket) {
+                ids.insert(ids.end(), groups[group].begin(), groups[group].end());
+            }
+            expected.push_back(std::move(ids));
+        }
+        std::sort(expected.begin(), expected.end());
+        std::vector<size_t> order(groups.size());
+        std::iota(order.begin(), order.end(), 0);
+        do {
+            CAPTURE(order);
+            auto data = GenDataSet(rows, 4, uint64_t{42});
+            std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>> scalar_info;
+            for (auto group : order) {
+                scalar_info[0].push_back(groups[group]);
+            }
+            data->Set(knowhere::meta::SCALAR_INFO, scalar_info);
+            knowhere::Json conf = {{"dim", 4}, {"metric_type", "L2"}, {"M", 4}, {"efConstruction", 32}};
+            if (test.threshold.has_value()) {
+                conf[knowhere::indexparam::PARTITION_KEY_ISOLATION_MIN_ROWS] = test.threshold.value();
+            }
+            auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(factory_type, version).value();
+            REQUIRE(index.Build(data, conf) == knowhere::Status::success);
+            knowhere::BinarySet binary;
+            REQUIRE(index.Serialize(binary) == knowhere::Status::success);
+            const auto blob = binary.GetByName(type);
+            REQUIRE(blob != nullptr);
+            knowhere::MemoryIOReader reader(blob->data.get(), blob->size);
+            std::vector<std::vector<uint32_t>> actual;
+            if (faiss::cppcontrib::knowhere::read_is_mv(&reader)) {
+                REQUIRE(faiss::cppcontrib::knowhere::read_value(&reader) == 0);  // MV header version
+                const auto index_count = faiss::cppcontrib::knowhere::read_value(&reader);
+                REQUIRE(faiss::cppcontrib::knowhere::read_value(&reader) == index_count);
+                for (uint32_t i = 0; i < index_count; ++i) {
+                    std::vector<uint32_t> labels;
+                    faiss::cppcontrib::knowhere::read_vector(labels, &reader);
+                    std::sort(labels.begin(), labels.end());
+                    actual.push_back(std::move(labels));
+                }
+            } else {
+                actual.emplace_back(rows);
+                std::iota(actual.back().begin(), actual.back().end(), 0);
+            }
+            std::sort(actual.begin(), actual.end());
+            REQUIRE(actual == expected);
+            std::vector<uint32_t> all_ids;
+            for (const auto& bucket : actual) {
+                all_ids.insert(all_ids.end(), bucket.begin(), bucket.end());
+            }
+            std::sort(all_ids.begin(), all_ids.end());
+            REQUIRE(all_ids.size() == rows);
+            for (uint32_t i = 0; i < rows; ++i) {
+                REQUIRE(all_ids[i] == i);
+            }
+            if (test.sizes != std::vector<uint32_t>{50, 70, 300}) {
+                break;
+            }
+        } while (std::next_permutation(order.begin(), order.end()));
+    }
+}
+
+TEST_CASE("HNSW partition-key grouping validates its threshold", "[faiss_hnsw][scalar_info][grouping][config]") {
+    const auto key = knowhere::indexparam::PARTITION_KEY_ISOLATION_MIN_ROWS;
+    for (const knowhere::Json& value :
+         {knowhere::Json(0), knowhere::Json(-1), knowhere::Json(1.5), knowhere::Json(true), knowhere::Json(),
+          knowhere::Json(int64_t{2147483648}), knowhere::Json("invalid"), knowhere::Json("9223372036854775808")}) {
+        CAPTURE(value);
+        knowhere::FaissHnswFlatConfig cfg;
+        knowhere::Json conf = {{key, value}, {"metric_type", "L2"}, {"dim", 4}};
+        std::string error;
+        const auto formatted = knowhere::Config::FormatAndCheck(cfg, conf, &error);
+        if (formatted == knowhere::Status::success) {
+            REQUIRE(knowhere::Config::Load(cfg, conf, knowhere::PARAM_TYPE::TRAIN, &error) !=
+                    knowhere::Status::success);
+        }
+        REQUIRE_FALSE(error.empty());
+    }
+    for (const knowhere::Json& value : {knowhere::Json(1), knowhere::Json(128), knowhere::Json("128"),
+                                        knowhere::Json(std::numeric_limits<int32_t>::max())}) {
+        knowhere::FaissHnswFlatConfig cfg;
+        knowhere::Json conf = {{key, value}, {"metric_type", "L2"}, {"dim", 4}};
+        REQUIRE(knowhere::Config::FormatAndCheck(cfg, conf) == knowhere::Status::success);
+        REQUIRE(knowhere::Config::Load(cfg, conf, knowhere::PARAM_TYPE::TRAIN) == knowhere::Status::success);
+        REQUIRE(cfg.partition_key_isolation_min_rows.has_value());
+    }
+    knowhere::FaissHnswSqConfig sq;
+    knowhere::FaissHnswPqConfig pq;
+    knowhere::FaissHnswPrqConfig prq;
+    for (const auto* cfg : std::vector<const knowhere::Config*>{&sq, &pq, &prq}) {
+        knowhere::Json conf = {{key, 128}, {"metric_type", "L2"}, {"dim", 4}};
+        REQUIRE(knowhere::Config::FormatAndCheck(*cfg, conf) == knowhere::Status::invalid_args);
+        conf.erase(key);
+        REQUIRE(knowhere::Config::FormatAndCheck(*cfg, conf) == knowhere::Status::success);
+    }
+#ifndef KNOWHERE_WITH_CARDINAL
+    auto data = GenDataSet(128, 4, uint64_t{42});
+    knowhere::Json conf = {{key, 128}, {"metric_type", "L2"}, {"dim", 4}};
+    auto old_index =
+        knowhere::IndexFactory::Instance().Create<knowhere::fp32>(knowhere::IndexEnum::INDEX_HNSW, 5).value();
+    REQUIRE(old_index.Build(data, conf) == knowhere::Status::invalid_args);
+#endif
+}
+
+TEST_CASE("HNSW preserved scalar groups retain filtered IDs after serialization",
+          "[faiss_hnsw][scalar_info][grouping]") {
+    const std::string type = knowhere::IndexEnum::INDEX_HNSW;
+#ifdef KNOWHERE_WITH_CARDINAL
+    const std::string factory_type = "HNSW_DEPRECATED";
+#else
+    const std::string factory_type = type;
+#endif
+    const auto version = knowhere::Version::GetCurrentVersion().VersionNumber();
+    const int64_t rows = 420;
+    const int64_t dim = 4;
+    const int64_t k = 5;
+    std::vector<float> vectors(rows * dim, 0);
+    for (int64_t i = 0; i < rows; ++i) {
+        vectors[i * dim] = static_cast<float>(i);
+    }
+    auto data = knowhere::GenDataSet(rows, dim, vectors.data());
+    const std::vector<size_t> sizes = {50, 70, 300};
+    std::vector<std::vector<uint32_t>> groups(3);
+    for (uint32_t i = 0; i < rows; ++i) {
+        size_t group = i % groups.size();
+        while (groups[group].size() == sizes[group]) {
+            group = (group + 1) % groups.size();
+        }
+        groups[group].push_back(i);
+    }
+    data->Set(knowhere::meta::SCALAR_INFO,
+              std::unordered_map<int64_t, std::vector<std::vector<uint32_t>>>{{0, groups}});
+    for (const int64_t threshold : {1, 128}) {
+        CAPTURE(threshold);
+        knowhere::Json conf = {{"dim", dim},
+                               {"metric_type", "L2"},
+                               {"M", 16},
+                               {"efConstruction", 96},
+                               {"k", k},
+                               {"ef", 128},
+                               {knowhere::indexparam::PARTITION_KEY_ISOLATION_MIN_ROWS, threshold}};
+        auto index = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(factory_type, version).value();
+        REQUIRE(index.Build(data, conf) == knowhere::Status::success);
+        auto check_search = [&](auto& candidate) {
+            std::vector<std::vector<int64_t>> results;
+            for (const auto& group : groups) {
+                std::vector<uint8_t> bits((rows + 7) / 8, 0xff);
+                for (auto id : group) {
+                    bits[id >> 3] &= static_cast<uint8_t>(~(1U << (id & 7)));
+                }
+                auto query =
+                    knowhere::GenDataSet(1, dim, static_cast<const float*>(data->GetTensor()) + group[0] * dim);
+                for (const int64_t search_k : {k, static_cast<int64_t>(group.size())}) {
+                    auto search_conf = conf;
+                    search_conf["k"] = search_k;
+                    search_conf["ef"] = rows;
+                    auto result = candidate.Search(query, search_conf,
+                                                   knowhere::BitsetView(bits.data(), rows, rows - group.size()));
+                    REQUIRE(result.has_value());
+                    const auto* ids = result.value()->GetIds();
+                    const auto* distances = result.value()->GetDistance();
+                    std::unordered_set<int64_t> seen;
+                    for (int64_t i = 0; i < search_k; ++i) {
+                        REQUIRE(std::find(group.begin(), group.end(), ids[i]) != group.end());
+                        REQUIRE(seen.insert(ids[i]).second);
+                        const float delta = static_cast<float>(ids[i] - group[0]);
+                        REQUIRE(distances[i] == delta * delta);
+                    }
+                    results.emplace_back(ids, ids + search_k);
+                    if (search_k == static_cast<int64_t>(group.size())) {
+                        REQUIRE(ids[0] == group[0]);
+                        auto all_ids = results.back();
+                        std::sort(all_ids.begin(), all_ids.end());
+                        REQUIRE(std::equal(all_ids.begin(), all_ids.end(), group.begin(), group.end()));
+                    }
+                }
+            }
+            return results;
+        };
+        const auto original_results = check_search(index);
+        knowhere::BinarySet binary;
+        REQUIRE(index.Serialize(binary) == knowhere::Status::success);
+        auto restored = knowhere::IndexFactory::Instance().Create<knowhere::fp32>(factory_type, version).value();
+        REQUIRE(restored.Deserialize(binary, conf) == knowhere::Status::success);
+        REQUIRE(check_search(restored) == original_results);
     }
 }

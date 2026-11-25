@@ -795,7 +795,8 @@ get_index_data_format(const faiss::Index* index) {
 // for example: scalar_info= {{1,2}, {3,4,5}, {1}}, base_rows = 3
 // we will get {{2, 0}, {1}}, which means we combine the scalar id 0 and 2 together
 std::vector<std::vector<int>>
-combine_partitions(const std::vector<std::vector<uint32_t>>& scalar_info, const int64_t base_rows) {
+combine_partitions(const std::vector<std::vector<uint32_t>>& scalar_info, const int64_t base_rows,
+                   const bool preserve_large_groups = false) {
     auto scalar_size = scalar_info.size();
     std::vector<int> indices(scalar_size);
     std::iota(indices.begin(), indices.end(), 0);
@@ -808,7 +809,27 @@ combine_partitions(const std::vector<std::vector<uint32_t>>& scalar_info, const 
     std::vector<std::vector<int>> res;
     std::vector<int> cur;
     int64_t cur_size = 0;
+    auto append_tail = [&] {
+        if (!cur.empty()) {
+            if (res.empty()) {
+                res.push_back(cur);
+            } else {
+                res.back().insert(res.back().end(), cur.begin(), cur.end());
+            }
+            cur.clear();
+            cur_size = 0;
+        }
+    };
     for (auto i : indices) {
+        if (preserve_large_groups && sizes[i] == 0) {
+            continue;
+        }
+        if (preserve_large_groups && sizes[i] >= base_rows) {
+            // Sorted sizes put all small groups first: finish their tail before preserving large groups.
+            append_tail();
+            res.push_back({i});
+            continue;
+        }
         cur_size += sizes[i];
         cur.push_back(i);
         if (cur_size >= base_rows) {
@@ -817,15 +838,7 @@ combine_partitions(const std::vector<std::vector<uint32_t>>& scalar_info, const 
             cur_size = 0;
         }
     }
-    // tail
-    if (!cur.empty()) {
-        if (res.empty()) {
-            res.push_back(cur);
-            return res;
-        } else {
-            res[res.size() - 1].insert(res[res.size() - 1].end(), cur.begin(), cur.end());
-        }
-    }
+    append_tail();
     return res;
 }
 
@@ -2255,7 +2268,10 @@ class BaseFaissRegularIndexHNSWFlatNode : public BaseFaissRegularIndexHNSWNode {
         }
         for (const auto& [field_id, scalar_info] : scalar_info_map) {
             tmp_combined_scalar_ids =
-                scalar_info.size() > 1 ? combine_partitions(scalar_info, 128) : std::vector<std::vector<int>>();
+                scalar_info.size() > 1
+                    ? combine_partitions(scalar_info, hnsw_cfg.partition_key_isolation_min_rows.value_or(128),
+                                         hnsw_cfg.partition_key_isolation_min_rows.has_value())
+                    : std::vector<std::vector<int>>();
         }
 
         // no scalar info or just one partition(after possible combination), build index on whole data
