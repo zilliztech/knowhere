@@ -47,7 +47,7 @@ target_link_libraries(
   PUBLIC faiss ${AIO_LIBRARIES}
          ${DISKANN_BOOST_PROGRAM_OPTIONS_LIB}
          nlohmann_json::nlohmann_json
-         milvus-common::milvus-common
+         milvus-common
          Folly::folly
          fmt::fmt
          prometheus-cpp::core

@@ -256,7 +256,7 @@ if(__X86_64)
                                               -mavx512bw -mpopcnt -mavx512vl -mavx512vpopcntdq)
   target_compile_options(sparse_simd_avx512 PRIVATE -mavx512f -mavx512dq)
   target_include_directories(sparse_simd_avx512 PRIVATE ${Boost_INCLUDE_DIRS})
-  target_link_libraries(sparse_simd_avx512 PRIVATE milvus-common::milvus-common)
+  target_link_libraries(sparse_simd_avx512 PRIVATE milvus-common)
 
   add_library(
     knowhere_utils STATIC
@@ -265,7 +265,7 @@ if(__X86_64)
     $<TARGET_OBJECTS:sparse_simd_avx512>)
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
   target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
-  target_link_libraries(knowhere_utils PUBLIC milvus-common::milvus-common)
+  target_link_libraries(knowhere_utils PUBLIC milvus-common)
 endif()
 
 # generate `knowhere_utils` library for AARCH64
@@ -340,7 +340,7 @@ if(__AARCH64)
 
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
   target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
-  target_link_libraries(knowhere_utils PUBLIC milvus-common::milvus-common)
+  target_link_libraries(knowhere_utils PUBLIC milvus-common)
 endif()
 
 # generate `knowhere_utils` library for RISCV64
@@ -349,7 +349,7 @@ if(__RISCV64)
   add_library(knowhere_utils STATIC ${UTILS_SRC})
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
   target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
-  target_link_libraries(knowhere_utils PUBLIC milvus-common::milvus-common)
+  target_link_libraries(knowhere_utils PUBLIC milvus-common)
   target_compile_options(knowhere_utils PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-march=rv64gcv_zvfhmin -mabi=lp64d>
     $<$<COMPILE_LANGUAGE:C>:-march=rv64gcv_zvfhmin -mabi=lp64d>
@@ -369,7 +369,7 @@ if(__LOONGARCH64)
   add_library(knowhere_utils STATIC ${UTILS_SRC} $<TARGET_OBJECTS:utils_lsx> $<TARGET_OBJECTS:utils_lasx>)
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
   target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
-  target_link_libraries(knowhere_utils PUBLIC milvus-common::milvus-common)
+  target_link_libraries(knowhere_utils PUBLIC milvus-common)
 endif()
 
 # generate `knowhere_utils` library for PPC64
@@ -379,7 +379,7 @@ if(__PPC64)
   add_library(knowhere_utils STATIC ${UTILS_SRC})
   target_link_libraries(knowhere_utils PUBLIC glog::glog)
   target_link_libraries(knowhere_utils PUBLIC xxHash::xxhash)
-  target_link_libraries(knowhere_utils PUBLIC milvus-common::milvus-common)
+  target_link_libraries(knowhere_utils PUBLIC milvus-common)
 endif()
 
 
@@ -425,7 +425,7 @@ if(__X86_64)
                                             -mavx2 -mfma -mf16c -mpopcnt>)
   target_compile_definitions(faiss_avx2 PRIVATE COMPILE_SIMD_AVX2)
   target_include_directories(faiss_avx2 PRIVATE ${Boost_INCLUDE_DIRS})
-  target_link_libraries(faiss_avx2 PRIVATE milvus-common::milvus-common)
+  target_link_libraries(faiss_avx2 PRIVATE milvus-common)
   add_library(faiss_avx512 OBJECT ${FAISS_AVX512_SRCS})
   target_compile_options(
     faiss_avx512
@@ -442,7 +442,7 @@ if(__X86_64)
             -mpopcnt>)
   target_compile_definitions(faiss_avx512 PRIVATE COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512)
   target_include_directories(faiss_avx512 PRIVATE ${Boost_INCLUDE_DIRS})
-  target_link_libraries(faiss_avx512 PRIVATE milvus-common::milvus-common)
+  target_link_libraries(faiss_avx512 PRIVATE milvus-common)
 
   if(FAISS_ENABLE_AVX512_VPOPCNT)
     add_library(faiss_avx512_vpopcnt OBJECT ${FAISS_AVX512_VPOPCNT_SRCS})
@@ -464,7 +464,7 @@ if(__X86_64)
     target_compile_definitions(faiss_avx512_vpopcnt PRIVATE
                                COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512 COMPILE_SIMD_AVX512_VPOPCNT)
     target_include_directories(faiss_avx512_vpopcnt PRIVATE ${Boost_INCLUDE_DIRS})
-    target_link_libraries(faiss_avx512_vpopcnt PRIVATE milvus-common::milvus-common)
+    target_link_libraries(faiss_avx512_vpopcnt PRIVATE milvus-common)
   endif()
 
   if(FAISS_ENABLE_AVX512_SPR)
@@ -491,7 +491,7 @@ if(__X86_64)
                                COMPILE_SIMD_AVX2 COMPILE_SIMD_AVX512
                                COMPILE_SIMD_AVX512_VPOPCNT COMPILE_SIMD_AVX512_SPR)
     target_include_directories(faiss_avx512_spr PRIVATE ${Boost_INCLUDE_DIRS})
-    target_link_libraries(faiss_avx512_spr PRIVATE milvus-common::milvus-common)
+    target_link_libraries(faiss_avx512_spr PRIVATE milvus-common)
   endif()
 
   add_library(faiss STATIC ${FAISS_SRCS})
@@ -593,7 +593,7 @@ if(__AARCH64)
   if(SVE_AVAILABLE)
     add_library(faiss_sve OBJECT ${FAISS_SVE_SRCS})
     target_include_directories(faiss_sve PRIVATE ${Boost_INCLUDE_DIRS})
-    target_link_libraries(faiss_sve PRIVATE milvus-common::milvus-common)
+    target_link_libraries(faiss_sve PRIVATE milvus-common)
     target_compile_definitions(faiss_sve PRIVATE
       FINTEGER=int FAISS_ENABLE_DD COMPILE_SIMD_ARM_NEON COMPILE_SIMD_ARM_SVE)
     target_compile_options(

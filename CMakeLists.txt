@@ -171,7 +171,7 @@ endif()
 
 include(cmake/utils/platform_check.cmake)
 include(cmake/utils/compile_flags.cmake)
-find_package(milvus-common REQUIRED)
+include(cmake/libs/libmilvus-common.cmake)
 include(cmake/libs/libhnsw.cmake)
 include(cmake/libs/libfaiss.cmake)
 
@@ -314,7 +314,7 @@ set(KNOWHERE_PUBLIC_LIBS
     nlohmann_json::nlohmann_json
     glog::glog
     Folly::folly
-    milvus-common::milvus-common
+    milvus-common
     prometheus-cpp::core
     opentelemetry-cpp::opentelemetry_trace
     OpenMP::OpenMP_CXX)

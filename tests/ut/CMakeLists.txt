@@ -62,7 +62,7 @@ target_link_libraries(knowhere_tests PRIVATE
         Catch2::Catch2WithMain
         knowhere
         knowhere_utils
-        milvus-common::milvus-common)
+        milvus-common)
 if(WITH_CUVS)
   target_link_libraries(knowhere_tests PRIVATE raft::raft cuvs::cuvs)
 endif()
