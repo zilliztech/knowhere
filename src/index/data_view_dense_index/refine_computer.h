@@ -170,8 +170,10 @@ struct QuantDataDistanceComputer : faiss::DistanceComputer {
 
     void
     set_query(const float* x) override {
+        // Use set_query() rather than assigning qc->q: some SQ distance computers
+        // prepare the query in set_query() (e.g. the BF16 one converts it to BF16).
         if (quant_data->GetOriginDataType() == DataFormatEnum::fp32) {
-            qc->q = x;
+            qc->set_query(x);
             if constexpr (NeedNormalize) {
                 q_norm = GetL2Norm(x, dim);
             }
@@ -180,7 +182,7 @@ struct QuantDataDistanceComputer : faiss::DistanceComputer {
             if (convert_data(x, query_buf.data(), quant_data->GetOriginDataType(), 1, dim) != true) {
                 throw std::runtime_error("fail to convert data to fp32 type.");
             }
-            qc->q = query_buf.data();
+            qc->set_query(query_buf.data());
             if constexpr (NeedNormalize) {
                 q_norm = GetL2Norm(query_buf.data(), dim);
             }
