@@ -1488,7 +1488,7 @@ base_AiSAQ_param_test() {
             test_json = build_gen();
             test_json["max_degree"] = diskann::defaults::MAX_AISAQ_MAX_DEGREE + 1;
             test_stat = diskann.Build(ds_ptr, test_json);
-            REQUIRE(test_stat == knowhere::Status::aisaq_error);
+            REQUIRE(test_stat == knowhere::Status::invalid_args);
             test_json = build_gen();
             test_json["search_list_size"] = diskann::defaults::MAX_AISAQ_SEARCH_LIST_SIZE + 1;
             test_stat = diskann.Build(ds_ptr, test_json);
