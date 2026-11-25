@@ -14,7 +14,9 @@
 #include <faiss/cppcontrib/knowhere/IndexCosine.h>
 
 #include <memory>
+#include <type_traits>
 
+#include "faiss/IndexScalarQuantizer.h"
 #include "faiss/cppcontrib/knowhere/IndexFlat.h"
 #include "faiss/cppcontrib/knowhere/impl/CountSizeIOWriter.h"
 #include "faiss/cppcontrib/knowhere/index_io.h"
@@ -40,6 +42,18 @@ IndexIVFWrapper<IndexIVFType>::from_deserialized(std::unique_ptr<faiss::Index>&&
     auto index_base = index->get_base_ivf_index();
     if (index_base == nullptr) {
         return nullptr;
+    }
+
+    if constexpr (std::is_same_v<IndexIVFType, faiss::cppcontrib::knowhere::IndexIVFPQ>) {
+        auto* coarse = dynamic_cast<faiss::IndexScalarQuantizer*>(index_base->quantizer);
+        if (coarse != nullptr && coarse->sq.qtype == faiss::ScalarQuantizer::QT_fp16 &&
+            (coarse->metric_type == faiss::METRIC_L2 || coarse->metric_type == faiss::METRIC_INNER_PRODUCT)) {
+            // Only coarse_quantizer=sq_fp16_gemm builds an FP16 SQ coarse quantizer. Its GEMM settings are not
+            // serialized, so re-enable the GEMM path with the AUTO kernel resolved against this host.
+            coarse->use_fp16_gemm = true;
+            LOG_KNOWHERE_INFO_ << "IVF_PQ coarse quantizer loaded with FP16 GEMM kernel="
+                               << faiss::fp16_gemm::kernel_name(coarse->fp16_gemm_effective_kernel());
+        }
     }
 
     index_base->make_direct_map(true);
@@ -154,9 +168,9 @@ template struct IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFPQ>;
 template struct IndexIVFWrapper<faiss::cppcontrib::knowhere::IndexIVFScalarQuantizer>;
 
 expected<std::unique_ptr<IndexIVFPQWrapper>>
-IndexIvfFactory::create_for_pq(faiss::cppcontrib::knowhere::IndexFlat* qzr_raw_ptr, const faiss::idx_t d,
-                               const size_t nlist, const size_t nbits, const IvfPqConfig& ivf_pq_cfg,
-                               const DataFormatEnum raw_data_format, const faiss::MetricType metric) {
+IndexIvfFactory::create_for_pq(faiss::Index* qzr_raw_ptr, const faiss::idx_t d, const size_t nlist, const size_t nbits,
+                               const IvfPqConfig& ivf_pq_cfg, const DataFormatEnum raw_data_format,
+                               const faiss::MetricType metric) {
     // the index factory string is either `IVFx,PQ,Refine(y)` or `IVFx,PQ`,
     //   depends on the refine parameters
 

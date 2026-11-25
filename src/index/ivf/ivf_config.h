@@ -115,6 +115,10 @@ class IvfPqConfig : public IvfConfig {
     CFG_INT m;
     CFG_INT nbits;
 
+    // optional coarse quantizer that scores centroids with an FP16 GEMM kernel
+    CFG_STRING coarse_quantizer;
+    CFG_STRING coarse_kernel;
+
     // whether an index is built with a refine support
     CFG_BOOL refine;
     // undefined value leads to a search without a refine
@@ -125,6 +129,16 @@ class IvfPqConfig : public IvfConfig {
         KNOWHERE_CONFIG_DECLARE_FIELD(m).description("m").for_train().set_range(1, 65536);
         // FAISS rejects nbits > 24, because it is not practical
         KNOWHERE_CONFIG_DECLARE_FIELD(nbits).description("nbits").set_default(8).for_train().set_range(1, 24);
+        KNOWHERE_CONFIG_DECLARE_FIELD(coarse_quantizer)
+            .description(
+                "coarse quantizer of IVF_PQ: flat (default) or sq_fp16_gemm (FP16 centroids scored by AMX/FMA)")
+            .set_default("flat")
+            .for_train();
+        KNOWHERE_CONFIG_DECLARE_FIELD(coarse_kernel)
+            .description(
+                "kernel of the sq_fp16_gemm coarse quantizer: auto, amx, fma or scalar; flat accepts only auto")
+            .set_default("auto")
+            .for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(refine)
             .description("whether the refine is used during the train")
             .set_default(false)
@@ -164,6 +178,27 @@ class IvfPqConfig : public IvfConfig {
 
         // check our parameters
         if (param_type == PARAM_TYPE::TRAIN) {
+            coarse_quantizer = str_to_lower(coarse_quantizer.value_or("flat"));
+            coarse_kernel = str_to_lower(coarse_kernel.value_or("auto"));
+            if (coarse_quantizer != "flat" && coarse_quantizer != "sq_fp16_gemm") {
+                return HandleError(err_msg, "coarse_quantizer accepts only flat or sq_fp16_gemm", Status::invalid_args);
+            }
+            if (coarse_kernel != "auto" && coarse_kernel != "amx" && coarse_kernel != "fma" &&
+                coarse_kernel != "scalar") {
+                return HandleError(err_msg, "coarse_kernel accepts only auto, amx, fma or scalar",
+                                   Status::invalid_args);
+            }
+            if (coarse_quantizer == "flat" && coarse_kernel != "auto") {
+                return HandleError(err_msg, "coarse_quantizer=flat accepts only coarse_kernel=auto",
+                                   Status::invalid_args);
+            }
+            if (coarse_quantizer == "sq_fp16_gemm") {
+                const auto metric = str_to_lower(metric_type.value_or("L2"));
+                if (metric != "l2" && metric != "ip" && metric != "cosine") {
+                    return HandleError(err_msg, "coarse_quantizer=sq_fp16_gemm supports only L2, IP or COSINE",
+                                       Status::invalid_metric_type);
+                }
+            }
             // check refine
             if (refine_type.has_value()) {
                 if (!WhetherAcceptableRefineType(refine_type.value())) {
