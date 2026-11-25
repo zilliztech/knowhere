@@ -96,8 +96,7 @@ ExactScore(const RaBitQFixture& f, size_t q, int64_t id, const std::string& metr
     }
     return metric == "L2" ? l2 : metric == "IP" ? ip : ip / std::sqrt(qnorm * bnorm);
 }
-// Reference the unchanged ordinary SSD-PQ path directly. Its IP conversion,
-// cache and BF limitations are tracked separately from navigation support.
+// Reference the ordinary SSD-PQ path directly from the stored codes.
 float
 LegacySSDPQScore(const RaBitQFixture& f, size_t q, int64_t id, const std::string& metric) {
     std::ifstream graph(diskann::get_disk_index_filename(f.prefix), std::ios::binary);
@@ -128,7 +127,7 @@ LegacySSDPQScore(const RaBitQFixture& f, size_t q, int64_t id, const std::string
     norms.seekg(2 * sizeof(uint32_t));
     norms.read(reinterpret_cast<char*>(&max_norm), sizeof(max_norm));
     REQUIRE(bool(norms));
-    return (1.0f - negative_ip / 2.0f) * max_norm * norm;
+    return -negative_ip * max_norm * norm;
 }
 }  // namespace
 
@@ -397,22 +396,11 @@ TEST_CASE("RaBitQ TokenANN preserves document scores and filtering", "[diskann][
         }
     }
     if (std::string(metric) == "MAX_SIM_L2" && !cache) {
+        // Embedding-list reranking needs exact distances, which a disk-PQ artifact cannot provide.
         build["index_prefix"] = f.prefix + "_ssd_pq";
         build["disk_pq_dims"] = 4;
-        {
-            auto compressed = CreateDiskANN("DISKANN", version, manager);
-            REQUIRE(compressed.Build(nullptr, build) == knowhere::Status::success);
-        }
         auto compressed = CreateDiskANN("DISKANN", version, manager);
-        load["index_prefix"] = build["index_prefix"];
-        REQUIRE(compressed.Deserialize({}, load) == knowhere::Status::success);
-        auto result = compressed.Search(query, search, nullptr);
-        REQUIRE(result.has_value());
-        for (size_t i = 0; i < (query_offsets.size() - 1) * 5; ++i) {
-            REQUIRE(result.value()->GetIds()[i] >= 0);
-            REQUIRE(size_t(result.value()->GetIds()[i]) < docs);
-            REQUIRE(std::isfinite(result.value()->GetDistance()[i]));
-        }
+        REQUIRE(compressed.Build(nullptr, build) == knowhere::Status::invalid_param_in_json);
     }
 }
 
