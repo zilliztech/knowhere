@@ -83,6 +83,11 @@ struct ClusteringParameters {
     /// with its own index, so callers that supply both get an exception rather
     /// than a silent downgrade to vanilla Clustering.
     bool use_super_kmeans = false;
+
+    /// Positive values select e-means for IVF coarse training, overriding
+    /// use_super_kmeans. Zero preserves the existing trainer. The budget is
+    /// passes over the sample (fractions allowed), independently of niter.
+    double e_means_epochs = 0.0;
 };
 
 struct ClusteringIterationStats {

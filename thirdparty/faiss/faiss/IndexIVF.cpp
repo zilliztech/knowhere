@@ -6,10 +6,12 @@
  */
 
 #include <faiss/IndexIVF.h>
+#include <faiss/EMeans.h>
 #include <faiss/SuperKMeans.h>
 
 #include <omp.h>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 
@@ -59,6 +61,17 @@ void Level1Quantizer::train_q1(
         bool verbose,
         MetricType metric_type) {
     FAISS_THROW_IF_NOT_MSG(quantizer, "IVF quantizer must not be null");
+    FAISS_THROW_IF_NOT_MSG(
+            std::isfinite(cp.e_means_epochs) && cp.e_means_epochs >= 0,
+            "e_means_epochs must be finite and nonnegative");
+    if (cp.e_means_epochs > 0) {
+        FAISS_THROW_IF_NOT_MSG(
+                quantizer_trains_alone == 0 && !clustering_index,
+                "e-means requires the standard IVF coarse trainer without a custom clustering index");
+        FAISS_THROW_IF_NOT_MSG(
+                metric_type == METRIC_L2 || cp.spherical,
+                "e-means requires L2 or spherical clustering");
+    }
     size_t d = quantizer->d;
     if (quantizer->is_trained &&
         (static_cast<size_t>(quantizer->ntotal) == nlist)) {
@@ -80,12 +93,16 @@ void Level1Quantizer::train_q1(
         }
 
         FAISS_THROW_IF_MSG(
-                cp.use_super_kmeans && clustering_index,
+                cp.e_means_epochs == 0 && cp.use_super_kmeans && clustering_index,
                 "cp.use_super_kmeans is incompatible with a user-provided "
                 "clustering_index: SuperKMeans assigns with its own index");
 
         quantizer->reset();
-        if (cp.use_super_kmeans) {
+        if (cp.e_means_epochs > 0) {
+            EMeans clus(static_cast<int>(d), static_cast<int>(nlist), cp);
+            clus.train(n, x);
+            quantizer->add(nlist, clus.centroids.data());
+        } else if (cp.use_super_kmeans) {
             SuperKMeansParameters super_cp;
             static_cast<ClusteringParameters&>(super_cp) = cp;
             SuperKMeans clus(

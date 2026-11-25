@@ -11,13 +11,18 @@
 
 #include <sys/stat.h>
 
+#include <cmath>
+#include <limits>
+#include <numeric>
 #include <unordered_set>
 
 #include "catch2/catch_approx.hpp"
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 #include "faiss/Clustering.h"
+#include "faiss/EMeans.h"
 #include "faiss/IndexFlat.h"
+#include "faiss/IndexIVFFlat.h"
 #include "faiss/SuperKMeans.h"
 #include "faiss/cppcontrib/knowhere/utils/binary_distances.h"
 #include "faiss/impl/ClusteringHelpers.h"
@@ -34,6 +39,88 @@ constexpr float kKnnRecallThreshold = 0.1f;
 constexpr float kKnnMinClusterSizeRatio = 0.1f;
 constexpr float kKnnMaxClusterSizeRatio = 10.0f;
 }  // namespace
+
+TEST_CASE("E-means closing means and validation", "[cluster][e-means]") {
+    faiss::ClusteringParameters cp;
+    cp.e_means_epochs = GENERATE(1.0, 2.5);
+    const std::vector<float> values{0, 1, 2, 3, 14};
+    faiss::EMeans trainer(1, 1, cp);
+    trainer.train(values.size(), values.data());
+    REQUIRE(trainer.centroids == std::vector<float>{4});
+
+    SECTION("invalid epoch budget") {
+        cp.e_means_epochs = GENERATE(0.0, -1.0, 0.01, std::numeric_limits<double>::infinity());
+        faiss::EMeans invalid(1, 1, cp);
+        REQUIRE_THROWS(invalid.train(values.size(), values.data()));
+    }
+    SECTION("non-finite input") {
+        const float input = std::numeric_limits<float>::quiet_NaN();
+        REQUIRE_THROWS(trainer.train(1, &input));
+    }
+    SECTION("too many centroids") {
+        faiss::EMeans invalid(1, 6, cp);
+        REQUIRE_THROWS(invalid.train(values.size(), values.data()));
+    }
+}
+
+TEST_CASE("E-means spherical closing and large sums", "[cluster][e-means]") {
+    faiss::ClusteringParameters cp;
+    cp.e_means_epochs = 2.5;
+    cp.spherical = true;
+    faiss::EMeans spherical(2, 1, cp);
+    const std::vector<float> values{1, 0, 0, 1};
+    spherical.train(2, values.data());
+    REQUIRE(spherical.centroids[0] == Catch::Approx(std::sqrt(0.5)));
+    REQUIRE(spherical.centroids[1] == Catch::Approx(std::sqrt(0.5)));
+
+    cp.spherical = false;
+    faiss::EMeans wide(2, 1, cp);
+    const std::vector<float> large(256, 1000.0f);
+    wide.train(128, large.data());
+    REQUIRE((wide.centroids == std::vector<float>{1000.0f, 1000.0f}));
+}
+
+TEST_CASE("E-means seeded training separates clusters", "[cluster][e-means]") {
+    constexpr size_t n = 256, d = 4, k = 4;
+    std::vector<float> values(n * d);
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = 0; j < d; ++j) {
+            values[i * d + j] = (i % k) * 10.0f + ((i + j) % 7) * 0.01f;
+        }
+    }
+    faiss::ClusteringParameters cp;
+    cp.e_means_epochs = 5;
+    cp.nredo = 2;
+    faiss::EMeans first(d, k, cp), second(d, k, cp);
+    first.train(n, values.data());
+    second.train(n, values.data());
+    REQUIRE(first.centroids == second.centroids);
+    faiss::IndexFlatL2 assigner(d);
+    assigner.add(k, first.centroids.data());
+    std::vector<float> distances(n);
+    std::vector<faiss::idx_t> labels(n);
+    assigner.search(n, values.data(), 1, distances.data(), labels.data());
+    REQUIRE(std::accumulate(distances.begin(), distances.end(), 0.0) < 1.0);
+}
+
+TEST_CASE("E-means takes precedence in IVF coarse training", "[cluster][e-means]") {
+    faiss::IndexFlatL2 quantizer(1);
+    faiss::IndexIVFFlat index(&quantizer, 1, 1);
+    index.cp.e_means_epochs = 2.5;
+    index.cp.use_super_kmeans = true;
+    index.cp.niter = 0;  // E-means has its own epoch budget.
+    const std::vector<float> values{0, 1, 2, 3, 14};
+    index.train(values.size(), values.data());
+    float centroid;
+    quantizer.reconstruct(0, &centroid);
+    REQUIRE(centroid == 4.0f);
+    index.add(values.size(), values.data());
+    float distance;
+    faiss::idx_t label;
+    index.search(1, &values.back(), 1, &distance, &label);
+    REQUIRE(label == 4);
+    REQUIRE(distance == 0.0f);
+}
 
 // use kNN search to test the correctness of kmeans
 TEST_CASE("Test Kmeans With Float Vector", "[float metrics]") {
