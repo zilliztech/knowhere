@@ -1,0 +1,176 @@
+name: Compiler Upper-bound Build
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Upper-bound compiler verification: build Knowhere with gcc-16 on Ubuntu 24.04,
+# mirroring the compiler range targeted by the Milvus dependency validation.
+# Experimental workflow — trigger manually or via matching pull requests.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "include/**"
+      - "src/**"
+      - "thirdparty/**"
+      - "benchmark/**"
+      - "cmake/**"
+      - ".github/workflows/gcc16-build.yml"
+      - "CMakeLists.txt"
+      - "Makefile"
+      - "conanfile.py"
+      - "cpp/cmake/**"
+      - "scripts/**"
+
+jobs:
+  build:
+    name: Build on ubuntu-24.04 (gcc-16)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: none
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libaio-dev python3-pip
+
+      # scripts/install_deps.sh pins Conan 2.28.1, whose settings stop at
+      # gcc 15.2 / clang 21. 2.33.0 is the first release that knows
+      # compiler.version=16, so this job installs it locally.
+      - name: Install Conan and CMake
+        run: |
+          pip3 install conan==2.33.0 cmake==3.28.1
+          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+
+      - name: Install gcc-16 toolchain
+        run: |
+          # gcc-16 is not packaged by Ubuntu 24.04 apt or the toolchain PPA, so
+          # use Homebrew-on-Linux; its bundled glibc (2.39) matches ubuntu-24.04.
+          NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          brew install gcc@16 binutils
+          mkdir -p "$RUNNER_TEMP/toolchain-bin"
+          ln -sf "$(brew --prefix gcc@16)/bin/gcc-16" "$RUNNER_TEMP/toolchain-bin/gcc"
+          ln -sf "$(brew --prefix gcc@16)/bin/g++-16" "$RUNNER_TEMP/toolchain-bin/g++"
+          # gcc-16 emits .base64 pseudo-ops that need binutils >= 2.43; prefer
+          # the binutils bundled with the Homebrew gcc.
+          echo "$(brew --prefix gcc@16)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix binutils)/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/toolchain-bin" >> "$GITHUB_PATH"
+
+      - name: Record gcc-16 version
+        env:
+          BREW_PREFIX: /home/linuxbrew/.linuxbrew
+        run: |
+          # Homebrew updates the gcc@16 formula over time; hash the compiler
+          # identity into the Conan cache key so a restored cache can never
+          # silently reuse binaries built by an older gcc-16 patch release.
+          GCC16_BIN="$BREW_PREFIX/bin/gcc-16"
+          GCC16_ID="$("$GCC16_BIN" --version | sha256sum | cut -d' ' -f1 | cut -c1-12)"
+          echo "GCC16_BIN=$GCC16_BIN" >> "$GITHUB_ENV"
+          echo "GCC16_ID=$GCC16_ID" >> "$GITHUB_ENV"
+
+      - name: Restore Conan Packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: knowhere-ubuntu-24.04-gcc16-${{ env.GCC16_ID }}-${{ hashFiles('conanfile.py')}}
+          restore-keys: knowhere-ubuntu-24.04-gcc16-${{ env.GCC16_ID }}-
+
+      - name: Setup Conan Profile
+        run: |
+          conan profile detect --force
+          # detect keys off `cc`, which still resolves to the system gcc; pin
+          # the profile to gcc-16 to match the compiler_executables below.
+          profile_path="$(conan profile path default)"
+          sed -i -e 's/^compiler.version=.*/compiler.version=16/' \
+                 -e 's/^compiler=.*/compiler=gcc/' "$profile_path"
+          conan remote add --force default-conan-local2 \
+            https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local2
+          # Conan 2 has no `conan profile update`; append the compiler
+          # executables mapping as a [conf] section on the default profile.
+          printf '\n[conf]\ntools.build:compiler_executables={"c":"gcc-16","cpp":"g++-16"}\n' \
+            >> "$(conan profile path default)"
+
+      # Default target: Release build of libknowhere (WITH_DISKANN=True needs
+      # the libaio-dev installed above). WITH_UT is left unset so the unit-test
+      # binaries are not part of this compile check.
+      - name: Build
+        run: make
+
+      - name: Save Conan Packages
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.conan2
+          key: knowhere-ubuntu-24.04-gcc16-${{ env.GCC16_ID }}-${{ hashFiles('conanfile.py')}}
+
+  macos-build:
+    name: Build on macos-26 (clang-23)
+    runs-on: macos-26
+    timeout-minutes: 300
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: none
+
+      - name: Install dependencies
+        run: |
+          # CMake 4.x (Homebrew) removed compat with cmake_minimum_required < 3.5;
+          # some Conan recipes (e.g. bzip2/1.0.8) still use older values.
+          export CMAKE_POLICY_VERSION_MINIMUM=3.5
+          bash scripts/install_deps.sh
+          # install_deps pins Conan 2.28.1 via uv, whose settings stop at
+          # clang 21; 2.33.0 knows compiler.version=23. The runner python is
+          # externally managed, hence --break-system-packages.
+          python3 -m pip install --break-system-packages --user "conan==2.33.0"
+          echo "$(python3 -m site --user-base)/bin" >> "$GITHUB_PATH"
+
+      - name: Install LLVM 23
+        run: |
+          brew install llvm@23
+          echo "$(brew --prefix llvm@23)/bin" >> "$GITHUB_PATH"
+          echo "CC=$(brew --prefix llvm@23)/bin/clang" >> "$GITHUB_ENV"
+          echo "CXX=$(brew --prefix llvm@23)/bin/clang++" >> "$GITHUB_ENV"
+          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+
+      - name: Record clang-23 version
+        run: |
+          # Hash the compiler identity into the Conan cache key (same rationale
+          # as the gcc-16 job's GCC16_ID). macOS ships shasum, not sha256sum.
+          CLANG23_ID="$("$CC" --version | shasum -a 256 | cut -d' ' -f1 | cut -c1-12)"
+          echo "CLANG23_ID=$CLANG23_ID" >> "$GITHUB_ENV"
+
+      - name: Restore Conan Packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: knowhere-macos-26-clang23-${{ env.CLANG23_ID }}-${{ hashFiles('conanfile.py')}}
+          restore-keys: knowhere-macos-26-clang23-${{ env.CLANG23_ID }}-
+
+      - name: Setup Conan Profile
+        run: |
+          # detect reads CC/CXX, so it records compiler=clang / version=23
+          # (known to Conan 2.33 settings).
+          conan profile detect --force
+          conan remote add --force default-conan-local2 \
+            https://milvus01.jfrog.io/artifactory/api/conan/default-conan-local2
+          printf '\n[conf]\ntools.build:compiler_executables={"c":"%s","cpp":"%s"}\n' "$CC" "$CXX" \
+            >> "$(conan profile path default)"
+
+      # Cardinal is explicitly disabled: it is not part of the macOS build
+      # matrix, and its pinned milvus-common adapters are not exercised here.
+      - name: Build
+        run: make WITH_CARDINAL=False
+
+      - name: Save Conan Packages
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.conan2
+          key: knowhere-macos-26-clang23-${{ env.CLANG23_ID }}-${{ hashFiles('conanfile.py')}}

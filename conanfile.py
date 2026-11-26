@@ -163,7 +163,14 @@ class KnowhereConan(ConanFile):
         self.requires("fmt/12.1.0", force=True, override=True)
         self.requires("libevent/2.1.12#95065aaefcd58d3956d6dfbfc5631d97")
         self.requires("grpc/1.67.1@milvus/dev#efeaa484b59bffaa579004d5e82ec4fd")
-        self.requires("folly/2026.04.20.00@milvus/dev#06852bea5b6449f0c4eb0df002b5779c")
+        # folly recipe revision with the upstream fix backported by
+        # milvus-io/conanfiles#252 (facebook/folly 97d5b31d): folly/result/
+        # epitaph.{h,cpp} were missing <algorithm>/<vector>, rejected by the
+        # libc++ shipped with clang-23 (see zilliztech/milvus-common#155).
+        # force=True aligns the whole graph (including the transitive pin from
+        # the milvus-common Conan package still consumed on main) to this
+        # fixed revision; Conan rejects two revisions of the same ref otherwise.
+        self.requires("folly/2026.04.20.00@milvus/dev#bb88f7ffd53457e8fa8f4516eaec6c60", force=True)
         self.requires("fast_float/8.0.0@milvus/dev#c7802833c74c5a86ffed70e4af1a795e")
         self.requires("libcurl/8.10.1#a3113369c86086b0e84231844e7ed0a9", force=True, override=True)
         self.requires("simde/0.8.2#5e1edfd5cba92f25d79bf6ef4616b972")
