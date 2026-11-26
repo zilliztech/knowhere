@@ -25,15 +25,21 @@ refinement_pool_size(size_t k, float factor, size_t count) {
 
 template <typename T>
 bool
-valid_refinement_row(const SparseRow<T>& row) {
+valid_pruning_row(const SparseRow<T>& row, bool require_sorted) {
     for (size_t i = 0; i < row.size(); ++i) {
         const auto [dim, val] = row[i];
-        if (!std::isfinite(val) || val < 0 || (i && row[i - 1].id >= dim)) {
+        if (!std::isfinite(val) || val < 0 || (require_sorted && i && row[i - 1].id >= dim)) {
             return false;
         }
     }
 
     return true;
+}
+
+template <typename T>
+bool
+valid_refinement_row(const SparseRow<T>& row) {
+    return valid_pruning_row(row, true);
 }
 
 // Keep indexed dimensions in external-ID order before computing retained mass.
@@ -55,9 +61,9 @@ filter_query_dimensions(const SparseRow<T>& query, IsIndexed is_indexed) {
 // Query term selection does not depend on the physical posting value/ID codecs.
 template <typename T>
 SparseRow<T>
-retain_query_mass(const SparseRow<T>& query, float mass) {
-    if (!std::isfinite(mass) || mass <= 0 || mass > 1 || !valid_refinement_row(query)) {
-        throw std::invalid_argument("Refinement requires finite nonnegative, sorted unique query coordinates");
+retain_validated_query_mass(const SparseRow<T>& query, float mass) {
+    if (!std::isfinite(mass) || mass <= 0 || mass > 1) {
+        throw std::invalid_argument("Refinement mass must be in (0, 1]");
     }
 
     std::vector<size_t> order(query.size());
@@ -87,6 +93,15 @@ retain_query_mass(const SparseRow<T>& query, float mass) {
     }
 
     return out;
+}
+
+template <typename T>
+SparseRow<T>
+retain_query_mass(const SparseRow<T>& query, float mass) {
+    if (!valid_refinement_row(query)) {
+        throw std::invalid_argument("Refinement requires finite nonnegative, sorted unique query coordinates");
+    }
+    return retain_validated_query_mass(query, mass);
 }
 
 // Logical posting offsets, not byte offsets. Future packed backends may locate/decode

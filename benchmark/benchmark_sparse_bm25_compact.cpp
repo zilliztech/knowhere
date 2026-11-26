@@ -190,9 +190,10 @@ int
 main(int argc, char** argv) {
     try {
         std::map<std::string, std::string> args;
-        const std::set<std::string> supported{"--data-dir",   "--split",   "--quant-type", "--output",     "--k",
-                                              "--queries",    "--threads", "--repeats",    "--simd",       "--truth",
-                                              "--index-save", "--base",    "--query-file", "--doc-reorder"};
+        const std::set<std::string> supported{"--data-dir",   "--split",       "--quant-type", "--output",
+                                              "--k",          "--queries",     "--threads",    "--repeats",
+                                              "--simd",       "--truth",       "--index-save", "--base",
+                                              "--query-file", "--doc-reorder", "--base-file"};
         for (int i = 1; i < argc; i += 2) {
             const std::string key = argv[i];
             if (key == "--help") {
@@ -220,7 +221,8 @@ main(int argc, char** argv) {
         Check(!std::filesystem::exists(output), "Refuse to overwrite output");
         const size_t k = std::stoul(get("--k", "10")), limit = std::stoul(get("--queries", "0"));
         const int threads = std::stoi(get("--threads", "8")), requested = std::stoi(get("--repeats", "3"));
-        Check(k > 0 && (k == 10 || k == 100) && threads > 0 && requested >= 3, "Invalid benchmark arguments");
+        Check(k > 0 && (k == 10 || k == 100) && threads > 0 && (requested == 1 || requested >= 3),
+              "Invalid benchmark arguments");
         const auto simd = get("--simd", "auto");
         auto simd_type = knowhere::KnowhereConfig::SimdType::AUTO;
         if (simd == "avx2")
@@ -232,7 +234,7 @@ main(int argc, char** argv) {
         const auto selected_simd = knowhere::KnowhereConfig::SetSimdType(simd_type);
         knowhere::KnowhereConfig::SetBuildThreadPoolSize(threads);
         knowhere::KnowhereConfig::SetSearchThreadPoolSize(threads);
-        const auto base_path = get("--base", data + "/corpus.csr");
+        const auto base_path = get("--base-file", get("--base", data + "/corpus.csr"));
         auto default_query = data + "/queries_" + split + ".csr";
         if (!std::filesystem::exists(default_query))
             default_query = data + "/queries.csr";
@@ -426,7 +428,7 @@ main(int argc, char** argv) {
             Check(hits.good(), "Hit output failed");
         }
         double timed = 0;
-        for (int repetition = 0; repetition < requested || timed < 5; ++repetition) {
+        for (int repetition = 0; repetition < requested || (requested > 1 && timed < 5); ++repetition) {
             t = Clock::now();
             auto result = index.Search(queries.Dataset(), search, nullptr);
             const double seconds = Seconds(t);

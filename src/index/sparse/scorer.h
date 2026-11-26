@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <span>
@@ -21,6 +22,16 @@ struct IndexScorerConfig {
         } bm25;
     } scorer_params;
 };
+
+[[nodiscard]] inline bool
+valid_bm25_scorer(const IndexScorerConfig& config) noexcept {
+    if (config.scorer_type != IndexScorerType::BM25) {
+        return false;
+    }
+    const auto& bm25 = config.scorer_params.bm25;
+    return std::isfinite(bm25.k1) && bm25.k1 >= 0 && std::isfinite(bm25.b) && bm25.b >= 0 && bm25.b <= 1 &&
+           std::isfinite(bm25.avgdl) && bm25.avgdl > 0;
+}
 
 /**
  * DimScorer is a function that computes a relevance score for a vector.

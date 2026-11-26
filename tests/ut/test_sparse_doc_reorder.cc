@@ -208,11 +208,14 @@ TEST_CASE("SINDI doc reorder keeps results and row ids", "[sparse][sindi][reorde
     const int32_t nb = 5000;
     const int32_t dim = 400;
     const int32_t nq = 20;
-    auto [metric, quant] = GENERATE(table<std::string, std::string>({
-        {knowhere::metric::IP, ""},
-        {knowhere::metric::BM25, ""},
-        {knowhere::metric::BM25, "u8"},
-        {knowhere::metric::BM25, "u4_lut"},
+    auto [metric, quant, h2, refine] = GENERATE(table<std::string, std::string, bool, bool>({
+        {knowhere::metric::IP, "", false, false},
+        {knowhere::metric::BM25, "", false, false},
+        {knowhere::metric::BM25, "u8", false, false},
+        {knowhere::metric::BM25, "u4_lut", false, false},
+        {knowhere::metric::IP, "fp16", true, false},
+        {knowhere::metric::IP, "fp16", true, true},
+        {knowhere::metric::BM25, "u8", true, false},
     }));
     const bool bm25 = metric == knowhere::metric::BM25;
     auto train_ds = bm25 ? GenSparseDataSetWithMaxVal(nb, dim, 0.95, 20, true) : GenSparseDataSet(nb, dim, 0.95);
@@ -230,12 +233,14 @@ TEST_CASE("SINDI doc reorder keeps results and row ids", "[sparse][sindi][reorde
     if (!quant.empty()) {
         build["quant_type"] = quant;
     }
+    build["refine"] = refine;
     knowhere::Json search{{knowhere::meta::TOPK, topk},      {knowhere::meta::METRIC_TYPE, metric},
                           {knowhere::meta::BM25_K1, 1.2},    {knowhere::meta::BM25_B, 0.75},
                           {knowhere::meta::BM25_AVGDL, 100}, {"drop_ratio_search", 0}};
     auto reordered_build = build;
     reordered_build["sindi_doc_reorder"] = "bp_kmeans";
-    CAPTURE(metric, quant, topk);
+    reordered_build["sindi_h2"] = h2;
+    CAPTURE(metric, quant, topk, h2, refine);
 
     const auto type = knowhere::IndexEnum::INDEX_SPARSE_INVERTED_INDEX;
     auto base = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(type, kVersion).value();
@@ -298,8 +303,10 @@ TEST_CASE("SINDI doc reorder keeps results and row ids", "[sparse][sindi][reorde
     }
 
     SECTION("deserialize and deserialize from file") {
+        auto load = build;
+        load["sindi_h2"] = h2;
         auto loaded = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(type, kVersion).value();
-        REQUIRE(loaded.Deserialize(bs, build) == knowhere::Status::success);
+        REQUIRE(loaded.Deserialize(bs, load) == knowhere::Status::success);
         auto actual = loaded.Search(query_ds, search, nullptr);
         REQUIRE(actual.has_value());
         RequireSameResults(*expected.value(), *actual.value(), oracle, no_filter, nb);
@@ -314,7 +321,7 @@ TEST_CASE("SINDI doc reorder keeps results and row ids", "[sparse][sindi][reorde
             out.write(reinterpret_cast<const char*>(binary->data.get()), binary->size);
         }
         auto mapped = knowhere::IndexFactory::Instance().Create<knowhere::sparse_u32_f32>(type, kVersion).value();
-        REQUIRE(mapped.DeserializeFromFile(path, build) == knowhere::Status::success);
+        REQUIRE(mapped.DeserializeFromFile(path, load) == knowhere::Status::success);
         auto mapped_result = mapped.Search(query_ds, search, nullptr);
         REQUIRE(mapped_result.has_value());
         RequireSameResults(*expected.value(), *mapped_result.value(), oracle, no_filter, nb);
