@@ -384,14 +384,17 @@ class SparseInvertedIndexNode : public IndexNode {
         auto queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
         auto nq = dataset->GetRows();
 
-        if (refine || PackedStorageEnabled()) {
+        const bool require_sorted = refine || PackedStorageEnabled();
+        const bool has_h2 = index_->h2_enabled();
+        if (require_sorted || has_h2) {
             for (int64_t i = 0; i < nq; ++i) {
-                if (!sparse::inverted::sindi::valid_refinement_row(queries[i])) {
-                    return expected<DataSetPtr>::Err(Status::invalid_args, "Invalid SINDI refinement query");
+                if (!sparse::inverted::sindi::valid_pruning_row(queries[i], require_sorted)) {
+                    return expected<DataSetPtr>::Err(Status::invalid_args, "Invalid SINDI pruning query");
                 }
             }
+            search_params.sindi_request_validated = true;
         }
-
+        search_params.sindi_use_h2 = has_h2 && index_->has_matching_h2_bounds(search_params.scorer_config);
         auto k = cfg.k.value();
         auto p_id = std::make_unique<sparse::label_t[]>(nq * k);
         auto p_dist = std::make_unique<float[]>(nq * k);
@@ -431,15 +434,17 @@ class SparseInvertedIndexNode : public IndexNode {
         }
         auto search_params = search_params_or.value();
 
-        if (PackedStorageEnabled()) {
+        const bool require_sorted = PackedStorageEnabled();
+        if (require_sorted || index_->h2_enabled()) {
             const auto* queries = static_cast<const sparse::SparseRow<value_type>*>(dataset->GetTensor());
             for (int64_t i = 0; i < nq; ++i) {
-                if (!sparse::inverted::sindi::valid_refinement_row(queries[i])) {
+                if (!sparse::inverted::sindi::valid_pruning_row(queries[i], require_sorted)) {
                     return expected<std::vector<IndexNode::IteratorPtr>>::Err(Status::invalid_args,
-                                                                              "Invalid packed sparse query");
+                                                                              "Invalid SINDI iterator query");
                 }
             }
         }
+        search_params.sindi_request_validated = true;
         auto vec = std::vector<std::shared_ptr<IndexNode::iterator>>(nq, nullptr);
         const auto& id_map = this->GetIdMap();
         const auto* result_id_map = this->SearchResultIdMap(id_map);
@@ -844,7 +849,8 @@ class SparseInvertedIndexNode : public IndexNode {
                         window_size, cfg.refine.value_or(false), cfg.quant_type.value_or("") == "e5m7");
                 } else {
                     index = std::make_unique<sparse::inverted::SindiInvertedIndexIP>(
-                        window_size, cfg.refine.value_or(false), cfg.quant_type.value_or("") == "e5m7");
+                        window_size, cfg.refine.value_or(false), cfg.quant_type.value_or("") == "e5m7", false,
+                        cfg.sindi_h2.value_or(false));
                 }
                 ConfigureSindiSerialization(index.get());
                 ConfigureSindiDocReorder(index.get(), cfg);
@@ -872,22 +878,25 @@ class SparseInvertedIndexNode : public IndexNode {
                 if constexpr (std::is_same_v<QType, uint8_t>) {
                     index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25U8>(
                         window_size, false, IsBm25U4QuantType(cfg.quant_type.value_or("")),
-                        cfg.quant_type.value_or("") == "u4_lut_u16");
+                        cfg.quant_type.value_or("") == "u4_lut_u16", cfg.sindi_h2.value_or(false));
                 } else {
                     if (is_growable) {
                         index = std::make_unique<sparse::inverted::GrowableSindiInvertedIndexBM25>(window_size);
                     } else {
-                        index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25>(window_size);
+                        index = std::make_unique<sparse::inverted::SindiInvertedIndexBM25>(
+                            window_size, false, false, false, cfg.sindi_h2.value_or(false));
                     }
                 }
                 ConfigureSindiSerialization(index.get());
                 ConfigureSindiDocReorder(index.get(), cfg);
                 index->set_build_algo(algo);
+                const float avgdl = cfg.bm25_avgdl.value();
+                // Preserve invalid input for the common H2 builder validation.
+                const float build_avgdl = cfg.sindi_h2.value_or(false) && avgdl <= 0 ? avgdl : std::max(avgdl, 1.0f);
                 index->set_build_scorer(sparse::inverted::IndexScorerConfig{
                     .scorer_type = sparse::inverted::IndexScorerType::BM25,
-                    .scorer_params = {.bm25 = {.k1 = cfg.bm25_k1.value(),
-                                               .b = cfg.bm25_b.value(),
-                                               .avgdl = std::max(cfg.bm25_avgdl.value(), 1.0f)}}});
+                    .scorer_params = {
+                        .bm25 = {.k1 = cfg.bm25_k1.value(), .b = cfg.bm25_b.value(), .avgdl = build_avgdl}}});
                 return index;
             } else {
                 return create_index_before_v10(algo, codec);
@@ -969,6 +978,19 @@ class SparseInvertedIndexNode : public IndexNode {
         }
 
         auto qt = cfg.quant_type.value_or("");
+        if (cfg.sindi_h2.value_or(false)) {
+            const bool ip = IsMetricType(cfg.metric_type.value(), metric::IP);
+            const bool bm25 = IsMetricType(cfg.metric_type.value(), metric::BM25);
+            const auto algo =
+                NormalizeInvertedIndexAlgo(cfg.inverted_index_algo.value_or(ip ? "SINDI" : "DAAT_MAXSCORE"));
+            if (is_growable || index_version_ < 10 || algo != "SINDI" || (!ip && !bm25) ||
+                (ip && !qt.empty() && qt != "fp16") ||
+                (bm25 && !qt.empty() && qt != "u8" && qt != "u16" && qt != "auto") ||
+                (encoding && *encoding != sparse::inverted::InvertedIndexEncoding::FIXED_DOCID_WINDOWS)) {
+                return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
+                    Status::invalid_args, "sindi_h2 requires sealed SINDI IP fp16 or BM25 u8/u16/auto, version >=10");
+            }
+        }
         if (qt == "auto") {
             return expected<std::unique_ptr<sparse::inverted::InvertedIndex<value_type>>>::Err(
                 Status::invalid_args, "quant_type=auto was not resolved before index creation");
@@ -1143,11 +1165,15 @@ class SparseInvertedIndexNode : public IndexNode {
             }
             search_params.scorer_config.scorer_type = sparse::inverted::IndexScorerType::BM25;
             search_params.sindi_filter_threshold = config.sindi_bm25_filter_threshold.value();
-            search_params.scorer_config.scorer_params.bm25.avgdl = std::max(config.bm25_avgdl.value(), 1.0f);
-            search_params.scorer_config.scorer_params.bm25.k1 =
-                config.bm25_k1.value_or(index_->get_scorer_config().scorer_params.bm25.k1);
-            search_params.scorer_config.scorer_params.bm25.b =
-                config.bm25_b.value_or(index_->get_scorer_config().scorer_params.bm25.b);
+            auto& bm25 = search_params.scorer_config.scorer_params.bm25;
+            bm25.avgdl = config.bm25_avgdl.value();
+            bm25.k1 = config.bm25_k1.value_or(index_->get_scorer_config().scorer_params.bm25.k1);
+            bm25.b = config.bm25_b.value_or(index_->get_scorer_config().scorer_params.bm25.b);
+            if (index_->h2_enabled() && !sparse::inverted::valid_bm25_scorer(search_params.scorer_config)) {
+                return expected<sparse::inverted::InvertedIndexSearchParams>::Err(Status::invalid_args,
+                                                                                  "Invalid BM25 search scorer");
+            }
+            bm25.avgdl = std::max(bm25.avgdl, 1.0f);
             if (PackedStorageEnabled()) {
                 const auto& stored = index_->get_scorer_config().scorer_params.bm25;
                 const auto& requested = search_params.scorer_config.scorer_params.bm25;

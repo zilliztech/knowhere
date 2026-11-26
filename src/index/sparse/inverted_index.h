@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <type_traits>
@@ -153,6 +154,10 @@ struct InvertedIndexSearchParams {
         float drop_ratio_search;
         float dim_max_score_ratio;
     } approx;
+
+    // Set by the node after validating the query batch. Direct calls validate their input.
+    bool sindi_request_validated = false;
+    std::optional<bool> sindi_use_h2{};
 };
 
 template <typename DType>
@@ -298,6 +303,17 @@ class InvertedIndex {
     virtual std::vector<float>
     get_all_distances(const SparseRow<DType>& query, const BitsetView& bitset,
                       const InvertedIndexSearchParams& search_params) const = 0;
+
+    virtual bool
+    h2_enabled() const noexcept {
+        return false;
+    }
+
+    // Derived caches may bind search to the scorer used during their construction.
+    virtual bool
+    has_matching_h2_bounds(const IndexScorerConfig&) const noexcept {
+        return false;
+    }
 
     /**
      * @brief Set the build scorer type and parameters
