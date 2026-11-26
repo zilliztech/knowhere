@@ -1,4 +1,4 @@
-set( MILVUS-COMMON-VERSION a88c21f3d7faff36ca4af119c76b75a17afa3c86 )
+set( MILVUS-COMMON-VERSION 60f998e4494ad1630ef5ce58a06cc26565ed5bc1 )
 set( GIT_REPOSITORY "https://github.com/zilliztech/milvus-common.git" )
 
 message(STATUS "milvus-common repo: ${GIT_REPOSITORY}")
