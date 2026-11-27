@@ -30,7 +30,7 @@ if ( NOT milvus-common_POPULATED )
     # libatomic is a separate library only on Linux (needed for 64-bit atomics on
     # some architectures with GCC). On macOS, atomic operations are part of the
     # standard library.
-    if(NOT APPLE)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_link_libraries(milvus-common PUBLIC atomic)
     endif()
 endif()
