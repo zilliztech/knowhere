@@ -15,24 +15,18 @@ FetchContent_Declare(
         BINARY_DIR      ${CMAKE_CURRENT_BINARY_DIR}/milvus-common-build )
 
 FetchContent_GetProperties( milvus-common )
-if ( NOT milvus-common_POPULATED )
-    FetchContent_Populate( milvus-common )
-    # Adding the following target:
-    # milvus-common
-    add_subdirectory( ${milvus-common_SOURCE_DIR}
-                      ${milvus-common_BINARY_DIR} )
-    # Place the shared library next to libknowhere.so in the top-level build
-    # directory; FetchContent targets would otherwise land inside their own
-    # subdirectory, breaking the wheel's -L/-rpath (python/setup.py).
-    set_target_properties(milvus-common PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} )
-    # libatomic is a separate library only on Linux (needed for 64-bit atomics on
-    # some architectures with GCC). On macOS, atomic operations are part of the
-    # standard library.
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_link_libraries(milvus-common PUBLIC atomic)
-    endif()
+FetchContent_MakeAvailable( milvus-common )
+# Place the shared library next to libknowhere.so in the top-level build
+# directory; FetchContent targets would otherwise land inside their own
+# subdirectory, breaking the wheel's -L/-rpath (python/setup.py).
+set_target_properties(milvus-common PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} )
+# libatomic is a separate library only on Linux (needed for 64-bit atomics on
+# some architectures with GCC). On macOS, atomic operations are part of the
+# standard library.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(milvus-common PUBLIC atomic)
 endif()
 
 set( MILVUS_COMMON_INCLUDE_DIR ${milvus-common_SOURCE_DIR}/include CACHE INTERNAL "Path to milvus-common include directory" )
