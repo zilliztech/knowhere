@@ -3,6 +3,7 @@ from setuptools.extension import Extension
 from setuptools.command.build_py import build_py
 import os
 import shutil
+import glob
 
 NAME = "pyknowhere"
 
@@ -53,7 +54,12 @@ INCLUDE_DIRS = [
     get_numpy_include(),
     os.path.join("..", "include"),
     os.path.join("..", "thirdparty"),
-    get_thirdparty_prefix("milvus-common") + "/include",
+    # milvus-common is built from source via FetchContent in the CMake build;
+    # its headers live in the FetchContent source dir of whichever build-type
+    # directory was produced (prefer Release).
+    (sorted(glob.glob(os.path.join("..", "build", "*", "milvus-common-src", "include")),
+            reverse=True) + [os.path.join("..", "build", "Release",
+            "milvus-common-src", "include")])[0],
     get_thirdparty_prefix("boost-headers") + "/include",
     get_thirdparty_prefix("nlohmann_json") + "/include",
     get_thirdparty_prefix("libglog") + "/include",
@@ -64,7 +70,9 @@ INCLUDE_DIRS = [
 ]
 
 BUILD_DIR = os.path.abspath(os.path.join("..", "build", "Release"))
-MILVUS_COMMON_LIB_DIR = get_thirdparty_prefix("milvus-common") + "/lib"
+# libmilvus-common.so is placed next to libknowhere.so by the
+# LIBRARY_OUTPUT_DIRECTORY override in cmake/libs/libmilvus-common.cmake.
+MILVUS_COMMON_LIB_DIR = BUILD_DIR
 
 LIBRARY_DIRS = [
     BUILD_DIR,

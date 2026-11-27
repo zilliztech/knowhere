@@ -1,0 +1,12 @@
+# Minimal compatibility config: milvus-common is built from source in
+# cmake/libs/libmilvus-common.cmake, but some consumers (vendored cardinal
+# adapters) still call find_package(milvus-common) and link the namespaced
+# target that the Conan CMakeDeps config used to provide.
+if(NOT TARGET milvus-common)
+    message(FATAL_ERROR "milvus-common target not found; add cmake/libs/libmilvus-common.cmake before consuming it")
+endif()
+if(NOT TARGET milvus-common::milvus-common)
+    add_library(milvus-common::milvus-common INTERFACE IMPORTED)
+    target_link_libraries(milvus-common::milvus-common INTERFACE milvus-common)
+endif()
+set(milvus-common_INCLUDE_DIRS "@MILVUS_COMMON_INCLUDE_DIR@")

@@ -147,7 +147,6 @@ class KnowhereConan(ConanFile):
             self.requires("metis/5.2.1#85cfe7ee0dfc0cba7c0334e92efcbbc6")
         self.requires("abseil/20250127.0#481edcc75deb0efb16500f511f0f0a1c")
         self.requires("boost/1.83.0#4e8a94ac1b88312af95eded83cd81ca8")
-        self.requires("milvus-common/1.0.0-a88c21f@milvus/dev#0eb9a7f2f5d5fe0e7d37f45f3f9a38ea")
         self.requires("gflags/2.2.2#7671803f1dc19354cc90bd32874dcfda")
         self.requires("glog/0.7.1#a306e61d7b8311db8cb148ad62c48030")
         self.requires("nlohmann_json/3.11.3#ffb9e9236619f1c883e36662f944345d", force=True)
@@ -170,8 +169,10 @@ class KnowhereConan(ConanFile):
         self.requires("xxhash/0.8.3#caa6d0af1b951c247922e38fbcebdbe6")
         if self.settings.os == "Linux":
             self.requires("openblas/0.3.30#aca4131c143d4c109923372e052c643c")
-        if not self.options.with_light:
-            self.requires("opentelemetry-cpp/1.23.0@milvus/dev#11bc565ec6e82910ae8f7471da756720")
+        # milvus-common is built from source (cmake/libs/libmilvus-common.cmake)
+        # and its CMake requires opentelemetry-cpp unconditionally, so it must
+        # stay in the graph even for light builds.
+        self.requires("opentelemetry-cpp/1.23.0@milvus/dev#11bc565ec6e82910ae8f7471da756720")
         if self.settings.os != "Macos":
             self.requires("libunwind/1.8.1#748a981ace010b80163a08867b732e71")
         if self.options.with_ut:
@@ -354,6 +355,17 @@ class KnowhereConan(ConanFile):
         cmake.build()
 
     def package(self):
+        # milvus-common is embedded via FetchContent (cmake/libs/libmilvus-common.cmake),
+        # so its install rules (install(TARGETS milvus-common) + install(DIRECTORY include/))
+        # are honored here alongside the knowhere install rules. The published knowhere
+        # package therefore ships libmilvus-common.so and milvus-common's headers in
+        # addition to libknowhere.so, and package_info does not re-export a
+        # milvus-common::milvus-common component. This is an explicit, intended packaging
+        # change: consumers that already provide their own milvus-common (e.g. the Milvus
+        # server after the FetchContent migration) must not ALSO install this one, or two
+        # copies of libmilvus-common.so can end up on the runtime path and silently load
+        # the wrong one once the pins diverge. If this embedding becomes undesirable,
+        # guard milvus-common's install rules instead of relying on the subproject's.
         cmake = CMake(self)
         cmake.install()
         files.rmdir(self, os.path.join(self.package_folder, "lib", "cmake"))
@@ -369,7 +381,6 @@ class KnowhereConan(ConanFile):
         self.cpp_info.components["libknowhere"].requires = [
             "boost::program_options",
             "glog::glog",
-            "milvus-common::milvus-common",
             "prometheus-cpp::core",
             "prometheus-cpp::push",
         ]
