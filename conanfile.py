@@ -355,6 +355,17 @@ class KnowhereConan(ConanFile):
         cmake.build()
 
     def package(self):
+        # milvus-common is embedded via FetchContent (cmake/libs/libmilvus-common.cmake),
+        # so its install rules (install(TARGETS milvus-common) + install(DIRECTORY include/))
+        # are honored here alongside the knowhere install rules. The published knowhere
+        # package therefore ships libmilvus-common.so and milvus-common's headers in
+        # addition to libknowhere.so, and package_info does not re-export a
+        # milvus-common::milvus-common component. This is an explicit, intended packaging
+        # change: consumers that already provide their own milvus-common (e.g. the Milvus
+        # server after the FetchContent migration) must not ALSO install this one, or two
+        # copies of libmilvus-common.so can end up on the runtime path and silently load
+        # the wrong one once the pins diverge. If this embedding becomes undesirable,
+        # guard milvus-common's install rules instead of relying on the subproject's.
         cmake = CMake(self)
         cmake.install()
         files.rmdir(self, os.path.join(self.package_folder, "lib", "cmake"))
